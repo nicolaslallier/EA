@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**The element catalogue works end to end; relationships are backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA whose one screen browses, creates, edits and deletes elements through the generated OpenAPI client — see `docs/adr/0007`. Relationships and the two traversals have no UI yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**The element catalogue works end to end; relationships are backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with one section built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`). Relationships, the metamodel and the two traversals are declared in the menu as *à venir* and have no screen yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 **Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, any frontend view of relationships or of the graph itself.
 
@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Everything not a graph | PostgreSQL + SQLAlchemy 2 (async) + Alembic | Auth, audit, scheduled work. **No table exists yet**; add the dependencies with the first one |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
+| Frontend routing | `vue-router` 4, `history` mode | Routes and menu are both derived from one section catalogue — see `docs/adr/0008` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
 | Containers | Docker + `docker compose` for local Postgres and E2E | Reproducible; no "works on my machine" DB |
 
@@ -41,8 +42,9 @@ backend/
   tests/{unit,integration,e2e}/
 frontend/
   src/api/                             # GENERATED ONLY — never hand-write there
+  src/router/                          # the section catalogue, the routes it produces, the 404
   src/features/                        # one directory per screen: components + its composables
-  src/{components,lib}/                # shared components; hand-written glue (the API client)
+  src/{components,lib}/                # shared components (the shell menu); hand-written glue (the API client)
   tests/                               # Vitest specs, mirroring src/
 docs/adr/                              # architecture decision records
 ```
@@ -103,6 +105,18 @@ Whole stack: `make run`. The graph is a single instance on the Docker cluster (1
 The backend's OpenAPI schema is the single source of truth. **Never hand-write a TypeScript interface that mirrors a Pydantic model** — regenerate `frontend/src/api/` and import from there. A backend change that alters the schema and does not regenerate the client is an incomplete change.
 
 `backend/openapi.json` and `frontend/src/api/schema.d.ts` are both committed. `make openapi` regenerates the pair; `make openapi-check` fails when they no longer match the code, and `make check` runs it. `openapi-fetch` calls the generated types; `src/lib/api.ts` holds the base URL and the error handling — the only hand-written half — and nothing else there describes a payload. See `docs/adr/0007`.
+
+## Adding a section to the SPA
+
+Sections live in one list: `frontend/src/router/sections.ts`. Add an entry to
+`SECTIONS` — path, route name, label, one-line summary, group — and both the
+router and the menu follow; there is no second list to keep in step. Leave `view`
+out until the screen exists: the menu then shows the section greyed out with an
+*à venir* badge and the router creates no route for it, so a link can never
+resolve to a screen that is not there. When you build it, add
+`view: () => import('../features/<section>/<Screen>.vue')` — the lazy import is
+what keeps each section in its own bundle chunk. A new group is an entry in
+`GROUPS`. See `docs/adr/0008`.
 
 ## The graph has no Alembic
 
