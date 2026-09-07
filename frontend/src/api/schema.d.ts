@@ -159,6 +159,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metamodel/matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Relationship Matrix
+         * @description One row of the metamodel matrix: what `source` may point at, and how.
+         *
+         *     Appendix B publishes the whole 61x61 grid; a row is what a screen shows at
+         *     a time, and asking for one keeps this a lookup instead of a 3721-cell
+         *     payload. The cells are computed here, never stored, so they cannot drift
+         *     from the rules the API rejects a link with.
+         */
+        get: operations["read_relationship_matrix_metamodel_matrix_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metamodel/relationships": {
         parameters: {
             query?: never;
@@ -404,8 +429,14 @@ export interface components {
             /** Layers */
             layers: components["schemas"]["Layer"][];
             /** Relationship Types */
-            relationship_types: components["schemas"]["RelationshipType"][];
+            relationship_types: components["schemas"]["RelationshipTypeRead"][];
         };
+        /**
+         * RelationshipCategory
+         * @description The four families the specification groups relationships into.
+         * @enum {string}
+         */
+        RelationshipCategory: "structural" | "dependency" | "dynamic" | "other";
         /**
          * RelationshipCreate
          * @description A new link between two existing elements.
@@ -443,6 +474,18 @@ export interface components {
              */
             target_id: string;
         };
+        /**
+         * RelationshipMatrixRead
+         * @description One row of the 61x61 matrix of Appendix B, derived from the rules.
+         *
+         *     A row rather than the whole matrix: 3721 cells is a payload nobody reads,
+         *     and a client always draws one source at a time.
+         */
+        RelationshipMatrixRead: {
+            /** Rules */
+            rules: components["schemas"]["RelationshipRuleRead"][];
+            source: components["schemas"]["ElementType"];
+        };
         /** RelationshipRead */
         RelationshipRead: {
             access_type: components["schemas"]["AccessType"] | null;
@@ -479,6 +522,15 @@ export interface components {
             target_type: components["schemas"]["ElementType"];
         };
         /**
+         * RelationshipRuleRead
+         * @description Which relationships one source type may open toward one target type.
+         */
+        RelationshipRuleRead: {
+            /** Relationships */
+            relationships: components["schemas"]["RelationshipType"][];
+            target: components["schemas"]["ElementType"];
+        };
+        /**
          * RelationshipType
          * @description Every relationship type ArchiMate 3.2 defines.
          *
@@ -488,6 +540,28 @@ export interface components {
          * @enum {string}
          */
         RelationshipType: "composition" | "aggregation" | "assignment" | "realization" | "serving" | "access" | "influence" | "association" | "triggering" | "flow" | "specialization";
+        /**
+         * RelationshipTypeRead
+         * @description One relationship type, with what the metamodel says about using it.
+         *
+         *     `label` stays out on purpose: the display form is the client's business —
+         *     the SPA writes these as French verbs — while the family, the strength and
+         *     the direction of dependency are facts of ArchiMate the backend owns.
+         */
+        RelationshipTypeRead: {
+            category: components["schemas"]["RelationshipCategory"];
+            /**
+             * Impact Follows Direction
+             * @description Whether an outage at the source propagates along the arrow.
+             */
+            impact_follows_direction: boolean;
+            /**
+             * Strength
+             * @description Higher binds tighter; a derived chain keeps the weakest.
+             */
+            strength: number;
+            value: components["schemas"]["RelationshipType"];
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -873,6 +947,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetamodelRead"];
+                };
+            };
+        };
+    };
+    read_relationship_matrix_metamodel_matrix_get: {
+        parameters: {
+            query: {
+                /** @description Type the links start at. */
+                source: components["schemas"]["ElementType"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipMatrixRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

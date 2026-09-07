@@ -55,6 +55,7 @@ export const SECTIONS: readonly Section[] = [
     label: 'Métamodèle',
     summary: "Les types d'éléments et de relations d'ArchiMate 3.2.",
     group: 'model',
+    view: () => import('../features/metamodel/MetamodelSection.vue'),
   },
   {
     path: '/analyse/voisinage',
