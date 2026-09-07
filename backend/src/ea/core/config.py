@@ -61,12 +61,13 @@ class Settings(BaseSettings):
     # nothing. The password below has no default — that one is a real shared
     # secret, not a throwaway.
     #
-    # `postgres_enabled` is off because no table exists yet: an application
-    # that opens a connection pool to a database nothing reads would fail to
-    # boot wherever the cluster is out of reach. The first table turns it on,
-    # and from that day a deployment without PostgreSQL is a misconfiguration
-    # rather than the normal case.
-    postgres_enabled: bool = False
+    # `postgres_enabled` is on since the first table landed: `element_documents`
+    # holds the markdown attached to the elements of the graph (docs/adr/0017),
+    # so a deployment without PostgreSQL is now a misconfiguration rather than
+    # the normal case — exactly as it already is for the graph. A process that
+    # cannot reach the cluster fails at boot, loudly, instead of on the first
+    # upload of the first user.
+    postgres_enabled: bool = True
     postgres_host: str = "192.168.1.252"
     postgres_port: int = 5432
     postgres_user: str = "ea"

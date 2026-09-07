@@ -4,6 +4,35 @@
  */
 
 export interface paths {
+    "/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Document
+         * @description One document with its markdown, as text.
+         */
+        get: operations["read_document_documents__document_id__get"];
+        /**
+         * Revise Document
+         * @description Replace the content of a document with a newer version of the same file.
+         *
+         *     The uploaded name must match the stored one: a document is known to its
+         *     readers by its name, so overwriting `runbook.md` with something else under
+         *     that name is refused rather than silently accepted.
+         */
+        put: operations["revise_document_documents__document_id__put"];
+        post?: never;
+        /** Discard Document */
+        delete: operations["discard_document_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/elements": {
         parameters: {
             query?: never;
@@ -51,6 +80,37 @@ export interface paths {
          * @description Change what an element says. Its type is fixed once created.
          */
         patch: operations["update_element_elements__element_id__patch"];
+        trace?: never;
+    };
+    "/elements/{element_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Element Documents
+         * @description What is attached to an element: the names and the sizes, not the text.
+         *
+         *     A 404 rather than an empty list when the element is unknown — an empty list
+         *     is the answer to a different question.
+         */
+        get: operations["list_element_documents_elements__element_id__documents_get"];
+        put?: never;
+        /**
+         * Attach Document
+         * @description Attach a markdown file to an element.
+         *
+         *     The element must already exist, and it may hold only one document under a
+         *     given file name — uploading the same name twice is a 409, and revising it
+         *     is `PUT /documents/{document_id}`.
+         */
+        post: operations["attach_document_elements__element_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/elements/{element_id}/impact": {
@@ -261,6 +321,101 @@ export interface components {
          * @enum {string}
          */
         Aspect: "active_structure" | "behavior" | "passive_structure" | "motivation" | "composite" | "connector";
+        /** Body_attach_document_elements__element_id__documents_post */
+        Body_attach_document_elements__element_id__documents_post: {
+            /**
+             * File
+             * @description A UTF-8 markdown file, at most 1 MB.
+             */
+            file: string;
+        };
+        /** Body_revise_document_documents__document_id__put */
+        Body_revise_document_documents__document_id__put: {
+            /**
+             * File
+             * @description A UTF-8 markdown file, at most 1 MB.
+             */
+            file: string;
+        };
+        /**
+         * DocumentRead
+         * @description One attached markdown file, content included — the whole document.
+         *
+         *     Not a subclass of the summary above: it would inherit an `of` that builds
+         *     it from a `DocumentSummary`, which has no content to give it.
+         */
+        DocumentRead: {
+            /**
+             * Byte Size
+             * @description Size of the stored markdown, in bytes.
+             */
+            byte_size: number;
+            /**
+             * Content
+             * @description The markdown itself, as text.
+             */
+            content: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * DocumentSummaryRead
+         * @description One attached markdown file, as a listing shows it — without its content.
+         *
+         *     The content is deliberately absent: a listing exists to name the files, and
+         *     a client that received ten bodies to draw ten names would download
+         *     megabytes to render a list. `GET /documents/{id}` is the read that carries
+         *     the text.
+         */
+        DocumentSummaryRead: {
+            /**
+             * Byte Size
+             * @description Size of the stored markdown, in bytes.
+             */
+            byte_size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * ElementCreate
          * @description A new architecture element.
@@ -584,6 +739,137 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    read_document_documents__document_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revise_document_documents__document_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_revise_document_documents__document_id__put"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    discard_document_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_elements_elements_get: {
         parameters: {
             query?: {
@@ -779,6 +1065,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_element_documents_elements__element_id__documents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentSummaryRead"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_document_elements__element_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_attach_document_elements__element_id__documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

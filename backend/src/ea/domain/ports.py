@@ -12,6 +12,7 @@ from typing import Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
+from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
 
 
@@ -123,3 +124,43 @@ class ArchitectureRepository(Protocol):
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Whether composing `target` under `source` would make containment cyclic."""
         ...
+
+
+class ElementAttachments(Protocol):
+    """The only thing the architecture graph needs to know about attachments.
+
+    Deleting an element has to take its documents with it, and the two live in
+    different stores — one in Neo4j, one in PostgreSQL — so no foreign key can
+    do it. That cascade is the *whole* of the coupling, so it is the whole of
+    this port: `ArchitectureService` depends on this and never on the document
+    repository, which knows how to upload, list and read.
+    """
+
+    async def discard_for_element(self, element_id: UUID) -> int:
+        """Delete every document attached to an element, and say how many."""
+        ...
+
+
+class DocumentRepository(ElementAttachments, Protocol):
+    """Persistence for the markdown attached to elements.
+
+    A `DocumentSummary` is what a listing returns and a `Document` what a read
+    returns: the difference is the content, and loading a megabyte per row to
+    render a list of file names is the mistake the two types prevent.
+    """
+
+    async def add(self, document: Document) -> Document:
+        """Store a new document, or refuse a file name the element already has."""
+        ...
+
+    async def get(self, document_id: UUID) -> Document | None: ...
+
+    async def list_for_element(self, element_id: UUID) -> tuple[DocumentSummary, ...]:
+        """Every document attached to an element, oldest first, without content."""
+        ...
+
+    async def replace(self, document: Document) -> Document:
+        """Overwrite the content of a stored document."""
+        ...
+
+    async def delete(self, document_id: UUID) -> bool: ...

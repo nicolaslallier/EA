@@ -77,11 +77,17 @@ def test_the_committed_env_example_builds_settings() -> None:
     settings = Settings(_env_file=example)  # type: ignore[call-arg]
 
     assert settings.cors_origins == ["http://localhost:5173"]
+    assert settings.postgres_enabled is True
 
 
-def test_postgres_is_off_until_something_stores_a_table_there() -> None:
-    """Nothing relational exists yet; booting must not require a second database."""
-    assert Settings(_env_file=None).postgres_enabled is False  # type: ignore[call-arg]
+def test_postgres_is_open_now_that_a_table_stores_something() -> None:
+    """`element_documents` holds the markdown attached to elements (docs/adr/0017).
+
+    From that table on, a deployment that cannot reach PostgreSQL is a
+    misconfiguration and the boot says so — the same rule the graph has always
+    had.
+    """
+    assert Settings(_env_file=None).postgres_enabled is True  # type: ignore[call-arg]
 
 
 def test_the_postgres_connection_is_read_from_the_environment() -> None:

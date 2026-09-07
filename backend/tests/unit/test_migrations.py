@@ -62,10 +62,52 @@ def test_constraints_are_named_by_a_convention() -> None:
     assert convention["pk"] == "pk_%(table_name)s"
 
 
-def test_no_table_is_mapped_yet() -> None:
-    """The scaffold deliberately invents no domain: the first table is a choice.
+def test_every_mapped_table_is_reachable_from_the_models_package() -> None:
+    """Autogenerate proposes to *drop* a table whose module nobody imported.
 
-    This fails the day one is added, which is the reminder to generate its
-    migration — `make pg-revision m="..."` — rather than to delete the line.
+    Importing `ea.db.models` is what `migrations/env.py` does and all it does,
+    so the metadata this sees is exactly the metadata a generated migration is
+    diffed against.
     """
-    assert Base.metadata.tables == {}
+    from ea.db import models
+
+    mapped = {mapper.class_.__tablename__ for mapper in models.Base.registry.mappers}
+
+    assert mapped == set(Base.metadata.tables)
+
+
+def test_the_documents_table_states_its_constraints_by_convention() -> None:
+    """The names a `downgrade` has to be able to reference — see docs/adr/0015."""
+    table = Base.metadata.tables["element_documents"]
+
+    assert table.primary_key.name == "pk_element_documents"
+    assert {constraint.name for constraint in table.constraints} >= {
+        "pk_element_documents",
+        "uq_element_documents_element_id_filename",
+    }
+
+
+def test_the_markdown_is_stored_as_text_and_not_as_bytes() -> None:
+    """The whole point of docs/adr/0017: markdown is prose, read by people.
+
+    A `bytea` column would make searching, diffing and reading it a decoding
+    step, and would let in a file that is not text at all.
+    """
+    from sqlalchemy import Text
+
+    content = Base.metadata.tables["element_documents"].c.content
+
+    assert isinstance(content.type, Text)
+    assert content.nullable is False
+
+
+def test_the_element_a_document_names_carries_no_foreign_key() -> None:
+    """It cannot: the element is a `:Element` node in Neo4j, not a row here.
+
+    This is the assertion that explains the explicit cascade in
+    `ArchitectureService.delete_element` — see docs/adr/0017.
+    """
+    element_id = Base.metadata.tables["element_documents"].c.element_id
+
+    assert element_id.foreign_keys == set()
+    assert element_id.index is True

@@ -10,10 +10,16 @@ from uuid import UUID
 import pytest
 
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.errors import ElementNotFoundError
+from ea.domain.documents import Document, DocumentSummary
+from ea.domain.errors import (
+    DocumentNotFoundError,
+    DuplicateDocumentError,
+    ElementNotFoundError,
+)
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
 from ea.services.architecture import ArchitectureService
+from ea.services.documents import DocumentService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -21,18 +27,21 @@ FIXED_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _neo4j_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def _database_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the deployment that provides the database credentials.
 
-    `Settings` refuses an empty Neo4j password outside debug, so a suite that
-    builds settings must look like a configured process. Tests that are *about*
-    the credentials pass their own values, which take precedence over this.
+    `Settings` refuses an empty password outside debug — for Neo4j always, and
+    for PostgreSQL since `postgres_enabled` defaults to on (docs/adr/0017) — so
+    a suite that builds settings must look like a configured process. Tests
+    that are *about* the credentials pass their own values, which take
+    precedence over this.
 
     A password already in the environment wins: that is the integration run,
-    which needs the credentials of the container it is about to talk to.
+    which needs the credentials of the database it is about to talk to.
     """
-    if not os.environ.get("EA_NEO4J_PASSWORD"):
-        monkeypatch.setenv("EA_NEO4J_PASSWORD", "test-password")
+    for variable in ("EA_NEO4J_PASSWORD", "EA_POSTGRES_PASSWORD"):
+        if not os.environ.get(variable):
+            monkeypatch.setenv(variable, "test-password")
 
 
 class InMemoryRepository:
@@ -132,12 +141,81 @@ class InMemoryRepository:
         return False
 
 
+class InMemoryDocuments:
+    """A dictionary pretending to be the `element_documents` table.
+
+    It enforces the one rule the real table enforces with a constraint — one
+    file name per element — so a service test sees the same refusal an upload
+    against PostgreSQL would get.
+    """
+
+    def __init__(self) -> None:
+        self.documents: dict[UUID, Document] = {}
+
+    async def add(self, document: Document) -> Document:
+        taken = any(
+            stored.element_id == document.element_id and stored.filename == document.filename
+            for stored in self.documents.values()
+        )
+        if taken:
+            msg = f"{document.filename!r} is already attached to this element"
+            raise DuplicateDocumentError(msg)
+        self.documents[document.id] = document
+        return document
+
+    async def get(self, document_id: UUID) -> Document | None:
+        return self.documents.get(document_id)
+
+    async def list_for_element(self, element_id: UUID) -> tuple[DocumentSummary, ...]:
+        return tuple(
+            document.summary
+            for document in sorted(
+                (stored for stored in self.documents.values() if stored.element_id == element_id),
+                key=lambda stored: (stored.created_at, stored.filename),
+            )
+        )
+
+    async def replace(self, document: Document) -> Document:
+        if document.id not in self.documents:
+            raise DocumentNotFoundError(str(document.id))
+        self.documents[document.id] = document
+        return document
+
+    async def delete(self, document_id: UUID) -> bool:
+        return self.documents.pop(document_id, None) is not None
+
+    async def discard_for_element(self, element_id: UUID) -> int:
+        doomed = [
+            document_id
+            for document_id, stored in self.documents.items()
+            if stored.element_id == element_id
+        ]
+        for document_id in doomed:
+            del self.documents[document_id]
+        return len(doomed)
+
+
 @pytest.fixture
 def repository() -> InMemoryRepository:
     return InMemoryRepository()
 
 
 @pytest.fixture
-def service(repository: InMemoryRepository) -> ArchitectureService:
-    """The service wired to the in-memory graph and to a clock that never moves."""
-    return ArchitectureService(repository, clock=lambda: FIXED_NOW)
+def documents() -> InMemoryDocuments:
+    return InMemoryDocuments()
+
+
+@pytest.fixture
+def service(repository: InMemoryRepository, documents: InMemoryDocuments) -> ArchitectureService:
+    """The service wired to the in-memory graph and to a clock that never moves.
+
+    It is handed the attachments too, because deleting an element has to take
+    its documents with it and no foreign key says so — see docs/adr/0017.
+    """
+    return ArchitectureService(repository, clock=lambda: FIXED_NOW, attachments=documents)
+
+
+@pytest.fixture
+def document_service(documents: InMemoryDocuments, service: ArchitectureService) -> DocumentService:
+    """The document use cases over the same in-memory pair, same frozen clock."""
+    return DocumentService(documents, service, clock=lambda: FIXED_NOW)

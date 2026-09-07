@@ -23,6 +23,7 @@ from ea.domain.archimate import (
     RelationshipType,
     permitted_relationships,
 )
+from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
 
@@ -260,6 +261,62 @@ class RelationshipMatrixRead(BaseModel):
                 )
                 for target in ElementType
             ],
+        )
+
+
+class DocumentSummaryRead(BaseModel):
+    """One attached markdown file, as a listing shows it — without its content.
+
+    The content is deliberately absent: a listing exists to name the files, and
+    a client that received ten bodies to draw ten names would download
+    megabytes to render a list. `GET /documents/{id}` is the read that carries
+    the text.
+    """
+
+    id: UUID
+    element_id: UUID
+    filename: str
+    byte_size: int = Field(description="Size of the stored markdown, in bytes.")
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, summary: DocumentSummary) -> DocumentSummaryRead:
+        return cls(
+            id=summary.id,
+            element_id=summary.element_id,
+            filename=summary.filename,
+            byte_size=summary.byte_size,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
+class DocumentRead(BaseModel):
+    """One attached markdown file, content included — the whole document.
+
+    Not a subclass of the summary above: it would inherit an `of` that builds
+    it from a `DocumentSummary`, which has no content to give it.
+    """
+
+    id: UUID
+    element_id: UUID
+    filename: str
+    byte_size: int = Field(description="Size of the stored markdown, in bytes.")
+    created_at: datetime
+    updated_at: datetime
+    content: str = Field(description="The markdown itself, as text.")
+
+    @classmethod
+    def of(cls, document: Document) -> DocumentRead:
+        return cls(
+            id=document.id,
+            element_id=document.element_id,
+            filename=document.filename,
+            byte_size=document.byte_size,
+            created_at=document.created_at,
+            updated_at=document.updated_at,
+            content=document.content,
         )
 
 

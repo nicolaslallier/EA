@@ -12,6 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from ea.api.architecture import router as architecture_router
 from ea.api.dependencies import architecture_service_of
+from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
 from ea.api.metamodel import router as metamodel_router
@@ -19,9 +20,12 @@ from ea.core.config import Settings, get_settings
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
+from ea.domain.ports import DocumentRepository
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.document_store import PostgresDocumentRepository
 from ea.services.architecture import ArchitectureService
+from ea.services.documents import DocumentService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ def _lifespan(
     settings: Settings,
     *,
     open_graph: bool,
+    documents: DocumentRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -54,17 +59,29 @@ def _lifespan(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
-            if open_graph:
-                driver = create_driver(settings)
-                stack.push_async_callback(driver.close)
-                await prepare_database(driver, database=settings.neo4j_database)
-                repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
-                app.state.architecture_service = ArchitectureService(repository)
+            # PostgreSQL first: the markdown attached to an element lives here,
+            # and the architecture service built below has to be handed the
+            # repository that deletes it when the element goes.
+            attachments = documents
             if settings.postgres_enabled:
                 engine = create_engine(settings)
                 stack.push_async_callback(engine.dispose)
                 await check_relational_store(engine)
                 app.state.db_sessions = create_session_factory(engine)
+                if attachments is None:
+                    attachments = PostgresDocumentRepository(app.state.db_sessions)
+            if open_graph:
+                driver = create_driver(settings)
+                stack.push_async_callback(driver.close)
+                await prepare_database(driver, database=settings.neo4j_database)
+                repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
+                app.state.architecture_service = ArchitectureService(
+                    repository, attachments=attachments
+                )
+            if attachments is not None:
+                app.state.document_service = DocumentService(
+                    attachments, architecture_service_of(app)
+                )
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
@@ -128,24 +145,33 @@ def create_app(
     settings: Settings | None = None,
     *,
     architecture_service: ArchitectureService | None = None,
+    documents: DocumentRepository | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
     Taking `settings` as an argument keeps the app testable without touching
     the process environment. Passing `architecture_service` swaps the graph for
     a double, so an API test never needs a running database — and, conversely,
-    an app built without one opens the driver on startup.
+    an app built without one opens the driver on startup. `documents` does the
+    same for the relational store: given one, the document endpoints answer
+    without PostgreSQL; given none, the lifespan builds the real repository
+    when `postgres_enabled` says the store is open.
+
+    An injected pair is wired here rather than in the lifespan, because an API
+    test drives the app through `ASGITransport` without ever starting it.
     """
     settings = settings or get_settings()
 
     app = FastAPI(
         title=settings.app_name,
         debug=settings.debug,
-        lifespan=_lifespan(settings, open_graph=architecture_service is None),
+        lifespan=_lifespan(settings, open_graph=architecture_service is None, documents=documents),
     )
     app.state.settings = settings
     if architecture_service is not None:
         app.state.architecture_service = architecture_service
+        if documents is not None:
+            app.state.document_service = DocumentService(documents, architecture_service)
 
     app.add_middleware(
         CORSMiddleware,
@@ -158,6 +184,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(metamodel_router)
     app.include_router(architecture_router)
+    app.include_router(documents_router)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
     return app

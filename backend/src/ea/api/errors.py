@@ -16,7 +16,9 @@ from fastapi.responses import JSONResponse
 
 from ea.domain.errors import (
     CyclicContainmentError,
+    DocumentNotFoundError,
     DomainError,
+    DuplicateDocumentError,
     DuplicateElementError,
     ElementNotFoundError,
     IllegalRelationshipError,
@@ -27,7 +29,9 @@ logger = logging.getLogger(__name__)
 #: Domain failure -> (HTTP status, stable machine-readable code).
 _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     ElementNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DocumentNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateElementError: (status.HTTP_409_CONFLICT, "duplicate"),
+    DuplicateDocumentError: (status.HTTP_409_CONFLICT, "duplicate"),
     CyclicContainmentError: (status.HTTP_409_CONFLICT, "cyclic_containment"),
     IllegalRelationshipError: (
         status.HTTP_422_UNPROCESSABLE_CONTENT,

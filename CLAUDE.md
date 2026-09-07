@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). The same backend also speaks **MCP**: `/mcp` offers the whole architecture service to an agent as fourteen tools — the element CRUD, the links, the two traversals and the metamodel — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-The relational half now has a **scaffold and no table**: SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster are wired, `EA_POSTGRES_ENABLED` is off until the first table exists (see `docs/adr/0015`).
+The relational half now holds its **first table**: `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`). SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster were wired by `docs/adr/0015`; `EA_POSTGRES_ENABLED` is **on** since that table exists, so a deployment that cannot reach PostgreSQL no longer boots.
 
 **Not yet scaffolded** (do not assume these exist): auth, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
 
@@ -19,7 +19,7 @@ The relational half now has a **scaffold and no table**: SQLAlchemy 2 (async), A
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
 | Architecture graph | Neo4j (`neo4j` async driver, Cypher) | The model *is* a graph; impact analysis is a variable-depth traversal — see `docs/adr/0004` |
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
-| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | Auth, audit, scheduled work. Scaffolded and open for business; **no table exists yet** — see `docs/adr/0015` |
+| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | The markdown attached to elements today (`docs/adr/0017`); auth, audit and scheduled work next — see `docs/adr/0015` for the scaffold |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
 | Agent-facing API | MCP (`mcp` SDK 2.x), streamable HTTP served at `/mcp` | A second adapter over the same service, not a second API — see `docs/adr/0014` |
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
@@ -129,6 +129,10 @@ writes a graph the API would refuse. The same reason forbids restating a rule
 here: the palette is *asked for* (`describe_metamodel`), exactly as the SPA
 asks for it.
 
+The documents of `docs/adr/0017` are deliberately **not** exposed as tools yet:
+uploading a file is not an MCP shape, and reading the attached markdown is a
+separate addition that does not depend on this one.
+
 Adding a tool means: a method on the service if it is a new use case, a
 function in `mcp/server.py` decorated with `@server.tool(annotations=...)` and
 `@speaking_plainly`, and an entry in the whole-list assertion in
@@ -172,6 +176,37 @@ and `RELATIONSHIP_LABELS` next to the relations — and **not one rule**. A rule
 restated in TypeScript is a second metamodel, free to promise a link the API
 then refuses. See `docs/adr/0012`.
 
+## A document is markdown, and markdown is text
+
+`element_documents` holds the files attached to an element. Four things about
+it are decisions, not details — see `docs/adr/0017`.
+
+**It is `TEXT`, never `bytea`.** Markdown is prose: it is read, searched and
+diffed by people. The price is paid up front, in `domain/documents.py`: a file
+that is not UTF-8, or that holds a NUL, is refused at the door — PostgreSQL
+cannot store a NUL in a `TEXT` column, so accepting it would fail at `INSERT`,
+as a driver error, in a log. The check is on the *file name* (`.md`,
+`.markdown`) and not on the `Content-Type`, which browsers report three
+different ways.
+
+**There is no foreign key, and there cannot be one:** the element is a node in
+Neo4j. Both halves of what a foreign key would have given are code —
+`DocumentService` reads the element before attaching, and
+`ArchitectureService.delete_element` discards the documents through the narrow
+`ElementAttachments` port. There is no transaction across the two stores; the
+graph is deleted first, and the accepted failure is unreachable rows.
+
+**Listing is not reading.** `DocumentSummaryRead` names the files;
+`DocumentRead` carries the text. A client that downloaded ten bodies to draw
+ten names is the mistake the two models prevent, and the size is computed by
+the server (`octet_length`) rather than stored, so it cannot drift.
+
+**The relational repository takes the session factory**, exactly as the Neo4j
+one takes the driver, and opens one unit of work per call — every use case here
+is a single write, so that *is* a transaction per use case. A use case spanning
+two writes takes an `AsyncSession` argument instead, and
+`api.dependencies.get_session` becomes the seam it was built to be.
+
 ## Drawing a graph in the SPA
 
 There is no graph-rendering library and adding one needs an ADR. A sub-graph is
@@ -203,24 +238,25 @@ the catalogue follows the rule for the element it details (`?element=`, see
 (`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is not that kind
 of state and stays in a `ref`.
 
-## The relational store is scaffolded and empty
+## The relational store holds the documents
 
 PostgreSQL is a second instance on the same cluster as the graph
 (192.168.1.252:5432), and its password is a real shared secret — `.env.example`
 leaves it blank, like Neo4j's. `db/postgres.py` owns the engine, the session
 factory and the boot-time check; `db/base.py` holds the declarative `Base` and
-**the constraint naming convention, which is frozen** — changing it after the
-first table is deployed renames constraints already in the database. See
-`docs/adr/0015`.
+**the constraint naming convention, which is frozen** — changing it renames
+constraints already in the deployed database. See `docs/adr/0015`.
 
-Three rules matter when the first table arrives:
+Three rules hold for every table, starting with `element_documents`:
 
 1. **Its module is imported by `db/models/__init__.py`.** Alembic autogenerates
    by diffing `Base.metadata`; a model that package does not import is one
    autogenerate proposes to *drop*.
-2. **`EA_POSTGRES_ENABLED` flips to `true` in the same commit.** It is off
-   because nothing stores anything yet, so a machine out of reach of the
-   cluster still boots the API.
+2. **Every change to a table is a versioned revision.** `make pg-revision
+   m="..."` generates it, and the generated file is read before it is
+   committed. `EA_POSTGRES_ENABLED` is on now, so a machine out of reach of the
+   cluster no longer boots the API — that is the intended rule, the same one
+   the graph has always had.
 3. **Never write a DSN anywhere.** `dsn_of()` builds it from `Settings` with
    `URL.create` — a password holding `@`, `/` or `:` spliced into a URL string
    silently addresses a *different* database. `alembic.ini` carries no

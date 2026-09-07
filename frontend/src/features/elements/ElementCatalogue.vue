@@ -15,6 +15,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
+import DocumentPanel from '../documents/DocumentPanel.vue'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import RelationshipPanel from '../relationships/RelationshipPanel.vue'
 import ElementDetail from './ElementDetail.vue'
@@ -53,6 +54,8 @@ const creating = ref(false)
 const confirming = ref<ElementRead | null>(null)
 /** The element whose relations are on screen, or nothing. */
 const relating = ref<ElementRead | null>(null)
+/** The element whose attached markdown is on screen, or nothing. */
+const documenting = ref<ElementRead | null>(null)
 const failure = ref('')
 const busy = ref(false)
 
@@ -80,25 +83,36 @@ async function closeDetail(): Promise<void> {
 
 // One panel at a time: acting on an element replaces the reading of it, so the
 // screen never shows the same element twice, once read-only and once in a form.
-async function openCreate(): Promise<void> {
+function closeEverything(): void {
   failure.value = ''
+  creating.value = false
   editing.value = null
+  relating.value = null
+  documenting.value = null
+}
+
+async function openCreate(): Promise<void> {
+  closeEverything()
   creating.value = true
   await closeDetail()
 }
 
 /** Show the relations of one row. Only one panel at a time, like the form. */
 async function openRelations(element: ElementRead): Promise<void> {
-  failure.value = ''
-  creating.value = false
-  editing.value = null
+  closeEverything()
   relating.value = element
   await closeDetail()
 }
 
+/** Show the markdown attached to one row — same rule, its own panel. */
+async function openDocuments(element: ElementRead): Promise<void> {
+  closeEverything()
+  documenting.value = element
+  await closeDetail()
+}
+
 async function openEdit(element: ElementRead): Promise<void> {
-  failure.value = ''
-  creating.value = false
+  closeEverything()
   editing.value = element
   await closeDetail()
 }
@@ -230,6 +244,13 @@ function day(iso: string): string {
       @close="relating = null"
     />
 
+    <DocumentPanel
+      v-if="documenting"
+      :key="documenting.id"
+      :element="documenting"
+      @close="documenting = null"
+    />
+
     <p v-if="confirming" class="banner banner--confirm" role="alert">
       Supprimer « {{ confirming.name }} » et toutes ses relations ?
       <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
@@ -276,6 +297,13 @@ function day(iso: string): string {
               @click="openRelations(element)"
             >
               Relations
+            </button>
+            <button
+              type="button"
+              :aria-label="`Documents de ${element.name}`"
+              @click="openDocuments(element)"
+            >
+              Documents
             </button>
             <button
               type="button"

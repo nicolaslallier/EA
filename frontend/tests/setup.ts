@@ -6,3 +6,4 @@ import { afterEach } from 'vitest'
 // auto-cleanup: without this, a second `render` stacks on top of the first and
 // every query finds two of everything.
 afterEach(cleanup)
+

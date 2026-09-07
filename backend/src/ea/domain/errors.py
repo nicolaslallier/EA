@@ -25,3 +25,11 @@ class ElementNotFoundError(DomainError):
 
 class DuplicateElementError(DomainError):
     """An element name is already taken inside its type."""
+
+
+class DuplicateDocumentError(DomainError):
+    """An element already carries a document under that file name."""
+
+
+class DocumentNotFoundError(DomainError):
+    """A document referenced by id is absent from the store."""
