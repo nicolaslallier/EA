@@ -308,3 +308,35 @@ class TestRelationshipListing:
         response = await client.delete(f"/relationships/{uuid4()}")
 
         assert response.status_code == 404
+
+    async def test_the_relations_of_an_element_come_with_their_endpoints(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """The screen draws "Invoice API serves Order to cash", so it needs both names."""
+        api = await create(client, "application_service", "Invoice API")
+        process = await create(client, "business_process", "Order to cash")
+        await client.post(
+            "/relationships",
+            json={
+                "relationship_type": "serving",
+                "source_id": api["id"],
+                "target_id": process["id"],
+            },
+        )
+
+        response = await client.get(f"/elements/{api['id']}/relationships")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert {element["name"] for element in body["elements"]} == {
+            "Invoice API",
+            "Order to cash",
+        }
+        assert [link["relationship_type"] for link in body["relationships"]] == ["serving"]
+
+    async def test_relations_of_an_unknown_element_are_a_404(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.get(f"/elements/{uuid4()}/relationships")
+
+        assert response.status_code == 404

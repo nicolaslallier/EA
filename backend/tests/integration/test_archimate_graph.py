@@ -213,6 +213,100 @@ class TestContainmentCycles:
         assert not await graph_repository.would_close_a_containment_cycle(first.id, second.id)
 
 
+class TestRelationsOfOneElement:
+    async def test_the_links_of_an_element_come_with_both_endpoints(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        api = await graph_service.create_element(
+            element_type=E.APPLICATION_SERVICE, name="Invoice API"
+        )
+        process = await graph_service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Order to cash"
+        )
+        await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=process.id
+        )
+
+        view = await graph_service.relations_of(api.id)
+
+        assert {element.name for element in view.elements} == {"Invoice API", "Order to cash"}
+        assert [link.relationship_type for link in view.relationships] == [R.SERVING]
+
+    async def test_a_link_pointing_at_the_element_is_listed_too(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """The panel shows what an element serves *and* what serves it."""
+        api = await graph_service.create_element(
+            element_type=E.APPLICATION_SERVICE, name="Invoice API"
+        )
+        process = await graph_service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Order to cash"
+        )
+        await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=process.id
+        )
+
+        view = await graph_service.relations_of(process.id)
+
+        assert [link.source_id for link in view.relationships] == [api.id]
+
+    async def test_only_the_direct_links_are_returned(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """Unlike a depth-1 neighbourhood, an edge between two neighbours is not one
+        of this element's relations and must not appear in its list."""
+        api = await graph_service.create_element(
+            element_type=E.APPLICATION_SERVICE, name="Invoice API"
+        )
+        first = await graph_service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Order to cash"
+        )
+        second = await graph_service.create_element(element_type=E.BUSINESS_PROCESS, name="Dunning")
+        await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=first.id
+        )
+        await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=second.id
+        )
+        await graph_service.connect(
+            relationship_type=R.TRIGGERING, source_id=first.id, target_id=second.id
+        )
+
+        view = await graph_service.relations_of(api.id)
+
+        assert [link.relationship_type for link in view.relationships] == [R.SERVING, R.SERVING]
+
+    async def test_an_element_with_no_link_returns_itself_alone(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """An empty record would be indistinguishable from a missing element."""
+        element = await graph_service.create_element(
+            element_type=E.APPLICATION_COMPONENT, name="Billing"
+        )
+
+        view = await graph_service.relations_of(element.id)
+
+        assert [found.name for found in view.elements] == ["Billing"]
+        assert view.relationships == ()
+
+    async def test_an_element_associated_to_itself_is_listed_once(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """ArchiMate permits a self-association, and both ends of it are the
+        same node — which must not appear twice in the view."""
+        element = await graph_service.create_element(
+            element_type=E.APPLICATION_COMPONENT, name="Billing"
+        )
+        await graph_service.connect(
+            relationship_type=R.ASSOCIATION, source_id=element.id, target_id=element.id
+        )
+
+        view = await graph_service.relations_of(element.id)
+
+        assert [found.id for found in view.elements] == [element.id]
+        assert len(view.relationships) == 1
+
+
 class TestTraversals:
     async def test_the_neighbourhood_stops_at_the_requested_depth(
         self, graph_service: ArchitectureService

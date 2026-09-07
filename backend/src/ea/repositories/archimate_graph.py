@@ -171,6 +171,20 @@ LIST_RELATIONSHIPS: Final[LiteralString] = (
     "RETURN r ORDER BY r.created_at, r.id SKIP $offset LIMIT $limit"
 )
 
+#: The links attached to one element, in either direction, with both endpoints.
+#: `OPTIONAL MATCH` so an element with no link still returns itself rather than
+#: an empty record, which the caller could not tell from a missing element. The
+#: element is put back at the head of the list and filtered out of the others,
+#: because a self-association would otherwise return it twice.
+RELATIONS_OF: Final[LiteralString] = (
+    "MATCH (e:Element {id: $id}) "
+    "OPTIONAL MATCH (e)-[edge:" + _ANY + "]-(other:Element) "
+    "WHERE size($relationship_types) = 0 OR type(edge) IN $relationship_types "
+    "WITH e, collect(DISTINCT other) AS others, collect(DISTINCT edge) AS edges "
+    "RETURN [e] + [other IN others WHERE other <> e] AS elements, "
+    "edges AS relationships"
+)
+
 WOULD_CLOSE_A_CONTAINMENT_CYCLE: Final[LiteralString] = """
     MATCH (source:Element {id: $source_id}), (target:Element {id: $target_id})
     RETURN source.id = target.id
@@ -358,6 +372,14 @@ class Neo4jArchitectureRepository:
         return bool(records)
 
     # --- Traversals -------------------------------------------------------
+
+    async def relations_of(
+        self,
+        element_id: UUID,
+        *,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        return await self._traverse(RELATIONS_OF, element_id, relationship_types)
 
     async def neighbourhood(
         self,

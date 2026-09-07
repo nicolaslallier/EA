@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ElementCatalogue from '../src/features/elements/ElementCatalogue.vue'
-import { METAMODEL, aPage, anElement, stubApi, type Route } from './support/api'
+import { METAMODEL, aGraph, aPage, anElement, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -167,5 +167,21 @@ describe('ElementCatalogue', () => {
     await screen.findByText('Facturation')
 
     expect(screen.getByRole('button', { name: /précédente/i })).toBeDisabled()
+  })
+
+  it('opens the relations of a row so an element can be associated to another', async () => {
+    const element = anElement({ name: 'Facturation' })
+    renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: `/elements/${element.id}/relationships`, body: aGraph([element], []) },
+    ])
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /^relations/i }))
+
+    expect(
+      await screen.findByRole('region', { name: /relations de l'élément/i }),
+    ).toBeInTheDocument()
+    expect(await screen.findByRole('form', { name: /associer un élément/i })).toBeInTheDocument()
   })
 })

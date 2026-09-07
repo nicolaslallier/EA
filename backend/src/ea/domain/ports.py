@@ -81,6 +81,20 @@ class ArchitectureRepository(Protocol):
 
     async def delete_relationship(self, relationship_id: UUID) -> bool: ...
 
+    async def relations_of(
+        self,
+        element_id: UUID,
+        *,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        """The links attached to one element, with the elements at both ends.
+
+        A `GraphView` rather than a list of relationships because a link is
+        unreadable on its own: it stores the ids and the types of its endpoints,
+        never their names, which belong to the elements and change without it.
+        """
+        ...
+
     async def neighbourhood(
         self,
         element_id: UUID,

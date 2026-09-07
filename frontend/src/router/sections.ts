@@ -47,6 +47,7 @@ export const SECTIONS: readonly Section[] = [
     label: 'Relations',
     summary: 'Relier les éléments, sous les règles du métamodèle.',
     group: 'model',
+    view: () => import('../features/relationships/RelationshipsSection.vue'),
   },
   {
     path: '/metamodele',

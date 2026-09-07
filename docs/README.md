@@ -145,6 +145,7 @@ Servie par `create_app` (`main.py`), sur `http://127.0.0.1:8000`.
 | `DELETE /elements/{id}` | Supprime un élément et toutes ses relations |
 | `POST /relationships` | Relie deux éléments, si ArchiMate l'autorise (201 / 404 / 409 / 422) |
 | `GET /relationships` | Liste les liens, éventuellement autour d'un élément |
+| `GET /elements/{id}/relationships` | Les liens directs d'un élément **et les éléments aux deux bouts** |
 | `DELETE /relationships/{id}` | Supprime un lien |
 | `GET /elements/{id}/neighbourhood` | Le sous-graphe autour d'un élément, dans les deux sens |
 | `GET /elements/{id}/impact` | Ce qui dépend d'un élément, transitivement |
@@ -167,17 +168,28 @@ plus profond que cela revient à un parcours complet du graphe déguisé en filt
 Vue 3 + TypeScript + Vite, en `<script setup>`
 ([`adr/0002`](adr/0002-frontend-vue-3-plutot-que-react.md)).
 
-**État actuel :** seul `BackendStatus.vue` existe ; il affiche l'état du backend.
-Le frontend ne consomme **pas encore** le domaine — c'est le point de départ de
-todo. `src/lib/health.ts` est un wrapper `fetch` écrit à la main, assumé
-provisoire.
+**État actuel :** une coquille routée dont le menu est engendré par
+`src/router/sections.ts` ([`adr/0008`](adr/0008-menu-et-routage-du-spa.md)), avec
+deux sections construites :
+
+- **Éléments** — parcourir, créer, modifier, supprimer
+  ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md)) ;
+- **Relations** — choisir un élément, lister ses liens, en ajouter et en retirer
+  ([`adr/0009`](adr/0009-association-des-elements-dans-le-spa.md)). Le même
+  panneau s'ouvre depuis n'importe quelle ligne du catalogue. Le formulaire ne
+  connaît aucune règle : il demande à `GET /metamodel/relationships` ce que le
+  couple autorise et n'offre que la réponse.
+
+`BackendStatus.vue` affiche l'état du backend. Le métamodèle et les deux
+parcours (`/neighbourhood`, `/impact`) sont annoncés *à venir* dans le menu et
+n'ont pas d'écran : ils demandent un dessin, pas un tableau.
 
 **Contrat front/back** ([`CLAUDE.md`](../CLAUDE.md)) : le schéma OpenAPI du
 backend est la source unique de vérité. On ne rédige jamais à la main une
 interface TypeScript qui reflète un modèle Pydantic ; on régénère
-`frontend/src/api/` (`npm run generate:api`, **pas encore configuré**) et on
-importe d'là. Un changement backend qui fait bouger le schéma et ne régénère pas
-le client est un changement inachevé.
+`frontend/src/api/` (`npm run generate:api`, ou `make openapi` à la racine) et on
+importe de là. Un changement backend qui fait bouger le schéma et ne régénère pas
+le client est un changement inachevé — `make openapi-check` le vérifie.
 
 ## Les tests
 
@@ -243,4 +255,8 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0003](adr/0003-uv-comme-chaine-outils-python.md) | `uv` comme chaîne d'outils Python | Accepté |
 | [0004](adr/0004-neo4j-pour-le-graphe-d-architecture.md) | Neo4j pour le graphe d'architecture | Accepté |
 | [0005](adr/0005-archimate-3-2-comme-metamodele.md) | ArchiMate 3.2 comme métamodèle du référentiel | Accepté |
+| [0006](adr/0006-neo4j-sur-le-cluster-docker.md) | Neo4j sur le cluster Docker | Accepté |
+| [0007](adr/0007-client-openapi-genere-pour-le-spa.md) | Client OpenAPI généré, et premier écran de CRUD | Accepté |
+| [0008](adr/0008-menu-et-routage-du-spa.md) | Menu de sections et routage du SPA | Accepté |
+| [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |
