@@ -168,15 +168,21 @@ plus profond que cela revient à un parcours complet du graphe déguisé en filt
 Vue 3 + TypeScript + Vite, en `<script setup>`
 ([`adr/0002`](adr/0002-frontend-vue-3-plutot-que-react.md)).
 
-**État actuel :** un écran, le catalogue des éléments — parcourir, créer,
-modifier, supprimer ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md))
-— et, depuis n'importe quelle ligne, un panneau qui liste les relations de cet
-élément et en ajoute une
-([`adr/0008`](adr/0008-association-des-elements-dans-le-spa.md)). Le formulaire
-ne connaît aucune règle : il demande à `GET /metamodel/relationships` ce que le
-couple autorise et n'offre que la réponse. `BackendStatus.vue` affiche l'état du
-backend. Les deux parcours (`/neighbourhood`, `/impact`) n'ont pas d'interface :
-ils demandent un dessin, pas un tableau.
+**État actuel :** une coquille routée dont le menu est engendré par
+`src/router/sections.ts` ([`adr/0008`](adr/0008-menu-et-routage-du-spa.md)), avec
+deux sections construites :
+
+- **Éléments** — parcourir, créer, modifier, supprimer
+  ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md)) ;
+- **Relations** — choisir un élément, lister ses liens, en ajouter et en retirer
+  ([`adr/0009`](adr/0009-association-des-elements-dans-le-spa.md)). Le même
+  panneau s'ouvre depuis n'importe quelle ligne du catalogue. Le formulaire ne
+  connaît aucune règle : il demande à `GET /metamodel/relationships` ce que le
+  couple autorise et n'offre que la réponse.
+
+`BackendStatus.vue` affiche l'état du backend. Le métamodèle et les deux
+parcours (`/neighbourhood`, `/impact`) sont annoncés *à venir* dans le menu et
+n'ont pas d'écran : ils demandent un dessin, pas un tableau.
 
 **Contrat front/back** ([`CLAUDE.md`](../CLAUDE.md)) : le schéma OpenAPI du
 backend est la source unique de vérité. On ne rédige jamais à la main une
@@ -251,5 +257,6 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0005](adr/0005-archimate-3-2-comme-metamodele.md) | ArchiMate 3.2 comme métamodèle du référentiel | Accepté |
 | [0006](adr/0006-neo4j-sur-le-cluster-docker.md) | Neo4j sur le cluster Docker | Accepté |
 | [0007](adr/0007-client-openapi-genere-pour-le-spa.md) | Client OpenAPI généré, et premier écran de CRUD | Accepté |
-| [0008](adr/0008-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
+| [0008](adr/0008-menu-et-routage-du-spa.md) | Menu de sections et routage du SPA | Accepté |
+| [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

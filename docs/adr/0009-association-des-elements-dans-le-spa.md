@@ -1,4 +1,4 @@
-# 8. Associer deux éléments depuis le SPA
+# 9. Associer deux éléments depuis le SPA
 
 Date : 2026-09-07
 Statut : Accepté
@@ -6,9 +6,10 @@ Statut : Accepté
 ## Contexte
 
 `docs/adr/0007` a livré le premier écran — le CRUD des éléments — et a remis
-l'interface des relations « à la vue graphe ». Le besoin est arrivé avant elle :
-un catalogue d'éléments sans liens n'est pas un modèle d'architecture, c'est une
-liste. Le backend savait déjà créer, lister et supprimer un lien, et publier les
+l'interface des relations « à la vue graphe ». `docs/adr/0008` a transformé le
+SPA en coquille routée et a déclaré « Relations » comme une section *à venir*.
+Le besoin est arrivé avant la vue graphe : un catalogue d'éléments sans liens
+n'est pas un modèle d'architecture, c'est une liste. Le backend savait déjà créer, lister et supprimer un lien, et publier les
 relations que le métamodèle autorise entre deux types
 (`GET /metamodel/relationships`). Rien de tout cela n'était atteignable.
 
@@ -39,9 +40,15 @@ directs de l'élément, et les éléments aux deux bouts.
   un enregistrement vide serait indistinguable d'un élément absent.
 * Le domaine n'apprend rien de nouveau : `Relationship` ne gagne aucun champ.
 
-**L'écran est un panneau ouvert depuis une ligne du catalogue**, pas une
-seconde page. Associer se fait en regardant un élément ; le sortir du catalogue
-obligerait à choisir les deux bouts à l'aveugle.
+**L'interface est un panneau porté par un élément**, pas un tableau de liens.
+Associer se fait en regardant un élément ; une liste de tous les liens du
+référentiel obligerait à choisir les deux bouts à l'aveugle. Ce panneau est donc
+atteignable par deux chemins, qui montent le même composant :
+
+* un bouton *Relations* sur chaque ligne du catalogue — le chemin rapide, quand
+  on est déjà en train de regarder l'élément ;
+* la section `/relations` que `0008` avait déclarée, qui demande d'abord de quel
+  élément on parle. C'est ce qui la fait passer d'« à venir » à construite.
 
 **Le formulaire ne connaît aucune règle ArchiMate.** Il demande le couple
 (source, cible) à `GET /metamodel/relationships` et n'offre que la réponse. Le
