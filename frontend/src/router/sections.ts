@@ -71,6 +71,7 @@ export const SECTIONS: readonly Section[] = [
     label: 'Analyse d’impact',
     summary: "Ce qui dépend d'un élément, de proche en proche.",
     group: 'analysis',
+    view: () => import('../features/impact/ImpactSection.vue'),
   },
 ]
 

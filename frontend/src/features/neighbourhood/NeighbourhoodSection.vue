@@ -13,7 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useElementCatalogue } from '../elements/useElementCatalogue'
 import { useMetamodel } from '../metamodel/useMetamodel'
 import { RELATIONSHIP_LABELS } from '../relationships/labels'
-import NeighbourhoodGraph from './NeighbourhoodGraph.vue'
+import GraphDiagram from '../../components/GraphDiagram.vue'
 import type { ElementRead, RelationshipType } from './useNeighbourhood'
 import { DEFAULT_DEPTH, MAX_DEPTH, useNeighbourhood } from './useNeighbourhood'
 
@@ -173,7 +173,7 @@ const onSearch = () => catalogue.search()
             par la relation « {{ RELATIONSHIP_LABELS[relationshipType] }} »</template>.
         </p>
 
-        <NeighbourhoodGraph
+        <GraphDiagram
           :graph="neighbourhood.graph.value"
           :root-id="focusId"
           :type-label="metamodel.labelOf"

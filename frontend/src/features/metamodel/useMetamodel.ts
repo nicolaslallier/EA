@@ -103,9 +103,30 @@ export function useMetamodel() {
     () => new Map(elementTypes.value.map((type) => [type.value, type.label])),
   )
 
+  const directions = computed(
+    () =>
+      new Map(
+        relationshipTypes.value.map((type) => [type.value, type.impact_follows_direction]),
+      ),
+  )
+
   /** The label for a type, or the raw value while the palette is still loading. */
   function labelOf(value: ElementType | string): string {
     return labels.value.get(value as ElementType) ?? value
+  }
+
+  /**
+   * Whether an outage at the source of this relationship travels *along* its
+   * arrow — the fact an impact analysis walks the graph by.
+   *
+   * It is a fact of ArchiMate, so it is read from `/metamodel` and never
+   * restated here: eleven booleans written in TypeScript would be a second
+   * metamodel, free to draw a cascade the API never walked (`docs/adr/0012`).
+   * Until the palette lands, the answer is the majority one — nine of the
+   * eleven types follow their arrow — and the cascade redraws when it does.
+   */
+  function followsArrow(value: RelationshipType | string): boolean {
+    return directions.value.get(value as RelationshipType) ?? true
   }
 
   async function load(): Promise<void> {
@@ -129,6 +150,7 @@ export function useMetamodel() {
     layers,
     byLayer,
     labelOf,
+    followsArrow,
     error,
     load,
   }

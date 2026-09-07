@@ -5,18 +5,39 @@ import { createMemoryHistory } from 'vue-router'
 
 import AppNav from '../src/components/AppNav.vue'
 import { createAppRouter } from '../src/router'
-import { GROUPS, SECTIONS } from '../src/router/sections'
+import { GROUPS, menu, SECTIONS, type MenuEntry } from '../src/router/sections'
 
-async function renderNav(path = '/elements'): Promise<Router> {
+async function renderNav(path = '/elements', entries?: MenuEntry[]): Promise<Router> {
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  render(AppNav, { global: { plugins: [router] } })
+  render(AppNav, { props: entries ? { entries } : {}, global: { plugins: [router] } })
   return router
 }
 
 const built = SECTIONS.filter((section) => section.view)
-const upcoming = SECTIONS.filter((section) => !section.view)
+
+/**
+ * A menu with a section that has no screen.
+ *
+ * Every declared section has one today, so the catalogue itself can no longer
+ * produce this case — and the badge is still what the menu must show the day
+ * the next section is declared before it is built.
+ */
+const WITH_AN_UPCOMING_SECTION: MenuEntry[] = [
+  {
+    group: GROUPS[0],
+    sections: [
+      {
+        path: '/analyse/scenarios',
+        name: 'scenarios',
+        label: 'Scénarios',
+        summary: 'Déclarée, pas encore construite.',
+        group: GROUPS[0].id,
+      },
+    ],
+  },
+]
 
 describe('AppNav', () => {
   it('lists every group and every section it declares', async () => {
@@ -41,15 +62,23 @@ describe('AppNav', () => {
     }
   })
 
-  it('announces the sections still to come without linking them', async () => {
-    expect(upcoming.length).toBeGreaterThan(0)
+  it('announces a section still to come without linking it', async () => {
+    await renderNav('/elements', WITH_AN_UPCOMING_SECTION)
+    const [section] = WITH_AN_UPCOMING_SECTION[0].sections
+
+    expect(screen.queryByRole('link', { name: new RegExp(section.label) })).toBeNull()
+    const item = screen.getByText(section.label).closest('[aria-disabled="true"]')
+    expect(item).not.toBeNull()
+    expect(item).toHaveTextContent(/à venir/i)
+  })
+
+  it('links every section the catalogue declares, none being upcoming today', async () => {
     await renderNav()
 
-    for (const section of upcoming) {
-      expect(screen.queryByRole('link', { name: new RegExp(section.label) })).toBeNull()
-      const item = screen.getByText(section.label).closest('[aria-disabled="true"]')
-      expect(item).not.toBeNull()
-      expect(item).toHaveTextContent(/à venir/i)
+    for (const entry of menu()) {
+      for (const section of entry.sections) {
+        expect(screen.getByText(section.label).closest('a')).not.toBeNull()
+      }
     }
   })
 

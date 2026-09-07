@@ -34,6 +34,24 @@ describe('useMetamodel', () => {
     ])
   })
 
+  it('reads the direction an outage travels from the metamodel, never from a table here', async () => {
+    stubApi([{ path: '/metamodel', body: METAMODEL }])
+
+    const metamodel = useMetamodel()
+    await metamodel.load()
+
+    // A service serves a process: the outage runs along the arrow. A whole is
+    // composed of its parts: it runs back against it.
+    expect(metamodel.followsArrow('serving')).toBe(true)
+    expect(metamodel.followsArrow('composition')).toBe(false)
+  })
+
+  it('assumes an outage follows the arrow while the metamodel is still loading', () => {
+    // The palette arrives after the traversal it explains; a cascade drawn in
+    // the meantime must be redrawn, not left empty.
+    expect(useMetamodel().followsArrow('serving')).toBe(true)
+  })
+
   it('resolves a type to its human label, and falls back to the raw value', async () => {
     stubApi([{ path: '/metamodel', body: METAMODEL }])
 

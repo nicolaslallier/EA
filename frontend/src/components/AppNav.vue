@@ -1,12 +1,17 @@
 <script setup lang="ts">
 // The section menu. It renders `menu()` and nothing else, so a new section is
 // declared once in `router/sections.ts` and appears here on its own.
+//
+// The menu is a prop only so a test can hand it a catalogue of its own: a
+// section still to be built gets a badge instead of a link, and that has to
+// stay covered even on the day every declared section has a screen.
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { menu } from '../router/sections'
+import { menu, type MenuEntry } from '../router/sections'
 
-const entries = menu()
+withDefaults(defineProps<{ entries?: MenuEntry[] }>(), { entries: () => menu() })
+
 const route = useRoute()
 
 /** Narrow screens collapse the menu behind a toggle; wide ones ignore this. */

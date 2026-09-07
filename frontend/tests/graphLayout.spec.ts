@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { BOX_HEIGHT, BOX_WIDTH, hopsFrom, layout } from '../src/features/neighbourhood/layout'
+import { BOX_HEIGHT, BOX_WIDTH, hopsFrom, layout } from '../src/lib/graphLayout'
 import { aGraph, anElement, aRelationship } from './support/api'
 
 const A = anElement({ id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'Facturation' })
