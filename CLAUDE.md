@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Backend has a domain; the frontend does not use it yet.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is still the Vue 3 SPA that only displays the health status. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**The element catalogue works end to end; relationships are backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA whose one screen browses, creates, edits and deletes elements through the generated OpenAPI client — see `docs/adr/0007`. Relationships and the two traversals have no UI yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), `npm run generate:api`, Playwright, `pre-commit`, CI, any frontend view of the graph.
+**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, any frontend view of relationships or of the graph itself.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
 
@@ -40,7 +40,9 @@ backend/
     core/          # config (pydantic-settings), security, logging, errors
   tests/{unit,integration,e2e}/
 frontend/
-  src/{api,features,components,lib}/   # api/ is GENERATED ONLY — never hand-write there
+  src/api/                             # GENERATED ONLY — never hand-write there
+  src/features/                        # one directory per screen: components + its composables
+  src/{components,lib}/                # shared components; hand-written glue (the API client)
   tests/                               # Vitest specs, mirroring src/
 docs/adr/                              # architecture decision records
 ```
@@ -89,16 +91,18 @@ npm test -- --run                       # Vitest once (no watch)
 npm test -- tests/BackendStatus.spec.ts  # single file/dir
 npm run test:e2e                         # Playwright — NOT SET UP YET
 npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint config)
-npm run generate:api                     # NOT SET UP YET — see the contract section
+npm run generate:api                     # regenerate src/api/ — or `make openapi` from the root
 ```
 
 Whole stack: `make run`. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. `make pg-up` starts the still-unused local PostgreSQL.
 
-`make check` runs lint, types and the DB-free suite — what CI will check.
+`make check` runs lint, types (backend and frontend), the generated-client check and the DB-free suites on both sides — what CI will check.
 
 ## Front/back contract
 
-The backend's OpenAPI schema is the single source of truth. **Never hand-write a TypeScript interface that mirrors a Pydantic model** — regenerate `frontend/src/api/` with `npm run generate:api` and import from there. A backend change that alters the schema and does not regenerate the client is an incomplete change. CI must fail if the committed client differs from a fresh generation.
+The backend's OpenAPI schema is the single source of truth. **Never hand-write a TypeScript interface that mirrors a Pydantic model** — regenerate `frontend/src/api/` and import from there. A backend change that alters the schema and does not regenerate the client is an incomplete change.
+
+`backend/openapi.json` and `frontend/src/api/schema.d.ts` are both committed. `make openapi` regenerates the pair; `make openapi-check` fails when they no longer match the code, and `make check` runs it. `openapi-fetch` calls the generated types; `src/lib/api.ts` holds the base URL and the error handling — the only hand-written half — and nothing else there describes a payload. See `docs/adr/0007`.
 
 ## The graph has no Alembic
 

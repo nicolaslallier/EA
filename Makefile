@@ -30,6 +30,11 @@ PORTAINER_STACKS ?= http://$(NEO4J_HOST):9000/\#!/9/docker/stacks
 # vient de l'environnement, ou à défaut de backend/.env (non versionné).
 NEO4J_PASSWORD ?= $(shell sed -n 's/^EA_NEO4J_PASSWORD=//p' $(BACKEND)/.env 2>/dev/null | tail -1)
 
+# Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
+OPENAPI_SCHEMA_NAME := openapi.json
+OPENAPI_SCHEMA      := $(BACKEND)/$(OPENAPI_SCHEMA_NAME)
+GENERATED_CLIENT    := $(FRONTEND)/src/api/schema.d.ts
+
 GREEN := \033[0;32m
 RED   := \033[0;31m
 NC    := \033[0m
@@ -37,8 +42,8 @@ NC    := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
-        pg-up pg-down \
-        test test-unit test-integration lint typecheck check
+        pg-up pg-down openapi openapi-check \
+        test test-unit test-integration test-fe lint typecheck check
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -142,6 +147,24 @@ pg-up: ## Démarre PostgreSQL en local
 pg-down: ## Arrête PostgreSQL (les données restent dans le volume)
 	docker compose down
 
+## --- Contrat front/back ---------------------------------------------------
+#
+# Le schéma OpenAPI est la source de vérité : `frontend/src/api/` en est
+# dérivé, jamais écrit à la main. Les deux fichiers sont versionnés pour que
+# `openapi-check` puisse constater qu'ils sont à jour — voir docs/adr/0007.
+
+openapi: | $(VENV_PYTHON) $(FRONTEND)/node_modules ## Régénère le schéma OpenAPI et le client TypeScript
+	cd $(BACKEND) && uv run python -m ea.openapi > $(OPENAPI_SCHEMA_NAME)
+	cd $(FRONTEND) && npm run generate:api
+	@printf "$(GREEN)Schéma et client régénérés.$(NC)\n"
+
+openapi-check: | $(VENV_PYTHON) $(FRONTEND)/node_modules ## Échoue si le client versionné n'est plus celui du schéma
+	@cd $(BACKEND) && uv run python -m ea.openapi | diff -u $(OPENAPI_SCHEMA_NAME) - \
+		|| { printf "$(RED)$(OPENAPI_SCHEMA) est périmé. Lance : make openapi$(NC)\n"; exit 1; }
+	@cd $(FRONTEND) && npm run --silent generate:api:check \
+		|| { printf "$(RED)$(GENERATED_CLIENT) est périmé. Lance : make openapi$(NC)\n"; exit 1; }
+	@printf "$(GREEN)Client généré à jour.$(NC)\n"
+
 ## --- Qualité --------------------------------------------------------------
 
 test: ## Tests unitaires et API (sans base de données)
@@ -149,6 +172,9 @@ test: ## Tests unitaires et API (sans base de données)
 
 test-unit: ## Boucle rapide : uniquement les tests unitaires
 	cd $(BACKEND) && uv run pytest tests/unit -q
+
+test-fe: | $(FRONTEND)/node_modules ## Tests Vitest du frontend (une passe, sans watch)
+	cd $(FRONTEND) && npm test -- --run
 
 test-integration: | $(VENV_PYTHON) require-neo4j-password ## Tests contre le vrai Neo4j (vide le graphe partagé !)
 	@printf "$(RED)Ces tests effacent les :Element du graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"
@@ -161,10 +187,11 @@ test-integration: | $(VENV_PYTHON) require-neo4j-password ## Tests contre le vra
 lint: ## ruff format + check
 	cd $(BACKEND) && uv run ruff format . && uv run ruff check --fix .
 
-typecheck: ## mypy --strict
+typecheck: ## mypy --strict, puis vue-tsc sur le frontend
 	cd $(BACKEND) && uv run mypy src
+	cd $(FRONTEND) && npm run typecheck
 
-check: lint typecheck test ## Tout ce que la CI vérifiera
+check: lint typecheck openapi-check test test-fe ## Tout ce que la CI vérifiera
 
 ## --- Nettoyage ------------------------------------------------------------
 
