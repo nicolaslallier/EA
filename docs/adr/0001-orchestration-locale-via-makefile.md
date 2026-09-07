@@ -32,9 +32,22 @@ développement local. Il expose :
 Points de conception :
 
 - **Garde-fous.** `run-be` et `run-fe` déclarent une dépendance *order-only* sur
-  `backend/.venv/bin/python` et `frontend/node_modules`. Si la cible est absente,
-  make exécute une règle qui échoue avec « Lance d'abord : make install » plutôt
-  que de laisser le shell produire un `command not found` opaque.
+  un témoin de venv (`backend/.venv/.uv-sync-stamp`) et sur
+  `frontend/node_modules`. Si la cible est absente, make exécute une règle qui
+  échoue avec « Lance d'abord : make install » plutôt que de laisser le shell
+  produire un `command not found` opaque. Le témoin — écrit par `install-be`,
+  et déclaré dépendant de `pyproject.toml` et `uv.lock` — étend le garde-fou au
+  venv *périmé* : une dépendance ajoutée rend le lockfile plus récent que le
+  témoin, donc make réclame `make install` au lieu de laisser uvicorn échouer
+  sur un `ModuleNotFoundError`.
+- **`.env` local semé depuis l'exemple.** `backend/.env` est une cible de
+  fichier sans prérequis, copiée de `.env.example` quand elle manque : `install`
+  et `run-be` la fabriquent, et éditer l'exemple n'écrase jamais la
+  configuration locale. Sans elle, `Settings` refuse de démarrer faute de mot de
+  passe Neo4j — un refus correct, mais illisible dans une trace pydantic.
+  L'exemple ne porte pas de mot de passe : le graphe est l'instance partagée du
+  cluster (voir `0006`). Le fichier semé suffit donc à démarrer en `EA_DEBUG`,
+  et la règle le dit en clair plutôt que de laisser croire le contraire.
 - **Ports surchargeables.** `BE_PORT` et `FE_PORT` sont des variables `?=`, donc
   un conflit de port se contourne par `make run-be BE_PORT=8001` sans éditer le
   fichier. Vite tourne en `strictPort` : un port occupé échoue au lieu de glisser
