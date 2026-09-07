@@ -178,11 +178,18 @@ deux sections construites :
   ([`adr/0009`](adr/0009-association-des-elements-dans-le-spa.md)). Le même
   panneau s'ouvre depuis n'importe quelle ligne du catalogue. Le formulaire ne
   connaît aucune règle : il demande à `GET /metamodel/relationships` ce que le
-  couple autorise et n'offre que la réponse.
+  couple autorise et n'offre que la réponse ;
+- **Voisinage** — le sous-graphe autour d'un élément, *dessiné* : des anneaux
+  concentriques, un par saut, aux couleurs de couche d'ArchiMate
+  ([`adr/0010`](adr/0010-dessiner-le-voisinage-d-un-element.md)). Un clic sur un
+  voisin déplace le centre. La question — quel élément, quelle profondeur,
+  quelle relation suivie — vit dans l'URL, donc la vue s'envoie par lien et le
+  bouton *Précédent* remonte l'exploration.
 
-`BackendStatus.vue` affiche l'état du backend. Le métamodèle et les deux
-parcours (`/neighbourhood`, `/impact`) sont annoncés *à venir* dans le menu et
-n'ont pas d'écran : ils demandent un dessin, pas un tableau.
+`BackendStatus.vue` affiche l'état du backend. Le métamodèle et le parcours
+d'impact (`/impact`) sont annoncés *à venir* dans le menu et n'ont pas d'écran ;
+`/impact` répond le même `GraphRead` que le voisinage et se dessinera avec les
+mêmes composants.
 
 **Contrat front/back** ([`CLAUDE.md`](../CLAUDE.md)) : le schéma OpenAPI du
 backend est la source unique de vérité. On ne rédige jamais à la main une
@@ -231,14 +238,15 @@ Récapitulatif — voir `CLAUDE.md` pour le détail :
 ## État et chemin restant
 
 **Existe :** domaine ArchiMate complet, repository Neo4j, deux parcours
-(neighbourhood + impact), l'API entière, le frontend minimal de santé.
+(neighbourhood + impact), l'API entière, et trois écrans — catalogue, relations,
+voisinage.
 
 **Décidé mais pas encore écrit** (ne pas supposer que cela existe) :
 
 - Authentification (OAuth2 / JWT + `argon2`), `SQLAlchemy`, `Alembic`, la première
   table PostgreSQL.
 - `bandit`, `pip-audit`, `ESLint` (`npm run lint`), `npm run generate:api`,
-  Playwright, `pre-commit`, CI, et toute vue frontend du graphe.
+  Playwright, `pre-commit`, CI, et l'écran d'analyse d'impact.
 - L'export vers le format d'échange ArchiMate (Open Exchange File) n'est pas
   implémenté, mais rien ne s'y oppose — la taxonomie est complète.
 
@@ -259,4 +267,5 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0007](adr/0007-client-openapi-genere-pour-le-spa.md) | Client OpenAPI généré, et premier écran de CRUD | Accepté |
 | [0008](adr/0008-menu-et-routage-du-spa.md) | Menu de sections et routage du SPA | Accepté |
 | [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
+| [0010](adr/0010-dessiner-le-voisinage-d-un-element.md) | Dessiner le voisinage d'un élément | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

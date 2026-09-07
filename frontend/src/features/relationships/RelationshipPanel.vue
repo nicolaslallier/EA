@@ -9,36 +9,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import { messageOf } from '../../lib/api'
 import type { ElementRead } from '../elements/useElementCatalogue'
+import { ACCESS_LABELS, RELATIONSHIP_LABELS, verbOf } from './labels'
 import type { AccessType, RelationshipType } from './useElementRelationships'
 import { useElementRelationships } from './useElementRelationships'
 
 const props = defineProps<{ element: ElementRead }>()
 const emit = defineEmits<{ close: [] }>()
-
-/**
- * Each relationship read as the verb of "source <verb> target", so a row is a
- * sentence rather than a code. The wire values stay the ArchiMate ones.
- */
-const RELATIONSHIP_LABELS: Record<RelationshipType, string> = {
-  composition: 'compose',
-  aggregation: 'agrège',
-  assignment: 'est affecté à',
-  realization: 'réalise',
-  serving: 'sert',
-  access: 'accède à',
-  influence: 'influence',
-  association: 'est associé à',
-  triggering: 'déclenche',
-  flow: 'alimente',
-  specialization: 'spécialise',
-}
-
-const ACCESS_LABELS: Record<AccessType, string> = {
-  access: 'accède',
-  read: 'lit',
-  write: 'écrit',
-  read_write: 'lit et écrit',
-}
 
 /** Which way round the new link runs, seen from the element on screen. */
 type Direction = 'outgoing' | 'incoming'
@@ -152,14 +128,6 @@ async function confirmDelete(): Promise<void> {
   } finally {
     busy.value = false
   }
-}
-
-/** How a stored link reads, qualifier included where it carries meaning. */
-function verbOf(relationship: RelationshipType, access: AccessType | null | undefined): string {
-  if (relationship === 'access' && access) {
-    return ACCESS_LABELS[access]
-  }
-  return RELATIONSHIP_LABELS[relationship]
 }
 </script>
 

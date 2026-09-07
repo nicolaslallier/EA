@@ -62,6 +62,7 @@ export const SECTIONS: readonly Section[] = [
     label: 'Voisinage',
     summary: "Le sous-graphe autour d'un élément, à profondeur choisie.",
     group: 'analysis',
+    view: () => import('../features/neighbourhood/NeighbourhoodSection.vue'),
   },
   {
     path: '/analyse/impact',

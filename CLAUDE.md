@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**The element catalogue and the links between elements work end to end; the two traversals are backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with two sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`), and relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row). The metamodel and the two traversals are declared in the menu as *à venir* and have no screen yet: they want a drawing, not a table. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**The element catalogue, the links between elements and the neighbourhood traversal work end to end; `/impact` is backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with three sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); and neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`). The metamodel and `/impact` are declared in the menu as *à venir* and have no screen yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, any frontend view of the graph itself.
+**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, a screen for `/impact`.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
 
@@ -117,6 +117,23 @@ resolve to a screen that is not there. When you build it, add
 `view: () => import('../features/<section>/<Screen>.vue')` — the lazy import is
 what keeps each section in its own bundle chunk. A new group is an entry in
 `GROUPS`. See `docs/adr/0008`.
+
+## Drawing a graph in the SPA
+
+There is no graph-rendering library and adding one needs an ADR. A sub-graph is
+drawn as hand-written SVG over a **pure, deterministic layout module**
+(`features/neighbourhood/layout.ts`): concentric rings, one per hop from the
+subject, so the geometry is unit-tested without mounting anything and the same
+sub-graph always draws the same way. Boxes carry the conventional ArchiMate
+layer colours (`LAYER_COLOURS`, beside `LAYER_LABELS`) — light fills that state
+their own dark ink, because `var(--text)` inverts in the dark theme — and every
+neighbour is a real focusable control, not a painted pixel.
+
+**A screen whose state is a question the user would want to share or walk back
+keeps that state in the URL, not in a `ref`.** The neighbourhood reads
+`?element=`, `?depth=` and `?relation=` from the route and writes them back:
+changing subject pushes a history entry, turning a dial replaces one. See
+`docs/adr/0010`.
 
 ## The graph has no Alembic
 
