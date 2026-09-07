@@ -170,7 +170,7 @@ Vue 3 + TypeScript + Vite, en `<script setup>`
 
 **État actuel :** une coquille routée dont le menu est engendré par
 `src/router/sections.ts` ([`adr/0008`](adr/0008-menu-et-routage-du-spa.md)), avec
-deux sections construites :
+cinq sections construites :
 
 - **Éléments** — parcourir, créer, modifier, supprimer
   ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md)). Le nom d'une
@@ -187,12 +187,21 @@ deux sections construites :
   ([`adr/0010`](adr/0010-dessiner-le-voisinage-d-un-element.md)). Un clic sur un
   voisin déplace le centre. La question — quel élément, quelle profondeur,
   quelle relation suivie — vit dans l'URL, donc la vue s'envoie par lien et le
-  bouton *Précédent* remonte l'exploration.
+  bouton *Précédent* remonte l'exploration ;
+- **Métamodèle** — le référentiel ArchiMate lui-même : les 61 types par couche,
+  les 11 relations avec leur famille et le sens où l'impact voyage, et une ligne
+  de la matrice 61×61 à la fois
+  ([`adr/0012`](adr/0012-ecran-du-metamodele.md)) ;
+- **Analyse d'impact** — ce qui tombe avec un élément, *dessiné* sur les mêmes
+  anneaux que le voisinage, l'anneau signifiant cette fois à quelle distance la
+  panne se propage, et **listé** vague par vague en dessous
+  ([`adr/0013`](adr/0013-ecran-d-analyse-d-impact.md)). Chaque saut est parcouru
+  dans le sens où la dépendance court, que le métamodèle donne
+  (`impact_follows_direction`) et que le SPA ne recopie pas.
 
-`BackendStatus.vue` affiche l'état du backend. Le métamodèle et le parcours
-d'impact (`/impact`) sont annoncés *à venir* dans le menu et n'ont pas d'écran ;
-`/impact` répond le même `GraphRead` que le voisinage et se dessinera avec les
-mêmes composants.
+`BackendStatus.vue` affiche l'état du backend. Toutes les sections déclarées ont
+désormais un écran ; le dessin est partagé par les deux parcours
+(`components/GraphDiagram.vue` sur `lib/graphLayout.ts`).
 
 **Contrat front/back** ([`CLAUDE.md`](../CLAUDE.md)) : le schéma OpenAPI du
 backend est la source unique de vérité. On ne rédige jamais à la main une
@@ -241,15 +250,14 @@ Récapitulatif — voir `CLAUDE.md` pour le détail :
 ## État et chemin restant
 
 **Existe :** domaine ArchiMate complet, repository Neo4j, deux parcours
-(neighbourhood + impact), l'API entière, et trois écrans — catalogue, relations,
-voisinage.
+(neighbourhood + impact), l'API entière, et cinq écrans — catalogue, relations,
+voisinage, métamodèle, analyse d'impact.
 
 **Décidé mais pas encore écrit** (ne pas supposer que cela existe) :
 
 - Authentification (OAuth2 / JWT + `argon2`), `SQLAlchemy`, `Alembic`, la première
   table PostgreSQL.
-- `bandit`, `pip-audit`, `ESLint` (`npm run lint`), `npm run generate:api`,
-  Playwright, `pre-commit`, CI, et l'écran d'analyse d'impact.
+- `bandit`, `pip-audit`, `ESLint` (`npm run lint`), Playwright, `pre-commit`, CI.
 - L'export vers le format d'échange ArchiMate (Open Exchange File) n'est pas
   implémenté, mais rien ne s'y oppose — la taxonomie est complète.
 
@@ -272,4 +280,6 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
 | [0010](adr/0010-dessiner-le-voisinage-d-un-element.md) | Dessiner le voisinage d'un élément | Accepté |
 | [0011](adr/0011-detail-d-un-element-dans-le-catalogue.md) | Le détail d'un élément, ouvert depuis le catalogue | Accepté |
+| [0012](adr/0012-ecran-du-metamodele.md) | L'écran du métamodèle, et la matrice servie par lignes | Accepté |
+| [0013](adr/0013-ecran-d-analyse-d-impact.md) | L'écran d'analyse d'impact, et le dessin partagé par les deux parcours | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

@@ -1,15 +1,20 @@
 // Where a sub-graph goes on the canvas.
 //
-// A neighbourhood has a centre and a distance, so its drawing has them too:
+// A traversal has a centre and a distance, so its drawing has them too:
 // concentric rings, one per hop, the subject in the middle. The reading is
 // then immediate — an element on the second ring is two relationships away —
 // which no force-directed layout can promise.
+//
+// *What* counts as a hop is the caller's business: the neighbourhood walks
+// links either way, the impact analysis only the way dependency runs. So
+// `layout` takes the distances rather than insisting on computing them, and
+// falls back to the undirected walk below — the neighbourhood's own question.
 //
 // Nothing here is animated, iterative or random: the same sub-graph always
 // draws the same way, so a test can assert a coordinate and a user can compare
 // two screenshots. That is also why this is a module of pure functions rather
 // than a component: the geometry is testable without mounting anything.
-import type { components } from '../../api/schema'
+import type { components } from '../api/schema'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
@@ -141,13 +146,17 @@ function selfEdge(relationship: RelationshipRead, node: PositionedNode): Positio
 }
 
 /**
- * Lay the sub-graph out around its subject.
+ * Lay the sub-graph out around its subject, `hops` saying how far each element
+ * sits from it.
  *
- * An element the walk cannot reach — which the API does not return, but a
+ * An element `hops` does not mention — which the API does not return, but a
  * drawing should not lose silently — lands one ring beyond the last.
  */
-export function layout(graph: GraphRead, rootId: string): Diagram {
-  const hops = hopsFrom(graph, rootId)
+export function layout(
+  graph: GraphRead,
+  rootId: string,
+  hops: Map<string, number> = hopsFrom(graph, rootId),
+): Diagram {
   if (hops.size === 0) {
     return { nodes: [], edges: [], size: 2 * MARGIN, viewBox: `0 0 ${2 * MARGIN} ${2 * MARGIN}`, rings: [], hops: 0 }
   }

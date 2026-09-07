@@ -3,24 +3,52 @@
 //
 // It renders a `GraphRead` and emits which element the user wants to look at
 // next; it fetches nothing and decides nothing. All the geometry comes from
-// `layout.ts`, so what is left here is SVG and interaction — and a change of
-// layout never touches this file.
+// `lib/graphLayout.ts`, so what is left here is SVG and interaction — and a
+// change of layout never touches this file.
+//
+// It is shared by the two traversals, which draw the same shape and mean
+// different things by it: the neighbourhood's rings are distance either way,
+// the impact analysis's are how far a failure travels. So the caller supplies
+// the distances, the words around the drawing, and which links to draw as
+// carrying nothing.
 import { computed, onMounted, ref, useTemplateRef, watch } from 'vue'
 
-import { BOX_TEXT, LAYER_COLOURS, LAYER_LABELS } from '../metamodel/useMetamodel'
-import { verbOf } from '../relationships/labels'
-import { BOX_HEIGHT, BOX_WIDTH, layout, type GraphRead } from './layout'
-import type { ElementRead } from './useNeighbourhood'
+import { BOX_TEXT, LAYER_COLOURS, LAYER_LABELS } from '../features/metamodel/useMetamodel'
+import { verbOf } from '../features/relationships/labels'
+import { BOX_HEIGHT, BOX_WIDTH, layout, type GraphRead } from '../lib/graphLayout'
+import type { components } from '../api/schema'
+
+type ElementRead = components['schemas']['ElementRead']
 
 const props = withDefaults(
   defineProps<{
     graph: GraphRead
     /** The element at the centre. */
     rootId: string
+    /**
+     * How far each element sits from the centre. Left out, the drawing counts
+     * the hops itself, ignoring the direction of the arrows.
+     */
+    hops?: Map<string, number>
     /** How an element type reads, from the metamodel; raw value by default. */
     typeLabel?: (value: string) => string
+    /** What the drawing is of, for the screen reader: "Voisinage", "Impact". */
+    caption?: string
+    /** What a click on a box does, for the screen reader. */
+    focusAction?: (element: ElementRead) => string
+    /**
+     * Links that are in the picture without carrying anything — an impact
+     * analysis shows the arrows it did *not* follow, drawn faint.
+     */
+    inert?: Set<string>
   }>(),
-  { typeLabel: (value: string) => value },
+  {
+    hops: undefined,
+    typeLabel: (value: string) => value,
+    caption: 'Voisinage',
+    focusAction: (element: ElementRead) => `Centrer sur ${element.name}`,
+    inert: undefined,
+  },
 )
 
 const emit = defineEmits<{ focus: [element: ElementRead] }>()
@@ -35,7 +63,7 @@ const LEGIBLE = 0.75
 const canvas = useTemplateRef<HTMLElement>('canvas')
 const zoom = ref(1)
 
-const diagram = computed(() => layout(props.graph, props.rootId))
+const diagram = computed(() => layout(props.graph, props.rootId, props.hops))
 
 /** The layers actually drawn — a legend of eight when two are shown is noise. */
 const legend = computed(() =>
@@ -114,7 +142,7 @@ watch(diagram, settle, { flush: 'post' })
         :viewBox="diagram.viewBox"
         :width="diagram.size * zoom"
         :height="diagram.size * zoom"
-        :aria-label="`Voisinage : ${summary}`"
+        :aria-label="`${caption} : ${summary}`"
       >
         <defs>
           <marker
@@ -140,7 +168,12 @@ watch(diagram, settle, { flush: 'post' })
           :r="radius"
         />
 
-        <g v-for="edge in diagram.edges" :key="edge.relationship.id" class="graph__edge">
+        <g
+          v-for="edge in diagram.edges"
+          :key="edge.relationship.id"
+          class="graph__edge"
+          :class="{ 'graph__edge--inert': inert?.has(edge.relationship.id) }"
+        >
           <path :d="edge.path" marker-end="url(#ea-arrow)" />
           <text :x="edge.labelX" :y="edge.labelY" text-anchor="middle">
             {{ verbOf(edge.relationship.relationship_type, edge.relationship.access_type) }}
@@ -155,9 +188,7 @@ watch(diagram, settle, { flush: 'post' })
           :role="node.hops === 0 ? undefined : 'button'"
           :tabindex="node.hops === 0 ? undefined : 0"
           :aria-label="
-            node.hops === 0
-              ? `Sujet : ${node.element.name}`
-              : `Centrer sur ${node.element.name}`
+            node.hops === 0 ? `Sujet : ${node.element.name}` : focusAction(node.element)
           "
           @click="activate(node)"
           @keydown.enter.prevent="activate(node)"
@@ -258,6 +289,15 @@ watch(diagram, settle, { flush: 'post' })
 .graph__head {
   fill: var(--text);
   opacity: 0.55;
+}
+/* A link the traversal did not follow: present, so the picture is not a lie,
+   but visibly not part of the answer. */
+.graph__edge--inert path {
+  stroke-dasharray: 4 4;
+  opacity: 0.25;
+}
+.graph__edge--inert text {
+  opacity: 0.4;
 }
 .graph__edge text {
   font-size: 10px;

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**The element catalogue, the links between elements, the neighbourhood traversal and the metamodel reference work end to end; `/impact` is backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with four sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); and metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`). `/impact` is declared in the menu as *à venir* and has no screen yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, a screen for `/impact`.
+**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
 
@@ -44,7 +44,7 @@ frontend/
   src/api/                             # GENERATED ONLY — never hand-write there
   src/router/                          # the section catalogue, the routes it produces, the 404
   src/features/                        # one directory per screen: components + its composables
-  src/{components,lib}/                # shared components (the shell menu); hand-written glue (the API client)
+  src/{components,lib}/                # shared components (the shell menu, the graph drawing); hand-written glue (the API client, the ring geometry)
   tests/                               # Vitest specs, mirroring src/
 docs/adr/                              # architecture decision records
 ```
@@ -116,7 +116,10 @@ out until the screen exists: the menu then shows the section greyed out with an
 resolve to a screen that is not there. When you build it, add
 `view: () => import('../features/<section>/<Screen>.vue')` — the lazy import is
 what keeps each section in its own bundle chunk. A new group is an entry in
-`GROUPS`. See `docs/adr/0008`.
+`GROUPS`. See `docs/adr/0008`. Every declared section has a
+screen today, so the *à venir* badge is covered by a spec that hands `AppNav` a
+menu of its own — the component takes its entries as a prop, defaulting to
+`menu()`, for exactly that reason.
 
 ## The SPA holds no copy of the metamodel
 
@@ -132,22 +135,33 @@ then refuses. See `docs/adr/0012`.
 ## Drawing a graph in the SPA
 
 There is no graph-rendering library and adding one needs an ADR. A sub-graph is
-drawn as hand-written SVG over a **pure, deterministic layout module**
-(`features/neighbourhood/layout.ts`): concentric rings, one per hop from the
-subject, so the geometry is unit-tested without mounting anything and the same
-sub-graph always draws the same way. Boxes carry the conventional ArchiMate
-layer colours (`LAYER_COLOURS`, beside `LAYER_LABELS`) — light fills that state
-their own dark ink, because `var(--text)` inverts in the dark theme — and every
-neighbour is a real focusable control, not a painted pixel.
+drawn as hand-written SVG (`components/GraphDiagram.vue`) over a **pure,
+deterministic layout module** (`lib/graphLayout.ts`): concentric rings, one per
+hop from the subject, so the geometry is unit-tested without mounting anything
+and the same sub-graph always draws the same way. Boxes carry the conventional
+ArchiMate layer colours (`LAYER_COLOURS`, beside `LAYER_LABELS`) — light fills
+that state their own dark ink, because `var(--text)` inverts in the dark theme —
+and every neighbour is a real focusable control, not a painted pixel.
+
+**Both traversals share that drawing, and mean different things by a ring.**
+`layout(graph, rootId, hops?)` *accepts* the distances instead of insisting on
+computing them: the neighbourhood lets it walk links either way, and the impact
+analysis hands it its own walk, which follows each hop the way dependency runs
+(`features/impact/propagation.ts`). Which way that is per relationship type is
+`impact_follows_direction`, read from `/metamodel` through
+`useMetamodel().followsArrow` — never restated in TypeScript, per the rule
+above. A link that explains no distance is drawn dashed rather than dropped.
+See `docs/adr/0013`.
 
 **A screen whose state is a question the user would want to share or walk back
 keeps that state in the URL, not in a `ref`.** The neighbourhood reads
 `?element=`, `?depth=` and `?relation=` from the route and writes them back:
 changing subject pushes a history entry, turning a dial replaces one. See
-`docs/adr/0010`. The catalogue follows the same rule for the element it details
-(`?element=`, see `docs/adr/0011`), and the metamodel for the cell of the matrix
-it is showing (`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is
-not that kind of state and stays in a `ref`.
+`docs/adr/0010`. The impact analysis reads the same three (see `docs/adr/0013`),
+the catalogue follows the rule for the element it details (`?element=`, see
+`docs/adr/0011`), and the metamodel for the cell of the matrix it is showing
+(`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is not that kind
+of state and stays in a `ref`.
 
 ## The graph has no Alembic
 
