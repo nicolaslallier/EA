@@ -11,6 +11,7 @@ ce fichier résume la section *SDLC*.
 
 | Sujet | Référence |
 |---|---|
+| Le parcours complet, d'une brique au merge | [`parcours.md`](parcours.md) |
 | Branches, Conventional Commits, `pre-commit`, définition de « fait » | [`../../CLAUDE.md`](../../CLAUDE.md), section *SDLC* |
 | Orchestration locale (Makefile) | [adr/0001](../adr/0001-orchestration-locale-via-makefile.md) |
 | Boucle TDD (tests d'abord, à trois niveaux) | [`../tdd/README.md`](../tdd/README.md) |
