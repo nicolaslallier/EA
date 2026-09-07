@@ -1,0 +1,57 @@
+# Bases de données locales. Rien d'autre ne tourne ici : le backend et le
+# frontend se lancent avec `make run`, en dehors de Docker, pour garder le
+# rechargement à chaud immédiat.
+#
+# `make db-up` démarre Neo4j, `make db-up-all` y ajoute PostgreSQL.
+# Voir docs/adr/0004 pour le partage des rôles entre les deux.
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: ea-neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474" # navigateur Neo4j
+      - "${NEO4J_BOLT_PORT:-7687}:7687" # protocole Bolt, utilisé par le backend
+    environment:
+      # Mot de passe de développement uniquement. Un déploiement fournit
+      # NEO4J_PASSWORD par son propre mécanisme de secrets.
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-developmentonly}"
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment.
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-developmentonly} 'RETURN 1' || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # Pas encore utilisé par le code : PostgreSQL accueillera l'authentification,
+  # l'audit et les traitements planifiés, qui ne sont pas des graphes.
+  postgres:
+    image: postgres:17-alpine
+    container_name: ea-postgres
+    profiles: ["full"]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ea
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-developmentonly}"
+      POSTGRES_DB: ea
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ea -d ea"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  neo4j-data:
+  postgres-data:

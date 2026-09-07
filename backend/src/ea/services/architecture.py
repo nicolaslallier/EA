@@ -1,0 +1,217 @@
+"""Use cases over the architecture graph.
+
+This layer owns the rules that need more than one object to check: an element
+must exist before it can be linked, and a containment edge must not close a
+loop. The rules that need only the two *types* live in the domain and are
+enforced by `Relationship.between`.
+
+When authentication lands, the permission checks go here — never in the router
+and never in the SPA, per `CLAUDE.md`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
+from ea.domain.model import Element, Relationship
+
+if TYPE_CHECKING:
+    from ea.domain.ports import ArchitectureRepository, ElementFilter, GraphView
+
+Clock = Callable[[], datetime]
+
+#: Relationships that build the containment tree, and so must stay acyclic.
+_CONTAINMENT = frozenset({RelationshipType.COMPOSITION, RelationshipType.AGGREGATION})
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class ArchitectureService:
+    """The single entry point `api/` uses to read and change the graph."""
+
+    def __init__(self, repository: ArchitectureRepository, *, clock: Clock = _utc_now) -> None:
+        self._repository = repository
+        self._now = clock
+
+    # --- Elements ---------------------------------------------------------
+
+    async def create_element(
+        self,
+        *,
+        element_type: ElementType,
+        name: str,
+        description: str = "",
+        documentation: str = "",
+        properties: Mapping[str, str] | None = None,
+    ) -> Element:
+        element = Element.create(
+            element_type=element_type,
+            name=name,
+            description=description,
+            documentation=documentation,
+            properties=properties,
+            now=self._now(),
+        )
+        return await self._repository.add_element(element)
+
+    async def get_element(self, element_id: UUID) -> Element:
+        """Fetch an element or say which one is missing."""
+        element = await self._repository.get_element(element_id)
+        if element is None:
+            msg = f"no element with id {element_id}"
+            raise ElementNotFoundError(msg)
+        return element
+
+    async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
+        return await self._repository.list_elements(criteria)
+
+    async def count_elements(self, criteria: ElementFilter) -> int:
+        return await self._repository.count_elements(criteria)
+
+    async def update_element(
+        self,
+        element_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        documentation: str | None = None,
+        properties: Mapping[str, str] | None = None,
+    ) -> Element:
+        """Apply a partial update. An omitted field keeps its stored value.
+
+        The element type is deliberately not updatable: changing it could make
+        relationships that are already stored illegal, which is a migration, not
+        an edit.
+        """
+        current = await self.get_element(element_id)
+        now = self._now()
+        updated = current
+        if name is not None:
+            updated = updated.rename(name, now=now)
+        if properties is not None:
+            updated = updated.with_properties(properties, now=now)
+        if description is not None or documentation is not None:
+            updated = Element(
+                id=updated.id,
+                element_type=updated.element_type,
+                name=updated.name,
+                created_at=updated.created_at,
+                updated_at=now,
+                description=(
+                    description.strip() if description is not None else updated.description
+                ),
+                documentation=(
+                    documentation.strip() if documentation is not None else updated.documentation
+                ),
+                properties=updated.properties,
+            )
+        return await self._repository.save_element(updated)
+
+    async def delete_element(self, element_id: UUID) -> None:
+        """Remove an element together with everything attached to it."""
+        if not await self._repository.delete_element(element_id):
+            msg = f"no element with id {element_id}"
+            raise ElementNotFoundError(msg)
+
+    # --- Relationships ----------------------------------------------------
+
+    async def connect(
+        self,
+        *,
+        relationship_type: RelationshipType,
+        source_id: UUID,
+        target_id: UUID,
+        name: str = "",
+        access_type: AccessType | None = None,
+        directed: bool = False,
+        properties: Mapping[str, str] | None = None,
+    ) -> Relationship:
+        """Link two elements, refusing anything the metamodel or the graph forbids."""
+        source = await self.get_element(source_id)
+        target = await self.get_element(target_id)
+
+        # `between` rejects the pairs ArchiMate does not allow; it cannot see the
+        # rest of the graph, so the containment loop is checked separately.
+        relationship = Relationship.between(
+            relationship_type,
+            source,
+            target,
+            name=name,
+            access_type=access_type,
+            directed=directed,
+            properties=properties,
+            now=self._now(),
+        )
+        if (
+            relationship_type in _CONTAINMENT
+            and await self._repository.would_close_a_containment_cycle(source_id, target_id)
+        ):
+            msg = (
+                f"{source.name!r} already sits inside {target.name!r}: "
+                "containment would become cyclic"
+            )
+            raise CyclicContainmentError(msg)
+
+        return await self._repository.add_relationship(relationship)
+
+    async def get_relationship(self, relationship_id: UUID) -> Relationship:
+        relationship = await self._repository.get_relationship(relationship_id)
+        if relationship is None:
+            msg = f"no relationship with id {relationship_id}"
+            raise ElementNotFoundError(msg)
+        return relationship
+
+    async def list_relationships(
+        self,
+        *,
+        element_id: UUID | None = None,
+        relationship_types: Sequence[RelationshipType] = (),
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Relationship, ...]:
+        return await self._repository.list_relationships(
+            element_id=element_id,
+            relationship_types=relationship_types,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def disconnect(self, relationship_id: UUID) -> None:
+        if not await self._repository.delete_relationship(relationship_id):
+            msg = f"no relationship with id {relationship_id}"
+            raise ElementNotFoundError(msg)
+
+    # --- Analysis ---------------------------------------------------------
+
+    async def neighbourhood(
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 1,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        """The sub-graph around an element — what a diagram of it would show."""
+        await self.get_element(element_id)
+        return await self._repository.neighbourhood(
+            element_id, depth=depth, relationship_types=relationship_types
+        )
+
+    async def impact_of(
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 5,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        """Everything that would be affected if this element stopped working."""
+        await self.get_element(element_id)
+        return await self._repository.impacted_by(
+            element_id, depth=depth, relationship_types=relationship_types
+        )

@@ -15,12 +15,20 @@ BE_HOST ?= 127.0.0.1
 BE_PORT ?= 8000
 FE_PORT ?= 5173
 
+# Base de données graphe (Neo4j). `docker-compose.yml` lit ces mêmes variables.
+NEO4J_BOLT_PORT ?= 7687
+NEO4J_HTTP_PORT ?= 7474
+NEO4J_PASSWORD  ?= developmentonly
+export NEO4J_BOLT_PORT NEO4J_HTTP_PORT NEO4J_PASSWORD
+
 GREEN := \033[0;32m
 RED   := \033[0;31m
 NC    := \033[0m
 
 .DEFAULT_GOAL := help
-.PHONY: help install install-be install-fe run run-be run-fe clean
+.PHONY: help install install-be install-fe run run-be run-fe clean \
+        db-up db-up-all db-down db-logs db-shell db-reset \
+        test test-unit test-integration lint typecheck check
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -66,6 +74,53 @@ $(FRONTEND)/node_modules:
 	@printf "$(RED)Dépendances Node absentes ($(FRONTEND)/node_modules).$(NC)\n"
 	@printf "$(RED)Lance d'abord : make install$(NC)\n"
 	@exit 1
+
+## --- Base de données graphe -----------------------------------------------
+
+db-up: ## Démarre Neo4j (bolt 7687, navigateur http://localhost:7474)
+	@printf "$(GREEN)Starting Neo4j...$(NC)\n"
+	docker compose up -d --wait neo4j
+	@printf "$(GREEN)Neo4j prêt : bolt://localhost:$(NEO4J_BOLT_PORT)$(NC)\n"
+	@printf "Navigateur : http://localhost:$(NEO4J_HTTP_PORT) (neo4j / $(NEO4J_PASSWORD))\n"
+
+db-up-all: ## Démarre Neo4j *et* PostgreSQL (pas encore utilisé par le code)
+	docker compose --profile full up -d --wait
+
+db-down: ## Arrête les bases sans supprimer les données
+	docker compose --profile full down
+
+db-logs: ## Suit les logs de Neo4j
+	docker compose logs -f neo4j
+
+db-shell: ## Ouvre un cypher-shell sur le graphe
+	docker compose exec neo4j cypher-shell -u neo4j -p $(NEO4J_PASSWORD)
+
+db-reset: ## Supprime les volumes : le graphe repart vide
+	@printf "$(RED)Cette commande efface le contenu du graphe.$(NC)\n"
+	docker compose --profile full down -v
+
+## --- Qualité --------------------------------------------------------------
+
+test: ## Tests unitaires et API (sans base de données)
+	cd $(BACKEND) && uv run pytest -q
+
+test-unit: ## Boucle rapide : uniquement les tests unitaires
+	cd $(BACKEND) && uv run pytest tests/unit -q
+
+test-integration: | $(VENV_PYTHON) ## Tests contre le vrai Neo4j (vide le graphe !)
+	@printf "$(RED)Les tests d'intégration effacent le contenu du graphe local.$(NC)\n"
+	cd $(BACKEND) && EA_ALLOW_DESTRUCTIVE_TESTS=1 EA_DEBUG=true \
+		EA_NEO4J_PASSWORD=$(NEO4J_PASSWORD) \
+		EA_NEO4J_URI=bolt://localhost:$(NEO4J_BOLT_PORT) \
+		uv run pytest tests/integration -q
+
+lint: ## ruff format + check
+	cd $(BACKEND) && uv run ruff format . && uv run ruff check --fix .
+
+typecheck: ## mypy --strict
+	cd $(BACKEND) && uv run mypy src
+
+check: lint typecheck test ## Tout ce que la CI vérifiera
 
 ## --- Nettoyage ------------------------------------------------------------
 

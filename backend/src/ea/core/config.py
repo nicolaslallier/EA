@@ -4,7 +4,7 @@ No literal secret, DSN or key lives in this file — see `.env.example` for the
 shape of a local environment.
 """
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     # Explicit allowlist — never `*`, because the API is called with credentials.
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
+    # The password has no default on purpose: an empty one is only tolerated in
+    # debug, where the local container runs with authentication disabled.
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr = SecretStr("")
+    neo4j_database: str = "neo4j"
+
+    # Bolt keeps connections pooled; these bound a slow or wedged server.
+    neo4j_max_connection_pool_size: int = 25
+    neo4j_connection_timeout_seconds: float = 5.0
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -42,6 +54,14 @@ class Settings(BaseSettings):
             msg = "cors_origins must be an explicit allowlist, not a wildcard"
             raise ValueError(msg)
         return value
+
+    @model_validator(mode="after")
+    def _require_a_neo4j_password_outside_debug(self) -> "Settings":
+        """A deployed instance talking to an unauthenticated database is a breach."""
+        if not self.debug and not self.neo4j_password.get_secret_value():
+            msg = "neo4j_password is required when debug is off"
+            raise ValueError(msg)
+        return self
 
 
 def get_settings() -> Settings:
