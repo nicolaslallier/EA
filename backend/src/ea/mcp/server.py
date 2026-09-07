@@ -1,15 +1,21 @@
 """The tools an agent may call, and what each one is allowed to do.
 
-One tool per use case the `ArchitectureService` already exposes — the same
-list `api/architecture.py` and `api/metamodel.py` serve over HTTP, in the same
-order, so the two adapters can be read side by side. Nothing here decides
-anything: a tool binds its arguments, calls the service, and renders the answer
-with the very models the REST API renders, so an agent and the SPA are told the
-same thing about the same element.
+One tool per use case the services already expose — the same list
+`api/architecture.py`, `api/metamodel.py` and `api/documents.py` serve over
+HTTP, in the same order, so the two adapters can be read side by side. Nothing
+here decides anything: a tool binds its arguments, calls a service, and renders
+the answer with the very models the REST API renders, so an agent and the SPA
+are told the same thing about the same element.
 
-The service is fetched through a callable rather than held, because the
-application builds it during its lifespan and this module is assembled before
-that: see `main.create_app`.
+Two services, because the catalogue spans two stores: the graph in Neo4j and
+the markdown attached to its elements in PostgreSQL (docs/adr/0017). They are
+kept apart here exactly as they are in `api/`, since the rule that binds them —
+an element must exist before a file hangs off it — is `DocumentService`'s, and
+an adapter holding a repository instead would be free to skip it.
+
+Both are fetched through callables rather than held, because the application
+builds them during its lifespan and this module is assembled before that: see
+`main.create_app`.
 """
 
 from __future__ import annotations
@@ -23,6 +29,8 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ea.api.schemas import (
+    DocumentRead,
+    DocumentSummaryRead,
     ElementPage,
     ElementRead,
     GraphRead,
@@ -41,10 +49,12 @@ from ea.domain.archimate import (
     # `build_mcp_server` the bare name would resolve to the tool itself.
     permitted_relationships as permitted_between,
 )
+from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.ports import ElementFilter
 from ea.mcp.errors import speaking_plainly
 from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 from ea.services.architecture import ArchitectureService
+from ea.services.documents import DocumentService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
@@ -69,11 +79,17 @@ it, because stored links are legal only for the types they were made between.
 `neighbourhood` answers "what is around this element", following links either
 way. `impact_of` answers "what breaks if this element fails", following each
 link in the direction dependency actually runs — which is not always the
-direction the arrow is drawn.\
+direction the arrow is drawn.
+
+An element may also carry markdown documents — a runbook, an interface
+contract, a decision note — each a named file kept whole. `list_documents`
+names them and gives their sizes; `read_document` is what carries the text, so
+read one document rather than every document to find out what is there.\
 """
 
-#: The service the tools call, looked up per call. See the module docstring.
+#: The services the tools call, looked up per call. See the module docstring.
 ServiceProvider = Callable[[], ArchitectureService]
+DocumentProvider = Callable[[], DocumentService]
 
 # --- Shared argument constraints, bounded exactly as the HTTP adapter is ----
 ElementId = Annotated[
@@ -87,6 +103,29 @@ Properties = Annotated[
     Field(description="Free-form attributes, e.g. owner or criticality. Keys are identifiers."),
 ]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
+DocumentId = Annotated[
+    UUID, Field(description="The id of a document, as `list_documents` reports it.")
+]
+Filename = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=MAX_FILENAME_LENGTH,
+        description="The file's own name, ending in .md or .markdown.",
+    ),
+]
+#: The bound is in characters and the real one, in `domain/documents.py`, is in
+#: bytes: this only stops a runaway argument before it is built into a request,
+#: and the domain still decides. A character is at least one byte, so a string
+#: this allows can still be refused below — never the other way round.
+Markdown = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=MAX_DOCUMENT_BYTES,
+        description="The document itself, as markdown text.",
+    ),
+]
 Limit = Annotated[int, Field(ge=1, le=200)]
 Offset = Annotated[int, Field(ge=0)]
 
@@ -106,12 +145,22 @@ REMOVES: Final = ToolAnnotations(
 )
 
 
-def build_mcp_server(get_service: ServiceProvider, *, version: str = "0.1.0") -> MCPServer[Any]:
-    """Assemble the tool set over one architecture service.
+def build_mcp_server(
+    get_service: ServiceProvider,
+    get_documents: DocumentProvider,
+    *,
+    version: str = "0.1.0",
+) -> MCPServer[Any]:
+    """Assemble the tool set over the architecture and document services.
 
-    Taking a provider rather than the service keeps this callable before the
-    application has opened its database, and lets a test hand over the same
-    in-memory double the API tests use.
+    Taking providers rather than the services keeps this callable before the
+    application has opened its databases, and lets a test hand over the same
+    in-memory doubles the API tests use.
+
+    `get_documents` is required rather than optional, so that an app assembled
+    without a relational store fails when a document tool is *called* — with
+    the wiring fault `document_service_of` states — instead of quietly offering
+    an agent a shorter tool list than the one this module documents.
     """
     server: MCPServer[Any] = MCPServer(
         "ea-architecture",
@@ -339,6 +388,85 @@ def build_mcp_server(get_service: ServiceProvider, *, version: str = "0.1.0") ->
                 element_id, depth=depth, relationship_types=tuple(relationship_types or ())
             )
         )
+
+    # --- Documents --------------------------------------------------------
+    # The markdown attached to an element, which lives in PostgreSQL while the
+    # element lives in the graph (docs/adr/0017). The HTTP adapter takes a
+    # `multipart/form-data` upload here; an agent has no file to upload, so
+    # these take the text itself and land on the service's text entry points.
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def attach_document(
+        element_id: ElementId, filename: Filename, content: Markdown
+    ) -> DocumentRead:
+        """Attach a markdown document to an element, under its own file name.
+
+        This is for a whole document — a runbook, an interface contract, a
+        decision note. A sentence describing the element is its `documentation`
+        field, not a file; use `update_element` for that.
+
+        The element must already exist, the name must end in `.md` or
+        `.markdown`, and one element holds one document per name: attaching
+        `runbook.md` twice is refused, and replacing it is `revise_document`.
+        """
+        return DocumentRead.of(
+            await get_documents().attach_text(element_id, filename=filename, content=content)
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_documents(element_id: ElementId) -> list[DocumentSummaryRead]:
+        """What is attached to an element: the file names and sizes, not the text.
+
+        Start here rather than with `read_document`: this answer stays small
+        whatever the documents weigh, and it carries the id each one is read
+        by. An element with nothing attached answers with an empty list; an
+        element that does not exist is an error, which is a different answer.
+        """
+        return [
+            DocumentSummaryRead.of(summary)
+            for summary in await get_documents().list_for_element(element_id)
+        ]
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def read_document(document_id: DocumentId) -> DocumentRead:
+        """One document with its markdown in full.
+
+        A document may be up to a megabyte of text, so read the one you need
+        rather than every document `list_documents` named.
+        """
+        return DocumentRead.of(await get_documents().get(document_id))
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def revise_document(
+        document_id: DocumentId, filename: Filename, content: Markdown
+    ) -> DocumentRead:
+        """Replace a document's markdown with a new version of the same file.
+
+        `content` replaces the whole document; there is no partial edit, so
+        read it first if you mean to change a paragraph. `filename` must be the
+        name the document is already stored under — it is what says you are
+        rewriting the file you think you are, and a mismatch is refused rather
+        than applied.
+        """
+        return DocumentRead.of(
+            await get_documents().revise_text(document_id, filename=filename, content=content)
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def discard_document(document_id: DocumentId) -> str:
+        """Detach a document from its element and delete its text.
+
+        There is no undo and no version history: the markdown is gone. Confirm
+        with the person you are working for before calling it. Deleting the
+        element itself already takes its documents with it.
+        """
+        await get_documents().discard(document_id)
+        return f"document {document_id} was deleted"
 
     # --- Metamodel --------------------------------------------------------
 

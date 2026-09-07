@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ea.api.architecture import router as architecture_router
-from ea.api.dependencies import architecture_service_of
+from ea.api.dependencies import architecture_service_of, document_service_of
 from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
@@ -123,13 +123,23 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     regenerating for it. And the sub-application's own lifespan is dropped,
     which is why its session manager is handed to `_lifespan` instead.
 
+    Both services are looked up per call, off `app.state`, for the same reason:
+    they are built by the lifespan and this runs while the app is still being
+    assembled. A deployment with the relational store shut therefore serves the
+    document tools and fails them one by one — the wiring fault the REST
+    adapter answers with a 500, said in the other protocol.
+
     The transport security is stated rather than inferred. Given a `host`, the
     SDK enables DNS-rebinding protection *only* when that host is loopback — so
     handing it `settings.host` silently switched the protection off the day the
     API started binding every interface, on a path that writes to the graph
     without authentication. The allowlist is its own setting instead.
     """
-    server = build_mcp_server(lambda: architecture_service_of(app), version=app.version)
+    server = build_mcp_server(
+        lambda: architecture_service_of(app),
+        lambda: document_service_of(app),
+        version=app.version,
+    )
     transport = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         transport_security=_transport_security(settings),

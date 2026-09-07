@@ -51,14 +51,26 @@ class DocumentService:
         """Attach an uploaded markdown file to an element.
 
         `raw` rather than text: decoding is a rule about what a document *is*
-        (`domain/documents.py`), so every adapter gets the same answer for a
-        file that is not UTF-8 — and the same message.
+        (`domain/documents.py`), so every adapter that holds an upload gets the
+        same answer for a file that is not UTF-8 — and the same message.
+        """
+        return await self.attach_text(element_id, filename=filename, content=decode_markdown(raw))
+
+    async def attach_text(self, element_id: UUID, *, filename: str, content: str) -> Document:
+        """Attach markdown an adapter already holds as text.
+
+        The MCP tools land here: an agent composes a document, it never
+        uploads one, and encoding that text only to decode it again would let
+        `decode_markdown` refuse — for not being UTF-8 — a string that by
+        construction is. Everything a document must satisfy once it *is* text
+        is checked below this line, in `Document.create`, so the two entry
+        points differ by exactly the decoding step and nothing else.
         """
         await self._architecture.get_element(element_id)
         document = Document.create(
             element_id=element_id,
             filename=filename,
-            content=decode_markdown(raw),
+            content=content,
             now=self._now(),
         )
         return await self._repository.add(document)
@@ -88,12 +100,22 @@ class DocumentService:
         name, and quietly overwriting `runbook.md` with the contents of
         `notes.md` under the old name is how a reader ends up misled.
         """
+        return await self.revise_text(document_id, filename=filename, content=decode_markdown(raw))
+
+    async def revise_text(self, document_id: UUID, *, filename: str, content: str) -> Document:
+        """Replace a stored document with markdown an adapter holds as text.
+
+        The counterpart of `attach_text`, and it keeps the name check: an agent
+        rewriting `runbook.md` has to say which document it is rewriting, so a
+        tool call aimed at the wrong id is refused rather than silently
+        replacing the wrong file.
+        """
         current = await self.get(document_id)
-        uploaded = clean_filename(filename)
-        if uploaded != current.filename:
-            msg = f"this document is {current.filename!r}, and the file uploaded is {uploaded!r}"
+        offered = clean_filename(filename)
+        if offered != current.filename:
+            msg = f"this document is {current.filename!r}, and the file offered is {offered!r}"
             raise ValueError(msg)
-        revised = current.revise(decode_markdown(raw), now=self._now())
+        revised = current.revise(content, now=self._now())
         return await self._repository.replace(revised)
 
     async def discard(self, document_id: UUID) -> None:
