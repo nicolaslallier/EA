@@ -1,11 +1,17 @@
-# Bases de données locales.
+# PostgreSQL jetable, pour les tests.
 #
-# Le graphe d'architecture ne figure plus ici : il tourne sur le cluster Docker
-# (192.168.1.252), déployé depuis `deploy/neo4j.stack.yml`. Voir docs/adr/0006.
+# Aucune des deux bases du projet ne tourne ici : le graphe (docs/adr/0006) et
+# le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques sur le
+# cluster Docker, 192.168.1.252.
 #
-# Il ne reste donc que PostgreSQL, qui n'est encore utilisé par aucun code :
-# `make pg-up` le démarre le jour où l'authentification ou l'audit en aura
-# besoin. Voir docs/adr/0004 pour le partage des rôles entre les deux bases.
+# Ce conteneur existe pour une seule raison : les tests d'intégration relationnels
+# appliquent puis annulent la chaîne de migrations (`alembic downgrade base`), ce
+# qu'on ne fait pas sur une base que d'autres utilisent. `make test-postgres` le
+# démarre et pointe dessus explicitement ; `make pg-ping`, `pg-shell` et
+# `pg-migrate` visent le cluster, pas ce conteneur.
+#
+# Le mot de passe ci-dessous est jetable, pas un secret : celui du cluster vit
+# dans backend/.env, jamais dans un fichier versionné.
 
 services:
   postgres:

@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). The same backend also speaks **MCP**: `/mcp` offers the whole architecture service to an agent as fourteen tools — the element CRUD, the links, the two traversals and the metamodel — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-**Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
+The relational half now has a **scaffold and no table**: SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster are wired, `EA_POSTGRES_ENABLED` is off until the first table exists (see `docs/adr/0015`).
+
+**Not yet scaffolded** (do not assume these exist): auth, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
 
@@ -17,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
 | Architecture graph | Neo4j (`neo4j` async driver, Cypher) | The model *is* a graph; impact analysis is a variable-depth traversal — see `docs/adr/0004` |
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
-| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async) + Alembic | Auth, audit, scheduled work. **No table exists yet**; add the dependencies with the first one |
+| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | Auth, audit, scheduled work. Scaffolded and open for business; **no table exists yet** — see `docs/adr/0015` |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
 | Agent-facing API | MCP (`mcp` SDK 2.x), streamable HTTP served at `/mcp` | A second adapter over the same service, not a second API — see `docs/adr/0014` |
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
@@ -39,7 +41,10 @@ backend/
       archimate/   # the ArchiMate 3.2 metamodel: taxonomy, relations, rules
     services/      # use cases; orchestrate domain + repositories, own transactions
     repositories/  # Cypher implementations of the ports declared in domain
-    db/            # Neo4j driver lifecycle and schema (constraints + indexes)
+    db/            # Neo4j driver lifecycle and schema (constraints + indexes);
+                   #   the PostgreSQL engine, session factory and declarative base
+    db/models/     # every mapped table — the one module Alembic autogenerates from
+  migrations/      # Alembic revisions for PostgreSQL. The graph has none
     core/          # config (pydantic-settings), security, logging, errors
   tests/{unit,integration,e2e}/
 frontend/
@@ -61,7 +66,7 @@ targets):
 ```bash
 make install                    # uv sync + npm install
 make run                        # backend and frontend in parallel, interleaved logs
-make run-be                     # backend only  — http://127.0.0.1:8000
+make run-be                     # backend only  — binds 0.0.0.0:8000, reachable on the LAN
 make run-fe                     # frontend only — http://localhost:5173
 make run-be BE_PORT=8001        # every port is an overridable variable
 make clean                      # drop .venv, node_modules, caches, build output
@@ -80,6 +85,8 @@ uv run pytest tests/unit -q     # fast loop, no DB
 uv run pytest tests/unit/test_capability.py::test_rename -x  # single test
 uv run pytest --cov=ea --cov-report=term-missing --cov-fail-under=90
 make test-integration           # against the real Neo4j — EMPTIES the SHARED cluster graph
+make test-postgres              # against the THROWAWAY local PostgreSQL — never the cluster
+uv run alembic upgrade head     # or `make pg-migrate` — targets the SHARED cluster database
 uv run ruff format . && uv run ruff check --fix .
 uv run mypy src
 uv run bandit -c pyproject.toml -r src
@@ -98,7 +105,9 @@ npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint confi
 npm run generate:api                     # regenerate src/api/ — or `make openapi` from the root
 ```
 
-Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. `make pg-up` starts the still-unused local PostgreSQL.
+Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. PostgreSQL is a second instance on the same cluster: `make pg-ping` checks it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`.
+
+The API binds `0.0.0.0` (`docs/adr/0016`), so it answers from other machines. Two allowlists decide who is actually served, and **neither follows from the bind address**: `EA_CORS_ORIGINS` for browsers, `EA_MCP_ALLOWED_HOSTS` for `/mcp`. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead.
 
 `make check` runs lint, types (backend and frontend), the generated-client check and the DB-free suites on both sides — what CI will check.
 
@@ -194,9 +203,41 @@ the catalogue follows the rule for the element it details (`?element=`, see
 (`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is not that kind
 of state and stays in a `ref`.
 
+## The relational store is scaffolded and empty
+
+PostgreSQL is a second instance on the same cluster as the graph
+(192.168.1.252:5432), and its password is a real shared secret — `.env.example`
+leaves it blank, like Neo4j's. `db/postgres.py` owns the engine, the session
+factory and the boot-time check; `db/base.py` holds the declarative `Base` and
+**the constraint naming convention, which is frozen** — changing it after the
+first table is deployed renames constraints already in the database. See
+`docs/adr/0015`.
+
+Three rules matter when the first table arrives:
+
+1. **Its module is imported by `db/models/__init__.py`.** Alembic autogenerates
+   by diffing `Base.metadata`; a model that package does not import is one
+   autogenerate proposes to *drop*.
+2. **`EA_POSTGRES_ENABLED` flips to `true` in the same commit.** It is off
+   because nothing stores anything yet, so a machine out of reach of the
+   cluster still boots the API.
+3. **Never write a DSN anywhere.** `dsn_of()` builds it from `Settings` with
+   `URL.create` — a password holding `@`, `/` or `:` spliced into a URL string
+   silently addresses a *different* database. `alembic.ini` carries no
+   connection string; `migrations/env.py` reads `Settings` like everything else.
+
+`make pg-migrate` targets the **shared** database. The integration tests apply
+and then reverse the whole chain, which is why `make test-postgres` points at
+the throwaway container in `docker-compose.yml` instead — the graph has no such
+second instance, which is why its tests need `EA_ALLOW_DESTRUCTIVE_TESTS`.
+
+Transactions belong to `services/`, not to the route: `get_session` opens a
+session per request and commits nothing.
+
 ## The graph has no Alembic
 
-Neo4j has no schema to migrate; it has constraints and indexes. `backend/src/ea/db/schema.py` declares them with `IF NOT EXISTS` and the application applies the whole list at startup, so adding one is adding a line to `SCHEMA_STATEMENTS`. The whole list runs in one session that asks the server for nothing below a warning: `IF NOT EXISTS` makes every boot after the first a no-op, and an unfiltered session has Neo4j announce each no-op as an INFORMATION notification — sixteen log lines per start saying the schema is exactly as declared. The filter belongs to that session alone, so a notification about a *query* still surfaces. Renaming a stored value — an element type, say — is a *data* migration and needs a versioned Cypher script; that has not come up yet.
+Neo4j has no schema to migrate; it has constraints and indexes — the opposite
+discipline from the PostgreSQL above, in the same repository. `backend/src/ea/db/schema.py` declares them with `IF NOT EXISTS` and the application applies the whole list at startup, so adding one is adding a line to `SCHEMA_STATEMENTS`. The whole list runs in one session that asks the server for nothing below a warning: `IF NOT EXISTS` makes every boot after the first a no-op, and an unfiltered session has Neo4j announce each no-op as an INFORMATION notification — sixteen log lines per start saying the schema is exactly as declared. The filter belongs to that session alone, so a notification about a *query* still surfaces. Renaming a stored value — an element type, say — is a *data* migration and needs a versioned Cypher script; that has not come up yet.
 
 Elements are `:Element` nodes with the ArchiMate type as an indexed property; relationships carry their ArchiMate type as the real Neo4j relationship type. User-defined attributes are stored flat under a `p_` prefix so they stay queryable. `db/schema.py` explains why.
 

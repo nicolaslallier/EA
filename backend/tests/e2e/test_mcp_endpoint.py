@@ -150,3 +150,28 @@ class TestTheMounting:
 
         assert with_mcp == without_mcp
         assert MCP_PATH not in with_mcp["paths"]
+
+    async def test_a_foreign_host_header_is_refused_though_the_api_binds_the_world(
+        self, service: ArchitectureService
+    ) -> None:
+        """Regression: the allowlist must not be derived from the bind address.
+
+        The SDK turns DNS-rebinding protection on by itself only for a loopback
+        `host`, so passing it `EA_HOST` switched the protection off the day that
+        became `0.0.0.0` — leaving an unauthenticated write path onto the graph
+        answering any `Host` a browser could be tricked into sending.
+        """
+        app = an_app(service, host="0.0.0.0")
+
+        async with app.router.lifespan_context(app):
+            transport = httpx2.ASGITransport(app=app)
+            async with httpx2.AsyncClient(
+                transport=transport, base_url="http://evil.example:8000"
+            ) as http:
+                response = await http.post(
+                    MCP_PATH,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                    headers={"accept": "application/json, text/event-stream"},
+                )
+
+        assert response.status_code == 421

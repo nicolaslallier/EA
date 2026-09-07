@@ -77,3 +77,77 @@ def test_the_committed_env_example_builds_settings() -> None:
     settings = Settings(_env_file=example)  # type: ignore[call-arg]
 
     assert settings.cors_origins == ["http://localhost:5173"]
+
+
+def test_postgres_is_off_until_something_stores_a_table_there() -> None:
+    """Nothing relational exists yet; booting must not require a second database."""
+    assert Settings(_env_file=None).postgres_enabled is False  # type: ignore[call-arg]
+
+
+def test_the_postgres_connection_is_read_from_the_environment() -> None:
+    settings = Settings(
+        debug=True,
+        postgres_host="db.internal",
+        postgres_port=5433,
+        postgres_user="ea",
+        postgres_password="s3cret",
+        postgres_database="audit",
+    )
+
+    assert (settings.postgres_host, settings.postgres_port) == ("db.internal", 5433)
+    assert settings.postgres_database == "audit"
+    assert settings.postgres_password.get_secret_value() == "s3cret"
+
+
+def test_the_postgres_password_never_appears_in_a_repr() -> None:
+    assert "s3cret" not in repr(Settings(debug=True, postgres_password="s3cret"))
+
+
+def test_an_empty_postgres_password_is_refused_once_the_store_is_in_use() -> None:
+    with pytest.raises(ValueError, match="postgres_password"):
+        Settings(debug=False, neo4j_password="x", postgres_enabled=True, postgres_password="")
+
+
+def test_an_empty_postgres_password_is_tolerated_in_debug() -> None:
+    """The local container in `docker-compose.yml` is not a deployment."""
+    settings = Settings(debug=True, postgres_enabled=True, postgres_password="")
+
+    assert settings.postgres_password.get_secret_value() == ""
+
+
+def test_a_disabled_store_asks_for_no_password_at_all() -> None:
+    """A secret is required by *use*, not by the mere presence of a setting."""
+    settings = Settings(debug=False, neo4j_password="x", postgres_enabled=False)
+
+    assert settings.postgres_enabled is False
+
+
+def test_the_api_listens_on_every_interface_by_default() -> None:
+    """The stack is reached from other machines — the cluster, a phone, a peer."""
+    assert Settings(_env_file=None).host == "0.0.0.0"  # type: ignore[call-arg]
+
+
+def test_the_mcp_allowlist_does_not_follow_the_bind_address() -> None:
+    """Binding every interface must not widen who may call `/mcp`.
+
+    The MCP SDK turns DNS-rebinding protection on by itself only when it is
+    served on a loopback host. Deriving the allowlist from `host` would
+    therefore switch that protection *off* the moment the API binds 0.0.0.0 —
+    on an unauthenticated write path onto the graph. It is its own setting.
+    """
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.host == "0.0.0.0"
+    assert settings.mcp_allowed_hosts == ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+
+
+def test_the_mcp_allowlist_is_parsed_from_a_comma_separated_string() -> None:
+    settings = Settings(debug=True, mcp_allowed_hosts="192.168.1.40:8000, localhost:*")
+
+    assert settings.mcp_allowed_hosts == ["192.168.1.40:8000", "localhost:*"]
+
+
+def test_the_mcp_allowlist_rejects_a_bare_wildcard() -> None:
+    """`*` here is "any Host header", which is the protection switched off."""
+    with pytest.raises(ValueError, match="wildcard"):
+        Settings(debug=True, mcp_allowed_hosts="*")

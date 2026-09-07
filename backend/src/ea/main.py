@@ -8,6 +8,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.transport_security import TransportSecuritySettings
 
 from ea.api.architecture import router as architecture_router
 from ea.api.dependencies import architecture_service_of
@@ -16,6 +17,8 @@ from ea.api.health import router as health_router
 from ea.api.metamodel import router as metamodel_router
 from ea.core.config import Settings, get_settings
 from ea.db.neo4j import create_driver, prepare_database
+from ea.db.postgres import check_connectivity as check_relational_store
+from ea.db.postgres import create_engine, create_session_factory
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.services.architecture import ArchitectureService
@@ -38,6 +41,10 @@ def _lifespan(
     up off `app.state`, where `_mount_mcp` left it, because the manager only
     exists once the app it is mounted on does.
 
+    PostgreSQL is a third, and it is opened only when `postgres_enabled` says
+    something stores anything there — no table does yet (docs/adr/0015), so the
+    default is off and a machine that never ran `make pg-up` still boots.
+
     An `AsyncExitStack` composes them, which is why this is one lifespan rather
     than two: an app built with `architecture_service=` opens no driver but
     must still start the session manager, and before this it had no lifespan at
@@ -53,12 +60,35 @@ def _lifespan(
                 await prepare_database(driver, database=settings.neo4j_database)
                 repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
                 app.state.architecture_service = ArchitectureService(repository)
+            if settings.postgres_enabled:
+                engine = create_engine(settings)
+                stack.push_async_callback(engine.dispose)
+                await check_relational_store(engine)
+                app.state.db_sessions = create_session_factory(engine)
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
             yield
 
     return lifespan
+
+
+def _transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Which `Host` and `Origin` headers `/mcp` answers.
+
+    The origins are derived from the hosts rather than configured twice: an
+    entry is a host and an optional port, and a browser reaching it does so
+    over one of the two schemes. Anything not on the list is a 421.
+    """
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(settings.mcp_allowed_hosts),
+        allowed_origins=[
+            f"{scheme}://{allowed}"
+            for allowed in settings.mcp_allowed_hosts
+            for scheme in ("http", "https")
+        ],
+    )
 
 
 def _mount_mcp(app: FastAPI, settings: Settings) -> None:
@@ -75,9 +105,18 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     over MCP, and the generated TypeScript client neither sees it nor needs
     regenerating for it. And the sub-application's own lifespan is dropped,
     which is why its session manager is handed to `_lifespan` instead.
+
+    The transport security is stated rather than inferred. Given a `host`, the
+    SDK enables DNS-rebinding protection *only* when that host is loopback — so
+    handing it `settings.host` silently switched the protection off the day the
+    API started binding every interface, on a path that writes to the graph
+    without authentication. The allowlist is its own setting instead.
     """
     server = build_mcp_server(lambda: architecture_service_of(app), version=app.version)
-    transport = server.streamable_http_app(streamable_http_path=MCP_PATH, host=settings.host)
+    transport = server.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        transport_security=_transport_security(settings),
+    )
     if transport.user_middleware:  # pragma: no cover - only auth adds any today
         msg = "the MCP transport now ships middleware that splicing its routes would drop"
         raise RuntimeError(msg)

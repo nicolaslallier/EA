@@ -16,8 +16,14 @@ VENV_STAMP := $(VENV)/.uv-sync-stamp
 BE_ENV := $(BACKEND)/.env
 
 # Surchargeables en cas de conflit de port : `make run-be BE_PORT=8001`.
-BE_HOST ?= 127.0.0.1
+#
+# BE_HOST est l'adresse d'*écoute*, pas une adresse à ouvrir : 0.0.0.0 rend
+# l'API joignable depuis les autres postes du réseau. BE_URL est celle qu'on
+# affiche, puisqu'on ne visite pas 0.0.0.0. Qui a le droit d'appeler /mcp n'en
+# découle pas — c'est EA_MCP_ALLOWED_HOSTS, voir backend/.env.example.
+BE_HOST ?= 0.0.0.0
 BE_PORT ?= 8000
+BE_URL  ?= http://127.0.0.1:$(BE_PORT)
 FE_PORT ?= 5173
 
 # Base de données graphe : une instance unique sur le cluster Docker, déployée
@@ -35,6 +41,25 @@ PORTAINER_STACKS ?= http://$(NEO4J_HOST):9000/\#!/9/docker/stacks
 # vient de l'environnement, ou à défaut de backend/.env (non versionné).
 NEO4J_PASSWORD ?= $(shell sed -n 's/^EA_NEO4J_PASSWORD=//p' $(BACKEND)/.env 2>/dev/null | tail -1)
 
+# Base relationnelle : tout ce qui n'est pas le graphe (auth, audit,
+# planification). Comme le graphe, une seule instance, sur le cluster Docker.
+# Voir docs/adr/0015.
+POSTGRES_HOST ?= 192.168.1.252
+POSTGRES_PORT ?= 5432
+POSTGRES_USER ?= ea
+POSTGRES_DB   ?= ea
+POSTGRES_IMAGE ?= postgres:17-alpine
+
+# Comme pour Neo4j : pas de valeur par défaut, l'instance est partagée. Vient
+# de l'environnement, sinon de backend/.env (non versionné).
+POSTGRES_PASSWORD ?= $(shell sed -n 's/^EA_POSTGRES_PASSWORD=//p' $(BACKEND)/.env 2>/dev/null | tail -1)
+
+# Le conteneur jetable de docker-compose.yml, contre lequel tournent les tests
+# d'intégration : `alembic downgrade base` ne doit jamais viser le partagé. Son
+# mot de passe est celui que docker-compose.yml porte déjà en clair.
+POSTGRES_TEST_HOST     ?= host.docker.internal
+POSTGRES_TEST_PASSWORD ?= developmentonly
+
 # Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
 OPENAPI_SCHEMA_NAME := openapi.json
 OPENAPI_SCHEMA      := $(BACKEND)/$(OPENAPI_SCHEMA_NAME)
@@ -47,8 +72,9 @@ NC    := \033[0m
 .DEFAULT_GOAL := help
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
-        pg-up pg-down openapi openapi-check \
-        test test-unit test-integration test-fe lint typecheck check
+        pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
+        require-postgres-password openapi openapi-check \
+        test test-unit test-integration test-postgres test-fe lint typecheck check
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -72,8 +98,8 @@ install-fe: ## Installe les dépendances Node du frontend
 
 ## --- Exécution ------------------------------------------------------------
 
-run-be: | $(VENV_STAMP) $(BE_ENV) ## Lance le backend FastAPI (http://127.0.0.1:8000)
-	@printf "$(GREEN)Starting backend on http://$(BE_HOST):$(BE_PORT) ...$(NC)\n"
+run-be: | $(VENV_STAMP) $(BE_ENV) ## Lance le backend FastAPI (écoute 0.0.0.0:8000)
+	@printf "$(GREEN)Starting backend on $(BE_HOST):$(BE_PORT) — $(BE_URL)$(NC)\n"
 	cd $(BACKEND) && uv run uvicorn ea.main:app --reload --host $(BE_HOST) --port $(BE_PORT)
 
 run-fe: | $(FRONTEND)/node_modules ## Lance le frontend Vue/Vite (http://localhost:5173)
@@ -157,15 +183,58 @@ db-reset: | require-neo4j-password ## Vide le graphe du cluster (CONFIRM=yes obl
 		cypher-shell -a $(NEO4J_URI) 'MATCH (n) DETACH DELETE n'
 	@printf "$(GREEN)Graphe vidé.$(NC)\n"
 
-## --- PostgreSQL local -----------------------------------------------------
+## --- PostgreSQL -----------------------------------------------------------
 #
-# Encore inutilisé : aucune table n'existe. Reste local, contrairement au
-# graphe, tant qu'aucun code ne s'y connecte.
+# Comme le graphe, une instance unique sur le cluster ($(POSTGRES_HOST)) :
+# `pg-ping`, `pg-shell` et `pg-migrate` s'y connectent, aucune ne la démarre.
+# Le client psql est pris dans l'image Postgres plutôt qu'installé sur le poste.
+#
+# `pg-up` fait exception : il lance le conteneur *jetable* de
+# docker-compose.yml, celui contre lequel tournent les tests d'intégration.
+# Ceux-ci appliquent puis annulent les migrations, ce qu'on ne fait pas sur une
+# base que d'autres utilisent.
+#
+# Aucune table n'existe encore — le socle SQLAlchemy et Alembic est en place,
+# la première table reste à écrire. Voir docs/adr/0015. Le graphe n'a pas de
+# migrations (ses contraintes sont réappliquées au démarrage) ; PostgreSQL, si.
 
-pg-up: ## Démarre PostgreSQL en local
+require-postgres-password:
+	@test -n "$(POSTGRES_PASSWORD)" || { \
+		printf "$(RED)POSTGRES_PASSWORD est vide.$(NC)\n"; \
+		printf "Renseigne EA_POSTGRES_PASSWORD dans $(BACKEND)/.env, ou lance :\n"; \
+		printf "  make $(MAKECMDGOALS) POSTGRES_PASSWORD=...\n"; exit 1; }
+
+pg-ping: | require-postgres-password ## Vérifie que la base du cluster répond
+	@printf "$(GREEN)Interrogation de $(POSTGRES_USER)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB) ...$(NC)\n"
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD $(POSTGRES_IMAGE) \
+		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
+		-c 'SELECT version()' \
+	|| { printf "$(RED)Aucune réponse. Vérifie l'\''hôte et le mot de passe.$(NC)\n"; exit 1; }
+
+pg-shell: | require-postgres-password ## Ouvre un psql sur la base du cluster
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -it -e PGPASSWORD $(POSTGRES_IMAGE) \
+		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+
+pg-migrate: | $(VENV_STAMP) ## Applique les migrations Alembic jusqu'à head (base du cluster)
+	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
+	cd $(BACKEND) && uv run alembic upgrade head
+
+pg-history: | $(VENV_STAMP) ## Affiche la chaîne des migrations et la révision courante
+	cd $(BACKEND) && uv run alembic history --indicate-current
+
+# `m` est obligatoire : une révision sans message donne un fichier qu'on ne
+# sait plus relire six mois plus tard.
+pg-revision: | $(VENV_STAMP) ## Génère une migration depuis les modèles (m="ajoute la table users")
+	@test -n "$(m)" || { \
+		printf "$(RED)Message manquant.$(NC)\n"; \
+		printf 'Lance : make pg-revision m="ajoute la table users"\n'; exit 1; }
+	cd $(BACKEND) && uv run alembic revision --autogenerate -m "$(m)"
+	@printf "$(GREEN)Relis le fichier généré avant de le committer.$(NC)\n"
+
+pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	docker compose up -d --wait postgres
 
-pg-down: ## Arrête PostgreSQL (les données restent dans le volume)
+pg-down: ## Arrête le PostgreSQL jetable local (les données restent dans le volume)
 	docker compose down
 
 ## --- Contrat front/back ---------------------------------------------------
@@ -205,11 +274,22 @@ test-integration: | $(VENV_STAMP) require-neo4j-password ## Tests contre le vrai
 		EA_NEO4J_URI=$(NEO4J_URI) \
 		uv run pytest tests/integration -q
 
+# Explicitement contre le conteneur jetable, jamais contre le cluster : ces
+# tests appliquent puis annulent la chaîne de migrations.
+test-postgres: | $(VENV_STAMP) ## Tests contre le PostgreSQL jetable local (le démarre au besoin)
+	docker compose up -d --wait postgres
+	cd $(BACKEND) && EA_DEBUG=true EA_POSTGRES_ENABLED=true \
+		EA_POSTGRES_HOST=127.0.0.1 EA_POSTGRES_PORT=5432 \
+		EA_POSTGRES_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
+		uv run pytest tests/integration -m postgres -q
+
 lint: ## ruff format + check
 	cd $(BACKEND) && uv run ruff format . && uv run ruff check --fix .
 
+# `migrations` en plus de `src` : env.py et les révisions sont du code exécuté
+# en production, pas des fichiers générés qu'on ne relit jamais.
 typecheck: ## mypy --strict, puis vue-tsc sur le frontend
-	cd $(BACKEND) && uv run mypy src
+	cd $(BACKEND) && uv run mypy src migrations
 	cd $(FRONTEND) && npm run typecheck
 
 check: lint typecheck openapi-check test test-fe ## Tout ce que la CI vérifiera
