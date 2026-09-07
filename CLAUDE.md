@@ -196,7 +196,7 @@ of state and stays in a `ref`.
 
 ## The graph has no Alembic
 
-Neo4j has no schema to migrate; it has constraints and indexes. `backend/src/ea/db/schema.py` declares them with `IF NOT EXISTS` and the application applies the whole list at startup, so adding one is adding a line to `SCHEMA_STATEMENTS`. Renaming a stored value — an element type, say — is a *data* migration and needs a versioned Cypher script; that has not come up yet.
+Neo4j has no schema to migrate; it has constraints and indexes. `backend/src/ea/db/schema.py` declares them with `IF NOT EXISTS` and the application applies the whole list at startup, so adding one is adding a line to `SCHEMA_STATEMENTS`. The whole list runs in one session that asks the server for nothing below a warning: `IF NOT EXISTS` makes every boot after the first a no-op, and an unfiltered session has Neo4j announce each no-op as an INFORMATION notification — sixteen log lines per start saying the schema is exactly as declared. The filter belongs to that session alone, so a notification about a *query* still surfaces. Renaming a stored value — an element type, say — is a *data* migration and needs a versioned Cypher script; that has not come up yet.
 
 Elements are `:Element` nodes with the ArchiMate type as an indexed property; relationships carry their ArchiMate type as the real Neo4j relationship type. User-defined attributes are stored flat under a `p_` prefix so they stay queryable. `db/schema.py` explains why.
 

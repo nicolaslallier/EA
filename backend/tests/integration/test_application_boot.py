@@ -14,7 +14,7 @@ import pytest
 from neo4j import AsyncDriver
 
 from ea.core.config import Settings
-from ea.db.schema import SCHEMA_STATEMENTS
+from ea.db.schema import apply_schema
 from ea.main import create_app
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -43,10 +43,15 @@ async def test_the_application_boots_against_the_graph_and_serves_a_request(
 async def test_applying_the_schema_twice_changes_nothing(
     graph_driver: object,
 ) -> None:
-    """Boot applies the whole list every time, so a second boot must be a no-op."""
+    """Boot applies the whole list every time, so a second boot must be a no-op.
+
+    Applying it through `apply_schema` rather than statement by statement is
+    the point: the second pass is the one the real server answers with "already
+    exists" for every statement, so it is also what proves the session that
+    carries them is one the driver accepts.
+    """
     driver: AsyncDriver = graph_driver  # type: ignore[assignment]
     settings = Settings(debug=True)
 
-    for statement in SCHEMA_STATEMENTS:
-        await driver.execute_query(statement, database_=settings.neo4j_database)
-        await driver.execute_query(statement, database_=settings.neo4j_database)
+    await apply_schema(driver, database=settings.neo4j_database)
+    await apply_schema(driver, database=settings.neo4j_database)
