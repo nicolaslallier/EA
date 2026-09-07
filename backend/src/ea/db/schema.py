@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, LiteralString
 
+from neo4j import NotificationMinimumSeverity
+
 if TYPE_CHECKING:
     from neo4j import AsyncDriver
 
@@ -63,6 +65,21 @@ SCHEMA_STATEMENTS: Final[tuple[LiteralString, ...]] = (
 
 
 async def apply_schema(driver: AsyncDriver, *, database: str) -> None:
-    """Bring `database` up to `SCHEMA_STATEMENTS`. Safe to run on every boot."""
-    for statement in SCHEMA_STATEMENTS:
-        await driver.execute_query(statement, database_=database)
+    """Bring `database` up to `SCHEMA_STATEMENTS`. Safe to run on every boot.
+
+    The one session is opened asking the server for nothing below a warning.
+    `IF NOT EXISTS` makes every boot after the first a no-op, and Neo4j reports
+    each no-op as an INFORMATION notification saying the constraint already
+    exists; the driver logs all sixteen of them at every start. That is the
+    designed outcome being announced as news, so the filter is set here — on
+    the schema session alone, so a notification about a *query* still surfaces.
+    """
+    async with driver.session(
+        database=database,
+        notifications_min_severity=NotificationMinimumSeverity.WARNING,
+    ) as session:
+        for statement in SCHEMA_STATEMENTS:
+            result = await session.run(statement)
+            # Consuming is what makes the statement's failure this call's
+            # failure: `run` only sends it.
+            await result.consume()
