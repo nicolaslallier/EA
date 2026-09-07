@@ -117,5 +117,6 @@ access: business_process -> application_service is not permitted
 
 ## Documentation
 
+- [`docs/README.md`](docs/README.md) — index de documentation et vue d'ensemble du système.
 - [`CLAUDE.md`](CLAUDE.md) — conventions de la pile, TDD, règles de sécurité.
 - [`docs/adr/`](docs/adr/) — décisions d'architecture et leurs conséquences.
