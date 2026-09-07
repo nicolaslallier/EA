@@ -84,6 +84,24 @@ class InMemoryRepository:
     async def delete_relationship(self, relationship_id: UUID) -> bool:
         return self.relationships.pop(relationship_id, None) is not None
 
+    async def relations_of(
+        self, element_id: UUID, *, relationship_types: Sequence[R] = ()
+    ) -> GraphView:
+        """The links touching one element, plus every element they reach."""
+        links = tuple(
+            link
+            for link in self.relationships.values()
+            if element_id in (link.source_id, link.target_id)
+            and (not relationship_types or link.relationship_type in relationship_types)
+        )
+        reached = (
+            {element_id} | {link.source_id for link in links} | {link.target_id for link in links}
+        )
+        return GraphView(
+            elements=tuple(self.elements[reached_id] for reached_id in reached),
+            relationships=links,
+        )
+
     async def neighbourhood(
         self, element_id: UUID, *, depth: int = 1, relationship_types: Sequence[R] = ()
     ) -> GraphView:

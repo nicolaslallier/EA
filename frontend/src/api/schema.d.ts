@@ -97,6 +97,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/elements/{element_id}/relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Element Relations
+         * @description Every link attached to one element, with the elements at both ends.
+         *
+         *     `GET /relationships?element_id=` answers with the links alone, which is
+         *     enough to count them but not to display one: a link stores the *types* of
+         *     its endpoints, never their names. This returns the sub-graph instead, so a
+         *     client renders "Invoice API serves Order to cash" from one response.
+         */
+        get: operations["read_element_relations_elements__element_id__relationships_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -731,6 +756,48 @@ export interface operations {
         parameters: {
             query?: {
                 depth?: number;
+                relationship_type?: components["schemas"]["RelationshipType"][] | null;
+            };
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_element_relations_elements__element_id__relationships_get: {
+        parameters: {
+            query?: {
                 relationship_type?: components["schemas"]["RelationshipType"][] | null;
             };
             header?: never;

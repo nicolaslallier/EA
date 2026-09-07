@@ -1123,6 +1123,79 @@
         ]
       }
     },
+    "/elements/{element_id}/relationships": {
+      "get": {
+        "description": "Every link attached to one element, with the elements at both ends.\n\n`GET /relationships?element_id=` answers with the links alone, which is\nenough to count them but not to display one: a link stores the *types* of\nits endpoints, never their names. This returns the sub-graph instead, so a\nclient renders \"Invoice API serves Order to cash\" from one response.",
+        "operationId": "read_element_relations_elements__element_id__relationships_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relationship_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/RelationshipType"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relationship Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Element Relations",
+        "tags": [
+          "architecture"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health_health_get",

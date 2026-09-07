@@ -174,6 +174,27 @@ async def delete_relationship(relationship_id: UUID, service: Architecture) -> R
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get(
+    "/elements/{element_id}/relationships",
+    response_model=GraphRead,
+    responses=NOT_FOUND,
+)
+async def read_element_relations(
+    element_id: UUID,
+    service: Architecture,
+    relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
+) -> GraphRead:
+    """Every link attached to one element, with the elements at both ends.
+
+    `GET /relationships?element_id=` answers with the links alone, which is
+    enough to count them but not to display one: a link stores the *types* of
+    its endpoints, never their names. This returns the sub-graph instead, so a
+    client renders "Invoice API serves Order to cash" from one response.
+    """
+    view = await service.relations_of(element_id, relationship_types=tuple(relationship_type or ()))
+    return GraphRead.of(view)
+
+
 # --- Traversals -----------------------------------------------------------
 
 

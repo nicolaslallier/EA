@@ -1,13 +1,16 @@
 <script setup lang="ts">
-// The catalogue screen: browse, create, edit and delete architecture elements.
+// The catalogue screen: browse, create, edit and delete architecture elements,
+// and open the relations of one of them.
 //
-// It owns the interaction — which form is open, which row is awaiting a
-// confirmation — and delegates every rule to the API. The two composables it
-// uses hold the data: one for the page of elements, one for the palette.
+// It owns the interaction — which form or panel is open, which row is awaiting
+// a confirmation — and delegates every rule to the API. The two composables it
+// uses hold the data: one for the page of elements, one for the palette; the
+// relations panel owns its own.
 import { onMounted, ref } from 'vue'
 
 import { messageOf } from '../../lib/api'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
+import RelationshipPanel from '../relationships/RelationshipPanel.vue'
 import ElementForm from './ElementForm.vue'
 import type { ElementCreate, ElementRead, ElementUpdate } from './useElementCatalogue'
 import { useElementCatalogue } from './useElementCatalogue'
@@ -20,6 +23,8 @@ const editing = ref<ElementRead | null>(null)
 const creating = ref(false)
 /** The row whose deletion is waiting for a confirmation. */
 const confirming = ref<ElementRead | null>(null)
+/** The element whose relations are on screen, or nothing. */
+const relating = ref<ElementRead | null>(null)
 const failure = ref('')
 const busy = ref(false)
 
@@ -31,6 +36,14 @@ function openCreate(): void {
   failure.value = ''
   editing.value = null
   creating.value = true
+}
+
+/** Show the relations of one row. Only one panel at a time, like the form. */
+function openRelations(element: ElementRead): void {
+  failure.value = ''
+  creating.value = false
+  editing.value = null
+  relating.value = element
 }
 
 function openEdit(element: ElementRead): void {
@@ -145,6 +158,13 @@ function day(iso: string): string {
       @cancel="closeForm"
     />
 
+    <RelationshipPanel
+      v-if="relating"
+      :key="relating.id"
+      :element="relating"
+      @close="relating = null"
+    />
+
     <p v-if="confirming" class="banner banner--confirm" role="alert">
       Supprimer « {{ confirming.name }} » et toutes ses relations ?
       <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
@@ -180,6 +200,13 @@ function day(iso: string): string {
           <td class="row-actions">
             <button type="button" :aria-label="`Modifier ${element.name}`" @click="openEdit(element)">
               Modifier
+            </button>
+            <button
+              type="button"
+              :aria-label="`Relations de ${element.name}`"
+              @click="openRelations(element)"
+            >
+              Relations
             </button>
             <button
               type="button"

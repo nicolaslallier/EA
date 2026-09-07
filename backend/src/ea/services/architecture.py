@@ -188,6 +188,18 @@ class ArchitectureService:
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
 
+    async def relations_of(
+        self,
+        element_id: UUID,
+        *,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        """Everything an element is linked to, ready to be listed or drawn."""
+        await self.get_element(element_id)
+        return await self._repository.relations_of(
+            element_id, relationship_types=relationship_types
+        )
+
     # --- Analysis ---------------------------------------------------------
 
     async def neighbourhood(

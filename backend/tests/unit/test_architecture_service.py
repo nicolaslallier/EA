@@ -142,3 +142,24 @@ class TestAnalysis:
         """An empty graph and a wrong id must not look the same to a caller."""
         with pytest.raises(ElementNotFoundError):
             await service.impact_of(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_listing_the_relations_of_an_unknown_element_fails(
+        self, service: ArchitectureService
+    ) -> None:
+        with pytest.raises(ElementNotFoundError):
+            await service.relations_of(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_relations_of_an_element_carry_both_endpoints(
+        self, service: ArchitectureService
+    ) -> None:
+        """A link is unreadable without its ends: the view carries them along."""
+        api = await service.create_element(element_type=E.APPLICATION_SERVICE, name="Invoice API")
+        process = await service.create_element(element_type=E.BUSINESS_PROCESS, name="Order")
+        await service.connect(relationship_type=R.SERVING, source_id=api.id, target_id=process.id)
+
+        view = await service.relations_of(api.id)
+
+        assert {element.name for element in view.elements} == {"Invoice API", "Order"}
+        assert [link.relationship_type for link in view.relationships] == [R.SERVING]
