@@ -12,6 +12,8 @@ export type ElementTypeRead = components['schemas']['ElementTypeRead']
 export type ElementType = components['schemas']['ElementType']
 export type Layer = components['schemas']['Layer']
 
+export type RelationshipType = components['schemas']['RelationshipType']
+
 export type LayerGroup = { layer: Layer; types: ElementTypeRead[] }
 
 /** Layer names for display; the wire values are snake_case identifiers. */
@@ -26,8 +28,32 @@ export const LAYER_LABELS: Record<Layer, string> = {
   other: 'Transverse',
 }
 
+/**
+ * The fill of an element on a drawing, one per layer.
+ *
+ * These are the conventional ArchiMate colours — a yellow business layer, a
+ * cyan application one, a green technology one — so a diagram drawn here reads
+ * like every other ArchiMate diagram. They are light fills in both themes,
+ * which is why a box states its own text colour instead of inheriting the
+ * page's: dark text on a pale yellow box stays legible at night.
+ */
+export const LAYER_COLOURS: Record<Layer, string> = {
+  motivation: '#ccccff',
+  strategy: '#f5deaa',
+  business: '#ffffb5',
+  application: '#b5ffff',
+  technology: '#c9e7b7',
+  physical: '#afdfa0',
+  implementation_migration: '#ffe0e0',
+  other: '#e8e6ec',
+}
+
+/** The ink on those fills — never `var(--text)`, which inverts in the dark. */
+export const BOX_TEXT = '#24202b'
+
 export function useMetamodel() {
   const elementTypes = ref<ElementTypeRead[]>([])
+  const relationshipTypes = ref<RelationshipType[]>([])
   const layers = ref<Layer[]>([])
   const error = ref('')
 
@@ -55,6 +81,7 @@ export function useMetamodel() {
     try {
       const metamodel = unwrap(await api.GET('/metamodel', {}))
       elementTypes.value = metamodel.element_types
+      relationshipTypes.value = metamodel.relationship_types
       layers.value = metamodel.layers
     } catch (caught) {
       // The palette is a convenience: a failure here must not take the whole
@@ -63,5 +90,5 @@ export function useMetamodel() {
     }
   }
 
-  return { elementTypes, layers, byLayer, labelOf, error, load }
+  return { elementTypes, relationshipTypes, layers, byLayer, labelOf, error, load }
 }
