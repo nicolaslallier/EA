@@ -3,20 +3,48 @@
 // and open the relations of one of them.
 //
 // It owns the interaction — which form or panel is open, which row is awaiting
-// a confirmation — and delegates every rule to the API. The two composables it
-// uses hold the data: one for the page of elements, one for the palette; the
-// relations panel owns its own.
-import { onMounted, ref } from 'vue'
+// a confirmation — and delegates every rule to the API. The three composables
+// it uses hold the data: one for the page of elements, one for the palette,
+// one for the element being looked at; the relations panel owns its own.
+//
+// Which element is detailed is the one piece of this screen's state a user
+// would send to a colleague, so it lives in the URL (`?element=`) rather than
+// in a ref — like the neighbourhood, see docs/adr/0010. An unsaved form is not
+// that kind of state, and stays local.
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import RelationshipPanel from '../relationships/RelationshipPanel.vue'
+import ElementDetail from './ElementDetail.vue'
 import ElementForm from './ElementForm.vue'
 import type { ElementCreate, ElementRead, ElementUpdate } from './useElementCatalogue'
 import { useElementCatalogue } from './useElementCatalogue'
+import { useElementDetail } from './useElementDetail'
 
+const route = useRoute()
+const router = useRouter()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
+const detail = useElementDetail()
+
+/** The element the URL asks to detail, if it asks for one. */
+const detailedId = computed(() =>
+  typeof route.query.element === 'string' ? route.query.element : '',
+)
+
+watch(
+  detailedId,
+  async (id) => {
+    if (!id) {
+      detail.close()
+      return
+    }
+    await detail.open(id)
+  },
+  { immediate: true },
+)
 
 /** Which form is open: none, a blank one, or one editing a stored element. */
 const editing = ref<ElementRead | null>(null)
@@ -32,24 +60,47 @@ onMounted(async () => {
   await Promise.all([metamodel.load(), catalogue.load()])
 })
 
-function openCreate(): void {
+/**
+ * Show the detail of one element by asking for it in the URL.
+ *
+ * Opening pushes, so the back button closes the detail; closing replaces, so a
+ * dozen opened-and-closed elements do not bury the page the user came from.
+ */
+async function openDetail(element: ElementRead): Promise<void> {
+  await router.push({ query: { ...route.query, element: element.id } })
+}
+
+async function closeDetail(): Promise<void> {
+  if (!detailedId.value) {
+    return
+  }
+  const { element: _detailed, ...rest } = route.query
+  await router.replace({ query: rest })
+}
+
+// One panel at a time: acting on an element replaces the reading of it, so the
+// screen never shows the same element twice, once read-only and once in a form.
+async function openCreate(): Promise<void> {
   failure.value = ''
   editing.value = null
   creating.value = true
+  await closeDetail()
 }
 
 /** Show the relations of one row. Only one panel at a time, like the form. */
-function openRelations(element: ElementRead): void {
+async function openRelations(element: ElementRead): Promise<void> {
   failure.value = ''
   creating.value = false
   editing.value = null
   relating.value = element
+  await closeDetail()
 }
 
-function openEdit(element: ElementRead): void {
+async function openEdit(element: ElementRead): Promise<void> {
   failure.value = ''
   creating.value = false
   editing.value = element
+  await closeDetail()
 }
 
 function closeForm(): void {
@@ -158,6 +209,20 @@ function day(iso: string): string {
       @cancel="closeForm"
     />
 
+    <p v-if="detail.status.value === 'error'" class="banner banner--error" role="alert">
+      {{ detail.error.value }}
+    </p>
+
+    <p v-if="detail.status.value === 'loading'" class="hint">Chargement de l'élément…</p>
+
+    <ElementDetail
+      v-if="detail.element.value"
+      :key="detail.element.value.id"
+      :element="detail.element.value"
+      :type-label="metamodel.labelOf(detail.element.value.element_type)"
+      @close="closeDetail"
+    />
+
     <RelationshipPanel
       v-if="relating"
       :key="relating.id"
@@ -192,7 +257,11 @@ function day(iso: string): string {
       </thead>
       <tbody>
         <tr v-for="element in catalogue.items.value" :key="element.id">
-          <td>{{ element.name }}</td>
+          <td>
+            <button type="button" class="link" @click="openDetail(element)">
+              {{ element.name }}
+            </button>
+          </td>
           <td>{{ metamodel.labelOf(element.element_type) }}</td>
           <td>{{ LAYER_LABELS[element.layer] }}</td>
           <td class="description">{{ element.description }}</td>
@@ -291,6 +360,19 @@ button:disabled {
 }
 .secondary {
   background: transparent;
+}
+/* The name is a real control — focusable and announced as a button — drawn as
+   the link it behaves like. */
+.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 table {
   width: 100%;

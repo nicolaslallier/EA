@@ -173,7 +173,10 @@ Vue 3 + TypeScript + Vite, en `<script setup>`
 deux sections construites :
 
 - **Éléments** — parcourir, créer, modifier, supprimer
-  ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md)) ;
+  ([`adr/0007`](adr/0007-client-openapi-genere-pour-le-spa.md)). Le nom d'une
+  ligne est un bouton : il ouvre le détail de l'élément — documentation,
+  aspect, attributs libres, identifiant, dates — sous `?element=<id>`, donc la
+  vue s'envoie par lien ([`adr/0011`](adr/0011-detail-d-un-element-dans-le-catalogue.md)) ;
 - **Relations** — choisir un élément, lister ses liens, en ajouter et en retirer
   ([`adr/0009`](adr/0009-association-des-elements-dans-le-spa.md)). Le même
   panneau s'ouvre depuis n'importe quelle ligne du catalogue. Le formulaire ne
@@ -268,4 +271,5 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0008](adr/0008-menu-et-routage-du-spa.md) | Menu de sections et routage du SPA | Accepté |
 | [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
 | [0010](adr/0010-dessiner-le-voisinage-d-un-element.md) | Dessiner le voisinage d'un élément | Accepté |
+| [0011](adr/0011-detail-d-un-element-dans-le-catalogue.md) | Le détail d'un élément, ouvert depuis le catalogue | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |
