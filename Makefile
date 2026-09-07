@@ -194,9 +194,10 @@ db-reset: | require-neo4j-password ## Vide le graphe du cluster (CONFIRM=yes obl
 # Ceux-ci appliquent puis annulent les migrations, ce qu'on ne fait pas sur une
 # base que d'autres utilisent.
 #
-# Aucune table n'existe encore — le socle SQLAlchemy et Alembic est en place,
-# la première table reste à écrire. Voir docs/adr/0015. Le graphe n'a pas de
-# migrations (ses contraintes sont réappliquées au démarrage) ; PostgreSQL, si.
+# La première table existe : `element_documents`, les fichiers markdown
+# attachés aux éléments (docs/adr/0017). Le graphe n'a pas de migrations (ses
+# contraintes sont réappliquées au démarrage) ; PostgreSQL, si — `pg-migrate`
+# est l'étape que le graphe n'a pas.
 
 require-postgres-password:
 	@test -n "$(POSTGRES_PASSWORD)" || { \

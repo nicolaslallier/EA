@@ -4,6 +4,8 @@ import type { components } from '../../src/api/schema'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type DocumentSummaryRead = components['schemas']['DocumentSummaryRead']
+type DocumentRead = components['schemas']['DocumentRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -22,6 +24,13 @@ export type RecordedCall = { method: string; url: URL; body: unknown }
  * the real request the component makes — the URL, the query string and the
  * body — rather than a mocked module that would let a wrong URL pass.
  */
+/** What a recorded call carries in place of an unreadable multipart body. */
+export const MULTIPART = '[multipart/form-data]'
+
+function isMultipart(request: Request): boolean {
+  return (request.headers.get('content-type') ?? '').startsWith('multipart/form-data')
+}
+
 export function stubApi(routes: Route[]): RecordedCall[] {
   const calls: RecordedCall[] = []
 
@@ -32,7 +41,18 @@ export function stubApi(routes: Route[]): RecordedCall[] {
       const url = new URL(request.url)
       // The body is read from a clone so the recorded call never consumes the
       // stream the client itself is about to send.
-      const body = request.body ? await request.clone().json() : undefined
+      //
+      // An upload is `multipart/form-data`, and only the fact that it *is* one
+      // is recorded. Reading it back is not possible here: jsdom installs its
+      // own `File` and `Blob`, Node's multipart machinery refuses to serialise
+      // or parse them, and the bytes this environment produces are not the
+      // ones a browser sends. What goes in the form is asserted directly
+      // instead, on `markdownForm` — see `useElementDocuments.spec.ts`.
+      const body = request.body
+        ? isMultipart(request)
+          ? MULTIPART
+          : await request.clone().json()
+        : undefined
       calls.push({ method: request.method, url, body })
 
       const route = routes.find(
@@ -144,4 +164,29 @@ export function aMatrix(
       relationships,
     })),
   }
+}
+
+/** One attached markdown file, as a listing returns it — no content. */
+export function aDocumentSummary(
+  overrides: Partial<DocumentSummaryRead> = {},
+): DocumentSummaryRead {
+  return {
+    id: 'dddddddd-1111-4111-8111-111111111111',
+    element_id: '11111111-1111-4111-8111-111111111111',
+    filename: 'runbook.md',
+    byte_size: 42,
+    created_at: '2026-09-07T12:00:00Z',
+    updated_at: '2026-09-07T12:00:00Z',
+    ...overrides,
+  }
+}
+
+/** The same document with its markdown, as `GET /documents/{id}` returns it. */
+export function aDocument(overrides: Partial<DocumentRead> = {}): DocumentRead {
+  return { ...aDocumentSummary(), content: '# Runbook\n', ...overrides }
+}
+
+/** A picked file, as the browser hands one to a change handler. */
+export function aFile(name = 'runbook.md', content = '# Runbook\n'): File {
+  return new File([content], name, { type: 'text/markdown' })
 }

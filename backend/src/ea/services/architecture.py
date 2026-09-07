@@ -21,7 +21,12 @@ from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.model import Element, Relationship
 
 if TYPE_CHECKING:
-    from ea.domain.ports import ArchitectureRepository, ElementFilter, GraphView
+    from ea.domain.ports import (
+        ArchitectureRepository,
+        ElementAttachments,
+        ElementFilter,
+        GraphView,
+    )
 
 Clock = Callable[[], datetime]
 
@@ -36,9 +41,16 @@ def _utc_now() -> datetime:
 class ArchitectureService:
     """The single entry point `api/` uses to read and change the graph."""
 
-    def __init__(self, repository: ArchitectureRepository, *, clock: Clock = _utc_now) -> None:
+    def __init__(
+        self,
+        repository: ArchitectureRepository,
+        *,
+        clock: Clock = _utc_now,
+        attachments: ElementAttachments | None = None,
+    ) -> None:
         self._repository = repository
         self._now = clock
+        self._attachments = attachments
 
     # --- Elements ---------------------------------------------------------
 
@@ -115,10 +127,28 @@ class ArchitectureService:
         return await self._repository.save_element(updated)
 
     async def delete_element(self, element_id: UUID) -> None:
-        """Remove an element together with everything attached to it."""
+        """Remove an element together with everything attached to it.
+
+        "Everything" spans two stores. The graph takes its own relationships
+        with it, in one Cypher statement; the markdown attached to the element
+        is a row in PostgreSQL (docs/adr/0017) that no foreign key can cascade,
+        so it is deleted here, through the narrow `ElementAttachments` port.
+
+        The graph goes first. There is no transaction across the two stores, so
+        one order has to be chosen and its failure mode accepted: this way a
+        crash in between leaves rows nobody can reach — invisible, and never
+        inherited by another element, since ids are random. The other order
+        would leave an element whose documentation had silently vanished.
+
+        `attachments` is absent whenever the relational store is shut
+        (`EA_POSTGRES_ENABLED`), which is also the only case in which there is
+        nothing attached to discard.
+        """
         if not await self._repository.delete_element(element_id):
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
+        if self._attachments is not None:
+            await self._attachments.discard_for_element(element_id)
 
     # --- Relationships ----------------------------------------------------
 

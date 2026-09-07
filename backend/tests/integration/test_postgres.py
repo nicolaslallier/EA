@@ -17,11 +17,13 @@ import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.api.dependencies import session_factory_of
 from ea.core.config import Settings
+from ea.db.models import Base
 from ea.db.postgres import create_session_factory
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
@@ -52,7 +54,7 @@ async def test_the_migration_chain_runs_and_reverses(
         stamped = await connection.execute(text("SELECT version_num FROM alembic_version"))
         version = stamped.scalar_one()
 
-    assert version == "0001"
+    assert version == ScriptDirectory.from_config(alembic_config).get_current_head()
 
     await asyncio.to_thread(command.downgrade, alembic_config, "base")
 
@@ -62,10 +64,15 @@ async def test_the_migration_chain_runs_and_reverses(
     assert remaining.scalar_one() == 0
 
 
-async def test_the_baseline_creates_no_table(
+async def test_the_chain_builds_every_table_the_models_declare(
     postgres_engine: AsyncEngine, alembic_config: Config
 ) -> None:
-    """The scaffold invents no domain — the first table is a deliberate commit."""
+    """A revision nobody wrote is a table autogenerate would propose to drop.
+
+    Comparing the applied schema to `Base.metadata` is what catches a model
+    added without its migration — the failure that only shows up on the next
+    deployment otherwise.
+    """
     await asyncio.to_thread(command.upgrade, alembic_config, "head")
 
     async with postgres_engine.connect() as connection:
@@ -73,7 +80,7 @@ async def test_the_baseline_creates_no_table(
             text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         )
 
-    assert [row[0] for row in tables] == ["alembic_version"]
+    assert {row[0] for row in tables} == {"alembic_version", *Base.metadata.tables}
 
 
 async def test_the_application_boots_with_the_relational_store_open(

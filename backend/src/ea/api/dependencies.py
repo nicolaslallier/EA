@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ea.services.architecture import ArchitectureService
+from ea.services.documents import DocumentService
 
 
 def architecture_service_of(app: FastAPI) -> ArchitectureService:
@@ -33,6 +34,28 @@ def get_architecture_service(request: Request) -> ArchitectureService:
 
 
 Architecture = Annotated[ArchitectureService, Depends(get_architecture_service)]
+
+
+def document_service_of(app: FastAPI) -> DocumentService:
+    """The document service the lifespan attached, or a clear failure.
+
+    Absent means the relational store is shut (`EA_POSTGRES_ENABLED`), and the
+    documents live in it — see docs/adr/0017. That is a wiring fault rather
+    than a request error, so it is a `RuntimeError` and a 500, not a 404
+    pretending the element simply has no documents.
+    """
+    service: DocumentService | None = getattr(app.state, "document_service", None)
+    if service is None:
+        msg = "no document service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_document_service(request: Request) -> DocumentService:
+    return document_service_of(request.app)
+
+
+Documents = Annotated[DocumentService, Depends(get_document_service)]
 
 
 def session_factory_of(app: FastAPI) -> async_sessionmaker[AsyncSession]:

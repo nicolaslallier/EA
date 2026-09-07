@@ -177,6 +177,22 @@ describe('ElementCatalogue', () => {
     expect(screen.getByRole('button', { name: /précédente/i })).toBeDisabled()
   })
 
+  it('opens the documents attached to a row, and only one panel at a time', async () => {
+    const element = anElement({ name: 'Facturation' })
+    await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: `/elements/${element.id}/documents`, body: [] },
+    ])
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /documents de Facturation/i }))
+
+    expect(
+      await screen.findByRole('region', { name: /documents de l'élément/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /relations de l'élément/i })).toBeNull()
+  })
+
   it('opens the detail of an element when its name is clicked', async () => {
     const element = anElement({ name: 'Facturation', description: 'Émet les factures' })
     const { calls } = await renderCatalogue([
