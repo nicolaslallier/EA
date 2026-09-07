@@ -4,8 +4,10 @@ No literal secret, DSN or key lives in this file — see `.env.example` for the
 shape of a local environment.
 """
 
+from typing import Annotated
+
 from pydantic import SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -25,7 +27,10 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # Explicit allowlist — never `*`, because the API is called with credentials.
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # `NoDecode` keeps pydantic-settings from JSON-decoding the environment
+    # value: without it `EA_CORS_ORIGINS=http://localhost:5173` — the form
+    # `.env.example` ships — raises before the validator below ever runs.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
     # The password has no default on purpose: an empty one is only tolerated in
