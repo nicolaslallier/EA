@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
-    # The password has no default on purpose: an empty one is only tolerated in
-    # debug, where the local container runs with authentication disabled.
-    neo4j_uri: str = "bolt://localhost:7687"
+    # There is one instance, on the Docker cluster (docs/adr/0006), so its
+    # address is the useful default: a developer who never writes a `.env`
+    # reaches the shared graph rather than a `localhost` that answers nothing.
+    # It is an address, not a credential — the password below has no default,
+    # and an empty one is only tolerated in debug.
+    neo4j_uri: str = "bolt://192.168.1.252:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("")
     neo4j_database: str = "neo4j"

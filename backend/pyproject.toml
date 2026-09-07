@@ -33,7 +33,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "strict"
 markers = [
-    "integration: needs a reachable Neo4j — `make db-up` first",
+    "integration: needs the cluster Neo4j — check it with `make db-ping`",
 ]
 addopts = "--strict-markers"
 

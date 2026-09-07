@@ -18,15 +18,24 @@ brew install make node uv
 ```
 
 `make` est déjà fourni par macOS (GNU Make 3.81) — c'est suffisant. Docker
-Desktop est nécessaire pour la base graphe.
+Desktop sert à ouvrir un `cypher-shell` sur le graphe ; le graphe lui-même
+tourne sur le cluster Docker, pas ici.
 
 ## Démarrage
 
 ```bash
 make install   # dépendances Python (uv) et Node (npm)
-make db-up     # démarre Neo4j dans Docker
+cp backend/.env.example backend/.env   # puis renseigne EA_NEO4J_PASSWORD
+make db-ping   # vérifie que le graphe du cluster répond
 make run       # backend + frontend en parallèle
 ```
+
+Le graphe n'est pas démarré par ces commandes : c'est une instance unique,
+déployée sur le cluster Docker (192.168.1.252) depuis
+[`deploy/neo4j.stack.yml`](deploy/neo4j.stack.yml) — voir
+[`docs/adr/0006`](docs/adr/0006-neo4j-sur-le-cluster-docker.md). `make db-stack`
+rappelle la marche à suivre pour la (re)déployer, et le mot de passe se demande
+à qui l'a déployée : il ne figure dans aucun fichier versionné.
 
 Puis ouvre <http://localhost:5173>. La page affiche l'état du backend : si elle
 indique « Backend: ok », les deux services communiquent.
@@ -36,7 +45,8 @@ indique « Backend: ok », les deux services communiquent.
 | <http://localhost:5173> | Frontend Vite |
 | <http://127.0.0.1:8000/health> | Endpoint de santé |
 | <http://127.0.0.1:8000/docs> | Documentation OpenAPI |
-| <http://localhost:7474> | Navigateur Neo4j (`neo4j` / `developmentonly`) |
+| <http://192.168.1.252:7474> | Navigateur Neo4j, sur le cluster (`neo4j`) |
+| <http://192.168.1.252:9000/#!/9/docker/stacks> | Portainer — la stack du graphe |
 
 ## Commandes
 
@@ -48,9 +58,10 @@ indique « Backend: ok », les deux services communiquent.
 | `make run` | Lance les deux serveurs, logs entrelacés, `Ctrl-C` arrête tout |
 | `make run-be` | Backend seul |
 | `make run-fe` | Frontend seul |
-| `make db-up` | Démarre Neo4j |
+| `make db-ping` | Vérifie que le graphe du cluster répond |
+| `make db-stack` | Rappelle comment déployer la stack Neo4j sur le cluster |
 | `make db-shell` | Ouvre un `cypher-shell` sur le graphe |
-| `make db-reset` | Vide le graphe (supprime les volumes) |
+| `make db-reset` | Vide le graphe partagé — `CONFIRM=yes` obligatoire |
 | `make check` | Lint, types et tests — ce que la CI vérifiera |
 | `make clean` | Supprime `.venv`, `node_modules`, caches et artefacts de build |
 
@@ -70,7 +81,8 @@ cd frontend && npm test -- --run && npm run typecheck
 
 Les tests d'intégration effacent le contenu du graphe entre chaque cas : Neo4j
 Community ne sert qu'une seule base, il n'y a donc ni schéma de test séparé ni
-transaction à annuler. Ils ne s'exécutent que si `EA_ALLOW_DESTRUCTIVE_TESTS=1`
+transaction à annuler. **Ce graphe est celui du cluster, partagé** : ne lance
+pas `make test-integration` pendant que quelqu'un modélise. Ils ne s'exécutent que si `EA_ALLOW_DESTRUCTIVE_TESTS=1`
 est positionné, ce que seule la cible `make test-integration` fait ; un
 `uv run pytest` nu les saute.
 

@@ -1,0 +1,55 @@
+# Neo4j — le graphe d'architecture, déployé sur le cluster Docker.
+#
+# Ce fichier n'est pas lancé depuis un poste : il est déployé comme *stack*
+# Portainer sur l'hôte 192.168.1.252 (endpoint 9, Docker standalone) :
+#
+#   http://192.168.1.252:9000/#!/9/docker/stacks
+#   → Add stack → Web editor → coller ce fichier
+#   → Environment variables → NEO4J_PASSWORD = <le mot de passe>
+#   → Deploy the stack
+#
+# `make db-stack` réaffiche ces instructions. Voir docs/adr/0006.
+#
+# Rien ici ne porte de secret : NEO4J_PASSWORD est déclaré avec `:?`, donc un
+# déploiement sans mot de passe échoue au lieu d'en inventer un.
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: ea-neo4j
+    # Le graphe doit revenir tout seul après un redémarrage de l'hôte : c'est
+    # la seule instance, il n'y a pas de `make db-up` pour la relancer.
+    restart: unless-stopped
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474" # navigateur Neo4j
+      - "${NEO4J_BOLT_PORT:-7687}:7687" # protocole Bolt, utilisé par le backend
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD est obligatoire}
+      # Le healthcheck a besoin du mot de passe en clair dans le conteneur, et
+      # NEO4J_AUTH n'est lu qu'une fois, à l'initialisation. Le nom ne commence
+      # pas par NEO4J_ : l'image traduit toute variable NEO4J_* en réglage de
+      # neo4j.conf, et un réglage inconnu fait échouer le démarrage.
+      EA_HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD est obligatoire}
+      # Le pilote Bolt réutilise l'adresse annoncée par le serveur ; sans ceci
+      # il reçoit le nom d'hôte du conteneur, injoignable depuis le LAN.
+      NEO4J_server_bolt_advertised__address: "${NEO4J_ADVERTISED_HOST:-192.168.1.252}:${NEO4J_BOLT_PORT:-7687}"
+      # Un seul underscore = un point dans neo4j.conf, deux = un underscore :
+      # `server.memory.pagecache.size`, `server.memory.heap.max_size`.
+      NEO4J_server_memory_pagecache_size: "${NEO4J_PAGECACHE:-1G}"
+      NEO4J_server_memory_heap_max__size: "${NEO4J_HEAP:-2G}"
+      NEO4J_server_memory_heap_initial__size: "${NEO4J_HEAP:-2G}"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment ;
+      # le mot de passe vient de l'environnement du conteneur, pas du fichier.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${EA_HEALTHCHECK_PASSWORD}\" 'RETURN 1' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  neo4j-data:
+  neo4j-logs:

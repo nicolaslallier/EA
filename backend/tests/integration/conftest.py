@@ -1,7 +1,8 @@
 """Fixtures for the tests that talk to a real Neo4j.
 
-Run `make db-up` first. Without a reachable database these skip rather than
-fail, so `uv run pytest` stays useful on a machine with no Docker.
+These talk to the shared graph on the Docker cluster (docs/adr/0006).
+Without a reachable database they skip rather than fail, so `uv run pytest`
+stays useful off the network.
 
 Neo4j Community serves a single database, so there is no separate test schema to
 point at and no nested transaction to roll back: isolation here means deleting
@@ -42,7 +43,7 @@ async def graph_driver() -> AsyncIterator[AsyncDriver]:
         await driver.verify_connectivity()
     except Exception:
         await driver.close()
-        pytest.skip(f"no Neo4j at {settings.neo4j_uri} — run `make db-up`")
+        pytest.skip(f"no Neo4j at {settings.neo4j_uri} — check `make db-ping`")
 
     await apply_schema(driver, database=settings.neo4j_database)
     await driver.execute_query(WIPE, database_=settings.neo4j_database)

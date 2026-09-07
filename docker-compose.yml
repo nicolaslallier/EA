@@ -1,43 +1,16 @@
-# Bases de données locales. Rien d'autre ne tourne ici : le backend et le
-# frontend se lancent avec `make run`, en dehors de Docker, pour garder le
-# rechargement à chaud immédiat.
+# Bases de données locales.
 #
-# `make db-up` démarre Neo4j, `make db-up-all` y ajoute PostgreSQL.
-# Voir docs/adr/0004 pour le partage des rôles entre les deux.
+# Le graphe d'architecture ne figure plus ici : il tourne sur le cluster Docker
+# (192.168.1.252), déployé depuis `deploy/neo4j.stack.yml`. Voir docs/adr/0006.
+#
+# Il ne reste donc que PostgreSQL, qui n'est encore utilisé par aucun code :
+# `make pg-up` le démarre le jour où l'authentification ou l'audit en aura
+# besoin. Voir docs/adr/0004 pour le partage des rôles entre les deux bases.
 
 services:
-  neo4j:
-    image: neo4j:5.26-community
-    container_name: ea-neo4j
-    ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474" # navigateur Neo4j
-      - "${NEO4J_BOLT_PORT:-7687}:7687" # protocole Bolt, utilisé par le backend
-    environment:
-      # Mot de passe de développement uniquement. Un déploiement fournit
-      # NEO4J_PASSWORD par son propre mécanisme de secrets.
-      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-developmentonly}"
-      NEO4J_server_memory_pagecache_size: 512M
-      NEO4J_server_memory_heap_max__size: 1G
-    volumes:
-      - neo4j-data:/data
-    healthcheck:
-      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment.
-      test:
-        [
-          "CMD-SHELL",
-          "cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-developmentonly} 'RETURN 1' || exit 1",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 20s
-
-  # Pas encore utilisé par le code : PostgreSQL accueillera l'authentification,
-  # l'audit et les traitements planifiés, qui ne sont pas des graphes.
   postgres:
     image: postgres:17-alpine
     container_name: ea-postgres
-    profiles: ["full"]
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
@@ -53,5 +26,4 @@ services:
       retries: 20
 
 volumes:
-  neo4j-data:
   postgres-data:
