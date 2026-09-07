@@ -28,6 +28,18 @@ export const LAYER_LABELS: Record<Layer, string> = {
   other: 'Transverse',
 }
 
+export type Aspect = components['schemas']['Aspect']
+
+/** The aspect an element belongs to, in the words ArchiMate uses for it. */
+export const ASPECT_LABELS: Record<Aspect, string> = {
+  active_structure: 'Structure active',
+  behavior: 'Comportement',
+  passive_structure: 'Structure passive',
+  motivation: 'Motivation',
+  composite: 'Composite',
+  connector: 'Connecteur',
+}
+
 /**
  * The fill of an element on a drawing, one per layer.
  *

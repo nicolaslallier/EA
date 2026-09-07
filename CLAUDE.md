@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**The element catalogue, the links between elements and the neighbourhood traversal work end to end; `/impact` is backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with three sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); and neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`). The metamodel and `/impact` are declared in the menu as *à venir* and have no screen yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**The element catalogue, the links between elements and the neighbourhood traversal work end to end; `/impact` is backend-only.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with three sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); and neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`). The metamodel and `/impact` are declared in the menu as *à venir* and have no screen yet. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 **Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI, a screen for `/impact`.
 
@@ -133,7 +133,9 @@ neighbour is a real focusable control, not a painted pixel.
 keeps that state in the URL, not in a `ref`.** The neighbourhood reads
 `?element=`, `?depth=` and `?relation=` from the route and writes them back:
 changing subject pushes a history entry, turning a dial replaces one. See
-`docs/adr/0010`.
+`docs/adr/0010`. The catalogue follows the same rule for the element it details
+(`?element=`, see `docs/adr/0011`); an unsaved form is not that kind of state
+and stays in a `ref`.
 
 ## The graph has no Alembic
 
