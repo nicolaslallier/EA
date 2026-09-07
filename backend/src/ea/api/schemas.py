@@ -21,6 +21,7 @@ from ea.domain.archimate import (
     Layer,
     RelationshipCategory,
     RelationshipType,
+    permitted_relationships,
 )
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
@@ -171,6 +172,15 @@ class ElementTypeRead(BaseModel):
     layer: Layer
     aspect: Aspect
 
+    @classmethod
+    def of(cls, element_type: ElementType) -> ElementTypeRead:
+        return cls(
+            value=element_type,
+            label=element_type.label,
+            layer=element_type.layer,
+            aspect=element_type.aspect,
+        )
+
 
 class RelationshipTypeRead(BaseModel):
     """One relationship type, with what the metamodel says about using it.
@@ -204,6 +214,22 @@ class MetamodelRead(BaseModel):
     relationship_types: list[RelationshipTypeRead]
     layers: list[Layer]
 
+    @classmethod
+    def snapshot(cls) -> MetamodelRead:
+        """The whole palette, read off the metamodel rather than listed here.
+
+        A classmethod rather than a route body because two adapters answer this
+        question — `GET /metamodel` and the `describe_metamodel` tool — and the
+        61 types are exactly the kind of list `CLAUDE.md` refuses to see twice.
+        """
+        return cls(
+            element_types=[ElementTypeRead.of(element_type) for element_type in ElementType],
+            relationship_types=[
+                RelationshipTypeRead.of(relationship) for relationship in RelationshipType
+            ],
+            layers=list(Layer),
+        )
+
 
 class RelationshipRuleRead(BaseModel):
     """Which relationships one source type may open toward one target type."""
@@ -221,6 +247,20 @@ class RelationshipMatrixRead(BaseModel):
 
     source: ElementType
     rules: list[RelationshipRuleRead]
+
+    @classmethod
+    def for_source(cls, source: ElementType) -> RelationshipMatrixRead:
+        """The row of the matrix for one source type, computed from the rules."""
+        return cls(
+            source=source,
+            rules=[
+                RelationshipRuleRead(
+                    target=target,
+                    relationships=list(permitted_relationships(source, target)),
+                )
+                for target in ElementType
+            ],
+        )
 
 
 class ErrorResponse(BaseModel):

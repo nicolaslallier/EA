@@ -5,6 +5,7 @@ description = "Enterprise Architecture backend"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
+    "mcp>=1.9",
     "neo4j>=5.26",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",

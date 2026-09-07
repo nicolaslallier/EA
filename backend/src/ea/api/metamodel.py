@@ -2,6 +2,8 @@
 
 The SPA must never re-declare the 61 element types or reimplement the rules:
 it asks here, and the answer comes from the same code the API validates with.
+The MCP adapter asks the same question through `describe_metamodel`, which is
+why the assembly lives on the schemas rather than in these route bodies.
 """
 
 from __future__ import annotations
@@ -11,15 +13,11 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from ea.api.schemas import (
-    ElementTypeRead,
     MetamodelRead,
     RelationshipMatrixRead,
-    RelationshipRuleRead,
-    RelationshipTypeRead,
 )
 from ea.domain.archimate import (
     ElementType,
-    Layer,
     RelationshipType,
     permitted_relationships,
 )
@@ -30,21 +28,7 @@ router = APIRouter(prefix="/metamodel", tags=["metamodel"])
 @router.get("", response_model=MetamodelRead)
 async def read_metamodel() -> MetamodelRead:
     """Every element type, relationship type and layer ArchiMate 3.2 defines."""
-    return MetamodelRead(
-        element_types=[
-            ElementTypeRead(
-                value=element_type,
-                label=element_type.label,
-                layer=element_type.layer,
-                aspect=element_type.aspect,
-            )
-            for element_type in ElementType
-        ],
-        relationship_types=[
-            RelationshipTypeRead.of(relationship) for relationship in RelationshipType
-        ],
-        layers=list(Layer),
-    )
+    return MetamodelRead.snapshot()
 
 
 @router.get("/relationships", response_model=list[RelationshipType])
@@ -67,13 +51,4 @@ async def read_relationship_matrix(
     payload. The cells are computed here, never stored, so they cannot drift
     from the rules the API rejects a link with.
     """
-    return RelationshipMatrixRead(
-        source=source,
-        rules=[
-            RelationshipRuleRead(
-                target=target,
-                relationships=list(permitted_relationships(source, target)),
-            )
-            for target in ElementType
-        ],
-    )
+    return RelationshipMatrixRead.for_source(source)
