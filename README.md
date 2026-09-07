@@ -24,8 +24,8 @@ tourne sur le cluster Docker, pas ici.
 ## Démarrage
 
 ```bash
-make install   # dépendances Python (uv) et Node (npm)
-cp backend/.env.example backend/.env   # puis renseigne EA_NEO4J_PASSWORD
+make install   # dépendances Python (uv), Node (npm), et backend/.env
+# puis renseigne EA_NEO4J_PASSWORD dans backend/.env
 make db-ping   # vérifie que le graphe du cluster répond
 make run       # backend + frontend en parallèle
 ```
