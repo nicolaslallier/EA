@@ -4,11 +4,14 @@ version = "0.1.0"
 description = "Enterprise Architecture backend"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
     "fastapi>=0.115",
     "mcp>=1.9",
     "neo4j>=5.26",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
+    "sqlalchemy[asyncio]>=2.0.36",
     "uvicorn[standard]>=0.30",
 ]
 
@@ -35,6 +38,7 @@ pythonpath = ["src"]
 asyncio_mode = "strict"
 markers = [
     "integration: needs the cluster Neo4j — check it with `make db-ping`",
+    "postgres: needs the local PostgreSQL — start it with `make pg-up`",
 ]
 addopts = "--strict-markers"
 
@@ -44,6 +48,12 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic's template imports `op` and `sa` into every generated migration. A
+# revision that happens to use only one of them is normal, not dead code, and
+# stripping the import by hand on each generation is how they get forgotten.
+"migrations/versions/*" = ["F401"]
 
 [tool.mypy]
 python_version = "3.12"

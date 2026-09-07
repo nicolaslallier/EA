@@ -6,7 +6,7 @@ shape of a local environment.
 
 from typing import Annotated
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -23,7 +23,11 @@ class Settings(BaseSettings):
     app_name: str = "EA API"
     debug: bool = False
 
-    host: str = "127.0.0.1"
+    # Every interface, not loopback: the API is called from other machines on
+    # the LAN — a peer's browser, the cluster, a phone. What this does *not*
+    # decide is who may call `/mcp`; that is `mcp_allowed_hosts` below, and the
+    # two are kept apart on purpose.
+    host: str = "0.0.0.0"
     port: int = 8000
 
     # Explicit allowlist — never `*`, because the API is called with credentials.
@@ -47,6 +51,33 @@ class Settings(BaseSettings):
     neo4j_max_connection_pool_size: int = 25
     neo4j_connection_timeout_seconds: float = 5.0
 
+    # --- PostgreSQL, the store for everything that is not the graph ---------
+    # Auth, audit and scheduled work live here rather than in Neo4j — see
+    # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
+    #
+    # Like the graph, there is one instance and it is on the Docker cluster, so
+    # its address is the useful default: a developer who never writes a `.env`
+    # reaches the shared database rather than a `localhost` that answers
+    # nothing. The password below has no default — that one is a real shared
+    # secret, not a throwaway.
+    #
+    # `postgres_enabled` is off because no table exists yet: an application
+    # that opens a connection pool to a database nothing reads would fail to
+    # boot wherever the cluster is out of reach. The first table turns it on,
+    # and from that day a deployment without PostgreSQL is a misconfiguration
+    # rather than the normal case.
+    postgres_enabled: bool = False
+    postgres_host: str = "192.168.1.252"
+    postgres_port: int = 5432
+    postgres_user: str = "ea"
+    postgres_password: SecretStr = SecretStr("")
+    postgres_database: str = "ea"
+
+    # The pool bounds a slow or wedged server the same way the Neo4j one does.
+    postgres_pool_size: int = 5
+    postgres_max_overflow: int = 5
+    postgres_connection_timeout_seconds: float = 5.0
+
     # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
     # On by default: an agent-facing tool set nobody can reach is not a
     # feature. It is a switch and not a constant because, until auth exists,
@@ -55,19 +86,38 @@ class Settings(BaseSettings):
     # turns it off here rather than by deleting a mount.
     mcp_enabled: bool = True
 
-    @field_validator("cors_origins", mode="before")
+    #: Which `Host` headers the MCP transport answers, as an explicit allowlist.
+    #:
+    #: The SDK enables DNS-rebinding protection by itself *only* when it is
+    #: served on a loopback host, so handing it `host` would silently disable
+    #: the protection the day the API binds every interface — on a path that
+    #: writes to the graph without authentication. It is therefore its own
+    #: setting, defaulting to loopback: an agent on another machine is added
+    #: here deliberately, the way a CORS origin is.
+    mcp_allowed_hosts: Annotated[list[str], NoDecode] = [
+        "127.0.0.1:*",
+        "localhost:*",
+        "[::1]:*",
+    ]
+
+    @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
         """Accept `A,B` from the environment as well as a real list."""
         if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
+            return [entry.strip() for entry in value.split(",") if entry.strip()]
         return value
 
-    @field_validator("cors_origins", mode="after")
+    @field_validator("cors_origins", "mcp_allowed_hosts", mode="after")
     @classmethod
-    def _reject_wildcard(cls, value: list[str]) -> list[str]:
+    def _reject_wildcard(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        """A bare `*` is the check switched off, which is never what is meant.
+
+        Entries like `localhost:*` stay legal: the wildcard is on the port, and
+        the host itself is still named.
+        """
         if "*" in value:
-            msg = "cors_origins must be an explicit allowlist, not a wildcard"
+            msg = f"{info.field_name} must be an explicit allowlist, not a wildcard"
             raise ValueError(msg)
         return value
 
@@ -76,6 +126,23 @@ class Settings(BaseSettings):
         """A deployed instance talking to an unauthenticated database is a breach."""
         if not self.debug and not self.neo4j_password.get_secret_value():
             msg = "neo4j_password is required when debug is off"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _require_a_postgres_password_when_the_store_is_used(self) -> "Settings":
+        """Same rule as the graph, but owed only by a process that connects.
+
+        The condition is `postgres_enabled` and not the mere presence of the
+        settings: demanding a secret for a database this process never opens
+        would make every developer invent one to start the API.
+        """
+        if (
+            self.postgres_enabled
+            and not self.debug
+            and not self.postgres_password.get_secret_value()
+        ):
+            msg = "postgres_password is required when postgres_enabled is on and debug is off"
             raise ValueError(msg)
         return self
 
