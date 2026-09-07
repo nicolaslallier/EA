@@ -1,5 +1,7 @@
 """Settings are read from the environment only — never hard-coded."""
 
+from pathlib import Path
+
 import pytest
 
 from ea.core.config import Settings
@@ -18,7 +20,10 @@ def test_cors_origins_reject_a_wildcard() -> None:
 
 
 def test_default_cors_origin_is_the_vite_dev_server() -> None:
-    assert Settings().cors_origins == ["http://localhost:5173"]
+    """`_env_file=None`: a default is only a default with no local `.env` in play."""
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.cors_origins == ["http://localhost:5173"]
 
 
 def test_neo4j_connection_is_read_from_the_environment() -> None:
@@ -63,3 +68,12 @@ def test_a_single_origin_in_the_environment_stays_a_one_item_allowlist(
     monkeypatch.setenv("EA_CORS_ORIGINS", "http://localhost:5173")
 
     assert Settings(debug=True).cors_origins == ["http://localhost:5173"]
+
+
+def test_the_committed_env_example_builds_settings() -> None:
+    """`.env.example` is the documented onboarding path: it must actually load."""
+    example = Path(__file__).parents[2] / ".env.example"
+
+    settings = Settings(_env_file=example)  # type: ignore[call-arg]
+
+    assert settings.cors_origins == ["http://localhost:5173"]

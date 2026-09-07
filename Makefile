@@ -7,8 +7,13 @@ BACKEND  := backend
 FRONTEND := frontend
 
 # Environnement virtuel Python géré par uv (uv sync le crée dans backend/.venv).
+# Le témoin vit *dans* le venv : `make clean` l'emporte avec lui, donc un venv
+# supprimé ne peut pas laisser derrière lui un témoin qui mentirait au garde-fou.
 VENV       := $(BACKEND)/.venv
-VENV_PYTHON := $(VENV)/bin/python
+VENV_STAMP := $(VENV)/.uv-sync-stamp
+
+# Configuration locale, dérivée de l'exemple committé. Jamais versionnée.
+BE_ENV := $(BACKEND)/.env
 
 # Surchargeables en cas de conflit de port : `make run-be BE_PORT=8001`.
 BE_HOST ?= 127.0.0.1
@@ -54,11 +59,12 @@ help: ## Liste les cibles disponibles
 
 install: install-be install-fe ## Installe toutes les dépendances (BE + FE)
 
-install-be: ## Crée le venv et installe les dépendances Python
+install-be: $(BE_ENV) ## Crée le venv et installe les dépendances Python
 	@printf "$(GREEN)Installing backend dependencies (uv)...$(NC)\n"
 	@command -v uv >/dev/null 2>&1 || { \
 		printf "$(RED)uv est introuvable. Installe-le : brew install uv$(NC)\n"; exit 1; }
 	cd $(BACKEND) && uv sync --all-extras
+	@touch $(VENV_STAMP)
 
 install-fe: ## Installe les dépendances Node du frontend
 	@printf "$(GREEN)Installing frontend dependencies (npm)...$(NC)\n"
@@ -66,7 +72,7 @@ install-fe: ## Installe les dépendances Node du frontend
 
 ## --- Exécution ------------------------------------------------------------
 
-run-be: | $(VENV_PYTHON) ## Lance le backend FastAPI (http://127.0.0.1:8000)
+run-be: | $(VENV_STAMP) $(BE_ENV) ## Lance le backend FastAPI (http://127.0.0.1:8000)
 	@printf "$(GREEN)Starting backend on http://$(BE_HOST):$(BE_PORT) ...$(NC)\n"
 	cd $(BACKEND) && uv run uvicorn ea.main:app --reload --host $(BE_HOST) --port $(BE_PORT)
 
@@ -80,10 +86,25 @@ run: ## Lance backend et frontend en parallèle (logs entrelacés, Ctrl-C arrêt
 
 # Garde-fous : une dépendance order-only sur un chemin absent échoue avec un
 # message explicite plutôt qu'avec un « command not found » du shell.
-$(VENV_PYTHON):
-	@printf "$(RED)Environnement Python absent ($(VENV)).$(NC)\n"
+#
+# Le témoin dépend du manifeste et du lockfile : ajouter une dépendance les rend
+# plus récents que lui, et make réclame `make install` avant de lancer le
+# serveur — au lieu de laisser uvicorn échouer sur un ModuleNotFoundError.
+$(VENV_STAMP): $(BACKEND)/pyproject.toml $(BACKEND)/uv.lock
+	@printf "$(RED)Environnement Python absent ou périmé ($(VENV)).$(NC)\n"
 	@printf "$(RED)Lance d'abord : make install$(NC)\n"
 	@exit 1
+
+# Pas de prérequis : la règle ne tourne que si le fichier manque, donc éditer
+# `.env.example` n'écrase jamais la configuration locale d'un développeur.
+#
+# L'exemple ne porte aucun mot de passe : le graphe est l'instance partagée du
+# cluster (docs/adr/0006). Le fichier semé suffit à démarrer en EA_DEBUG, mais
+# `db-ping`, `db-shell` et `test-integration` réclameront EA_NEO4J_PASSWORD.
+$(BE_ENV):
+	@printf "$(GREEN)Creating $(BE_ENV) from .env.example...$(NC)\n"
+	@cp $(BACKEND)/.env.example $@
+	@printf "$(RED)Renseigne EA_NEO4J_PASSWORD dans $@ — voir make db-stack.$(NC)\n"
 
 $(FRONTEND)/node_modules:
 	@printf "$(RED)Dépendances Node absentes ($(FRONTEND)/node_modules).$(NC)\n"
@@ -153,12 +174,12 @@ pg-down: ## Arrête PostgreSQL (les données restent dans le volume)
 # dérivé, jamais écrit à la main. Les deux fichiers sont versionnés pour que
 # `openapi-check` puisse constater qu'ils sont à jour — voir docs/adr/0007.
 
-openapi: | $(VENV_PYTHON) $(FRONTEND)/node_modules ## Régénère le schéma OpenAPI et le client TypeScript
+openapi: | $(VENV_STAMP) $(FRONTEND)/node_modules ## Régénère le schéma OpenAPI et le client TypeScript
 	cd $(BACKEND) && uv run python -m ea.openapi > $(OPENAPI_SCHEMA_NAME)
 	cd $(FRONTEND) && npm run generate:api
 	@printf "$(GREEN)Schéma et client régénérés.$(NC)\n"
 
-openapi-check: | $(VENV_PYTHON) $(FRONTEND)/node_modules ## Échoue si le client versionné n'est plus celui du schéma
+openapi-check: | $(VENV_STAMP) $(FRONTEND)/node_modules ## Échoue si le client versionné n'est plus celui du schéma
 	@cd $(BACKEND) && uv run python -m ea.openapi | diff -u $(OPENAPI_SCHEMA_NAME) - \
 		|| { printf "$(RED)$(OPENAPI_SCHEMA) est périmé. Lance : make openapi$(NC)\n"; exit 1; }
 	@cd $(FRONTEND) && npm run --silent generate:api:check \
@@ -176,7 +197,7 @@ test-unit: ## Boucle rapide : uniquement les tests unitaires
 test-fe: | $(FRONTEND)/node_modules ## Tests Vitest du frontend (une passe, sans watch)
 	cd $(FRONTEND) && npm test -- --run
 
-test-integration: | $(VENV_PYTHON) require-neo4j-password ## Tests contre le vrai Neo4j (vide le graphe partagé !)
+test-integration: | $(VENV_STAMP) require-neo4j-password ## Tests contre le vrai Neo4j (vide le graphe partagé !)
 	@printf "$(RED)Ces tests effacent les :Element du graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"
 	@printf "$(RED)Personne ne doit être en train de modéliser dessus.$(NC)\n"
 	cd $(BACKEND) && EA_ALLOW_DESTRUCTIVE_TESTS=1 EA_DEBUG=true \
