@@ -18,7 +18,8 @@ describe('fetchHealth', () => {
 
     await fetchHealth()
 
-    const url = String(spy.mock.calls[0][0])
+    // The generated client hands `fetch` a `Request`, not a bare URL string.
+    const url = new Request(spy.mock.calls[0][0] as RequestInfo).url
     expect(url).toMatch(/^https?:\/\//)
     expect(new URL(url).port).not.toBe('5173')
     expect(new URL(url).pathname).toBe('/health')
