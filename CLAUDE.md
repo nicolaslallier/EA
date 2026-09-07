@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Greenfield.** The repository currently contains only `README.md` and a Python `.gitignore`. Nothing below is scaffolded yet — this file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When you create the first files, follow this document; when a decision here turns out to be wrong, change this file in the same commit that changes the code.
+**Scaffolded, thin.** A root `Makefile` orchestrates local development; `backend/` serves a FastAPI app with a `/health` endpoint; `frontend/` is a Vue 3 SPA that displays that health status. There is no database, no auth, and no domain model yet — the layers listed below are the agreed target, not the current tree. This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+
+**Not yet scaffolded** (do not assume these exist): PostgreSQL, SQLAlchemy, Alembic, `bandit`, `pip-audit`, ESLint (`npm run lint`), `npm run generate:api`, Playwright, `pre-commit`, Docker, CI.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
 
@@ -15,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
 | Database | PostgreSQL | Alembic migrations, no auto-`create_all` outside tests |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
-| Frontend | React + TypeScript + Vite | SPA consuming the generated OpenAPI client |
+| Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
 | Containers | Docker + `docker compose` for local Postgres and E2E | Reproducible; no "works on my machine" DB |
 
@@ -24,6 +26,7 @@ Do not introduce a second HTTP client, ORM, state manager, or test runner alongs
 ## Repository layout
 
 ```
+Makefile         # single entry point for local dev — see docs/adr/0001
 backend/
   src/ea/
     api/           # FastAPI routers, request/response schemas, dependencies
@@ -34,8 +37,8 @@ backend/
     core/          # config (pydantic-settings), security, logging, errors
   tests/{unit,integration,e2e}/
 frontend/
-  src/{api,features,components,lib}/   # api/ is generated + thin wrappers
-  tests/
+  src/{api,features,components,lib}/   # api/ is GENERATED ONLY — never hand-write there
+  tests/                               # Vitest specs, mirroring src/
 docs/adr/                              # architecture decision records
 ```
 
@@ -43,11 +46,26 @@ docs/adr/                              # architecture decision records
 
 ## Commands
 
+Everyday local development goes through the root `Makefile` (`make help` lists the
+targets):
+
+```bash
+make install                    # uv sync + npm install
+make run                        # backend and frontend in parallel, interleaved logs
+make run-be                     # backend only  — http://127.0.0.1:8000
+make run-fe                     # frontend only — http://localhost:5173
+make run-be BE_PORT=8001        # every port is an overridable variable
+make clean                      # drop .venv, node_modules, caches, build output
+```
+
+The Makefile deliberately covers running the stack, not testing it: tests, lint
+and type checks are invoked directly, as below.
+
 Backend (run from `backend/`):
 
 ```bash
 uv sync --all-extras            # install/refresh the venv from uv.lock
-uv run fastapi dev src/ea/main.py
+uv run uvicorn ea.main:app --reload    # or `make run-be` from the repo root
 uv run pytest                   # full suite
 uv run pytest tests/unit -q     # fast loop, no DB
 uv run pytest tests/unit/test_capability.py::test_rename -x  # single test
@@ -66,13 +84,13 @@ Frontend (run from `frontend/`):
 npm ci
 npm run dev
 npm test -- --run                       # Vitest once (no watch)
-npm test -- src/features/capability      # single file/dir
-npm run test:e2e                         # Playwright
-npm run lint && npm run typecheck
-npm run generate:api                     # regenerate the client from backend OpenAPI
+npm test -- tests/BackendStatus.spec.ts  # single file/dir
+npm run test:e2e                         # Playwright — NOT SET UP YET
+npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint config)
+npm run generate:api                     # NOT SET UP YET — see the contract section
 ```
 
-Whole stack: `docker compose up -d db` before any integration/E2E run. `docker compose up --build` for the full app.
+Whole stack: `make run`. Docker (`docker compose up -d db` before any integration/E2E run) is the intended shape once a database exists — it is not scaffolded yet.
 
 ## Front/back contract
 

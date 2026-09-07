@@ -1,0 +1,1 @@
+"""EA — Enterprise Architecture backend."""
