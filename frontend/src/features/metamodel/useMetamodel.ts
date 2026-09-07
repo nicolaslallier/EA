@@ -13,6 +13,8 @@ export type ElementType = components['schemas']['ElementType']
 export type Layer = components['schemas']['Layer']
 
 export type RelationshipType = components['schemas']['RelationshipType']
+export type RelationshipTypeRead = components['schemas']['RelationshipTypeRead']
+export type RelationshipCategory = components['schemas']['RelationshipCategory']
 
 export type LayerGroup = { layer: Layer; types: ElementTypeRead[] }
 
@@ -26,6 +28,14 @@ export const LAYER_LABELS: Record<Layer, string> = {
   physical: 'Physique',
   implementation_migration: 'Implémentation & migration',
   other: 'Transverse',
+}
+
+/** The family a relationship belongs to, in the words the specification uses. */
+export const CATEGORY_LABELS: Record<RelationshipCategory, string> = {
+  structural: 'Structurelle',
+  dependency: 'Dépendance',
+  dynamic: 'Dynamique',
+  other: 'Autre',
 }
 
 export type Aspect = components['schemas']['Aspect']
@@ -65,7 +75,7 @@ export const BOX_TEXT = '#24202b'
 
 export function useMetamodel() {
   const elementTypes = ref<ElementTypeRead[]>([])
-  const relationshipTypes = ref<RelationshipType[]>([])
+  const relationshipTypes = ref<RelationshipTypeRead[]>([])
   const layers = ref<Layer[]>([])
   const error = ref('')
 
@@ -77,6 +87,16 @@ export function useMetamodel() {
         types: elementTypes.value.filter((type) => type.layer === layer),
       }))
       .filter((group) => group.types.length > 0),
+  )
+
+  /**
+   * The relationships, the most structuring first.
+   *
+   * That is the order the specification derives an indirect relationship in —
+   * a chain keeps its weakest link — so it is the order that explains itself.
+   */
+  const byStrength = computed<RelationshipTypeRead[]>(() =>
+    [...relationshipTypes.value].sort((one, other) => other.strength - one.strength),
   )
 
   const labels = computed(
@@ -102,5 +122,14 @@ export function useMetamodel() {
     }
   }
 
-  return { elementTypes, relationshipTypes, layers, byLayer, labelOf, error, load }
+  return {
+    elementTypes,
+    relationshipTypes,
+    byStrength,
+    layers,
+    byLayer,
+    labelOf,
+    error,
+    load,
+  }
 }

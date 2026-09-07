@@ -115,6 +115,33 @@ export const METAMODEL = {
       aspect: 'behavior',
     },
   ],
-  relationship_types: ['serving'],
+  relationship_types: [
+    {
+      value: 'serving',
+      category: 'dependency',
+      strength: 6,
+      impact_follows_direction: true,
+    },
+    {
+      value: 'composition',
+      category: 'structural',
+      strength: 10,
+      impact_follows_direction: false,
+    },
+  ],
   layers: ['business', 'application'],
+}
+
+/** One row of the metamodel matrix, as `/metamodel/matrix` returns it. */
+export function aMatrix(
+  source: string,
+  rules: Record<string, string[]>,
+): { source: string; rules: { target: string; relationships: string[] }[] } {
+  return {
+    source,
+    rules: Object.entries(rules).map(([target, relationships]) => ({
+      target,
+      relationships,
+    })),
+  }
 }

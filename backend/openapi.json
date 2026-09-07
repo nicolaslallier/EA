@@ -421,7 +421,7 @@
           },
           "relationship_types": {
             "items": {
-              "$ref": "#/components/schemas/RelationshipType"
+              "$ref": "#/components/schemas/RelationshipTypeRead"
             },
             "title": "Relationship Types",
             "type": "array"
@@ -434,6 +434,17 @@
         ],
         "title": "MetamodelRead",
         "type": "object"
+      },
+      "RelationshipCategory": {
+        "description": "The four families the specification groups relationships into.",
+        "enum": [
+          "structural",
+          "dependency",
+          "dynamic",
+          "other"
+        ],
+        "title": "RelationshipCategory",
+        "type": "string"
       },
       "RelationshipCreate": {
         "additionalProperties": false,
@@ -490,6 +501,27 @@
           "target_id"
         ],
         "title": "RelationshipCreate",
+        "type": "object"
+      },
+      "RelationshipMatrixRead": {
+        "description": "One row of the 61x61 matrix of Appendix B, derived from the rules.\n\nA row rather than the whole matrix: 3721 cells is a payload nobody reads,\nand a client always draws one source at a time.",
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipRuleRead"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ElementType"
+          }
+        },
+        "required": [
+          "source",
+          "rules"
+        ],
+        "title": "RelationshipMatrixRead",
         "type": "object"
       },
       "RelationshipRead": {
@@ -565,6 +597,27 @@
         "title": "RelationshipRead",
         "type": "object"
       },
+      "RelationshipRuleRead": {
+        "description": "Which relationships one source type may open toward one target type.",
+        "properties": {
+          "relationships": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipType"
+            },
+            "title": "Relationships",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ElementType"
+          }
+        },
+        "required": [
+          "target",
+          "relationships"
+        ],
+        "title": "RelationshipRuleRead",
+        "type": "object"
+      },
       "RelationshipType": {
         "description": "Every relationship type ArchiMate 3.2 defines.\n\nMembers are ordered from the strongest structural relationship to the\nweakest dependency, which is the order the specification uses when it\nderives an indirect relationship from a chain of direct ones.",
         "enum": [
@@ -582,6 +635,35 @@
         ],
         "title": "RelationshipType",
         "type": "string"
+      },
+      "RelationshipTypeRead": {
+        "description": "One relationship type, with what the metamodel says about using it.\n\n`label` stays out on purpose: the display form is the client's business \u2014\nthe SPA writes these as French verbs \u2014 while the family, the strength and\nthe direction of dependency are facts of ArchiMate the backend owns.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/RelationshipCategory"
+          },
+          "impact_follows_direction": {
+            "description": "Whether an outage at the source propagates along the arrow.",
+            "title": "Impact Follows Direction",
+            "type": "boolean"
+          },
+          "strength": {
+            "description": "Higher binds tighter; a derived chain keeps the weakest.",
+            "title": "Strength",
+            "type": "integer"
+          },
+          "value": {
+            "$ref": "#/components/schemas/RelationshipType"
+          }
+        },
+        "required": [
+          "value",
+          "category",
+          "strength",
+          "impact_follows_direction"
+        ],
+        "title": "RelationshipTypeRead",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -1234,6 +1316,50 @@
           }
         },
         "summary": "Read Metamodel",
+        "tags": [
+          "metamodel"
+        ]
+      }
+    },
+    "/metamodel/matrix": {
+      "get": {
+        "description": "One row of the metamodel matrix: what `source` may point at, and how.\n\nAppendix B publishes the whole 61x61 grid; a row is what a screen shows at\na time, and asking for one keeps this a lookup instead of a 3721-cell\npayload. The cells are computed here, never stored, so they cannot drift\nfrom the rules the API rejects a link with.",
+        "operationId": "read_relationship_matrix_metamodel_matrix_get",
+        "parameters": [
+          {
+            "description": "Type the links start at.",
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ElementType",
+              "description": "Type the links start at."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipMatrixRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Relationship Matrix",
         "tags": [
           "metamodel"
         ]

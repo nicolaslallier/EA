@@ -14,7 +14,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ea.domain.archimate import AccessType, Aspect, ElementType, Layer, RelationshipType
+from ea.domain.archimate import (
+    AccessType,
+    Aspect,
+    ElementType,
+    Layer,
+    RelationshipCategory,
+    RelationshipType,
+)
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
 
@@ -165,12 +172,55 @@ class ElementTypeRead(BaseModel):
     aspect: Aspect
 
 
+class RelationshipTypeRead(BaseModel):
+    """One relationship type, with what the metamodel says about using it.
+
+    `label` stays out on purpose: the display form is the client's business —
+    the SPA writes these as French verbs — while the family, the strength and
+    the direction of dependency are facts of ArchiMate the backend owns.
+    """
+
+    value: RelationshipType
+    category: RelationshipCategory
+    strength: int = Field(description="Higher binds tighter; a derived chain keeps the weakest.")
+    impact_follows_direction: bool = Field(
+        description="Whether an outage at the source propagates along the arrow."
+    )
+
+    @classmethod
+    def of(cls, relationship: RelationshipType) -> RelationshipTypeRead:
+        return cls(
+            value=relationship,
+            category=relationship.category,
+            strength=relationship.strength,
+            impact_follows_direction=relationship.impact_follows_direction,
+        )
+
+
 class MetamodelRead(BaseModel):
     """Everything a client needs to render and validate the ArchiMate palette."""
 
     element_types: list[ElementTypeRead]
-    relationship_types: list[RelationshipType]
+    relationship_types: list[RelationshipTypeRead]
     layers: list[Layer]
+
+
+class RelationshipRuleRead(BaseModel):
+    """Which relationships one source type may open toward one target type."""
+
+    target: ElementType
+    relationships: list[RelationshipType]
+
+
+class RelationshipMatrixRead(BaseModel):
+    """One row of the 61x61 matrix of Appendix B, derived from the rules.
+
+    A row rather than the whole matrix: 3721 cells is a payload nobody reads,
+    and a client always draws one source at a time.
+    """
+
+    source: ElementType
+    rules: list[RelationshipRuleRead]
 
 
 class ErrorResponse(BaseModel):

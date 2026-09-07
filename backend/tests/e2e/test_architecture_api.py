@@ -222,6 +222,47 @@ class TestMetamodelEndpoints:
         assert "serving" in response.json()
         assert "access" not in response.json()
 
+    async def test_each_relationship_type_carries_what_governs_its_use(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """A screen explaining the metamodel needs the family and the direction."""
+        response = await client.get("/metamodel")
+
+        assert response.status_code == 200
+        by_value = {entry["value"]: entry for entry in response.json()["relationship_types"]}
+        assert by_value["composition"]["category"] == "structural"
+        assert by_value["composition"]["strength"] > by_value["flow"]["strength"]
+        # A whole breaks when its part does: impact runs against the arrow.
+        assert by_value["composition"]["impact_follows_direction"] is False
+        assert by_value["serving"]["impact_follows_direction"] is True
+
+    async def test_the_matrix_row_of_a_source_type_is_published(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Appendix B is 61x61; a client asks for the row it is showing."""
+        response = await client.get("/metamodel/matrix", params={"source": "application_service"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source"] == "application_service"
+        assert len(body["rules"]) == 61
+        by_target = {rule["target"]: rule["relationships"] for rule in body["rules"]}
+        assert "serving" in by_target["business_process"]
+        assert "access" not in by_target["business_process"]
+        # The row is the same answer the per-pair endpoint gives, order included.
+        pair = await client.get(
+            "/metamodel/relationships",
+            params={"source": "application_service", "target": "business_process"},
+        )
+        assert by_target["business_process"] == pair.json()
+
+    async def test_an_unknown_source_type_is_refused_rather_than_guessed(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.get("/metamodel/matrix", params={"source": "microservice"})
+
+        assert response.status_code == 422
+
 
 @pytest.mark.asyncio
 async def test_the_openapi_schema_covers_the_architecture_endpoints(

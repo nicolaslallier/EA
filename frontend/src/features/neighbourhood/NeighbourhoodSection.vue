@@ -142,8 +142,8 @@ const onSearch = () => catalogue.search()
         <select id="neighbourhood-relation" :value="relationshipType"
                 @change="ask({ relation: ($event.target as HTMLSelectElement).value || undefined })">
           <option value="">Toutes les relations</option>
-          <option v-for="type in metamodel.relationshipTypes.value" :key="type" :value="type">
-            {{ RELATIONSHIP_LABELS[type] }}
+          <option v-for="type in metamodel.byStrength.value" :key="type.value" :value="type.value">
+            {{ RELATIONSHIP_LABELS[type.value] }}
           </option>
         </select>
       </div>

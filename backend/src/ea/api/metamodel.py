@@ -10,7 +10,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from ea.api.schemas import ElementTypeRead, MetamodelRead
+from ea.api.schemas import (
+    ElementTypeRead,
+    MetamodelRead,
+    RelationshipMatrixRead,
+    RelationshipRuleRead,
+    RelationshipTypeRead,
+)
 from ea.domain.archimate import (
     ElementType,
     Layer,
@@ -34,7 +40,9 @@ async def read_metamodel() -> MetamodelRead:
             )
             for element_type in ElementType
         ],
-        relationship_types=list(RelationshipType),
+        relationship_types=[
+            RelationshipTypeRead.of(relationship) for relationship in RelationshipType
+        ],
         layers=list(Layer),
     )
 
@@ -46,3 +54,26 @@ async def read_permitted_relationships(
 ) -> list[RelationshipType]:
     """Which relationships may run between two element types, strongest first."""
     return list(permitted_relationships(source, target))
+
+
+@router.get("/matrix", response_model=RelationshipMatrixRead)
+async def read_relationship_matrix(
+    source: Annotated[ElementType, Query(description="Type the links start at.")],
+) -> RelationshipMatrixRead:
+    """One row of the metamodel matrix: what `source` may point at, and how.
+
+    Appendix B publishes the whole 61x61 grid; a row is what a screen shows at
+    a time, and asking for one keeps this a lookup instead of a 3721-cell
+    payload. The cells are computed here, never stored, so they cannot drift
+    from the rules the API rejects a link with.
+    """
+    return RelationshipMatrixRead(
+        source=source,
+        rules=[
+            RelationshipRuleRead(
+                target=target,
+                relationships=list(permitted_relationships(source, target)),
+            )
+            for target in ElementType
+        ],
+    )
