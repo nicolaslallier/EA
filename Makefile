@@ -15,11 +15,20 @@ BE_HOST ?= 127.0.0.1
 BE_PORT ?= 8000
 FE_PORT ?= 5173
 
-# Base de données graphe (Neo4j). `docker-compose.yml` lit ces mêmes variables.
+# Base de données graphe : une instance unique sur le cluster Docker, déployée
+# depuis deploy/neo4j.stack.yml. Rien ne la démarre depuis ce Makefile — voir
+# docs/adr/0006.
+NEO4J_HOST      ?= 192.168.1.252
 NEO4J_BOLT_PORT ?= 7687
 NEO4J_HTTP_PORT ?= 7474
-NEO4J_PASSWORD  ?= developmentonly
-export NEO4J_BOLT_PORT NEO4J_HTTP_PORT NEO4J_PASSWORD
+NEO4J_URI       ?= bolt://$(NEO4J_HOST):$(NEO4J_BOLT_PORT)
+NEO4J_BROWSER   ?= http://$(NEO4J_HOST):$(NEO4J_HTTP_PORT)
+NEO4J_IMAGE     ?= neo4j:5.26-community
+PORTAINER_STACKS ?= http://$(NEO4J_HOST):9000/\#!/9/docker/stacks
+
+# Le mot de passe n'a pas de valeur par défaut : l'instance est partagée. Il
+# vient de l'environnement, ou à défaut de backend/.env (non versionné).
+NEO4J_PASSWORD ?= $(shell sed -n 's/^EA_NEO4J_PASSWORD=//p' $(BACKEND)/.env 2>/dev/null | tail -1)
 
 GREEN := \033[0;32m
 RED   := \033[0;31m
@@ -27,7 +36,8 @@ NC    := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-be install-fe run run-be run-fe clean \
-        db-up db-up-all db-down db-logs db-shell db-reset \
+        db-stack db-ping db-shell db-reset require-neo4j-password \
+        pg-up pg-down \
         test test-unit test-integration lint typecheck check
 
 help: ## Liste les cibles disponibles
@@ -76,28 +86,61 @@ $(FRONTEND)/node_modules:
 	@exit 1
 
 ## --- Base de données graphe -----------------------------------------------
+#
+# Le graphe tourne sur le cluster, pas ici : ces cibles s'y connectent, aucune
+# ne le démarre. Le client `cypher-shell` est pris dans l'image Neo4j plutôt
+# qu'installé sur le poste.
+#
+# Le mot de passe est passé par une variable d'environnement plutôt que par
+# `-p` : un argument de ligne de commande est visible dans `ps`.
 
-db-up: ## Démarre Neo4j (bolt 7687, navigateur http://localhost:7474)
-	@printf "$(GREEN)Starting Neo4j...$(NC)\n"
-	docker compose up -d --wait neo4j
-	@printf "$(GREEN)Neo4j prêt : bolt://localhost:$(NEO4J_BOLT_PORT)$(NC)\n"
-	@printf "Navigateur : http://localhost:$(NEO4J_HTTP_PORT) (neo4j / $(NEO4J_PASSWORD))\n"
+require-neo4j-password:
+	@test -n "$(NEO4J_PASSWORD)" || { \
+		printf "$(RED)NEO4J_PASSWORD est vide.$(NC)\n"; \
+		printf "Renseigne EA_NEO4J_PASSWORD dans $(BACKEND)/.env, ou lance :\n"; \
+		printf "  make $(MAKECMDGOALS) NEO4J_PASSWORD=...\n"; exit 1; }
 
-db-up-all: ## Démarre Neo4j *et* PostgreSQL (pas encore utilisé par le code)
-	docker compose --profile full up -d --wait
+db-stack: ## Rappelle comment déployer le graphe sur le cluster Docker
+	@printf "$(GREEN)Stack Neo4j : deploy/neo4j.stack.yml$(NC)\n"
+	@printf "  1. Ouvre $(PORTAINER_STACKS)\n"
+	@printf "  2. Add stack → Web editor → colle deploy/neo4j.stack.yml\n"
+	@printf "  3. Environment variables → NEO4J_PASSWORD = <mot de passe>\n"
+	@printf "  4. Deploy the stack, puis : make db-ping\n"
 
-db-down: ## Arrête les bases sans supprimer les données
-	docker compose --profile full down
+db-ping: | require-neo4j-password ## Vérifie que le graphe du cluster répond
+	@printf "$(GREEN)Interrogation de $(NEO4J_URI) ...$(NC)\n"
+	@NEO4J_USERNAME=neo4j NEO4J_PASSWORD='$(NEO4J_PASSWORD)' docker run --rm \
+		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_URI) --format plain \
+		'MATCH (n:Element) RETURN count(n) AS elements' \
+	|| { printf "$(RED)Aucune réponse. Vérifie la stack : make db-stack$(NC)\n"; exit 1; }
+	@printf "Navigateur : $(NEO4J_BROWSER)\n"
 
-db-logs: ## Suit les logs de Neo4j
-	docker compose logs -f neo4j
+db-shell: | require-neo4j-password ## Ouvre un cypher-shell sur le graphe du cluster
+	@NEO4J_USERNAME=neo4j NEO4J_PASSWORD='$(NEO4J_PASSWORD)' docker run --rm -it \
+		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_URI)
 
-db-shell: ## Ouvre un cypher-shell sur le graphe
-	docker compose exec neo4j cypher-shell -u neo4j -p $(NEO4J_PASSWORD)
+db-reset: | require-neo4j-password ## Vide le graphe du cluster (CONFIRM=yes obligatoire)
+	@test "$(CONFIRM)" = "yes" || { \
+		printf "$(RED)Cette commande efface le graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"; \
+		printf "$(RED)Tout le monde le perd, il n'y a qu'une instance.$(NC)\n"; \
+		printf "Relance avec : make db-reset CONFIRM=yes\n"; exit 1; }
+	@NEO4J_USERNAME=neo4j NEO4J_PASSWORD='$(NEO4J_PASSWORD)' docker run --rm \
+		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_URI) 'MATCH (n) DETACH DELETE n'
+	@printf "$(GREEN)Graphe vidé.$(NC)\n"
 
-db-reset: ## Supprime les volumes : le graphe repart vide
-	@printf "$(RED)Cette commande efface le contenu du graphe.$(NC)\n"
-	docker compose --profile full down -v
+## --- PostgreSQL local -----------------------------------------------------
+#
+# Encore inutilisé : aucune table n'existe. Reste local, contrairement au
+# graphe, tant qu'aucun code ne s'y connecte.
+
+pg-up: ## Démarre PostgreSQL en local
+	docker compose up -d --wait postgres
+
+pg-down: ## Arrête PostgreSQL (les données restent dans le volume)
+	docker compose down
 
 ## --- Qualité --------------------------------------------------------------
 
@@ -107,11 +150,12 @@ test: ## Tests unitaires et API (sans base de données)
 test-unit: ## Boucle rapide : uniquement les tests unitaires
 	cd $(BACKEND) && uv run pytest tests/unit -q
 
-test-integration: | $(VENV_PYTHON) ## Tests contre le vrai Neo4j (vide le graphe !)
-	@printf "$(RED)Les tests d'intégration effacent le contenu du graphe local.$(NC)\n"
+test-integration: | $(VENV_PYTHON) require-neo4j-password ## Tests contre le vrai Neo4j (vide le graphe partagé !)
+	@printf "$(RED)Ces tests effacent les :Element du graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"
+	@printf "$(RED)Personne ne doit être en train de modéliser dessus.$(NC)\n"
 	cd $(BACKEND) && EA_ALLOW_DESTRUCTIVE_TESTS=1 EA_DEBUG=true \
-		EA_NEO4J_PASSWORD=$(NEO4J_PASSWORD) \
-		EA_NEO4J_URI=bolt://localhost:$(NEO4J_BOLT_PORT) \
+		EA_NEO4J_PASSWORD='$(NEO4J_PASSWORD)' \
+		EA_NEO4J_URI=$(NEO4J_URI) \
 		uv run pytest tests/integration -q
 
 lint: ## ruff format + check

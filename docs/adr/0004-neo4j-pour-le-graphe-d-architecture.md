@@ -38,10 +38,13 @@ Partage des rôles :
 | Authentification, utilisateurs, journal d'audit, traitements planifiés | PostgreSQL |
 
 PostgreSQL n'est référencé par aucun code aujourd'hui : rien de non-graphe
-n'existe encore. `docker-compose.yml` le déclare sous le profil `full`
-(`make db-up-all`) pour que la cible soit visible, mais `make db-up` ne démarre
-que Neo4j. Les dépendances SQLAlchemy et Alembic seront ajoutées avec la
+n'existe encore. `docker-compose.yml` le déclare pour que la cible soit visible
+(`make pg-up`). Les dépendances SQLAlchemy et Alembic seront ajoutées avec la
 première table, pas avant.
+
+> Cet ADR ne disait pas *où* tourne Neo4j, et la réponse d'alors — un conteneur
+> par poste — a été remplacée : le graphe est une instance unique sur le cluster
+> Docker. Voir [`0006`](0006-neo4j-sur-le-cluster-docker.md).
 
 ### Pourquoi pas Apache AGE
 

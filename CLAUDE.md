@@ -73,7 +73,7 @@ uv run pytest                   # full suite
 uv run pytest tests/unit -q     # fast loop, no DB
 uv run pytest tests/unit/test_capability.py::test_rename -x  # single test
 uv run pytest --cov=ea --cov-report=term-missing --cov-fail-under=90
-make test-integration           # against the real Neo4j — EMPTIES the local graph
+make test-integration           # against the real Neo4j — EMPTIES the SHARED cluster graph
 uv run ruff format . && uv run ruff check --fix .
 uv run mypy src
 uv run bandit -c pyproject.toml -r src
@@ -92,7 +92,7 @@ npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint confi
 npm run generate:api                     # NOT SET UP YET — see the contract section
 ```
 
-Whole stack: `make run`. The graph runs in Docker: `make db-up` before anything that touches it, `make db-shell` for a `cypher-shell`, `make db-reset` to start from an empty graph. The Neo4j browser is on http://localhost:7474.
+Whole stack: `make run`. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. `make pg-up` starts the still-unused local PostgreSQL.
 
 `make check` runs lint, types and the DB-free suite — what CI will check.
 
