@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import httpx2
@@ -22,6 +23,7 @@ from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import MCP_PATH
 from ea.services.architecture import ArchitectureService
+from tests.conftest import InMemoryDocuments
 
 #: The transport turns on DNS-rebinding protection when it is served on a
 #: loopback host, which checks the `Host` header against `127.0.0.1:*` and
@@ -34,8 +36,22 @@ def an_app(service: ArchitectureService, **overrides: Any) -> Any:
     return create_app(Settings(debug=True, **overrides), architecture_service=service)
 
 
+def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocuments) -> Any:
+    """The same app with both stores doubled — nothing here touches PostgreSQL.
+
+    `postgres_enabled=False` so the lifespan opens no engine; the document
+    service is built from the injected repository instead, which is exactly the
+    seam `create_app` documents.
+    """
+    return create_app(
+        Settings(debug=True, postgres_enabled=False),
+        architecture_service=service,
+        documents=documents,  # type: ignore[arg-type]
+    )
+
+
 @asynccontextmanager
-async def agent(service: ArchitectureService) -> AsyncIterator[ClientSession]:
+async def agent_over(app: Any) -> AsyncIterator[ClientSession]:
     """A real MCP client speaking to the real app over an in-process transport.
 
     `httpx.ASGITransport` does not run the application lifespan, and the
@@ -48,7 +64,6 @@ async def agent(service: ArchitectureService) -> AsyncIterator[ClientSession]:
     from the test body, so the stack has to open and close inside one `async
     with`, in the test.
     """
-    app = an_app(service)
     async with app.router.lifespan_context(app):
         transport = httpx2.ASGITransport(app=app)
         async with (
@@ -58,6 +73,11 @@ async def agent(service: ArchitectureService) -> AsyncIterator[ClientSession]:
         ):
             await session.initialize()
             yield session
+
+
+def agent(service: ArchitectureService) -> Any:
+    """The common case: an agent talking to the app over the graph double."""
+    return agent_over(an_app(service))
 
 
 @pytest.mark.asyncio
@@ -104,6 +124,66 @@ class TestTheEndpoint:
 
         assert result.is_error
         assert "microservice" in str(result.content)
+
+
+@pytest.mark.asyncio
+class TestTheDocumentTools:
+    """The half of the catalogue that lives in PostgreSQL, reached over `/mcp`.
+
+    `tests/unit/test_mcp_server.py` covers what these tools answer. What only
+    assembly can prove is that `_mount_mcp` looked the document service up on
+    the application at all — the tools are built before the lifespan creates
+    it, so a lookup done at build time would have captured nothing.
+    """
+
+    async def test_an_agent_attaches_a_document_and_reads_it_back(
+        self, service: ArchitectureService, documents: InMemoryDocuments
+    ) -> None:
+        async with agent_over(an_app_with_documents(service, documents)) as session:
+            created = await session.call_tool(
+                "create_element", {"element_type": "application_component", "name": "Billing"}
+            )
+            assert not created.is_error, created.content
+
+            attached = await session.call_tool(
+                "attach_document",
+                {
+                    "element_id": created.structured_content["id"],
+                    "filename": "runbook.md",
+                    "content": "# Runbook\n",
+                },
+            )
+            assert not attached.is_error, attached.content
+
+            read = await session.call_tool(
+                "read_document", {"document_id": attached.structured_content["id"]}
+            )
+
+        assert read.structured_content["content"] == "# Runbook\n"
+
+    async def test_a_client_is_told_that_discarding_a_document_destroys_it(
+        self, service: ArchitectureService, documents: InMemoryDocuments
+    ) -> None:
+        """The annotation is what a client shows the person approving the call."""
+        async with agent_over(an_app_with_documents(service, documents)) as session:
+            tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+
+        assert tools["discard_document"].annotations.destructive_hint is True
+        assert tools["list_documents"].annotations.read_only_hint is True
+
+    async def test_with_the_relational_store_shut_the_tools_are_offered_and_fail(
+        self, service: ArchitectureService
+    ) -> None:
+        """The deliberate asymmetry: the tool list is the adapter's, not the
+        deployment's, exactly as `/documents` stays routed and answers a 500.
+        A shut store is a misconfiguration — see `docs/adr/0018`."""
+        app = create_app(Settings(debug=True, postgres_enabled=False), architecture_service=service)
+        async with agent_over(app) as session:
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            result = await session.call_tool("list_documents", {"element_id": str(uuid4())})
+
+        assert "list_documents" in names
+        assert result.is_error
 
 
 @pytest.mark.asyncio

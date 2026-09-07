@@ -18,12 +18,13 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.mcp import build_mcp_server
 from ea.services.architecture import ArchitectureService
+from ea.services.documents import DocumentService
 
 
 @pytest.fixture
-def server(service: ArchitectureService) -> MCPServer[Any]:
-    """The adapter over the in-memory graph — no database, no transport."""
-    return build_mcp_server(lambda: service)
+def server(service: ArchitectureService, document_service: DocumentService) -> MCPServer[Any]:
+    """The adapter over both in-memory stores — no database, no transport."""
+    return build_mcp_server(lambda: service, lambda: document_service)
 
 
 async def call(server: MCPServer[Any], tool: str, **arguments: Any) -> Any:
@@ -60,6 +61,11 @@ class TestTheToolset:
             "describe_metamodel",
             "permitted_relationships",
             "relationship_matrix_row",
+            "attach_document",
+            "list_documents",
+            "read_document",
+            "revise_document",
+            "discard_document",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -68,14 +74,16 @@ class TestTheToolset:
             assert tool.annotations is not None, tool.name
             assert tool.annotations.read_only_hint is not None, tool.name
 
-    async def test_the_two_deletions_are_flagged_destructive(self, server: MCPServer[Any]) -> None:
+    async def test_the_three_deletions_are_flagged_destructive(
+        self, server: MCPServer[Any]
+    ) -> None:
         annotations = {
             tool.name: tool.annotations
             for tool in await server.list_tools()
             if tool.annotations is not None
         }
 
-        for name in ("delete_element", "disconnect_elements"):
+        for name in ("delete_element", "disconnect_elements", "discard_document"):
             assert annotations[name].read_only_hint is False, name
             assert annotations[name].destructive_hint is True, name
 
@@ -343,3 +351,207 @@ class TestMetamodel:
 
         assert row["source"] == "application_component"
         assert len(row["rules"]) == 61
+
+
+@pytest.mark.asyncio
+class TestDocuments:
+    """The markdown attached to an element, offered to an agent as text.
+
+    The HTTP adapter takes an upload; there is no file here, so what is under
+    test is that the same rules still hold when the content arrives as a
+    string — the element must exist, the name must be markdown, and a listing
+    still refuses to carry the bodies.
+    """
+
+    async def test_a_document_is_attached_and_read_back_whole(self, server: MCPServer[Any]) -> None:
+        element = await an_element(server, "application_component", "Billing")
+
+        attached = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n\nRestart the service.\n",
+        )
+
+        read = await call(server, "read_document", document_id=attached["id"])
+        assert read["content"] == "# Runbook\n\nRestart the service.\n"
+        assert read["element_id"] == element["id"]
+
+    async def test_a_listing_names_the_files_without_carrying_their_text(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """The whole point of the two read models: ten names cost ten names."""
+        element = await an_element(server, "application_component", "Billing")
+        await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        listed = await call(server, "list_documents", element_id=element["id"])
+
+        assert [summary["filename"] for summary in listed["result"]] == ["runbook.md"]
+        assert "content" not in listed["result"][0]
+        assert listed["result"][0]["byte_size"] == len("# Runbook\n")
+
+    async def test_an_element_with_nothing_attached_answers_an_empty_list(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "node", "db-01")
+
+        assert await call(server, "list_documents", element_id=element["id"]) == {"result": []}
+
+    async def test_listing_an_element_that_does_not_exist_is_an_error_not_an_empty_list(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """ "No such element" and "no documents" are different answers."""
+        with pytest.raises(ToolError):
+            await call(server, "list_documents", element_id=str(uuid4()))
+
+    async def test_attaching_to_an_element_that_does_not_exist_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """No foreign key states this — the service does, and the adapter cannot skip it."""
+        with pytest.raises(ToolError):
+            await call(
+                server,
+                "attach_document",
+                element_id=str(uuid4()),
+                filename="runbook.md",
+                content="# Runbook\n",
+            )
+
+    async def test_a_name_that_is_not_markdown_is_refused_with_its_reason(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "application_component", "Billing")
+
+        with pytest.raises(ToolError) as failure:
+            await call(
+                server,
+                "attach_document",
+                element_id=element["id"],
+                filename="notes.txt",
+                content="plain\n",
+            )
+
+        assert ".md" in str(failure.value)
+
+    async def test_the_same_name_twice_on_one_element_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "application_component", "Billing")
+        await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        with pytest.raises(ToolError):
+            await call(
+                server,
+                "attach_document",
+                element_id=element["id"],
+                filename="runbook.md",
+                content="# Other\n",
+            )
+
+    async def test_a_revision_replaces_the_text_under_the_same_id(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "application_component", "Billing")
+        stored = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        revised = await call(
+            server,
+            "revise_document",
+            document_id=stored["id"],
+            filename="runbook.md",
+            content="# Runbook v2\n",
+        )
+
+        assert revised["id"] == stored["id"]
+        assert (await call(server, "read_document", document_id=stored["id"]))["content"] == (
+            "# Runbook v2\n"
+        )
+
+    async def test_revising_under_a_different_name_is_refused(self, server: MCPServer[Any]) -> None:
+        """A reader knows a document by its name, so the name must keep its text."""
+        element = await an_element(server, "application_component", "Billing")
+        stored = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        with pytest.raises(ToolError) as failure:
+            await call(
+                server,
+                "revise_document",
+                document_id=stored["id"],
+                filename="notes.md",
+                content="# Something else\n",
+            )
+
+        assert "runbook.md" in str(failure.value)
+
+    async def test_a_document_can_be_discarded_on_its_own(self, server: MCPServer[Any]) -> None:
+        element = await an_element(server, "application_component", "Billing")
+        stored = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        await call(server, "discard_document", document_id=stored["id"])
+
+        assert await call(server, "list_documents", element_id=element["id"]) == {"result": []}
+
+    async def test_discarding_twice_is_reported_rather_than_ignored(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "application_component", "Billing")
+        stored = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+        await call(server, "discard_document", document_id=stored["id"])
+
+        with pytest.raises(ToolError):
+            await call(server, "discard_document", document_id=stored["id"])
+
+    async def test_deleting_the_element_takes_its_documents_with_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """The cascade no foreign key declares, seen from the agent's side."""
+        element = await an_element(server, "application_component", "Billing")
+        stored = await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n",
+        )
+
+        await call(server, "delete_element", element_id=element["id"])
+
+        with pytest.raises(ToolError):
+            await call(server, "read_document", document_id=stored["id"])

@@ -87,6 +87,62 @@ class TestAttaching:
         assert await document_service.list_for_element(element.id) == ()
 
 
+class TestAttachingText:
+    """The entry point an adapter with no upload uses — the MCP tools.
+
+    An agent composes a document, it never sends a file, so the text skips
+    `decode_markdown` and lands on `Document.create` directly. What these check
+    is that skipping the decoding skips *nothing else*.
+    """
+
+    async def test_text_is_attached_the_same_way_an_upload_is(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        element = await an_element(service)
+
+        document = await document_service.attach_text(
+            element.id, filename="runbook.md", content="# Runbook\n"
+        )
+
+        assert document.content == "# Runbook\n"
+        assert document.byte_size == len(b"# Runbook\n")
+
+    async def test_the_element_must_exist_for_text_too(
+        self, document_service: DocumentService
+    ) -> None:
+        with pytest.raises(ElementNotFoundError):
+            await document_service.attach_text(
+                uuid4(), filename="runbook.md", content="# Runbook\n"
+            )
+
+    async def test_a_name_that_is_not_markdown_is_refused_for_text_too(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        element = await an_element(service)
+
+        with pytest.raises(ValueError, match=r"\.md"):
+            await document_service.attach_text(element.id, filename="notes.txt", content="plain\n")
+
+    async def test_empty_text_is_a_failed_document_rather_than_a_stored_one(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        element = await an_element(service)
+
+        with pytest.raises(ValueError, match="empty"):
+            await document_service.attach_text(element.id, filename="runbook.md", content="   \n")
+
+        assert await document_service.list_for_element(element.id) == ()
+
+    async def test_text_holding_a_nul_is_refused_though_nothing_was_decoded(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        """PostgreSQL cannot hold a NUL in a `TEXT` column whoever composed it."""
+        element = await an_element(service)
+
+        with pytest.raises(ValueError, match="NUL"):
+            await document_service.attach_text(element.id, filename="runbook.md", content="a\x00b")
+
+
 class TestReading:
     async def test_a_listing_names_the_files_without_carrying_their_text(
         self, service: ArchitectureService, document_service: DocumentService
@@ -144,6 +200,32 @@ class TestRevising:
 
         with pytest.raises(ValueError, match=r"notes\.md"):
             await document_service.revise(stored.id, filename="notes.md", raw=b"# Autre chose\n")
+
+
+class TestRevisingText:
+    async def test_text_replaces_the_content_under_the_same_id(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        element = await an_element(service)
+        stored = await document_service.attach(element.id, filename="runbook.md", raw=RUNBOOK)
+
+        revised = await document_service.revise_text(
+            stored.id, filename="runbook.md", content="# Runbook v2\n"
+        )
+
+        assert revised.id == stored.id
+        assert (await document_service.get(stored.id)).content == "# Runbook v2\n"
+
+    async def test_the_name_still_has_to_match_when_the_content_is_text(
+        self, service: ArchitectureService, document_service: DocumentService
+    ) -> None:
+        element = await an_element(service)
+        stored = await document_service.attach(element.id, filename="runbook.md", raw=RUNBOOK)
+
+        with pytest.raises(ValueError, match=r"runbook\.md"):
+            await document_service.revise_text(
+                stored.id, filename="notes.md", content="# Something else\n"
+            )
 
 
 class TestDiscarding:
