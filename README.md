@@ -45,6 +45,7 @@ indique « Backend: ok », les deux services communiquent.
 | <http://localhost:5173> | Frontend Vite |
 | <http://127.0.0.1:8000/health> | Endpoint de santé |
 | <http://127.0.0.1:8000/docs> | Documentation OpenAPI |
+| <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
 | <http://192.168.1.252:7474> | Navigateur Neo4j, sur le cluster (`neo4j`) |
 | <http://192.168.1.252:9000/#!/9/docker/stacks> | Portainer — la stack du graphe |
 
@@ -114,6 +115,28 @@ Un lien interdit par le métamodèle est refusé en 422 avec la règle enfreinte
 access: business_process -> application_service is not permitted
 — the ArchiMate 3.2 metamodel does not allow this relationship
 ```
+
+## Le serveur MCP
+
+Le backend sert aussi le référentiel **à un agent**, en MCP, sur `/mcp` — voir
+[`docs/adr/0014`](docs/adr/0014-serveur-mcp-pour-les-agents.md). Quatorze
+outils : le CRUD des éléments, les liens, les deux parcours et le métamodèle.
+Ce ne sont pas des règles réécrites pour l'occasion : chaque outil appelle le
+même service que l'API, donc un agent se voit refuser exactement ce qu'un
+humain se verrait refuser.
+
+`make run-be` suffit à le servir. Le [`.mcp.json`](.mcp.json) versionné y
+branche Claude Code ; pour un autre client, l'adresse est
+`http://127.0.0.1:8000/mcp` en *streamable HTTP*.
+
+Un agent qui découvre le référentiel commence par `describe_metamodel` : les
+61 types d'éléments et les 11 relations sont des listes fermées, et un nom qui
+n'y figure pas est refusé.
+
+> **`/mcp` n'est pas authentifié**, parce que rien ne l'est encore ici. C'est
+> donc un chemin d'**écriture** sur le graphe pour qui atteint l'hôte de l'API :
+> à réserver à un réseau de confiance, ou à couper avec `EA_MCP_ENABLED=false`,
+> tant que l'auth n'existe pas.
 
 ## Documentation
 

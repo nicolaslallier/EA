@@ -4,45 +4,85 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ea.api.architecture import router as architecture_router
+from ea.api.dependencies import architecture_service_of
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
 from ea.api.metamodel import router as metamodel_router
 from ea.core.config import Settings, get_settings
 from ea.db.neo4j import create_driver, prepare_database
+from ea.mcp import MCP_PATH, build_mcp_server
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.services.architecture import ArchitectureService
 
 logger = logging.getLogger(__name__)
 
 
-def _graph_lifespan(
+def _lifespan(
     settings: Settings,
+    *,
+    open_graph: bool,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    """Open one driver for the process, apply the schema, close it on shutdown.
+    """Start and stop everything the process owns, however it was assembled.
 
-    The driver owns a connection pool, so it is built once and shared. Applying
-    the schema here means a fresh database becomes usable by starting the app —
-    the graph has no `alembic upgrade` step; see `docs/adr/0004`.
+    Two things need a lifetime. The Neo4j driver owns a connection pool, so it
+    is built once and shared; applying the schema here means a fresh database
+    becomes usable by starting the app — the graph has no `alembic upgrade`
+    step, see `docs/adr/0004`. The MCP transport keeps its sessions in a
+    manager that has to be running before `/mcp` answers anything; it is picked
+    up off `app.state`, where `_mount_mcp` left it, because the manager only
+    exists once the app it is mounted on does.
+
+    An `AsyncExitStack` composes them, which is why this is one lifespan rather
+    than two: an app built with `architecture_service=` opens no driver but
+    must still start the session manager, and before this it had no lifespan at
+    all — `/mcp` would have accepted requests it could never answer.
     """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        driver = create_driver(settings)
-        try:
-            await prepare_database(driver, database=settings.neo4j_database)
-            repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
-            app.state.architecture_service = ArchitectureService(repository)
+        async with AsyncExitStack() as stack:
+            if open_graph:
+                driver = create_driver(settings)
+                stack.push_async_callback(driver.close)
+                await prepare_database(driver, database=settings.neo4j_database)
+                repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
+                app.state.architecture_service = ArchitectureService(repository)
+            sessions = getattr(app.state, "mcp_sessions", None)
+            if sessions is not None:
+                await stack.enter_async_context(sessions.run())
             yield
-        finally:
-            await driver.close()
 
     return lifespan
+
+
+def _mount_mcp(app: FastAPI, settings: Settings) -> None:
+    """Serve the MCP tools at `/mcp`, on the app that already serves the API.
+
+    The SDK hands back a Starlette application whose single route is the
+    transport. Its routes are spliced onto this app rather than `mount`ed,
+    because `Mount("/mcp", ...)` matches only `/mcp/...`: a bare `POST /mcp` —
+    the address every client is given — would be answered with a 307 redirect,
+    and a client is not obliged to follow one. Splicing keeps the exact path.
+
+    Two consequences worth knowing. The route is a Starlette `Route` and not an
+    `APIRoute`, so it stays out of the OpenAPI schema — `/mcp` describes itself
+    over MCP, and the generated TypeScript client neither sees it nor needs
+    regenerating for it. And the sub-application's own lifespan is dropped,
+    which is why its session manager is handed to `_lifespan` instead.
+    """
+    server = build_mcp_server(lambda: architecture_service_of(app), version=app.version)
+    transport = server.streamable_http_app(streamable_http_path=MCP_PATH, host=settings.host)
+    if transport.user_middleware:  # pragma: no cover - only auth adds any today
+        msg = "the MCP transport now ships middleware that splicing its routes would drop"
+        raise RuntimeError(msg)
+    app.router.routes.extend(transport.routes)
+    app.state.mcp_sessions = server.session_manager
 
 
 def create_app(
@@ -62,7 +102,7 @@ def create_app(
     app = FastAPI(
         title=settings.app_name,
         debug=settings.debug,
-        lifespan=None if architecture_service else _graph_lifespan(settings),
+        lifespan=_lifespan(settings, open_graph=architecture_service is None),
     )
     app.state.settings = settings
     if architecture_service is not None:
@@ -79,6 +119,8 @@ def create_app(
     app.include_router(health_router)
     app.include_router(metamodel_router)
     app.include_router(architecture_router)
+    if settings.mcp_enabled:
+        _mount_mcp(app, settings)
     return app
 
 

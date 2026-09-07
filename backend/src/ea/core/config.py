@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     neo4j_max_connection_pool_size: int = 25
     neo4j_connection_timeout_seconds: float = 5.0
 
+    # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
+    # On by default: an agent-facing tool set nobody can reach is not a
+    # feature. It is a switch and not a constant because, until auth exists,
+    # `/mcp` is an unauthenticated *write* path onto the architecture graph for
+    # anyone who can reach this host — a deployment that does not want that
+    # turns it off here rather than by deleting a mount.
+    mcp_enabled: bool = True
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:

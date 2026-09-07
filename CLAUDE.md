@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). The same backend also speaks **MCP**: `/mcp` offers the whole architecture service to an agent as fourteen tools — the element CRUD, the links, the two traversals and the metamodel — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 **Not yet scaffolded** (do not assume these exist): auth, SQLAlchemy, Alembic, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
 
@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
 | Everything not a graph | PostgreSQL + SQLAlchemy 2 (async) + Alembic | Auth, audit, scheduled work. **No table exists yet**; add the dependencies with the first one |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
+| Agent-facing API | MCP (`mcp` SDK 2.x), streamable HTTP served at `/mcp` | A second adapter over the same service, not a second API — see `docs/adr/0014` |
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
 | Frontend routing | `vue-router` 4, `history` mode | Routes and menu are both derived from one section catalogue — see `docs/adr/0008` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
@@ -33,6 +34,7 @@ Makefile         # single entry point for local dev — see docs/adr/0001
 backend/
   src/ea/
     api/           # FastAPI routers, request/response schemas, dependencies
+    mcp/           # the same service offered to an agent as MCP tools
     domain/        # entities, value objects, domain services — NO framework imports
       archimate/   # the ArchiMate 3.2 metamodel: taxonomy, relations, rules
     services/      # use cases; orchestrate domain + repositories, own transactions
@@ -49,7 +51,7 @@ frontend/
 docs/adr/                              # architecture decision records
 ```
 
-**Dependency direction is one-way: `api → services → domain ← repositories`.** `domain/` imports nothing from FastAPI, SQLAlchemy, or `api/`. A test that needs a database is not a unit test — move it to `tests/integration/`.
+**Dependency direction is one-way: `api → services → domain ← repositories`.** `mcp/` sits *beside* `api/` in that arrow — same distance from the domain, never behind it. `domain/` imports nothing from FastAPI, SQLAlchemy, or `api/`. A test that needs a database is not a unit test — move it to `tests/integration/`.
 
 ## Commands
 
@@ -96,7 +98,7 @@ npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint confi
 npm run generate:api                     # regenerate src/api/ — or `make openapi` from the root
 ```
 
-Whole stack: `make run`. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. `make pg-up` starts the still-unused local PostgreSQL.
+Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. `make pg-up` starts the still-unused local PostgreSQL.
 
 `make check` runs lint, types (backend and frontend), the generated-client check and the DB-free suites on both sides — what CI will check.
 
@@ -105,6 +107,35 @@ Whole stack: `make run`. The graph is a single instance on the Docker cluster (1
 The backend's OpenAPI schema is the single source of truth. **Never hand-write a TypeScript interface that mirrors a Pydantic model** — regenerate `frontend/src/api/` and import from there. A backend change that alters the schema and does not regenerate the client is an incomplete change.
 
 `backend/openapi.json` and `frontend/src/api/schema.d.ts` are both committed. `make openapi` regenerates the pair; `make openapi-check` fails when they no longer match the code, and `make check` runs it. `openapi-fetch` calls the generated types; `src/lib/api.ts` holds the base URL and the error handling — the only hand-written half — and nothing else there describes a payload. See `docs/adr/0007`.
+
+## The MCP adapter is a sibling of `api/`, not a client of it
+
+`ea/mcp/` translates one agent request into one `ArchitectureService` call and
+renders the answer with **the API's own read models** (`ElementRead`,
+`GraphRead`, `MetamodelRead`). Never give it a repository, never let it reach
+past the service, and never let it speak HTTP to our own API: the rules that
+need more than one object — the element must exist before it is linked,
+containment must not loop — live in `services/`, and an adapter that skips them
+writes a graph the API would refuse. The same reason forbids restating a rule
+here: the palette is *asked for* (`describe_metamodel`), exactly as the SPA
+asks for it.
+
+Adding a tool means: a method on the service if it is a new use case, a
+function in `mcp/server.py` decorated with `@server.tool(annotations=...)` and
+`@speaking_plainly`, and an entry in the whole-list assertion in
+`tests/unit/test_mcp_server.py`. Two things are part of the behaviour and not
+decoration — the docstring, which is what the model reads to decide whether to
+call it, and the annotation, which is what a client shows the person who has to
+approve a write. A tool that deletes says so.
+
+Domain failures come back as `ToolError` (`mcp/errors.py`), the exact
+counterpart of `api/errors.py`: an anticipated refusal reaches the model with
+its message so it can correct itself, anything else stays in the logs.
+
+The transport's routes are *spliced* onto the FastAPI app rather than mounted,
+because `Mount("/mcp", …)` answers a bare `POST /mcp` with a 307. It is a
+Starlette route, so **`/mcp` never appears in the OpenAPI schema** and no
+client regeneration follows from it. See `docs/adr/0014`.
 
 ## Adding a section to the SPA
 
