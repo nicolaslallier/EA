@@ -21,7 +21,9 @@ from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
 from ea.api.metamodel import router as metamodel_router
+from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.core.config import Settings, get_settings
+from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
@@ -98,6 +100,17 @@ def _lifespan(
             # PostgreSQL first: the markdown attached to an element lives here,
             # and the architecture service built below has to be handed the
             # repository that deletes it when the element goes.
+            logger.info(
+                "starting %s",
+                settings.app_name,
+                extra={
+                    "graph": open_graph,
+                    "postgres": settings.postgres_enabled,
+                    "embeddings": settings.embeddings_enabled,
+                    "mcp": settings.mcp_enabled,
+                    "log_level": settings.log_level,
+                },
+            )
             attachments = documents
             if settings.postgres_enabled:
                 engine = create_engine(settings)
@@ -106,6 +119,12 @@ def _lifespan(
                 app.state.db_sessions = create_session_factory(engine)
                 if attachments is None:
                     attachments = PostgresDocumentRepository(app.state.db_sessions)
+                logger.info(
+                    "relational store ready at %s:%s/%s",
+                    settings.postgres_host,
+                    settings.postgres_port,
+                    settings.postgres_database,
+                )
             if open_graph:
                 driver = create_driver(settings)
                 stack.push_async_callback(driver.close)
@@ -118,6 +137,7 @@ def _lifespan(
                 # store, so it is built from the very repository above — see
                 # `docs/adr/0020`.
                 app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                logger.info("architecture graph ready at %s", settings.neo4j_uri)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
@@ -127,6 +147,13 @@ def _lifespan(
                 stack.push_async_callback(embedder.aclose)
                 await embedder.probe()
                 index = DocumentIndexer(embedder)
+                logger.info(
+                    "embedding service ready: %s at %s",
+                    settings.embeddings_model,
+                    settings.embeddings_base_url,
+                )
+            elif index is None and settings.embeddings_enabled:
+                logger.warning("embeddings are on but there is no document store to index")
             if attachments is not None:
                 app.state.document_service = DocumentService(
                     attachments, architecture_service_of(app), indexer=index
@@ -134,7 +161,12 @@ def _lifespan(
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
+                logger.info("MCP tools served at %s", MCP_PATH)
+            logger.info(
+                "%s is up and answering on %s:%s", settings.app_name, settings.host, settings.port
+            )
             yield
+            logger.info("shutting down")
 
     return lifespan
 
@@ -254,7 +286,14 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A browser cannot read a response header it was not told about, and
+        # the request id is only useful to the SPA if it can put it in its own
+        # console line — see docs/adr/0021.
+        expose_headers=[REQUEST_ID_HEADER],
     )
+    # Added last, so it is the outermost layer: it then times and reports the
+    # CORS preflight and the 404 as readily as a route that ran.
+    app.add_middleware(RequestLogging)
     register_error_handlers(app)
     app.include_router(health_router)
     app.include_router(metamodel_router)
@@ -281,5 +320,12 @@ def __getattr__(name: str) -> FastAPI:
         raise AttributeError(name)
     global _app
     if _app is None:
-        _app = create_app()
+        # Logging is configured here and not in `create_app`, because this is
+        # the process entry point: a test that builds an app must not
+        # reconfigure the logging of the process running it. uvicorn has
+        # already installed its own by now, and this deliberately replaces it
+        # — see docs/adr/0021.
+        settings = get_settings()
+        configure_logging(settings)
+        _app = create_app(settings)
     return _app

@@ -23,6 +23,7 @@ up, so a document is stored either way and `reindex_all` catches it up.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -42,6 +43,9 @@ Clock = Callable[[], datetime]
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -86,7 +90,21 @@ class DocumentService:
             content=content,
             now=self._now(),
         )
-        return await self._repository.add(document, await self._passages_of(document))
+        passages = await self._passages_of(document)
+        stored = await self._repository.add(document, passages)
+        logger.info(
+            "document %r attached (%d bytes, %d passage(s))",
+            stored.filename,
+            len(stored.content.encode()),
+            len(passages),
+            extra={
+                "action": "attached",
+                "document_id": str(stored.id),
+                "element_id": str(element_id),
+                "passages": len(passages),
+            },
+        )
+        return stored
 
     async def get(self, document_id: UUID) -> Document:
         """One document, content included, or a clear statement that it is gone."""
@@ -129,12 +147,30 @@ class DocumentService:
             msg = f"this document is {current.filename!r}, and the file offered is {offered!r}"
             raise ValueError(msg)
         revised = current.revise(content, now=self._now())
-        return await self._repository.replace(revised, await self._passages_of(revised))
+        passages = await self._passages_of(revised)
+        stored = await self._repository.replace(revised, passages)
+        logger.info(
+            "document %r revised (%d bytes, %d passage(s))",
+            stored.filename,
+            len(stored.content.encode()),
+            len(passages),
+            extra={
+                "action": "revised",
+                "document_id": str(stored.id),
+                "element_id": str(stored.element_id),
+                "passages": len(passages),
+            },
+        )
+        return stored
 
     async def discard(self, document_id: UUID) -> None:
         if not await self._repository.delete(document_id):
             msg = f"no document with id {document_id}"
             raise DocumentNotFoundError(msg)
+        logger.info(
+            "document discarded, passages included",
+            extra={"action": "discarded", "document_id": str(document_id)},
+        )
 
     # --- Finding a passage rather than a file -----------------------------
 

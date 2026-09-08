@@ -24,6 +24,7 @@ both writing it.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -63,6 +64,9 @@ if TYPE_CHECKING:
     from ea.domain.model import Element
     from ea.domain.ports import IpamRepository
     from ea.services.architecture import ArchitectureService
+
+
+logger = logging.getLogger(__name__)
 
 
 class IpamService:
@@ -106,6 +110,18 @@ class IpamService:
                 PREFIX_PROPERTY: prefix.with_prefixlen,
                 VRF_PROPERTY: scope,
                 **({RESERVED_PROPERTY: reserved.strip()} if reserved.strip() else {}),
+            },
+        )
+        logger.info(
+            "subnet %s declared in VRF %r as %r",
+            prefix.with_prefixlen,
+            scope,
+            element.name,
+            extra={
+                "action": "subnet_declared",
+                "cidr": prefix.with_prefixlen,
+                "vrf": scope,
+                "element_id": str(element.id),
             },
         )
         return await self._with_occupancy(element)
@@ -207,6 +223,11 @@ class IpamService:
             key: value for key, value in element.properties.items() if key != ADDRESS_PROPERTY
         }
         await self._architecture.update_element(element_id, properties=remaining)
+        logger.info(
+            "address released by %r",
+            element.name,
+            extra={"action": "address_released", "element_id": str(element_id)},
+        )
 
     async def locate(self, address: str, *, vrf: str = DEFAULT_VRF) -> AddressLocation:
         """What answers on an address, and what that thing is wired to."""
@@ -342,4 +363,16 @@ class IpamService:
             VRF_PROPERTY: vrf,
         }
         updated = await self._architecture.update_element(element.id, properties=properties)
+        logger.info(
+            "%s assigned to %r in VRF %r",
+            address,
+            updated.name,
+            vrf,
+            extra={
+                "action": "address_assigned",
+                "address": str(address),
+                "vrf": vrf,
+                "element_id": str(element.id),
+            },
+        )
         return self._assignment(updated, address, vrf, subnets)

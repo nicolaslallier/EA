@@ -7,6 +7,7 @@
 import createClient from 'openapi-fetch'
 
 import type { paths } from '../api/schema'
+import { createLogger } from './logging'
 
 /** The port `make run-be` serves the API on. */
 const API_PORT = 8000
@@ -47,6 +48,58 @@ export const api = createClient<paths>({
   // reach the real backend — which, the graph being shared, means writing to
   // everyone's data from a unit test.
   fetch: (request) => globalThis.fetch(request),
+})
+
+const log = createLogger('api')
+
+/** When each in-flight call started, by the id openapi-fetch gives it. */
+const started = new Map<string, number>()
+
+function path(request: Request): string {
+  // The path and the query, never the origin: the origin is the same for every
+  // line and is the one part of the URL nobody is looking for.
+  const url = new URL(request.url)
+  return `${url.pathname}${url.search}`
+}
+
+function since(id: string): number {
+  const at = started.get(id)
+  started.delete(id)
+  return at === undefined ? 0 : Math.round((performance.now() - at) * 10) / 10
+}
+
+// One line per call. The backend writes its own (docs/adr/0021) and puts the
+// request id on the answer; repeating it here is what lets a line in this
+// console be joined to a line in that log — which is the whole reason the API
+// exposes the header through CORS.
+api.use({
+  onRequest({ request, id }) {
+    started.set(id, performance.now())
+    log.debug(`→ ${request.method} ${path(request)}`)
+  },
+  onResponse({ request, response, id }) {
+    const fields = {
+      status: response.status,
+      duration_ms: since(id),
+      request_id: response.headers.get('x-request-id') ?? undefined,
+    }
+    const line = `${request.method} ${path(request)}`
+    if (response.status >= 500) {
+      log.error(line, fields)
+    } else if (response.status >= 400) {
+      log.warn(line, fields)
+    } else {
+      log.debug(line, fields)
+    }
+  },
+  onError({ request, error, id }) {
+    // `fetch` itself never reached the backend: no status, no request id, and
+    // the reason is the only thing there is to say.
+    log.error(`${request.method} ${path(request)}`, {
+      duration_ms: since(id),
+      reason: error instanceof Error ? error.message : String(error),
+    })
+  },
 })
 
 /** A failure the API chose to describe — never a stack trace, by design. */

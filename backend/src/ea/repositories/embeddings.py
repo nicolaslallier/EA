@@ -21,11 +21,20 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from time import perf_counter
 from typing import Any, Final
 
 import httpx
 
+from ea.core.logging import EMBEDDINGS_LOGGER
+
 logger = logging.getLogger(__name__)
+
+#: The call trace, on its own switch — see `ea.core.logging`. Indexing a corpus
+#: is one HTTP round trip per batch to another machine, and it is the only
+#: thing here that takes minutes; without this, "the reindex is slow" cannot be
+#: told apart from "the model is slow".
+traffic = logging.getLogger(EMBEDDINGS_LOGGER)
 
 #: Appended to the configured base URL, which is expected to end in `/v1`.
 EMBEDDINGS_PATH: Final = "/embeddings"
@@ -124,6 +133,7 @@ class HttpEmbedder:
         """One request, and everything that can be wrong with its answer."""
         if not inputs:
             return []
+        started = perf_counter()
         try:
             response = await self._client.post(
                 self._url, json={"model": self._model, "input": inputs}
@@ -141,7 +151,19 @@ class HttpEmbedder:
             )
             msg = f"the embedding service answered {response.status_code}"
             raise EmbeddingServiceError(msg)
-        return self._vectors_of(response, expected=len(inputs))
+        vectors = self._vectors_of(response, expected=len(inputs))
+        traffic.debug(
+            "embedded %d input(s) with %s",
+            len(inputs),
+            self._model,
+            extra={
+                "model": self._model,
+                "inputs": len(inputs),
+                "characters": sum(len(text) for text in inputs),
+                "duration_ms": round((perf_counter() - started) * 1000, 1),
+            },
+        )
+        return vectors
 
     def _vectors_of(self, response: httpx.Response, *, expected: int) -> list[tuple[float, ...]]:
         """Read the answer, in the order it was asked for, at the declared width.

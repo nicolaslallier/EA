@@ -8,11 +8,13 @@ choice between them stays a URL rather than a rewrite. See docs/adr/0019.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
 import pytest
 
+from ea.core.logging import EMBEDDINGS_LOGGER
 from ea.repositories.embeddings import EmbeddingServiceError, HttpEmbedder
 
 WIDTH = 4
@@ -217,3 +219,47 @@ class TestTheBootProbe:
 
         with pytest.raises(EmbeddingServiceError, match="dimension"):
             await embedder(transport).probe()
+
+
+class TestTheTrace:
+    """Off unless `EA_LOG_EMBEDDINGS` opens it — see docs/adr/0021.
+
+    Indexing a corpus is the one thing here that takes minutes, and it is one
+    HTTP call per batch to another machine. Without the trace, "the reindex is
+    slow" cannot be told apart from "the model is slow" or "the batches are
+    tiny".
+    """
+
+    def traces(self, caplog: pytest.LogCaptureFixture) -> list[Any]:
+        return [record for record in caplog.records if record.name == EMBEDDINGS_LOGGER]
+
+    async def test_one_line_per_batch_actually_sent(self, caplog: pytest.LogCaptureFixture) -> None:
+        _, transport = responder()
+
+        with caplog.at_level(logging.DEBUG, logger=EMBEDDINGS_LOGGER):
+            await embedder(transport).embed_passages(["a", "b", "c"])
+
+        # batch_size is 2, so three passages are two round trips.
+        assert [line.inputs for line in self.traces(caplog)] == [2, 1]
+
+    async def test_the_line_says_which_model_and_how_long_it_took(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _, transport = responder()
+
+        with caplog.at_level(logging.DEBUG, logger=EMBEDDINGS_LOGGER):
+            await embedder(transport).embed_query("what restarts the collector?")
+
+        (line,) = self.traces(caplog)
+        assert line.model == "bge-m3"
+        assert line.duration_ms >= 0
+
+    async def test_it_says_nothing_until_it_is_switched_on(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _, transport = responder()
+
+        with caplog.at_level(logging.INFO):
+            await embedder(transport).embed_query("anything")
+
+        assert self.traces(caplog) == []

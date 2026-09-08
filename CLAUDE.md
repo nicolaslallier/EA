@@ -398,6 +398,46 @@ discipline from the PostgreSQL above, in the same repository. `backend/src/ea/db
 
 Elements are `:Element` nodes with the ArchiMate type as an indexed property; relationships carry their ArchiMate type as the real Neo4j relationship type. User-defined attributes are stored flat under a `p_` prefix so they stay queryable. `db/schema.py` explains why.
 
+## Nothing is logged until something configures logging
+
+`core/logging.py` is that something, and it is a **pure function of the
+settings**: `logging_config(settings)` returns the `dictConfig`,
+`configure_logging` applies it, and it is called from the **process entry
+point** — `main.__getattr__` for `uvicorn ea.main:app`, `main()` for
+`python -m ea.reindex` — and never from `create_app`, so a test that builds an
+app does not reconfigure the logging of the process running it. Four things
+about it are decisions, not details — see `docs/adr/0021`.
+
+**The request id is a `ContextVar`, set by `api/middleware.py` and put on every
+record by a filter.** A call site logs what it has to say; which request it was
+serving is not its business. The middleware is a plain ASGI one and not a
+`BaseHTTPMiddleware`, because `/mcp` answers over a streaming transport that
+`BaseHTTPMiddleware` buffers. The id is echoed in `X-Request-Id`, and CORS
+exposes that header so the SPA can print it too — a line in the browser console
+and a line in the server log are then the same request.
+
+**Each noisy stream has its own name and its own switch.** `EA_LOG_LEVEL` is
+the level of *our* code; `EA_LOG_CYPHER` (`ea.cypher` plus the driver),
+`EA_LOG_SQL` (`sqlalchemy.engine`) and `EA_LOG_EMBEDDINGS` (`ea.embeddings`
+plus `httpx`) are three firehoses opened one at a time. `EA_LOG_LEVEL=DEBUG`
+deliberately opens none of them. The logger names are constants in
+`core/logging.py`, imported by whoever writes to them, so a switch cannot drift
+from the logger it is meant to open.
+
+**`extra=` is where the facts go, and both formatters render them** — as JSON
+fields for a collector, as `key=value` at the end of the line for a terminal. A
+key colliding with a `LogRecord` attribute (`args`, `module`, `name`) raises at
+emit time; `action`, `element_id`, `duration_ms`, `status` and `tool` do not.
+Secrets are masked by `RedactingFilter` on the handler, per the rule above.
+
+**Every write logs one line in `services/`, and that is on purpose**: `POST
+/elements -> 201` says an element was created and not which, and `/mcp` reaches
+the same use cases without HTTP at all. The MCP side is traced inside
+`speaking_plainly` — the decorator every tool already carries — rather than by
+a third decorator somebody has to remember. The SPA's half is
+`lib/logging.ts` (`VITE_LOG_LEVEL`, `console`, no dependency) wired into
+`lib/api.ts` as an `openapi-fetch` middleware.
+
 ## TDD is the default working mode
 
 Write the failing test first, watch it fail for the right reason, then make it pass. Concretely, per change:
@@ -415,7 +455,7 @@ Rules that matter here: every bug fix starts with a regression test reproducing 
 - All DB access goes through SQLAlchemy constructs; raw `text()` requires bound parameters and a comment justifying it. **Cypher follows the same rule**: every runtime value is a bound parameter. Cypher cannot parameterise a relationship type or the bound of a variable-length path — those three call sites build from a closed enum or a clamped integer and each says so in a comment. Adding a fourth needs the same justification.
 - Request bodies are Pydantic models with explicit constraints; response models are declared so internal fields cannot leak. `model_config = ConfigDict(extra="forbid")` on inputs.
 - CORS is an explicit allowlist from settings — never `allow_origins=["*"]` with credentials.
-- Errors returned to clients are typed and generic; stack traces and DB messages go to structured logs (`structlog`, JSON, with a request id), never to the response body.
+- Errors returned to clients are typed and generic; stack traces and DB messages go to structured logs (stdlib `logging` through `core/logging.py` — JSON in a deployment, with a request id), never to the response body. Redaction is a filter on the handler, never a call site's job — see `docs/adr/0021`.
 - Never log tokens, passwords, or PII. Redact at the logging processor, not at each call site.
 - Frontend: no `dangerouslySetInnerHTML` without sanitisation; tokens in memory or httpOnly cookies, not `localStorage`.
 - `bandit`, `pip-audit`, and `npm audit --audit-level=high` run in CI and block merges. Dependabot/Renovate keeps lockfiles current.
