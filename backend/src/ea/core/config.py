@@ -4,6 +4,7 @@ No literal secret, DSN or key lives in this file — see `.env.example` for the
 shape of a local environment.
 """
 
+import logging
 from typing import Annotated
 
 from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
@@ -35,6 +36,32 @@ class Settings(BaseSettings):
     # value: without it `EA_CORS_ORIGINS=http://localhost:5173` — the form
     # `.env.example` ships — raises before the validator below ever runs.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
+
+    # --- What the process prints — see docs/adr/0021 ------------------------
+    # The level of our own code. It is INFO by default because the interesting
+    # lines are the ones nobody thought to ask for: what the boot opened, what
+    # each request did, which tool an agent called. DEBUG adds the traces a
+    # developer chasing something wants.
+    log_level: str = "INFO"
+
+    #: Text for a human, or one JSON object per line. Left unset it follows
+    #: `debug`: `make run` interleaves both servers in one terminal and must
+    #: stay readable, while a deployment's logs are read by a collector.
+    log_json: bool | None = None
+
+    #: One line per request — method, path, status, duration, request id. On,
+    #: because an API with no access log cannot be asked what it just did.
+    #: Turning it off hands the job back to uvicorn's own, which knows neither
+    #: the duration nor the id.
+    log_requests: bool = True
+
+    # The three noisy streams, each behind its own switch and each off. They
+    # are deliberately *not* opened by `log_level=DEBUG`: a developer wanting
+    # to see our own reasoning in detail is not asking for every Cypher
+    # statement, every SELECT and every HTTP round trip at once.
+    log_cypher: bool = False
+    log_sql: bool = False
+    log_embeddings: bool = False
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
     # There is one instance, on the Docker cluster (docs/adr/0006), so its
@@ -161,6 +188,21 @@ class Settings(BaseSettings):
             msg = f"{info.field_name} must be an explicit allowlist, not a wildcard"
             raise ValueError(msg)
         return value
+
+    @field_validator("log_level", mode="after")
+    @classmethod
+    def _known_level(cls, value: str) -> str:
+        """A level nobody recognises would otherwise start the process mute."""
+        level = value.strip().upper()
+        if level not in logging.getLevelNamesMapping():
+            msg = f"log_level must be one of {', '.join(logging.getLevelNamesMapping())}"
+            raise ValueError(msg)
+        return level
+
+    @property
+    def json_logs(self) -> bool:
+        """Whether lines come out as JSON — stated if stated, else the opposite of debug."""
+        return (not self.debug) if self.log_json is None else self.log_json
 
     @model_validator(mode="after")
     def _require_a_neo4j_password_outside_debug(self) -> "Settings":

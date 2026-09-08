@@ -11,6 +11,7 @@ and never in the SPA, per `CLAUDE.md`.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
         ElementFilter,
         GraphView,
     )
+
+logger = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
@@ -73,7 +76,18 @@ class ArchitectureService:
             properties=properties,
             now=self._now(),
         )
-        return await self._repository.add_element(element)
+        stored = await self._repository.add_element(element)
+        logger.info(
+            "element created: %s %r",
+            stored.element_type.value,
+            stored.name,
+            extra={
+                "action": "created",
+                "element_id": str(stored.id),
+                "element_type": stored.element_type.value,
+            },
+        )
+        return stored
 
     async def get_element(self, element_id: UUID) -> Element:
         """Fetch an element or say which one is missing."""
@@ -127,7 +141,18 @@ class ArchitectureService:
                 ),
                 properties=updated.properties,
             )
-        return await self._repository.save_element(updated)
+        stored = await self._repository.save_element(updated)
+        logger.info(
+            "element updated: %s %r",
+            stored.element_type.value,
+            stored.name,
+            extra={
+                "action": "updated",
+                "element_id": str(stored.id),
+                "element_type": stored.element_type.value,
+            },
+        )
+        return stored
 
     async def delete_element(self, element_id: UUID) -> None:
         """Remove an element together with everything attached to it.
@@ -152,6 +177,10 @@ class ArchitectureService:
             raise ElementNotFoundError(msg)
         if self._attachments is not None:
             await self._attachments.discard_for_element(element_id)
+        logger.info(
+            "element deleted, with everything attached to it",
+            extra={"action": "deleted", "element_id": str(element_id)},
+        )
 
     # --- Relationships ----------------------------------------------------
 
@@ -192,7 +221,21 @@ class ArchitectureService:
             )
             raise CyclicContainmentError(msg)
 
-        return await self._repository.add_relationship(relationship)
+        stored = await self._repository.add_relationship(relationship)
+        logger.info(
+            "%r --%s--> %r",
+            source.name,
+            stored.relationship_type.value,
+            target.name,
+            extra={
+                "action": "connected",
+                "relationship_id": str(stored.id),
+                "relationship_type": stored.relationship_type.value,
+                "source_id": str(source_id),
+                "target_id": str(target_id),
+            },
+        )
+        return stored
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship:
         relationship = await self._repository.get_relationship(relationship_id)
@@ -220,6 +263,10 @@ class ArchitectureService:
         if not await self._repository.delete_relationship(relationship_id):
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
+        logger.info(
+            "relationship deleted",
+            extra={"action": "disconnected", "relationship_id": str(relationship_id)},
+        )
 
     async def relations_of(
         self,

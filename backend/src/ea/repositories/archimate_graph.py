@@ -9,11 +9,13 @@ integer clamped to a small range, never from anything a caller typed.
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Final, LiteralString, cast
 from uuid import UUID
 
 from neo4j.exceptions import ConstraintError
 
+from ea.core.logging import CYPHER_LOGGER, summarise
 from ea.db.schema import ANY_RELATIONSHIP, PROPERTY_PREFIX
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import (
@@ -35,6 +37,19 @@ if TYPE_CHECKING:
     from neo4j.graph import Relationship as Neo4jRelationship
 
 logger = logging.getLogger(__name__)
+
+#: The Cypher trace, on its own switch — see `ea.core.logging`.
+cypher = logging.getLogger(CYPHER_LOGGER)
+
+
+def _first_line(query: LiteralString) -> str:
+    """The statement's opening clause, which is what identifies it in a log."""
+    for line in query.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("//"):
+            return stripped
+    return query.strip()
+
 
 #: A traversal deeper than this is a full-graph dump wearing a filter.
 MAX_TRAVERSAL_DEPTH: Final = 10
@@ -298,8 +313,30 @@ class Neo4jArchitectureRepository:
         self._database = database
 
     async def _run(self, query: LiteralString, parameters: dict[str, Any]) -> list[Any]:
+        """Every statement goes through here, which is why the trace does too.
+
+        Off unless `EA_LOG_CYPHER` opens `ea.cypher` — one line per query is a
+        firehose at rest and the only useful thing in the world when a
+        traversal answers something nobody expected. The parameters are traced
+        with the statement because half of what a query does is in them, and
+        `summarise` keeps a document body from being copied into the log.
+        """
+        started = perf_counter()
         result = await self._driver.execute_query(query, parameters, database_=self._database)
-        return list(result.records)
+        records = list(result.records)
+        if cypher.isEnabledFor(logging.DEBUG):
+            cypher.debug(
+                "%s -> %d record(s)",
+                _first_line(query),
+                len(records),
+                extra={
+                    "cypher": " ".join(query.split()),
+                    "parameters": {key: summarise(value) for key, value in parameters.items()},
+                    "records": len(records),
+                    "duration_ms": round((perf_counter() - started) * 1000, 1),
+                },
+            )
+        return records
 
     # --- Elements ---------------------------------------------------------
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -54,6 +55,33 @@ def _database_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) ->
     for variable in ("EA_NEO4J_PASSWORD", "EA_POSTGRES_PASSWORD"):
         if not os.environ.get(variable):
             monkeypatch.setenv(variable, "test-password")
+
+
+@pytest.fixture(autouse=True)
+def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
+    """No test may leave the logging of the process reconfigured.
+
+    Two of them apply a real `dictConfig`: the one that checks the
+    configuration is accepted, and the one that drives `python -m ea.reindex`
+    through its entry point. `dictConfig` sets a level on `ea` and on nine
+    other loggers and takes `propagate` off two of them — and a `propagate`
+    left off is a `caplog` in another module that silently captures nothing.
+    """
+    loggers = [logging.getLogger()] + [
+        logger
+        for logger in logging.root.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger)
+    ]
+    before = [
+        (logger, logger.level, list(logger.handlers), logger.propagate, list(logger.filters))
+        for logger in loggers
+    ]
+    yield
+    for logger, level, handlers, propagate, filters in before:
+        logger.setLevel(level)
+        logger.handlers[:] = handlers
+        logger.propagate = propagate
+        logger.filters[:] = filters
 
 
 class InMemoryRepository:

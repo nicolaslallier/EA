@@ -22,6 +22,7 @@ import logging
 import sys
 
 from ea.core.config import Settings, get_settings
+from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver
 from ea.db.postgres import check_connectivity, create_engine, create_session_factory
 from ea.main import build_embedder
@@ -66,8 +67,11 @@ async def reindex(settings: Settings) -> int:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    # The same configuration the server uses: this is the other entry point,
+    # and a reindex is exactly when the embedding trace is worth switching on
+    # (`EA_LOG_EMBEDDINGS`) — see docs/adr/0021.
+    configure_logging(settings)
     if not settings.embeddings_enabled:
         print("EA_EMBEDDINGS_ENABLED is off — there is no index to rebuild.", file=sys.stderr)
         return 1
