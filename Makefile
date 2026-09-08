@@ -21,10 +21,20 @@ BE_ENV := $(BACKEND)/.env
 # l'API joignable depuis les autres postes du réseau. BE_URL est celle qu'on
 # affiche, puisqu'on ne visite pas 0.0.0.0. Qui a le droit d'appeler /mcp n'en
 # découle pas — c'est EA_MCP_ALLOWED_HOSTS, voir backend/.env.example.
+#
+# FE_HOST suit la même règle depuis docs/adr/0019 : le SPA s'ouvre depuis les
+# autres postes, et qui le *backend* sert n'en découle pas non plus — c'est
+# EA_CORS_ORIGINS. `make run-fe FE_HOST=127.0.0.1` rend le serveur local.
 BE_HOST ?= 0.0.0.0
 BE_PORT ?= 8000
 BE_URL  ?= http://127.0.0.1:$(BE_PORT)
+FE_HOST ?= 0.0.0.0
 FE_PORT ?= 5173
+FE_URL  ?= http://127.0.0.1:$(FE_PORT)
+
+# L'adresse par laquelle un autre poste atteint ce Mac. Sert uniquement à
+# l'afficher : c'est l'origine à ajouter à EA_CORS_ORIGINS.
+LAN_IP ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 
 # Base de données graphe : une instance unique sur le cluster Docker, déployée
 # depuis deploy/neo4j.stack.yml. Rien ne la démarre depuis ce Makefile — voir
@@ -102,9 +112,11 @@ run-be: | $(VENV_STAMP) $(BE_ENV) ## Lance le backend FastAPI (écoute 0.0.0.0:8
 	@printf "$(GREEN)Starting backend on $(BE_HOST):$(BE_PORT) — $(BE_URL)$(NC)\n"
 	cd $(BACKEND) && uv run uvicorn ea.main:app --reload --host $(BE_HOST) --port $(BE_PORT)
 
-run-fe: | $(FRONTEND)/node_modules ## Lance le frontend Vue/Vite (http://localhost:5173)
-	@printf "$(GREEN)Starting frontend on http://localhost:$(FE_PORT) ...$(NC)\n"
-	cd $(FRONTEND) && npm run dev -- --port $(FE_PORT)
+run-fe: | $(FRONTEND)/node_modules ## Lance le frontend Vue/Vite (écoute 0.0.0.0:5173)
+	@printf "$(GREEN)Starting frontend on $(FE_HOST):$(FE_PORT) — $(FE_URL)$(NC)\n"
+	@test -z "$(LAN_IP)" || printf "  Depuis un autre poste : http://$(LAN_IP):$(FE_PORT)\n"
+	@test -z "$(LAN_IP)" || printf "  Ajoute http://$(LAN_IP):$(FE_PORT) à EA_CORS_ORIGINS ($(BE_ENV)), sinon l'API refuse ses appels.\n"
+	cd $(FRONTEND) && npm run dev -- --host $(FE_HOST) --port $(FE_PORT)
 
 run: ## Lance backend et frontend en parallèle (logs entrelacés, Ctrl-C arrête tout)
 	@printf "$(GREEN)Starting full stack...$(NC)\n"

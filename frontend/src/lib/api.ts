@@ -8,12 +8,36 @@ import createClient from 'openapi-fetch'
 
 import type { paths } from '../api/schema'
 
+/** The port `make run-be` serves the API on. */
+const API_PORT = 8000
+
+/** The two fields of `window.location` this module needs — all a test must fake. */
+type Origin = { protocol: string; hostname: string }
+
+/**
+ * The API's address when nothing configured one: this page's host, port 8000.
+ *
+ * Both servers bind every interface (docs/adr/0016 for the API, 0019 for Vite),
+ * so the SPA is loaded from `http://192.168.1.x:5173` as readily as from
+ * localhost. A constant `http://localhost:8000` would then name the *viewer's*
+ * machine — which usually runs no backend at all — so the host is taken from
+ * wherever the page itself came from, and the scheme with it, so a page served
+ * over TLS never falls back to plain HTTP.
+ */
+export function defaultApiBaseUrl(origin: Origin | undefined): string {
+  if (origin === undefined) {
+    return `http://localhost:${API_PORT}`
+  }
+  return `${origin.protocol}//${origin.hostname}:${API_PORT}`
+}
+
 // The API lives on its own origin, so this URL must be absolute: a relative
 // '/elements' would hit the Vite dev server, which answers 200 with index.html
 // and turns a failure into a confusing JSON parse error.
-// The default matches `make run-be`; override it with VITE_API_BASE_URL.
+// Override it with VITE_API_BASE_URL whenever the backend is neither on this
+// host nor on that port.
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+  import.meta.env.VITE_API_BASE_URL ?? defaultApiBaseUrl(globalThis.location)
 ).replace(/\/+$/, '')
 
 export const api = createClient<paths>({

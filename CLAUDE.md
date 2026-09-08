@@ -67,7 +67,7 @@ targets):
 make install                    # uv sync + npm install
 make run                        # backend and frontend in parallel, interleaved logs
 make run-be                     # backend only  — binds 0.0.0.0:8000, reachable on the LAN
-make run-fe                     # frontend only — http://localhost:5173
+make run-fe                     # frontend only — binds 0.0.0.0:5173, prints the LAN origin
 make run-be BE_PORT=8001        # every port is an overridable variable
 make clean                      # drop .venv, node_modules, caches, build output
 ```
@@ -107,7 +107,9 @@ npm run generate:api                     # regenerate src/api/ — or `make open
 
 Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. PostgreSQL is a second instance on the same cluster: `make pg-ping` checks it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`.
 
-The API binds `0.0.0.0` (`docs/adr/0016`), so it answers from other machines. Two allowlists decide who is actually served, and **neither follows from the bind address**: `EA_CORS_ORIGINS` for browsers, `EA_MCP_ALLOWED_HOSTS` for `/mcp`. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead.
+**Both servers bind `0.0.0.0`** — the API since `docs/adr/0016`, the Vite dev server since `docs/adr/0019` — and **an address to listen on authorises nobody.** Three allowlists decide who is actually served, and none of them follows from a bind address: `EA_CORS_ORIGINS` for browsers, `EA_MCP_ALLOWED_HOSTS` for `/mcp`, and Vite's own `server.allowedHosts`, left at its default. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead; setting Vite's `allowedHosts` to `true` would be the same mistake, which is why it is left alone.
+
+Two things follow for the SPA. A browser on another machine sends *that machine's* origin, so `EA_CORS_ORIGINS` needs an entry per host that serves the SPA — an origin is an exact string, the validator refuses `*`, and `make run-fe` prints the one to paste. And the API's URL cannot be a constant: `src/lib/api.ts` defaults to **this page's own host** on port 8000 (`defaultApiBaseUrl`, a pure function so it is tested without a DOM), because `http://localhost:8000` read by a browser elsewhere names the viewer's machine. `VITE_API_BASE_URL` still wins, for a backend that is genuinely somewhere else.
 
 `make check` runs lint, types (backend and frontend), the generated-client check and the DB-free suites on both sides — what CI will check.
 
