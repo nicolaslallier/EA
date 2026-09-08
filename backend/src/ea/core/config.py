@@ -79,6 +79,46 @@ class Settings(BaseSettings):
     postgres_max_overflow: int = 5
     postgres_connection_timeout_seconds: float = 5.0
 
+    # --- The embedding service, behind the document search — docs/adr/0019 --
+    # LM Studio on the same cluster as the two databases, serving an
+    # OpenAI-compatible `/v1/embeddings`. The base URL is all that ties us to
+    # it: Ollama, text-embeddings-inference and the hosted providers answer the
+    # same shape, so changing supplier is this line and a model name.
+    #
+    # On by default, like the two stores, and for the same reason: a search
+    # that silently returns nothing is worse than an API that refuses to start.
+    # It is not cross-checked against `postgres_enabled`: the passages are rows
+    # in that database, so a deployment without it has no documents to index
+    # either, and the lifespan simply opens no embedding client.
+    # The width of the vectors is not configurable here — it is the width of
+    # the column, `EMBEDDING_DIMENSIONS`, and changing it is a migration plus a
+    # full reindex, never an environment variable.
+    embeddings_enabled: bool = True
+    embeddings_base_url: str = "http://192.168.1.252:1234/v1"
+
+    #: Measured against the other model LM Studio holds, on French runbook
+    #: prose with its heading trail: 4 of 5 questions answered at rank 1,
+    #: against 2 of 5 for `nomic-embed-text-v1.5`. It is also 1024-wide, which
+    #: is what the column is.
+    embeddings_model: str = "text-embedding-mxbai-embed-large-v1"
+
+    #: Empty for a local LM Studio, which authenticates nothing. It is a
+    #: `SecretStr` all the same so that pointing this at a hosted provider is a
+    #: variable rather than a patch.
+    embeddings_api_key: SecretStr = SecretStr("")
+
+    #: Generous, because the first request after a cold start loads the model.
+    embeddings_timeout_seconds: float = 60.0
+    embeddings_batch_size: int = 16
+
+    #: The instructions this model family is trained with. `mxbai` wants one on
+    #: the query and none on the passage; the e5 line wants `passage: ` and
+    #: `query: `; `bge-m3` wants neither. Getting them the wrong way round
+    #: costs nothing visible and a good deal of recall, which is exactly why
+    #: they are stated rather than assumed.
+    embeddings_passage_prefix: str = ""
+    embeddings_query_prefix: str = "Represent this sentence for searching relevant passages: "
+
     # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
     # On by default: an agent-facing tool set nobody can reach is not a
     # feature. It is a switch and not a constant because, until auth exists,

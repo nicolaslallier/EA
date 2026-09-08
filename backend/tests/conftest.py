@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
@@ -18,8 +20,15 @@ from ea.domain.errors import (
 )
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.search import (
+    DEFAULT_SEARCH_LIMIT,
+    EMBEDDING_DIMENSIONS,
+    EmbeddedChunk,
+    Passage,
+)
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.indexing import DocumentIndexer
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -151,8 +160,9 @@ class InMemoryDocuments:
 
     def __init__(self) -> None:
         self.documents: dict[UUID, Document] = {}
+        self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
 
-    async def add(self, document: Document) -> Document:
+    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
             for stored in self.documents.values()
@@ -161,6 +171,7 @@ class InMemoryDocuments:
             msg = f"{document.filename!r} is already attached to this element"
             raise DuplicateDocumentError(msg)
         self.documents[document.id] = document
+        self.chunks[document.id] = tuple(chunks)
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -175,13 +186,17 @@ class InMemoryDocuments:
             )
         )
 
-    async def replace(self, document: Document) -> Document:
+    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
         self.documents[document.id] = document
+        self.chunks[document.id] = tuple(chunks)
         return document
 
     async def delete(self, document_id: UUID) -> bool:
+        """The passages go with the document — here by hand, in PostgreSQL by
+        the foreign key `element_documents` could never have."""
+        self.chunks.pop(document_id, None)
         return self.documents.pop(document_id, None) is not None
 
     async def discard_for_element(self, element_id: UUID) -> int:
@@ -192,7 +207,102 @@ class InMemoryDocuments:
         ]
         for document_id in doomed:
             del self.documents[document_id]
+            self.chunks.pop(document_id, None)
         return len(doomed)
+
+    async def all_document_ids(self) -> tuple[UUID, ...]:
+        return tuple(
+            document.id
+            for document in sorted(self.documents.values(), key=lambda stored: stored.created_at)
+        )
+
+    async def search(
+        self,
+        embedding: Sequence[float],
+        *,
+        model: str,
+        element_id: UUID | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+    ) -> tuple[Passage, ...]:
+        """Cosine similarity in Python — the same ordering pgvector computes.
+
+        The `model` filter is reproduced rather than skipped: it is the rule
+        that makes a half-finished reindex return too little instead of
+        nonsense, and a double that ignored it would hide the day it broke.
+        """
+        hits = [
+            Passage(
+                document_id=document.id,
+                element_id=document.element_id,
+                filename=document.filename,
+                heading_path=chunk.heading_path,
+                text=chunk.text,
+                score=_cosine(embedding, chunk.embedding),
+            )
+            for document in self.documents.values()
+            for chunk in self.chunks.get(document.id, ())
+            if chunk.model == model and (element_id is None or document.element_id == element_id)
+        ]
+        hits.sort(key=lambda passage: passage.score, reverse=True)
+        return tuple(hits[:limit])
+
+
+def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    product = sum(a * b for a, b in zip(left, right, strict=True))
+    norms = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    return product / norms if norms else 0.0
+
+
+class FakeEmbedder:
+    """An embedding service that never leaves the process.
+
+    It hashes words into the vector and normalises, so two texts sharing words
+    come out close and two that share none come out far apart. That is nowhere
+    near a real model, and it is exactly enough to prove the wiring: that the
+    heading trail is what gets embedded, that a query reaches the right method,
+    and that the model name follows every vector into the store.
+    """
+
+    def __init__(self, *, model: str = "fake-embed") -> None:
+        self._model = model
+        self.passages: list[str] = []
+        self.queries: list[str] = []
+        self.calls = 0
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return EMBEDDING_DIMENSIONS
+
+    def rename(self, model: str) -> None:
+        """Stand in for a deployment that changed model without reindexing."""
+        self._model = model
+
+    def reset(self) -> None:
+        self.passages, self.queries, self.calls = [], [], 0
+
+    async def embed_passages(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        if not texts:
+            return ()
+        self.calls += 1
+        self.passages.extend(texts)
+        return tuple(_bag_of_words(text) for text in texts)
+
+    async def embed_query(self, text: str) -> tuple[float, ...]:
+        self.calls += 1
+        self.queries.append(text)
+        return _bag_of_words(text)
+
+
+def _bag_of_words(text: str) -> tuple[float, ...]:
+    weights = [0.0] * EMBEDDING_DIMENSIONS
+    for word in re.findall(r"\w+", text.lower()):
+        weights[hash(word) % EMBEDDING_DIMENSIONS] += 1.0
+    norm = math.sqrt(sum(weight * weight for weight in weights)) or 1.0
+    return tuple(weight / norm for weight in weights)
 
 
 @pytest.fixture
@@ -216,6 +326,26 @@ def service(repository: InMemoryRepository, documents: InMemoryDocuments) -> Arc
 
 
 @pytest.fixture
-def document_service(documents: InMemoryDocuments, service: ArchitectureService) -> DocumentService:
+def embedder() -> FakeEmbedder:
+    return FakeEmbedder()
+
+
+@pytest.fixture
+def indexer(embedder: FakeEmbedder) -> DocumentIndexer:
+    return DocumentIndexer(embedder)
+
+
+@pytest.fixture
+def document_service(
+    documents: InMemoryDocuments, service: ArchitectureService, indexer: DocumentIndexer
+) -> DocumentService:
     """The document use cases over the same in-memory pair, same frozen clock."""
+    return DocumentService(documents, service, clock=lambda: FIXED_NOW, indexer=indexer)
+
+
+@pytest.fixture
+def document_service_without_an_index(
+    documents: InMemoryDocuments, service: ArchitectureService
+) -> DocumentService:
+    """The deployment with `EA_EMBEDDINGS_ENABLED` off: it stores, it cannot find."""
     return DocumentService(documents, service, clock=lambda: FIXED_NOW)

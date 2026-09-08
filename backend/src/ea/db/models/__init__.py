@@ -9,6 +9,7 @@ the list below is a table autogenerate will propose to *drop*.
 from __future__ import annotations
 
 from ea.db.base import Base
+from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
 
-__all__ = ["Base", "ElementDocument"]
+__all__ = ["Base", "DocumentChunk", "ElementDocument"]

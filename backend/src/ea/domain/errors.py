@@ -33,3 +33,13 @@ class DuplicateDocumentError(DomainError):
 
 class DocumentNotFoundError(DomainError):
     """A document referenced by id is absent from the store."""
+
+
+class SearchUnavailableError(DomainError):
+    """Semantic search was asked for on a deployment that has no index.
+
+    A deliberate configuration and not a bug — `EA_EMBEDDINGS_ENABLED` is off,
+    so nothing was ever embedded — which is why it is a domain failure with a
+    message rather than a crash: the caller, agent or human, is told what is
+    missing instead of being handed "error executing tool".
+    """

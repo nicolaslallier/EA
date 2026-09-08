@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as nineteen tools — the element CRUD, the links, the two traversals, the metamodel and the markdown attached to an element — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-The relational half now holds its **first table**: `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster were wired by `docs/adr/0015`; `EA_POSTGRES_ENABLED` is **on** since that table exists, so a deployment that cannot reach PostgreSQL no longer boots.
+The relational half now holds **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through a twentieth MCP tool, `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster were wired by `docs/adr/0015`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
 
 **Not yet scaffolded** (do not assume these exist): auth, any PostgreSQL table, `bandit`, `pip-audit`, ESLint (`npm run lint`), Playwright, `pre-commit`, CI.
 
@@ -19,7 +19,9 @@ The relational half now holds its **first table**: `element_documents` stores th
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
 | Architecture graph | Neo4j (`neo4j` async driver, Cypher) | The model *is* a graph; impact analysis is a variable-depth traversal — see `docs/adr/0004` |
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
-| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | The markdown attached to elements today (`docs/adr/0017`); auth, audit and scheduled work next — see `docs/adr/0015` for the scaffold |
+| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | The markdown attached to elements and its passage index today (`docs/adr/0017`, `0019`); auth, audit and scheduled work next — see `docs/adr/0015` for the scaffold |
+| Document search | pgvector in that same PostgreSQL, `vector(1024)` + HNSW | The corpus is small and already there; a third store would be a third consistency to keep — see `docs/adr/0019` |
+| Embeddings | An OpenAI-shaped `/v1/embeddings` — LM Studio on the cluster, `text-embedding-mxbai-embed-large-v1` | Measured against the alternative on French prose; the API shape, not the supplier, is what we depend on — see `docs/adr/0019` |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
 | Agent-facing API | MCP (`mcp` SDK 2.x), streamable HTTP served at `/mcp` | A second adapter over the same service, not a second API — see `docs/adr/0014` |
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
@@ -39,8 +41,12 @@ backend/
     mcp/           # the same service offered to an agent as MCP tools
     domain/        # entities, value objects, domain services — NO framework imports
       archimate/   # the ArchiMate 3.2 metamodel: taxonomy, relations, rules
+      chunking.py  # where a markdown document is cut, and what is embedded
+      search.py    # what the passage index holds and answers with
+    reindex.py     # `python -m ea.reindex` — rebuild the index over the whole corpus
     services/      # use cases; orchestrate domain + repositories, own transactions
-    repositories/  # Cypher implementations of the ports declared in domain
+    repositories/  # implementations of the ports declared in domain: Cypher, SQL,
+                 #   and the one outbound HTTP client (the embedding service)
     db/            # Neo4j driver lifecycle and schema (constraints + indexes);
                    #   the PostgreSQL engine, session factory and declarative base
     db/models/     # every mapped table — the one module Alembic autogenerates from
@@ -86,6 +92,7 @@ uv run pytest tests/unit/test_capability.py::test_rename -x  # single test
 uv run pytest --cov=ea --cov-report=term-missing --cov-fail-under=90
 make test-integration           # against the real Neo4j — EMPTIES the SHARED cluster graph
 make test-postgres              # against the THROWAWAY local PostgreSQL — never the cluster
+make docs-reindex               # rebuild the passage index over every stored document
 uv run alembic upgrade head     # or `make pg-migrate` — targets the SHARED cluster database
 uv run ruff format . && uv run ruff check --fix .
 uv run mypy src
@@ -105,7 +112,7 @@ npm run lint && npm run typecheck         # lint NOT SET UP YET (no ESLint confi
 npm run generate:api                     # regenerate src/api/ — or `make openapi` from the root
 ```
 
-Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. PostgreSQL is a second instance on the same cluster: `make pg-ping` checks it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`.
+Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, and `EA_MCP_ENABLED=false` turns it off. The graph is a single instance on the Docker cluster (192.168.1.252), deployed as a Portainer stack from `deploy/neo4j.stack.yml` — see `docs/adr/0006`. Nothing starts it locally: `make db-ping` checks it answers, `make db-stack` recalls how to deploy it, `make db-shell` opens a `cypher-shell` on it, `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). The Neo4j browser is on http://192.168.1.252:7474. The password lives in `backend/.env`, never in a committed file. PostgreSQL is a second instance on the same cluster: `make pg-ping` checks it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`. **Its image must carry pgvector** (`pgvector/pgvector:pgNN`), because the document index is a `vector` column; `make pg-vector-check` says so before a migration discovers it. The embedding service is a third thing on that cluster — LM Studio, serving an OpenAI-shaped `/v1/embeddings` on port 1234; `make embed-ping` checks the model answers and at what width, `make embed-models` lists what it holds. Nothing here starts any of the three.
 
 The API binds `0.0.0.0` (`docs/adr/0016`), so it answers from other machines. Two allowlists decide who is actually served, and **neither follows from the bind address**: `EA_CORS_ORIGINS` for browsers, `EA_MCP_ALLOWED_HOSTS` for `/mcp`. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead.
 
@@ -138,6 +145,12 @@ step and nothing else. `get_documents` is required rather than optional: the
 tool list belongs to the adapter, not to the deployment, so a shut relational
 store means the document tools are offered and fail — exactly as `/documents`
 stays routed and answers a 500. See `docs/adr/0018`.
+
+`search_documents` is the twentieth tool and the one that changes how an agent
+should work here: it searches the *passages* of every document by meaning and
+answers with the section, so reading ten documents to check one sentence is no
+longer the way in. The server's `INSTRUCTIONS` say so, because that is where a
+model learns it.
 
 Adding a tool means: a method on the service if it is a new use case, a
 function in `mcp/server.py` decorated with `@server.tool(annotations=...)` and
@@ -213,6 +226,49 @@ is a single write, so that *is* a transaction per use case. A use case spanning
 two writes takes an `AsyncSession` argument instead, and
 `api.dependencies.get_session` becomes the seam it was built to be.
 
+## A document is found by its headings, not by its file name
+
+`document_chunks` is what makes the markdown of `docs/adr/0017` searchable, and
+four things about it are decisions — see `docs/adr/0019`.
+
+**A document is cut at its own headings, and the trail of headings is embedded
+in front of each passage.** `domain/chunking.py` is pure and decides both: a
+section becomes a passage, and what is handed to the model is
+`runbook.md > Incidents > Escalade` then the text. That trail is exactly the
+information a passage does not contain about itself — "restart the container
+and check `/health`" is a sentence with no subject — and putting it back is the
+difference between a corpus that answers questions and one that matches words.
+The *stored* text is the passage alone; both come out of `heading_trail`, so a
+hit renders its trail exactly as it was indexed. Fenced code blocks are
+respected (`# restart the service` is the first line of half the shell examples
+ever written) and YAML front matter is not indexed.
+
+**The width of a vector is not a setting.** `EMBEDDING_DIMENSIONS` is the width
+of the column; the model, the migration and `Settings` agree by importing it.
+Changing it is a migration plus a full `make docs-reindex`, and boot refuses a
+model that answers anything else — otherwise the failure arrives at `INSERT`,
+as a driver error, in a log, after the upload was accepted.
+
+**Every vector records the model that produced it, and every search filters on
+it.** Cosine distance between vectors from two models is a number that means
+nothing, so a half-reindexed corpus returns *too little*, visibly, rather than
+something plausible and wrong.
+
+**This is the first table that can carry a foreign key**, because a passage
+names a document — a row next door — where `element_documents.element_id` names
+a Neo4j node and can reference nothing. So its cascade is DDL rather than a
+service, and a document and its passages are written in **one transaction**.
+The embedding call happens *before* that transaction opens: holding one across
+a call to another machine is how a slow embedder becomes a locked table.
+
+The embedder is a port with **two** methods, `embed_passages` and `embed_query`,
+because several model families want a different instruction on a stored passage
+than on a question — `mxbai` on the query only, the e5 line on both, `bge-m3` on
+neither. Both prefixes are in `.env`, stated rather than assumed. An index can
+still fall behind its store in two ways, both configuration — a document
+attached while `EA_EMBEDDINGS_ENABLED` was off, and a change of model — and
+`make docs-reindex` is the catch-up for both.
+
 ## Drawing a graph in the SPA
 
 There is no graph-rendering library and adding one needs an ADR. A sub-graph is
@@ -244,11 +300,13 @@ the catalogue follows the rule for the element it details (`?element=`, see
 (`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is not that kind
 of state and stays in a `ref`.
 
-## The relational store holds the documents
+## The relational store holds the documents and their index
 
 PostgreSQL is a second instance on the same cluster as the graph
 (192.168.1.252:5432), and its password is a real shared secret — `.env.example`
-leaves it blank, like Neo4j's. `db/postgres.py` owns the engine, the session
+leaves it blank, like Neo4j's. **Its image has to carry pgvector**: the document
+index is a `vector` column and migration `0003` runs `CREATE EXTENSION vector`,
+which fails on an image that does not have it (`make pg-vector-check`). `db/postgres.py` owns the engine, the session
 factory and the boot-time check; `db/base.py` holds the declarative `Base` and
 **the constraint naming convention, which is frozen** — changing it renames
 constraints already in the deployed database. See `docs/adr/0015`.
@@ -267,6 +325,13 @@ Three rules hold for every table, starting with `element_documents`:
    `URL.create` — a password holding `@`, `/` or `:` spliced into a URL string
    silently addresses a *different* database. `alembic.ini` carries no
    connection string; `migrations/env.py` reads `Settings` like everything else.
+
+A third rule arrived with the second table: **a use case that writes two tables
+writes them in one transaction**, which is possible here and nowhere else in
+this repository, since the graph is in another server. `add`/`replace` take the
+document and its passages together, and flush the document first — the two
+mappers are related by a foreign key and by no `relationship()`, so the unit of
+work is free to emit the chunk inserts first, and does.
 
 `make pg-migrate` targets the **shared** database. The integration tests apply
 and then reverse the whole chain, which is why `make test-postgres` points at

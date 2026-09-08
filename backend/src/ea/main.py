@@ -21,13 +21,36 @@ from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
 from ea.domain.ports import DocumentRepository
+from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
+from ea.repositories.embeddings import HttpEmbedder
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.indexing import DocumentIndexer
 
 logger = logging.getLogger(__name__)
+
+
+def build_embedder(settings: Settings) -> HttpEmbedder:
+    """The embedding client this process talks to, built from settings alone.
+
+    The width is `EMBEDDING_DIMENSIONS` and not a setting: it is the width of
+    the stored column, so a model of another width is a migration and a full
+    reindex — see docs/adr/0019. Passing it here is what makes the client
+    refuse such a model at boot instead of at the first `INSERT`.
+    """
+    return HttpEmbedder(
+        base_url=settings.embeddings_base_url,
+        model=settings.embeddings_model,
+        dimensions=EMBEDDING_DIMENSIONS,
+        api_key=settings.embeddings_api_key.get_secret_value(),
+        timeout=settings.embeddings_timeout_seconds,
+        batch_size=settings.embeddings_batch_size,
+        passage_prefix=settings.embeddings_passage_prefix,
+        query_prefix=settings.embeddings_query_prefix,
+    )
 
 
 def _lifespan(
@@ -35,6 +58,7 @@ def _lifespan(
     *,
     open_graph: bool,
     documents: DocumentRepository | None = None,
+    indexer: DocumentIndexer | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -46,9 +70,15 @@ def _lifespan(
     up off `app.state`, where `_mount_mcp` left it, because the manager only
     exists once the app it is mounted on does.
 
-    PostgreSQL is a third, and it is opened only when `postgres_enabled` says
-    something stores anything there — no table does yet (docs/adr/0015), so the
-    default is off and a machine that never ran `make pg-up` still boots.
+    PostgreSQL is a third: it holds the documents (docs/adr/0017) and the
+    passages they are searchable by (docs/adr/0019), so `postgres_enabled` is
+    on and a process that cannot reach it does not start.
+
+    The embedding service is a fourth, and the only one that is not a database.
+    It owns an HTTP connection pool, so it is built once and closed here, and
+    it is *probed* at boot for the same reason the two stores are — plus one
+    only it has: that the model configured answers vectors of the width the
+    column was created with.
 
     An `AsyncExitStack` composes them, which is why this is one lifespan rather
     than two: an app built with `architecture_service=` opens no driver but
@@ -78,9 +108,18 @@ def _lifespan(
                 app.state.architecture_service = ArchitectureService(
                     repository, attachments=attachments
                 )
+            # The index is a table beside the documents, so an embedding client
+            # is opened only where there are documents to index: a deployment
+            # with the relational store shut has neither.
+            index = indexer
+            if index is None and settings.embeddings_enabled and attachments is not None:
+                embedder = build_embedder(settings)
+                stack.push_async_callback(embedder.aclose)
+                await embedder.probe()
+                index = DocumentIndexer(embedder)
             if attachments is not None:
                 app.state.document_service = DocumentService(
-                    attachments, architecture_service_of(app)
+                    attachments, architecture_service_of(app), indexer=index
                 )
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
@@ -156,6 +195,7 @@ def create_app(
     *,
     architecture_service: ArchitectureService | None = None,
     documents: DocumentRepository | None = None,
+    indexer: DocumentIndexer | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -167,6 +207,10 @@ def create_app(
     without PostgreSQL; given none, the lifespan builds the real repository
     when `postgres_enabled` says the store is open.
 
+    `indexer` does the same for the embedding service: given one, the search
+    answers without a model being loaded anywhere; given none, the lifespan
+    builds and probes the real client when `embeddings_enabled` says so.
+
     An injected pair is wired here rather than in the lifespan, because an API
     test drives the app through `ASGITransport` without ever starting it.
     """
@@ -175,13 +219,20 @@ def create_app(
     app = FastAPI(
         title=settings.app_name,
         debug=settings.debug,
-        lifespan=_lifespan(settings, open_graph=architecture_service is None, documents=documents),
+        lifespan=_lifespan(
+            settings,
+            open_graph=architecture_service is None,
+            documents=documents,
+            indexer=indexer,
+        ),
     )
     app.state.settings = settings
     if architecture_service is not None:
         app.state.architecture_service = architecture_service
         if documents is not None:
-            app.state.document_service = DocumentService(documents, architecture_service)
+            app.state.document_service = DocumentService(
+                documents, architecture_service, indexer=indexer
+            )
 
     app.add_middleware(
         CORSMiddleware,
