@@ -64,6 +64,17 @@ POSTGRES_DB   ?= ea
 # la même image, et la base du cluster a la même exigence (docs/adr/0019).
 POSTGRES_IMAGE ?= pgvector/pgvector:pg17
 
+# psql attend indéfiniment par défaut. Un poste dont les conteneurs ne joignent
+# pas le LAN faisait pendre `make pg-ping` jusqu'au ^C, et la cible concluait
+# ensuite sur une base qu'elle n'avait jamais interrogée.
+PGCONNECT_TIMEOUT ?= 10
+
+# Le piège de ce poste-ci : `psql` tourne dans un conteneur, et un conteneur ne
+# joint pas forcément le LAN que le Mac joint. Sur macOS, Docker Desktop a
+# besoin de l'autorisation « Réseau local » pour sortir vers 192.168.x.x ; sans
+# elle, Internet passe et le cluster non.
+PG_UNREACHABLE_HINT := printf "Le Mac joint-il $(POSTGRES_HOST) alors qu'un conteneur ne le joint pas ?\n  docker run --rm alpine nc -w5 -z $(POSTGRES_HOST) $(POSTGRES_PORT)\nSi oui : Réglages Système → Confidentialité et sécurité → Réseau local → Docker.\n";
+
 # Comme pour Neo4j : pas de valeur par défaut, l'instance est partagée. Vient
 # de l'environnement, sinon de backend/.env (non versionné).
 POSTGRES_PASSWORD ?= $(shell sed -n 's/^EA_POSTGRES_PASSWORD=//p' $(BACKEND)/.env 2>/dev/null | tail -1)
@@ -92,7 +103,7 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
-        pg-vector-check require-postgres-password \
+        pg-vector-check pg-stack require-postgres-password \
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check
 
@@ -229,10 +240,12 @@ require-postgres-password:
 
 pg-ping: | require-postgres-password ## Vérifie que la base du cluster répond
 	@printf "$(GREEN)Interrogation de $(POSTGRES_USER)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB) ...$(NC)\n"
-	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD $(POSTGRES_IMAGE) \
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD \
+		-e PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(POSTGRES_IMAGE) \
 		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
 		-c 'SELECT version()' \
-	|| { printf "$(RED)Aucune réponse. Vérifie l'\''hôte et le mot de passe.$(NC)\n"; exit 1; }
+	|| { printf "$(RED)Aucune réponse. Vérifie l'hôte et le mot de passe.$(NC)\n"; \
+	     $(PG_UNREACHABLE_HINT) exit 1; }
 
 pg-shell: | require-postgres-password ## Ouvre un psql sur la base du cluster
 	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -it -e PGPASSWORD $(POSTGRES_IMAGE) \
@@ -256,13 +269,32 @@ pg-revision: | $(VENV_STAMP) ## Génère une migration depuis les modèles (m="a
 
 pg-vector-check: | require-postgres-password ## Vérifie que pgvector est disponible sur le cluster
 	@printf "$(GREEN)pgvector sur $(POSTGRES_HOST)/$(POSTGRES_DB) ?$(NC)\n"
-	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD $(POSTGRES_IMAGE) \
+	@out=$$(PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD \
+		-e PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(POSTGRES_IMAGE) \
 		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
-		-tAc "SELECT name || ' ' || default_version FROM pg_available_extensions WHERE name = 'vector'" \
-		| grep -q vector \
-	|| { printf "$(RED)L'\''extension vector est absente de ce serveur.$(NC)\n"; \
-	     printf "L'\''image du stack doit être pgvector/pgvector:pgNN — voir docs/adr/0019.\n"; exit 1; }
-	@printf "$(GREEN)pgvector disponible.$(NC)\n"
+		-tAc "SELECT default_version FROM pg_available_extensions WHERE name = 'vector'" 2>&1) \
+	|| { printf "$(RED)Connexion impossible : la question n'a pas été posée.$(NC)\n"; \
+	     printf "%s\n" "$$out"; \
+	     $(PG_UNREACHABLE_HINT) exit 1; }; \
+	test -n "$$out" \
+	|| { printf "$(RED)Serveur joint, mais l'extension vector y est absente.$(NC)\n"; \
+	     printf "L'image du stack doit être pgvector/pgvector:pgNN, pas postgres:NN —\n"; \
+	     printf "voir deploy/postgres.stack.yml, make pg-stack, docs/adr/0019.\n"; exit 1; }; \
+	printf "$(GREEN)pgvector disponible (%s).$(NC)\n" "$$out"
+
+pg-stack: ## Rappelle comment déployer la base relationnelle sur le cluster Docker
+	@printf "$(GREEN)Stack PostgreSQL : deploy/postgres.stack.yml$(NC)\n"
+	@printf "  1. Ouvre $(PORTAINER_STACKS)\n"
+	@printf "  2. Add stack → Web editor → colle deploy/postgres.stack.yml\n"
+	@printf "  3. Environment variables → POSTGRES_PASSWORD = <mot de passe>\n"
+	@printf "  4. Deploy the stack, puis : make pg-ping && make pg-vector-check\n"
+	@printf "\n"
+	@printf "$(RED)Remplacer une image postgres:NN par pgvector/pgvector:pgNN :$(NC)\n"
+	@printf "  le volume est réutilisable (même version majeure), mais il a été\n"
+	@printf "  initialisé sous musl et repart sous glibc : les collations diffèrent.\n"
+	@printf "  Après le redéploiement, une fois : REINDEX DATABASE $(POSTGRES_DB);\n"
+	@printf "  (make pg-shell). Base vide : supprimer le volume est plus simple.\n"
+	@printf "  Puis make pg-migrate pour appliquer la chaîne jusqu'à head.\n"
 
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	docker compose up -d --wait postgres

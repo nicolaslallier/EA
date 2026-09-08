@@ -1,0 +1,55 @@
+# PostgreSQL — tout ce qui n'est pas le graphe, déployé sur le cluster Docker.
+#
+# Comme Neo4j (deploy/neo4j.stack.yml), ce fichier n'est pas lancé depuis un
+# poste : il est déployé comme *stack* Portainer sur l'hôte 192.168.1.252
+# (endpoint 9, Docker standalone) :
+#
+#   http://192.168.1.252:9000/#!/9/docker/stacks
+#   → Add stack → Web editor → coller ce fichier
+#   → Environment variables → POSTGRES_PASSWORD = <le mot de passe>
+#   → Deploy the stack
+#
+# `make pg-stack` réaffiche ces instructions. Voir docs/adr/0015 et 0019.
+#
+# Rien ici ne porte de secret : POSTGRES_PASSWORD est déclaré avec `:?`, donc un
+# déploiement sans mot de passe échoue au lieu d'en inventer un.
+#
+# Le conteneur jetable des tests (docker-compose.yml) part de la même image,
+# pour la même raison, et n'a rien à voir avec cette instance-ci.
+
+services:
+  postgres:
+    # pgvector/pgvector plutôt que postgres : l'extension `vector` doit être
+    # présente *dans l'image*, pas seulement activée dans la base — la migration
+    # 0003 fait `CREATE EXTENSION vector` et échoue sur une image qui ne l'a pas
+    # (docs/adr/0019). `make pg-vector-check` pose la question avant la
+    # migration ; une image `postgres:17-alpine` y répond non.
+    image: pgvector/pgvector:pg17
+    container_name: ea-postgres
+    # La base doit revenir toute seule après un redémarrage de l'hôte : c'est la
+    # seule instance, il n'y a pas de `make pg-up` pour la relancer (celui-là
+    # démarre le conteneur jetable des tests).
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire}
+      POSTGRES_DB: ${POSTGRES_DB:-ea}
+      # Le répertoire de données est un *sous*-répertoire du volume, et pas le
+      # volume lui-même : c'est ce que faisait déjà le stack précédent, et un
+      # PGDATA qui bouge fait repartir la base vide sur un volume plein.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` prouve que le serveur accepte des connexions, ce que le
+      # simple fait que le conteneur tourne ne prouve pas.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ea} -d ${POSTGRES_DB:-ea}"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  postgres-data:
