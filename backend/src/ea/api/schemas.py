@@ -24,6 +24,14 @@ from ea.domain.archimate import (
     permitted_relationships,
 )
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.ipam import (
+    DEFAULT_VRF,
+    RESERVED_PROPERTY,
+    AddressLocation,
+    Assignment,
+    Subnet,
+    SubnetDetail,
+)
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
 from ea.domain.search import Passage
@@ -35,6 +43,26 @@ Documentation = Annotated[str, Field(max_length=20000)]
 Properties = Annotated[
     dict[str, str],
     Field(description="Free-form attributes, e.g. owner or criticality."),
+]
+#: The addressing constraints, bounded once for both adapters (docs/adr/0020).
+#: They stop a runaway argument before it reaches the parser; which strings are
+#: actually addresses is `domain/ipam.py`'s decision, never restated here.
+Vrf = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        description="The routing scope an address is unique in.",
+    ),
+]
+Address = Annotated[str, Field(min_length=2, max_length=64, description="An IPv4 or IPv6 address.")]
+Reserved = Annotated[
+    str,
+    Field(
+        max_length=2000,
+        description="Addresses set aside, comma-separated: `10.0.1.1, 10.0.1.10-10.0.1.20, "
+        "10.0.1.128/25`.",
+    ),
 ]
 
 
@@ -367,3 +395,143 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(description="Stable machine-readable code.")
     detail: str = Field(description="Human-readable message, safe to display.")
+
+
+# --- IP address management (docs/adr/0020) --------------------------------
+# An address is an attribute of an element, so these read models name the
+# element rather than wrapping one: a client drawing an inventory wants the
+# host's name beside its address, and `ElementRead` in every row would be the
+# same catalogue served three times.
+
+
+class SubnetCreate(_Input):
+    """A new subnet: a `communication_network` element carrying a prefix."""
+
+    name: Name
+    cidr: Annotated[
+        str,
+        Field(
+            min_length=2,
+            max_length=64,
+            description="The prefix itself, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
+        ),
+    ]
+    vrf: Vrf = DEFAULT_VRF
+    reserved: Reserved = ""
+    description: Description = ""
+
+
+class AddressAssign(_Input):
+    """One address, given to one element."""
+
+    element_id: UUID
+    address: Address
+    vrf: Vrf = DEFAULT_VRF
+
+
+class AddressAllocate(_Input):
+    """Whichever address the subnet has free next, given to one element."""
+
+    element_id: UUID
+
+
+class SubnetRead(BaseModel):
+    """A subnet and how full it is.
+
+    `capacity` is what the prefix can hand out at all, `reserved` what is set
+    aside by hand, `used` what is assigned and `free` what is left — four
+    numbers rather than a percentage, because a client that only has the
+    percentage cannot say "three addresses left" and that is the sentence
+    somebody acts on.
+    """
+
+    element_id: UUID
+    name: str
+    description: str
+    cidr: str
+    vrf: str
+    version: int = Field(description="4 or 6.")
+    capacity: int
+    reserved: int
+    used: int
+    free: int
+    reservations: str = Field(
+        description="The reservations exactly as written, so a client can edit them back."
+    )
+
+    @classmethod
+    def of(cls, subnet: Subnet) -> SubnetRead:
+        return cls(
+            element_id=subnet.element.id,
+            name=subnet.element.name,
+            description=subnet.element.description,
+            cidr=subnet.network.prefix.with_prefixlen,
+            vrf=subnet.network.vrf,
+            version=subnet.network.prefix.version,
+            capacity=subnet.network.capacity,
+            reserved=subnet.network.reserved_count,
+            used=subnet.used,
+            free=subnet.free,
+            reservations=subnet.element.properties.get(RESERVED_PROPERTY, ""),
+        )
+
+
+class AddressRead(BaseModel):
+    """One assigned address, with the element answering on it."""
+
+    address: str
+    vrf: str
+    version: int
+    element_id: UUID
+    element_name: str
+    element_type: ElementType
+    subnet_id: UUID | None = Field(
+        description="The subnet element this address falls in, if one is declared."
+    )
+
+    @classmethod
+    def of(cls, assignment: Assignment) -> AddressRead:
+        return cls(
+            address=str(assignment.address),
+            vrf=assignment.vrf,
+            version=assignment.address.version,
+            element_id=assignment.element.id,
+            element_name=assignment.element.name,
+            element_type=assignment.element.element_type,
+            subnet_id=assignment.subnet_id,
+        )
+
+
+class SubnetDetailRead(BaseModel):
+    """A subnet with its occupants and the address it would hand out next."""
+
+    subnet: SubnetRead
+    addresses: list[AddressRead]
+    next_free: str | None = Field(description="Absent when the subnet is full.")
+
+    @classmethod
+    def of(cls, detail: SubnetDetail) -> SubnetDetailRead:
+        return cls(
+            subnet=SubnetRead.of(detail.subnet),
+            addresses=[AddressRead.of(assignment) for assignment in detail.addresses],
+            next_free=str(detail.next_free) if detail.next_free is not None else None,
+        )
+
+
+class AddressLocationRead(BaseModel):
+    """The answer to "this address, that is what?" — in one payload.
+
+    The assignment says which element answers; the graph says what that element
+    is wired to, so the sentence "10.0.1.12 is srv-app-01, and Billing runs on
+    it" can be written without a second call.
+    """
+
+    address: AddressRead
+    graph: GraphRead
+
+    @classmethod
+    def of(cls, location: AddressLocation) -> AddressLocationRead:
+        return cls(
+            address=AddressRead.of(location.assignment),
+            graph=GraphRead.of(location.graph),
+        )

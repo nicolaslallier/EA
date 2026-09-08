@@ -14,10 +14,12 @@ import pytest
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
+    AddressAlreadyAssignedError,
     DocumentNotFoundError,
     DuplicateDocumentError,
     ElementNotFoundError,
 )
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
 from ea.domain.search import (
@@ -29,6 +31,7 @@ from ea.domain.search import (
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
+from ea.services.ipam import IpamService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -61,6 +64,7 @@ class InMemoryRepository:
         self.relationships: dict[UUID, Relationship] = {}
 
     async def add_element(self, element: Element) -> Element:
+        self._refuse_a_taken_address(element)
         self.elements[element.id] = element
         return element
 
@@ -76,8 +80,35 @@ class InMemoryRepository:
     async def save_element(self, element: Element) -> Element:
         if element.id not in self.elements:
             raise ElementNotFoundError(str(element.id))
+        self._refuse_a_taken_address(element)
         self.elements[element.id] = element
         return element
+
+    def _refuse_a_taken_address(self, element: Element) -> None:
+        """Stand in for the `(p_vrf, p_ip_address)` uniqueness constraint.
+
+        Reproduced rather than skipped, for the same reason the document double
+        reproduces its own: it is the rule that survives two agents allocating
+        at the same instant, and a double that ignored it would let a service
+        test pass on a graph the real one would refuse — see docs/adr/0020.
+        """
+        address = element.properties.get(ADDRESS_PROPERTY)
+        if not address:
+            return
+        scope = read_vrf(element.properties)
+        clash = next(
+            (
+                stored
+                for stored in self.elements.values()
+                if stored.id != element.id
+                and stored.properties.get(ADDRESS_PROPERTY) == address
+                and read_vrf(stored.properties) == scope
+            ),
+            None,
+        )
+        if clash is not None:
+            msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
+            raise AddressAlreadyAssignedError(msg)
 
     async def delete_element(self, element_id: UUID) -> bool:
         return self.elements.pop(element_id, None) is not None
@@ -129,6 +160,31 @@ class InMemoryRepository:
         self, element_id: UUID, *, depth: int = 5, relationship_types: Sequence[R] = ()
     ) -> GraphView:
         return GraphView(elements=(self.elements[element_id],), relationships=())
+
+    # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
+
+    async def networks(self) -> tuple[Element, ...]:
+        return tuple(
+            element for element in self.elements.values() if element.properties.get(PREFIX_PROPERTY)
+        )
+
+    async def addressed_elements(self) -> tuple[Element, ...]:
+        return tuple(
+            element
+            for element in self.elements.values()
+            if element.properties.get(ADDRESS_PROPERTY)
+        )
+
+    async def element_at(self, address: str, *, vrf: str) -> Element | None:
+        return next(
+            (
+                element
+                for element in self.elements.values()
+                if element.properties.get(ADDRESS_PROPERTY) == address
+                and read_vrf(element.properties) == vrf
+            ),
+            None,
+        )
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Walk the stored containment edges from target back to source."""
@@ -323,6 +379,17 @@ def service(repository: InMemoryRepository, documents: InMemoryDocuments) -> Arc
     its documents with it and no foreign key says so — see docs/adr/0017.
     """
     return ArchitectureService(repository, clock=lambda: FIXED_NOW, attachments=documents)
+
+
+@pytest.fixture
+def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamService:
+    """The IP use cases over the same graph double, which answers both ports.
+
+    `InMemoryRepository` satisfies `IpamRepository` as well as
+    `ArchitectureRepository`, exactly as the Neo4j class does — an address is
+    an attribute of an element, not a second store (docs/adr/0020).
+    """
+    return IpamService(service, repository)
 
 
 @pytest.fixture

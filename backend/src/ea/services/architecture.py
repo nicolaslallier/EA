@@ -18,6 +18,7 @@ from uuid import UUID
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
+from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ class ArchitectureService:
         documentation: str = "",
         properties: Mapping[str, str] | None = None,
     ) -> Element:
+        validate_ipam_properties(element_type, properties)
         element = Element.create(
             element_type=element_type,
             name=name,
@@ -103,6 +105,7 @@ class ArchitectureService:
         an edit.
         """
         current = await self.get_element(element_id)
+        validate_ipam_properties(current.element_type, properties)
         now = self._now()
         updated = current
         if name is not None:

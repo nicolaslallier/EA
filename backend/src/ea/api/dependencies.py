@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.ipam import IpamService
 
 
 def architecture_service_of(app: FastAPI) -> ArchitectureService:
@@ -56,6 +57,29 @@ def get_document_service(request: Request) -> DocumentService:
 
 
 Documents = Annotated[DocumentService, Depends(get_document_service)]
+
+
+def ipam_service_of(app: FastAPI) -> IpamService:
+    """The IPAM use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled with a doubled architecture service and
+    no repository behind it: the addressing needs two queries `ElementFilter`
+    cannot express (`domain/ports.py`), and there is nothing to answer them
+    with. A wiring fault, so a 500 — never an empty inventory, which a client
+    could not tell from a network with nothing in it.
+    """
+    service: IpamService | None = getattr(app.state, "ipam_service", None)
+    if service is None:
+        msg = "no IPAM service on the application — was it assembled without a graph?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_ipam_service(request: Request) -> IpamService:
+    return ipam_service_of(request.app)
+
+
+Ipam = Annotated[IpamService, Depends(get_ipam_service)]
 
 
 def session_factory_of(app: FastAPI) -> async_sessionmaker[AsyncSession]:

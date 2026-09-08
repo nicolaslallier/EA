@@ -15,13 +15,20 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from ea.domain.errors import (
+    AddressAlreadyAssignedError,
+    AddressNotAssignedError,
+    AddressOutsideAnyNetworkError,
     CyclicContainmentError,
     DocumentNotFoundError,
     DomainError,
     DuplicateDocumentError,
     DuplicateElementError,
+    DuplicateNetworkError,
     ElementNotFoundError,
     IllegalRelationshipError,
+    NetworkExhaustedError,
+    NotAddressableError,
+    NotASubnetError,
     SearchUnavailableError,
 )
 
@@ -40,6 +47,22 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     IllegalRelationshipError: (
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "illegal_relationship",
+    ),
+    # --- IP address management (docs/adr/0020) ---
+    # Each refusal gets its own code rather than a shared 409, because these
+    # are the ones a caller is expected to *act* on: an address already taken
+    # means pick another, a subnet exhausted means declare a bigger one, and an
+    # address outside every subnet means declare the subnet first. An agent
+    # told only "conflict" would retry the call that just failed.
+    AddressNotAssignedError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateNetworkError: (status.HTTP_409_CONFLICT, "duplicate"),
+    AddressAlreadyAssignedError: (status.HTTP_409_CONFLICT, "address_taken"),
+    NetworkExhaustedError: (status.HTTP_409_CONFLICT, "network_exhausted"),
+    NotAddressableError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_addressable"),
+    NotASubnetError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_a_subnet"),
+    AddressOutsideAnyNetworkError: (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "address_outside_any_network",
     ),
 }
 

@@ -12,6 +12,124 @@
         "title": "AccessType",
         "type": "string"
       },
+      "AddressAllocate": {
+        "additionalProperties": false,
+        "description": "Whichever address the subnet has free next, given to one element.",
+        "properties": {
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id"
+        ],
+        "title": "AddressAllocate",
+        "type": "object"
+      },
+      "AddressAssign": {
+        "additionalProperties": false,
+        "description": "One address, given to one element.",
+        "properties": {
+          "address": {
+            "description": "An IPv4 or IPv6 address.",
+            "maxLength": 64,
+            "minLength": 2,
+            "title": "Address",
+            "type": "string"
+          },
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          },
+          "vrf": {
+            "default": "default",
+            "description": "The routing scope an address is unique in.",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Vrf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "address"
+        ],
+        "title": "AddressAssign",
+        "type": "object"
+      },
+      "AddressLocationRead": {
+        "description": "The answer to \"this address, that is what?\" \u2014 in one payload.\n\nThe assignment says which element answers; the graph says what that element\nis wired to, so the sentence \"10.0.1.12 is srv-app-01, and Billing runs on\nit\" can be written without a second call.",
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/AddressRead"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/GraphRead"
+          }
+        },
+        "required": [
+          "address",
+          "graph"
+        ],
+        "title": "AddressLocationRead",
+        "type": "object"
+      },
+      "AddressRead": {
+        "description": "One assigned address, with the element answering on it.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          },
+          "element_name": {
+            "title": "Element Name",
+            "type": "string"
+          },
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "subnet_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The subnet element this address falls in, if one is declared.",
+            "title": "Subnet Id"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "vrf": {
+            "title": "Vrf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "vrf",
+          "version",
+          "element_id",
+          "element_name",
+          "element_type",
+          "subnet_id"
+        ],
+        "title": "AddressRead",
+        "type": "object"
+      },
       "Aspect": {
         "description": "The aspect an element belongs to \u2014 the column of the ArchiMate framework.",
         "enum": [
@@ -787,6 +905,153 @@
           "impact_follows_direction"
         ],
         "title": "RelationshipTypeRead",
+        "type": "object"
+      },
+      "SubnetCreate": {
+        "additionalProperties": false,
+        "description": "A new subnet: a `communication_network` element carrying a prefix.",
+        "properties": {
+          "cidr": {
+            "description": "The prefix itself, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
+            "maxLength": 64,
+            "minLength": 2,
+            "title": "Cidr",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reserved": {
+            "default": "",
+            "description": "Addresses set aside, comma-separated: `10.0.1.1, 10.0.1.10-10.0.1.20, 10.0.1.128/25`.",
+            "maxLength": 2000,
+            "title": "Reserved",
+            "type": "string"
+          },
+          "vrf": {
+            "default": "default",
+            "description": "The routing scope an address is unique in.",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Vrf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "cidr"
+        ],
+        "title": "SubnetCreate",
+        "type": "object"
+      },
+      "SubnetDetailRead": {
+        "description": "A subnet with its occupants and the address it would hand out next.",
+        "properties": {
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/AddressRead"
+            },
+            "title": "Addresses",
+            "type": "array"
+          },
+          "next_free": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent when the subnet is full.",
+            "title": "Next Free"
+          },
+          "subnet": {
+            "$ref": "#/components/schemas/SubnetRead"
+          }
+        },
+        "required": [
+          "subnet",
+          "addresses",
+          "next_free"
+        ],
+        "title": "SubnetDetailRead",
+        "type": "object"
+      },
+      "SubnetRead": {
+        "description": "A subnet and how full it is.\n\n`capacity` is what the prefix can hand out at all, `reserved` what is set\naside by hand, `used` what is assigned and `free` what is left \u2014 four\nnumbers rather than a percentage, because a client that only has the\npercentage cannot say \"three addresses left\" and that is the sentence\nsomebody acts on.",
+        "properties": {
+          "capacity": {
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "cidr": {
+            "title": "Cidr",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          },
+          "free": {
+            "title": "Free",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reservations": {
+            "description": "The reservations exactly as written, so a client can edit them back.",
+            "title": "Reservations",
+            "type": "string"
+          },
+          "reserved": {
+            "title": "Reserved",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          },
+          "version": {
+            "description": "4 or 6.",
+            "title": "Version",
+            "type": "integer"
+          },
+          "vrf": {
+            "title": "Vrf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_id",
+          "name",
+          "description",
+          "cidr",
+          "vrf",
+          "version",
+          "capacity",
+          "reserved",
+          "used",
+          "free",
+          "reservations"
+        ],
+        "title": "SubnetRead",
         "type": "object"
       },
       "ValidationError": {
@@ -1720,6 +1985,538 @@
         "summary": "Health",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/ipam/addresses": {
+      "get": {
+        "description": "The inventory: every assigned address, in address order.",
+        "operationId": "list_addresses_ipam_addresses_get",
+        "parameters": [
+          {
+            "description": "Narrow to one routing scope.",
+            "in": "query",
+            "name": "vrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one routing scope.",
+              "title": "Vrf"
+            }
+          },
+          {
+            "description": "Only addresses inside this prefix, e.g. `10.0.1.0/26`.",
+            "in": "query",
+            "name": "within",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only addresses inside this prefix, e.g. `10.0.1.0/26`.",
+              "title": "Within"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AddressRead"
+                  },
+                  "title": "Response List Addresses Ipam Addresses Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Addresses",
+        "tags": [
+          "ipam"
+        ]
+      },
+      "post": {
+        "description": "Give one element one address, if every rule allows it.",
+        "operationId": "assign_address_ipam_addresses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressAssign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Assign Address",
+        "tags": [
+          "ipam"
+        ]
+      }
+    },
+    "/ipam/addresses/{address}": {
+      "get": {
+        "description": "What answers on this address, and what that thing is wired to.",
+        "operationId": "locate_address_ipam_addresses__address__get",
+        "parameters": [
+          {
+            "description": "An IPv4 or IPv6 address.",
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "description": "An IPv4 or IPv6 address.",
+              "maxLength": 64,
+              "title": "Address",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "vrf",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "maxLength": 64,
+              "title": "Vrf",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressLocationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Locate Address",
+        "tags": [
+          "ipam"
+        ]
+      }
+    },
+    "/ipam/elements/{element_id}/address": {
+      "delete": {
+        "description": "Take an element's address back. The element itself is left alone.",
+        "operationId": "release_address_ipam_elements__element_id__address_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Address",
+        "tags": [
+          "ipam"
+        ]
+      }
+    },
+    "/ipam/subnets": {
+      "get": {
+        "description": "Every declared subnet, with how full each one is.",
+        "operationId": "list_subnets_ipam_subnets_get",
+        "parameters": [
+          {
+            "description": "Narrow to one routing scope.",
+            "in": "query",
+            "name": "vrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one routing scope.",
+              "title": "Vrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubnetRead"
+                  },
+                  "title": "Response List Subnets Ipam Subnets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Subnets",
+        "tags": [
+          "ipam"
+        ]
+      },
+      "post": {
+        "description": "Declare a subnet. A prefix may be declared once per routing scope.",
+        "operationId": "declare_subnet_ipam_subnets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubnetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubnetRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Declare Subnet",
+        "tags": [
+          "ipam"
+        ]
+      }
+    },
+    "/ipam/subnets/{subnet_id}": {
+      "get": {
+        "description": "One subnet, its occupants, and the address it would hand out next.\n\n`subnet_id` is an element id: a subnet *is* an element of the catalogue.\nIt is named for the role it plays here, because the allocation route below\ntakes two element ids and they are not interchangeable.",
+        "operationId": "read_subnet_ipam_subnets__subnet_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subnet Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubnetDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Read Subnet",
+        "tags": [
+          "ipam"
+        ]
+      }
+    },
+    "/ipam/subnets/{subnet_id}/allocate": {
+      "post": {
+        "description": "Give an element the first address this subnet has free.\n\nTwo element ids: the subnet in the path, the element receiving the address\nin the body.",
+        "operationId": "allocate_address_ipam_subnets__subnet_id__allocate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subnet_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subnet Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressAllocate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Allocate Address",
+        "tags": [
+          "ipam"
         ]
       }
     },

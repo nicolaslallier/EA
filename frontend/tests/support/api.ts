@@ -6,6 +6,10 @@ type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
 type DocumentSummaryRead = components['schemas']['DocumentSummaryRead']
 type DocumentRead = components['schemas']['DocumentRead']
+type SubnetRead = components['schemas']['SubnetRead']
+type SubnetDetailRead = components['schemas']['SubnetDetailRead']
+type AddressRead = components['schemas']['AddressRead']
+type AddressLocationRead = components['schemas']['AddressLocationRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -189,4 +193,54 @@ export function aDocument(overrides: Partial<DocumentRead> = {}): DocumentRead {
 /** A picked file, as the browser hands one to a change handler. */
 export function aFile(name = 'runbook.md', content = '# Runbook\n'): File {
   return new File([content], name, { type: 'text/markdown' })
+}
+
+/** A declared subnet, as `/ipam/subnets` returns it — counts, never a percentage. */
+export function aSubnet(overrides: Partial<SubnetRead> = {}): SubnetRead {
+  return {
+    element_id: 'cccccccc-1111-4111-8111-111111111111',
+    name: 'DMZ',
+    description: '',
+    cidr: '10.0.1.0/24',
+    vrf: 'default',
+    version: 4,
+    capacity: 254,
+    reserved: 0,
+    used: 0,
+    free: 254,
+    reservations: '',
+    ...overrides,
+  }
+}
+
+/** One assigned address, with the element answering on it. */
+export function anAddress(overrides: Partial<AddressRead> = {}): AddressRead {
+  return {
+    address: '10.0.1.12',
+    vrf: 'default',
+    version: 4,
+    element_id: '11111111-1111-4111-8111-111111111111',
+    element_name: 'srv-app-01',
+    element_type: 'application_component',
+    subnet_id: 'cccccccc-1111-4111-8111-111111111111',
+    ...overrides,
+  }
+}
+
+/** A subnet with its occupants, as `/ipam/subnets/{id}` returns it. */
+export function aSubnetDetail(
+  subnet: SubnetRead = aSubnet(),
+  addresses: AddressRead[] = [],
+  nextFree: string | null = '10.0.1.1',
+): SubnetDetailRead {
+  return { subnet, addresses, next_free: nextFree }
+}
+
+/** What an address lookup answers with: the holder, and what it is wired to. */
+export function anAddressLocation(
+  address: AddressRead = anAddress(),
+  elements: ElementRead[] = [],
+  relationships: RelationshipRead[] = [],
+): AddressLocationRead {
+  return { address, graph: { elements, relationships } }
 }

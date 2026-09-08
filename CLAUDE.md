@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with five sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); and impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as nineteen tools — the element CRUD, the links, the two traversals, the metamodel and the markdown attached to an element — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with six sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); and IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as twenty-eight tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element and the IP addressing — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 The relational half now holds **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through a twentieth MCP tool, `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster were wired by `docs/adr/0015`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
 
@@ -19,6 +19,7 @@ The relational half now holds **two tables**. `element_documents` stores the mar
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
 | Architecture graph | Neo4j (`neo4j` async driver, Cypher) | The model *is* a graph; impact analysis is a variable-depth traversal — see `docs/adr/0004` |
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
+| IP addressing | Properties of the existing elements, no new node kind | A subnet is a `communication_network`, an address is an attribute of the machine — so it is in the catalogue, the neighbourhood and the impact analysis for free — see `docs/adr/0020` |
 | Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | The markdown attached to elements and its passage index today (`docs/adr/0017`, `0019`); auth, audit and scheduled work next — see `docs/adr/0015` for the scaffold |
 | Document search | pgvector in that same PostgreSQL, `vector(1024)` + HNSW | The corpus is small and already there; a third store would be a third consistency to keep — see `docs/adr/0019` |
 | Embeddings | An OpenAI-shaped `/v1/embeddings` — LM Studio on the cluster, `text-embedding-mxbai-embed-large-v1` | Measured against the alternative on French prose; the API shape, not the supplier, is what we depend on — see `docs/adr/0019` |
@@ -42,6 +43,7 @@ backend/
     domain/        # entities, value objects, domain services — NO framework imports
       archimate/   # the ArchiMate 3.2 metamodel: taxonomy, relations, rules
       chunking.py  # where a markdown document is cut, and what is embedded
+      ipam.py      # what an IP address is, where it may live, what is free
       search.py    # what the passage index holds and answers with
     reindex.py     # `python -m ea.reindex` — rebuild the index over the whole corpus
     services/      # use cases; orchestrate domain + repositories, own transactions
@@ -138,15 +140,22 @@ writes a graph the API would refuse. The same reason forbids restating a rule
 here: the palette is *asked for* (`describe_metamodel`), exactly as the SPA
 asks for it.
 
-The markdown of `docs/adr/0017` is exposed too, so the adapter holds **two**
-service providers rather than one — never a repository. An agent has no file to
+The markdown of `docs/adr/0017` is exposed too, and the IP addressing of
+`docs/adr/0020` with it, so the adapter holds **three** service providers
+rather than one — never a repository. An agent has no file to
 upload, so the five document tools take the text itself and land on
 `DocumentService.attach_text` / `revise_text`; the byte-taking entry points the
 HTTP upload uses now delegate to those, so the two paths differ by the decoding
 step and nothing else. `get_documents` is required rather than optional: the
 tool list belongs to the adapter, not to the deployment, so a shut relational
 store means the document tools are offered and fail — exactly as `/documents`
-stays routed and answers a 500. See `docs/adr/0018`.
+stays routed and answers a 500. See `docs/adr/0018`. `get_ipam` is required for
+the same reason.
+
+The eight IP tools exist because the arithmetic is the server's job. An agent
+that wrote an address with `update_element` would be doing addition in its
+head, and would eventually hand one out twice; `allocate_ip_address` and
+`assign_ip_address` are what the `INSTRUCTIONS` point it at instead.
 
 `search_documents` is the twentieth tool and the one that changes how an agent
 should work here: it searches the *passages* of every document by meaning and
@@ -271,6 +280,43 @@ still fall behind its store in two ways, both configuration — a document
 attached while `EA_EMBEDDINGS_ENABLED` was off, and a change of model — and
 `make docs-reindex` is the catch-up for both.
 
+## An IP address is an attribute of the machine, not a record beside it
+
+There is no `:IpAddress` node and no `:Subnet` node, and adding one needs an
+ADR that supersedes `docs/adr/0020`. A **subnet is a `communication_network`
+element** carrying `p_cidr`, and an **address is `p_ip_address` on the element
+that answers on it**. Four things about that are decisions.
+
+**One address per element, and that is what makes uniqueness real.** A list in
+a property would have been easier to write and impossible to constrain: a
+composite Neo4j constraint only sees a scalar. With one address,
+`REQUIRE (e.p_vrf, e.p_ip_address) IS UNIQUE` is declarable, and it is the only
+thing that survives two agents reading "free" in the same instant. A
+multi-homed host is two `technology_interface` elements composed into a node —
+which is how ArchiMate says to model it anyway. `p_vrf` is written *beside*
+every address for the same reason: a composite constraint does not apply to a
+node missing one of its properties.
+
+**Belonging to a subnet is computed, never stored.** No edge from an address to
+its subnet, none between a subnet and its parent. Longest prefix wins, as in a
+routing table, so declaring `10.0.0.0/8` as the corporate range does not move
+the hosts of `10.0.1.0/24` under it. A stored edge would be a second truth,
+free to contradict the arithmetic.
+
+**The convention is checked wherever properties are written**, not only behind
+the IPAM door: `ArchitectureService.create_element` and `update_element` both
+call `validate_ipam_properties`. `PATCH /elements/{id}` takes free-form
+properties, and a rule enforced behind one of the two doors is a rule the
+inventory cannot lean on.
+
+**`domain/ipam.py` is pure and holds every rule an address can check alone** —
+what a prefix keeps for itself (RFC 3021 for a /31, the subnet-router anycast
+address for IPv6), what a reservation covers, what is free next.
+`services/ipam.py` holds the ones needing the rest of the catalogue: the type
+must be addressable, a declared subnet must hold the address, nothing else may
+have it. The SPA restates none of them — it asks, exactly as it does for the
+metamodel.
+
 ## Drawing a graph in the SPA
 
 There is no graph-rendering library and adding one needs an ADR. A sub-graph is
@@ -298,9 +344,11 @@ keeps that state in the URL, not in a `ref`.** The neighbourhood reads
 changing subject pushes a history entry, turning a dial replaces one. See
 `docs/adr/0010`. The impact analysis reads the same three (see `docs/adr/0013`),
 the catalogue follows the rule for the element it details (`?element=`, see
-`docs/adr/0011`), and the metamodel for the cell of the matrix it is showing
-(`?source=`, `?relation=`, see `docs/adr/0012`); an unsaved form is not that kind
-of state and stays in a `ref`.
+`docs/adr/0011`), the metamodel for the cell of the matrix it is showing
+(`?source=`, `?relation=`, see `docs/adr/0012`), and the IP addressing for the
+subnet it has open and the address it was asked about (`?subnet=`, `?address=`,
+`?vrf=`, see `docs/adr/0020`); an unsaved form — the subnet declaration, say —
+is not that kind of state and stays in a `ref`.
 
 ## The relational store holds the documents and their index
 

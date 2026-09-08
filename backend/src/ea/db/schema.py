@@ -16,6 +16,13 @@ How the graph is shaped, and why:
   of them and they are a closed set, so they are listed literally below;
 * user-defined attributes are stored flat under a `p_` prefix, so
   `MATCH (e:Element) WHERE e.p_owner = 'finance'` works without unpacking JSON.
+
+That last point is what the IP address management is built on: an address is
+`p_ip_address` on the element that answers on it and a subnet is `p_cidr` on a
+`communication_network`, so the IPAM adds no node kind and no label — see
+`docs/adr/0020`. It does add the one statement below that turns a convention
+into a guarantee: an address may be claimed once per routing scope, and the
+database says so rather than a check that two agents can both pass.
 """
 
 from __future__ import annotations
@@ -61,6 +68,20 @@ SCHEMA_STATEMENTS: Final[tuple[LiteralString, ...]] = (
     "CREATE INDEX rel_triggering_id IF NOT EXISTS FOR ()-[r:TRIGGERING]-() ON (r.id)",
     "CREATE INDEX rel_flow_id IF NOT EXISTS FOR ()-[r:FLOW]-() ON (r.id)",
     "CREATE INDEX rel_specialization_id IF NOT EXISTS FOR ()-[r:SPECIALIZATION]-() ON (r.id)",
+    # --- IP address management (docs/adr/0020) ---
+    # Two elements may not answer on one address inside one routing scope. This
+    # is the reason an element holds a single address rather than a list: a
+    # composite uniqueness constraint is what survives two agents allocating at
+    # the same instant, and it can only see a scalar property. A host with two
+    # NICs is two `technology_interface` elements, which is how ArchiMate says
+    # to model it anyway. Nodes missing either property are untouched by it,
+    # which is why the service always writes the scope alongside the address.
+    "CREATE CONSTRAINT element_address_unique_per_vrf IF NOT EXISTS "
+    "FOR (e:Element) REQUIRE (e.p_vrf, e.p_ip_address) IS UNIQUE",
+    # The inventory asks "every element that has an address" and "every element
+    # that declares a prefix"; without these each question is a full scan.
+    "CREATE INDEX element_ip_address_index IF NOT EXISTS FOR (e:Element) ON (e.p_ip_address)",
+    "CREATE INDEX element_cidr_index IF NOT EXISTS FOR (e:Element) ON (e.p_cidr)",
 )
 
 
@@ -70,7 +91,7 @@ async def apply_schema(driver: AsyncDriver, *, database: str) -> None:
     The one session is opened asking the server for nothing below a warning.
     `IF NOT EXISTS` makes every boot after the first a no-op, and Neo4j reports
     each no-op as an INFORMATION notification saying the constraint already
-    exists; the driver logs all sixteen of them at every start. That is the
+    exists; the driver logs one of them per statement at every start. That is the
     designed outcome being announced as news, so the filter is set here — on
     the schema session alone, so a notification about a *query* still surfaces.
     """
