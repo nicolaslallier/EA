@@ -30,10 +30,30 @@ def test_every_element_endpoint_is_described() -> None:
     assert set(paths["/elements/{element_id}"]) == {"get", "patch", "delete"}
 
 
+def test_every_ipam_endpoint_is_described() -> None:
+    """The addressing is part of the contract, so the client is generated for it."""
+    paths = openapi_document()["paths"]
+
+    assert set(paths["/ipam/subnets"]) == {"get", "post"}
+    assert set(paths["/ipam/subnets/{subnet_id}"]) == {"get"}
+    assert set(paths["/ipam/subnets/{subnet_id}/allocate"]) == {"post"}
+    assert set(paths["/ipam/addresses"]) == {"get", "post"}
+    assert set(paths["/ipam/addresses/{address}"]) == {"get"}
+    assert set(paths["/ipam/elements/{element_id}/address"]) == {"delete"}
+
+
 def test_the_element_schemas_the_client_needs_are_named() -> None:
     schemas = openapi_document()["components"]["schemas"]
 
     assert {"ElementCreate", "ElementUpdate", "ElementRead", "ElementPage"} <= set(schemas)
+    assert {
+        "SubnetCreate",
+        "SubnetRead",
+        "SubnetDetailRead",
+        "AddressAssign",
+        "AddressRead",
+        "AddressLocationRead",
+    } <= set(schemas)
 
 
 def test_the_environment_cannot_change_the_generated_document(

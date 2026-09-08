@@ -16,7 +16,13 @@ from neo4j.exceptions import ConstraintError
 
 from ea.db.schema import ANY_RELATIONSHIP, PROPERTY_PREFIX
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.errors import DuplicateElementError, ElementNotFoundError
+from ea.domain.errors import (
+    AddressAlreadyAssignedError,
+    DomainError,
+    DuplicateElementError,
+    ElementNotFoundError,
+)
+from ea.domain.ipam import ADDRESS_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
 
@@ -185,6 +191,29 @@ RELATIONS_OF: Final[LiteralString] = (
     "edges AS relationships"
 )
 
+#: --- IP address management (docs/adr/0020) -------------------------------
+#: An address is a property of the element answering on it, so none of these
+#: reaches a second store: they are the three questions `ElementFilter` cannot
+#: ask, since it filters on type, layer and name and never on an attribute.
+#:
+#: `ELEMENT_AT_ADDRESS` returns at most one row because `(p_vrf, p_ip_address)`
+#: is a uniqueness constraint (`db/schema.py`), and it reads that constraint's
+#: own index. The two listings are index-backed by their `IS NOT NULL` and are
+#: deliberately unbounded: an occupancy figure computed from a page of the
+#: inventory would be wrong, silently, and the inventory is bounded by how many
+#: machines are modelled rather than by how large the graph is.
+NETWORKS: Final[LiteralString] = (
+    "MATCH (e:Element) WHERE e.p_cidr IS NOT NULL RETURN e ORDER BY e.p_cidr, e.name"
+)
+
+ADDRESSED_ELEMENTS: Final[LiteralString] = (
+    "MATCH (e:Element) WHERE e.p_ip_address IS NOT NULL RETURN e ORDER BY e.name"
+)
+
+ELEMENT_AT_ADDRESS: Final[LiteralString] = (
+    "MATCH (e:Element {p_vrf: $vrf, p_ip_address: $address}) RETURN e"
+)
+
 WOULD_CLOSE_A_CONTAINMENT_CYCLE: Final[LiteralString] = """
     MATCH (source:Element {id: $source_id}), (target:Element {id: $target_id})
     RETURN source.id = target.id
@@ -283,10 +312,7 @@ class Neo4jArchitectureRepository:
             # The message names the constraint and the offending value; the
             # caller gets the generic domain error, the detail goes to the log.
             logger.info("element rejected by a uniqueness constraint", exc_info=error)
-            msg = (
-                f"an element of type {element.element_type.value} is already named {element.name!r}"
-            )
-            raise DuplicateElementError(msg) from error
+            raise _rejected(element, error) from error
         return element_from_node(records[0]["e"])
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -312,10 +338,7 @@ class Neo4jArchitectureRepository:
             )
         except ConstraintError as error:
             logger.info("element update rejected by a constraint", exc_info=error)
-            msg = (
-                f"an element of type {element.element_type.value} is already named {element.name!r}"
-            )
-            raise DuplicateElementError(msg) from error
+            raise _rejected(element, error) from error
         if not records:
             msg = f"no element with id {element.id}"
             raise ElementNotFoundError(msg)
@@ -435,12 +458,48 @@ class Neo4jArchitectureRepository:
             relationships=tuple(relationship_from_edge(edge) for edge in record["relationships"]),
         )
 
+    # --- IP address management (docs/adr/0020) ----------------------------
+    # `IpamRepository` as well as `ArchitectureRepository`: both protocols are
+    # structural, so one class satisfies both without either knowing about the
+    # other, and an address stays what it is — an attribute of an element.
+
+    async def networks(self) -> tuple[Element, ...]:
+        return tuple(element_from_node(record["e"]) for record in await self._run(NETWORKS, {}))
+
+    async def addressed_elements(self) -> tuple[Element, ...]:
+        records = await self._run(ADDRESSED_ELEMENTS, {})
+        return tuple(element_from_node(record["e"]) for record in records)
+
+    async def element_at(self, address: str, *, vrf: str) -> Element | None:
+        records = await self._run(ELEMENT_AT_ADDRESS, {"address": address, "vrf": vrf})
+        return element_from_node(records[0]["e"]) if records else None
+
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         records = await self._run(
             WOULD_CLOSE_A_CONTAINMENT_CYCLE,
             {"source_id": str(source_id), "target_id": str(target_id)},
         )
         return bool(records) and bool(records[0]["closes"])
+
+
+def _rejected(element: Element, error: ConstraintError) -> DomainError:
+    """Which uniqueness constraint refused this write, said in the caller's terms.
+
+    Two constraints can refuse an element: its name inside its type, and its IP
+    address inside its routing scope (`db/schema.py`). Telling them apart
+    matters — an agent handed "already named" after losing an allocation race
+    would rename the host and try again, forever — and the only thing that can
+    tell them apart is the server's message, which names the properties it
+    found already taken. So the property name is looked for there, and the
+    older failure is what an unrecognised message means.
+    """
+    address_property = f"{PROPERTY_PREFIX}{ADDRESS_PROPERTY}"
+    if address_property in str(error) and (address := element.properties.get(ADDRESS_PROPERTY)):
+        scope = read_vrf(element.properties)
+        msg = f"{address} is already assigned to another element in VRF {scope!r}"
+        return AddressAlreadyAssignedError(msg)
+    msg = f"an element of type {element.element_type.value} is already named {element.name!r}"
+    return DuplicateElementError(msg)
 
 
 def _clamp_depth(depth: int) -> int:

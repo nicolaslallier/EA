@@ -220,3 +220,39 @@ class Embedder(Protocol):
     async def embed_query(self, text: str) -> tuple[float, ...]:
         """Embed one question, to be compared against stored passages."""
         ...
+
+
+class IpamRepository(Protocol):
+    """The three reads the IP address management needs and the catalogue lacks.
+
+    An address is a *property* of an element (docs/adr/0020), so none of these
+    is a new store: they are the queries `ElementFilter` cannot express, which
+    filters on type, layer and name and never on an attribute.
+
+    They are declared apart from `ArchitectureRepository` because they are a
+    different use case, and satisfied by the same Neo4j class, which implements
+    both — structural typing, so neither protocol has to know about the other.
+    """
+
+    async def networks(self) -> tuple[Element, ...]:
+        """Every element declaring a prefix, whatever its scope."""
+        ...
+
+    async def addressed_elements(self) -> tuple[Element, ...]:
+        """Every element carrying an IP address.
+
+        The whole inventory rather than a page: an address is only meaningful
+        against the others — which subnet holds it, whether it is free — and a
+        page of them would answer none of those questions. It is bounded by how
+        many machines are modelled, not by how large the graph is.
+        """
+        ...
+
+    async def element_at(self, address: str, *, vrf: str) -> Element | None:
+        """The one element answering on that address in that scope, if any.
+
+        One and not many: `(p_vrf, p_ip_address)` is a uniqueness constraint in
+        Neo4j, which is the whole reason an element holds a single address
+        rather than a list — see `domain/ipam.py`.
+        """
+        ...

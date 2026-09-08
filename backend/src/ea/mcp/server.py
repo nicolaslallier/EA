@@ -29,6 +29,8 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ea.api.schemas import (
+    AddressLocationRead,
+    AddressRead,
     DocumentRead,
     DocumentSummaryRead,
     ElementPage,
@@ -38,6 +40,8 @@ from ea.api.schemas import (
     PassageRead,
     RelationshipMatrixRead,
     RelationshipRead,
+    SubnetDetailRead,
+    SubnetRead,
 )
 from ea.domain.archimate import (
     AccessType,
@@ -51,12 +55,14 @@ from ea.domain.archimate import (
     permitted_relationships as permitted_between,
 )
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
+from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.ipam import IpamService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
@@ -92,12 +98,27 @@ read one document rather than every document to find out what is there.
 holds the answer: it searches the *passages* of every document by meaning
 rather than by keyword, and each hit says which section of which file it came
 from. Prefer it to reading documents one by one; `read_document` is then for
-the one you found.\
+the one you found.
+
+The catalogue also holds the IP addressing, and it is not a separate register:
+a subnet is a `communication_network` element carrying its prefix, and an
+address is an attribute of the element that answers on it. So a host is created
+with `create_element` like anything else, and `assign_ip_address` gives it one.
+
+Never write an address with `update_element`. Use `allocate_ip_address`, which
+picks the first free address of a subnet, or `assign_ip_address` for a
+particular one; both refuse an address already taken, one the prefix keeps for
+itself, and one no declared subnet holds. An address must sit inside a subnet
+somebody declared, so `declare_ip_subnet` comes first.
+
+`locate_ip_address` is the question this is all for: it says which element
+answers on an address **and what that element is wired to**, in one call.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
 ServiceProvider = Callable[[], ArchitectureService]
 DocumentProvider = Callable[[], DocumentService]
+IpamProvider = Callable[[], IpamService]
 
 # --- Shared argument constraints, bounded exactly as the HTTP adapter is ----
 ElementId = Annotated[
@@ -145,6 +166,36 @@ Question = Annotated[
 ]
 SearchLimit = Annotated[int, Field(ge=1, le=MAX_SEARCH_LIMIT)]
 Offset = Annotated[int, Field(ge=0)]
+Vrf = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        description="The routing scope. Leave it alone unless the model has more than one.",
+    ),
+]
+IpAddressArgument = Annotated[
+    str, Field(min_length=2, max_length=64, description="An IPv4 or IPv6 address.")
+]
+Cidr = Annotated[
+    str,
+    Field(
+        min_length=2,
+        max_length=64,
+        description="A prefix, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
+    ),
+]
+ReservedAddresses = Annotated[
+    str,
+    Field(
+        max_length=2000,
+        description=(
+            "Addresses to keep out of automatic allocation, comma-separated. "
+            "Each entry is an address, a `first-last` range, or a prefix: "
+            "`10.0.1.1, 10.0.1.200-10.0.1.254`."
+        ),
+    ),
+]
 
 # --- What a tool does to the graph, said in the protocol's own terms --------
 # A client shows these to the person behind the agent, who decides from them
@@ -165,6 +216,7 @@ REMOVES: Final = ToolAnnotations(
 def build_mcp_server(
     get_service: ServiceProvider,
     get_documents: DocumentProvider,
+    get_ipam: IpamProvider,
     *,
     version: str = "0.1.0",
 ) -> MCPServer[Any]:
@@ -174,10 +226,11 @@ def build_mcp_server(
     application has opened its databases, and lets a test hand over the same
     in-memory doubles the API tests use.
 
-    `get_documents` is required rather than optional, so that an app assembled
-    without a relational store fails when a document tool is *called* — with
-    the wiring fault `document_service_of` states — instead of quietly offering
-    an agent a shorter tool list than the one this module documents.
+    `get_documents` and `get_ipam` are required rather than optional, so that
+    an app assembled without a relational store or without a graph fails when
+    one of their tools is *called* — with the wiring fault `document_service_of`
+    and `ipam_service_of` state — instead of quietly offering an agent a
+    shorter tool list than the one this module documents.
     """
     server: MCPServer[Any] = MCPServer(
         "ea-architecture",
@@ -514,6 +567,137 @@ def build_mcp_server(
         """
         await get_documents().discard(document_id)
         return f"document {document_id} was deleted"
+
+    # --- IP addressing ----------------------------------------------------
+    # No second store and no second catalogue: a subnet is a
+    # `communication_network` element and an address is a property of the
+    # element answering on it (docs/adr/0020). These tools exist because the
+    # arithmetic — what is free, what is taken, what a prefix keeps for itself
+    # — is not something an agent should be asked to do with `update_element`.
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def declare_ip_subnet(
+        name: Name,
+        cidr: Cidr,
+        vrf: Vrf = DEFAULT_VRF,
+        reserved: ReservedAddresses = "",
+        description: Description = "",
+    ) -> SubnetRead:
+        """Declare a subnet, so addresses inside it can be handed out.
+
+        This creates a `communication_network` element carrying the prefix, so
+        the subnet appears in the catalogue and in every diagram like anything
+        else. Write the network itself — `10.0.1.0/24`, not `10.0.1.5/24`,
+        which is refused rather than quietly corrected.
+
+        A prefix may be declared once per routing scope, and may sit inside
+        another: `10.0.0.0/8` as the corporate range and `10.0.1.0/24` as the
+        DMZ is the normal case, and an address then belongs to the narrowest
+        one holding it.
+        """
+        return SubnetRead.of(
+            await get_ipam().declare_network(
+                name=name, cidr=cidr, vrf=vrf, reserved=reserved, description=description
+            )
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_ip_subnets(vrf: Vrf | None = None) -> list[SubnetRead]:
+        """Every declared subnet, with how full each one is.
+
+        `capacity`, `reserved`, `used` and `free` are counts and not a
+        percentage, so "three addresses left" is sayable — which is the
+        sentence somebody acts on.
+        """
+        return [SubnetRead.of(subnet) for subnet in await get_ipam().list_networks(vrf=vrf)]
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def read_ip_subnet(element_id: ElementId) -> SubnetDetailRead:
+        """One subnet: what is in it, and the address it would hand out next.
+
+        `element_id` is the subnet's own element id, as `list_ip_subnets`
+        reports it. `next_free` is absent when the subnet is full.
+        """
+        return SubnetDetailRead.of(await get_ipam().read_network(element_id))
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def allocate_ip_address(subnet_id: ElementId, element_id: ElementId) -> AddressRead:
+        """Give an element the first address a subnet has free.
+
+        Prefer this to `assign_ip_address` whenever the particular address does
+        not matter: it cannot pick one that is taken, reserved, or one the
+        prefix keeps for itself. A full subnet is refused rather than served an
+        address that is already somebody's.
+        """
+        return AddressRead.of(await get_ipam().allocate_next(subnet_id, element_id))
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def assign_ip_address(
+        element_id: ElementId, address: IpAddressArgument, vrf: Vrf = DEFAULT_VRF
+    ) -> AddressRead:
+        """Give an element one particular address.
+
+        For an address that is already decided — a gateway, a printer somebody
+        wrote on a label. When any free address will do, `allocate_ip_address`
+        is the safer call.
+
+        Four things are refused: an element that cannot answer on an address at
+        all (a business process has no interface), an address no declared
+        subnet holds, one the prefix keeps for itself, and one another element
+        already has. Only elements of type node, device, equipment,
+        system_software or technology_interface may carry one — a host with two
+        NICs is two `technology_interface` elements under one node.
+        """
+        return AddressRead.of(await get_ipam().assign_address(element_id, address, vrf=vrf))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def locate_ip_address(
+        address: IpAddressArgument, vrf: Vrf = DEFAULT_VRF
+    ) -> AddressLocationRead:
+        """What answers on an address, and what that thing is wired to.
+
+        One call rather than two: the answer names the element and carries the
+        sub-graph around it, so "10.0.1.12 is srv-app-01, and Billing runs on
+        it" can be written without looking anything else up.
+        """
+        return AddressLocationRead.of(await get_ipam().locate(address, vrf=vrf))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_ip_addresses(
+        vrf: Vrf | None = None,
+        within: Cidr | None = None,
+        search: Annotated[str | None, Field(max_length=200)] = None,
+    ) -> list[AddressRead]:
+        """The inventory: every assigned address, in address order.
+
+        `within` narrows it to a prefix, declared or not — "what is in
+        10.0.1.0/26" is answerable whether or not anyone declared that slice.
+        `search` matches the element's name.
+        """
+        return [
+            AddressRead.of(assignment)
+            for assignment in await get_ipam().list_addresses(vrf=vrf, within=within, search=search)
+        ]
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def release_ip_address(element_id: ElementId) -> str:
+        """Take an element's address back, leaving the element itself alone.
+
+        The address becomes free at once and may be handed to something else,
+        so confirm with the person you are working for first: a machine that is
+        still running does not stop being reachable because the catalogue
+        forgot its address.
+        """
+        await get_ipam().release_address(element_id)
+        return f"element {element_id} no longer holds an IP address"
 
     # --- Metamodel --------------------------------------------------------
 

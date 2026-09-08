@@ -43,3 +43,41 @@ class SearchUnavailableError(DomainError):
     message rather than a crash: the caller, agent or human, is told what is
     missing instead of being handed "error executing tool".
     """
+
+
+class NotAddressableError(DomainError):
+    """An IP address was written onto something that cannot answer on one.
+
+    A business process has no interface; an address on it is a modelling
+    mistake no later query can undo — see `domain/ipam.py`.
+    """
+
+
+class NotASubnetError(DomainError):
+    """A prefix was asked of an element that declares none, or written onto
+    something that is not a `communication_network`."""
+
+
+class DuplicateNetworkError(DomainError):
+    """A prefix is already declared in that routing scope."""
+
+
+class AddressAlreadyAssignedError(DomainError):
+    """Another element already answers on that address in that scope."""
+
+
+class AddressNotAssignedError(DomainError):
+    """An address was released, or looked up, and nothing holds it."""
+
+
+class AddressOutsideAnyNetworkError(DomainError):
+    """No declared subnet of that scope holds the address.
+
+    Refused rather than stored: an inventory that accepts addresses belonging
+    to no subnet is one nobody can reconcile, and the usual cause is a typo or
+    a subnet that was never declared.
+    """
+
+
+class NetworkExhaustedError(DomainError):
+    """A subnet was asked for an address and has none left to give."""

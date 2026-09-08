@@ -58,6 +58,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/metamodel/MetamodelSection.vue'),
   },
   {
+    path: '/ipam',
+    name: 'ipam',
+    label: 'Adressage IP',
+    summary: "Les sous-réseaux, ce qu'ils contiennent, et ce qui répond sur une adresse.",
+    group: 'model',
+    view: () => import('../features/ipam/IpamSection.vue'),
+  },
+  {
     path: '/analyse/voisinage',
     name: 'neighbourhood',
     label: 'Voisinage',

@@ -9,6 +9,7 @@ tries it. The HTTP side is covered in `tests/e2e/test_mcp_endpoint.py`.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -19,20 +20,27 @@ from mcp.server.mcpserver.exceptions import ToolError
 from ea.mcp import build_mcp_server
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.ipam import IpamService
 
 
 @pytest.fixture
-def server(service: ArchitectureService, document_service: DocumentService) -> MCPServer[Any]:
-    """The adapter over both in-memory stores — no database, no transport."""
-    return build_mcp_server(lambda: service, lambda: document_service)
+def server(
+    service: ArchitectureService, document_service: DocumentService, ipam: IpamService
+) -> MCPServer[Any]:
+    """The adapter over the in-memory stores — no database, no transport."""
+    return build_mcp_server(lambda: service, lambda: document_service, lambda: ipam)
 
 
 @pytest.fixture
 def server_without_an_index(
-    service: ArchitectureService, document_service_without_an_index: DocumentService
+    service: ArchitectureService,
+    document_service_without_an_index: DocumentService,
+    ipam: IpamService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
-    return build_mcp_server(lambda: service, lambda: document_service_without_an_index)
+    return build_mcp_server(
+        lambda: service, lambda: document_service_without_an_index, lambda: ipam
+    )
 
 
 async def call(server: MCPServer[Any], tool: str, **arguments: Any) -> Any:
@@ -75,6 +83,14 @@ class TestTheToolset:
             "revise_document",
             "discard_document",
             "search_documents",
+            "declare_ip_subnet",
+            "list_ip_subnets",
+            "read_ip_subnet",
+            "allocate_ip_address",
+            "assign_ip_address",
+            "locate_ip_address",
+            "list_ip_addresses",
+            "release_ip_address",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -621,3 +637,159 @@ class TestSearchingTheDocuments:
     async def test_a_blank_question_is_refused_with_a_reason(self, server: MCPServer[Any]) -> None:
         with pytest.raises(ToolError, match="needs a question"):
             await call(server, "search_documents", question="   ")
+
+
+@pytest.mark.asyncio
+class TestTheIpAddressing:
+    """The tools an agent maintains the IP inventory with (docs/adr/0020).
+
+    They are the reason the addressing is not left to `update_element`: the
+    arithmetic — what is free, what is taken, what a prefix keeps for itself —
+    is the server's job, and an agent that had to do it in its head would
+    eventually hand out an address twice.
+    """
+
+    async def test_a_subnet_is_declared_as_an_ordinary_element(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+
+        assert subnet["cidr"] == "10.0.1.0/24"
+        element = await call(server, "get_element", element_id=subnet["element_id"])
+        assert element["element_type"] == "communication_network"
+
+    async def test_a_prefix_written_with_host_bits_is_refused_with_the_one_meant(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match=re.escape("10.0.1.0/24")):
+            await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.5/24")
+
+    async def test_allocating_hands_out_the_first_free_address(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(
+            server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24", reserved="10.0.1.1"
+        )
+        host = await an_element(server, "node", "srv-app-01")
+
+        assigned = await call(
+            server,
+            "allocate_ip_address",
+            subnet_id=subnet["element_id"],
+            element_id=host["id"],
+        )
+
+        assert assigned["address"] == "10.0.1.2"
+        assert assigned["element_name"] == "srv-app-01"
+
+    async def test_an_address_another_element_holds_is_refused_by_name(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """The refusal names the holder, so the agent can say what is in the way."""
+        await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+        first = await an_element(server, "node", "srv-app-01")
+        second = await an_element(server, "node", "srv-app-02")
+        await call(server, "assign_ip_address", element_id=first["id"], address="10.0.1.12")
+
+        with pytest.raises(ToolError, match="srv-app-01"):
+            await call(server, "assign_ip_address", element_id=second["id"], address="10.0.1.12")
+
+    async def test_something_that_cannot_be_pinged_is_refused(self, server: MCPServer[Any]) -> None:
+        await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+        process = await an_element(server, "business_process", "Facturer")
+
+        with pytest.raises(ToolError, match="business_process"):
+            await call(server, "assign_ip_address", element_id=process["id"], address="10.0.1.12")
+
+    async def test_locating_an_address_answers_with_the_element_and_its_links(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+        host = await an_element(server, "node", "srv-app-01")
+        billing = await an_element(server, "application_component", "Billing")
+        await call(server, "assign_ip_address", element_id=host["id"], address="10.0.1.12")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="serving",
+            source_id=host["id"],
+            target_id=billing["id"],
+        )
+
+        found = await call(server, "locate_ip_address", address="10.0.1.12")
+
+        assert found["address"]["element_name"] == "srv-app-01"
+        assert {element["name"] for element in found["graph"]["elements"]} == {
+            "srv-app-01",
+            "Billing",
+        }
+
+    async def test_the_inventory_can_be_narrowed_to_a_prefix_nobody_declared(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+        for name in ("srv-app-01", "srv-app-02"):
+            host = await an_element(server, "node", name)
+            await call(
+                server,
+                "allocate_ip_address",
+                subnet_id=subnet["element_id"],
+                element_id=host["id"],
+            )
+
+        listed = await call(server, "list_ip_addresses", within="10.0.1.0/31")
+
+        assert [entry["address"] for entry in listed["result"]] == ["10.0.1.1"]
+
+    async def test_releasing_frees_the_address_for_the_next_allocation(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(server, "declare_ip_subnet", name="DMZ", cidr="10.0.1.0/24")
+        first = await an_element(server, "node", "srv-app-01")
+        await call(
+            server, "allocate_ip_address", subnet_id=subnet["element_id"], element_id=first["id"]
+        )
+
+        await call(server, "release_ip_address", element_id=first["id"])
+
+        second = await an_element(server, "node", "srv-app-02")
+        reused = await call(
+            server, "allocate_ip_address", subnet_id=subnet["element_id"], element_id=second["id"]
+        )
+        assert reused["address"] == "10.0.1.1"
+
+    async def test_a_subnet_says_how_full_it_is_and_what_comes_next(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(server, "declare_ip_subnet", name="Lien", cidr="10.0.1.0/30")
+        host = await an_element(server, "node", "srv-app-01")
+        await call(
+            server, "allocate_ip_address", subnet_id=subnet["element_id"], element_id=host["id"]
+        )
+
+        detail = await call(server, "read_ip_subnet", element_id=subnet["element_id"])
+
+        assert (detail["subnet"]["used"], detail["subnet"]["free"]) == (1, 1)
+        assert detail["next_free"] == "10.0.1.2"
+
+    async def test_a_full_subnet_refuses_instead_of_inventing_an_address(
+        self, server: MCPServer[Any]
+    ) -> None:
+        subnet = await call(server, "declare_ip_subnet", name="Lien", cidr="10.0.1.0/30")
+        for name in ("a", "b"):
+            host = await an_element(server, "node", name)
+            await call(
+                server,
+                "allocate_ip_address",
+                subnet_id=subnet["element_id"],
+                element_id=host["id"],
+            )
+        latecomer = await an_element(server, "node", "c")
+
+        with pytest.raises(ToolError, match="no free address"):
+            await call(
+                server,
+                "allocate_ip_address",
+                subnet_id=subnet["element_id"],
+                element_id=latecomer["id"],
+            )

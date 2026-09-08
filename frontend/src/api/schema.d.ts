@@ -199,6 +199,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ipam/addresses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Addresses
+         * @description The inventory: every assigned address, in address order.
+         */
+        get: operations["list_addresses_ipam_addresses_get"];
+        put?: never;
+        /**
+         * Assign Address
+         * @description Give one element one address, if every rule allows it.
+         */
+        post: operations["assign_address_ipam_addresses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipam/addresses/{address}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate Address
+         * @description What answers on this address, and what that thing is wired to.
+         */
+        get: operations["locate_address_ipam_addresses__address__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipam/elements/{element_id}/address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Release Address
+         * @description Take an element's address back. The element itself is left alone.
+         */
+        delete: operations["release_address_ipam_elements__element_id__address_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipam/subnets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Subnets
+         * @description Every declared subnet, with how full each one is.
+         */
+        get: operations["list_subnets_ipam_subnets_get"];
+        put?: never;
+        /**
+         * Declare Subnet
+         * @description Declare a subnet. A prefix may be declared once per routing scope.
+         */
+        post: operations["declare_subnet_ipam_subnets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipam/subnets/{subnet_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Subnet
+         * @description One subnet, its occupants, and the address it would hand out next.
+         *
+         *     `subnet_id` is an element id: a subnet *is* an element of the catalogue.
+         *     It is named for the role it plays here, because the allocation route below
+         *     takes two element ids and they are not interchangeable.
+         */
+        get: operations["read_subnet_ipam_subnets__subnet_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipam/subnets/{subnet_id}/allocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Allocate Address
+         * @description Give an element the first address this subnet has free.
+         *
+         *     Two element ids: the subnet in the path, the element receiving the address
+         *     in the body.
+         */
+        post: operations["allocate_address_ipam_subnets__subnet_id__allocate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metamodel": {
         parameters: {
             query?: never;
@@ -315,6 +450,76 @@ export interface components {
          * @enum {string}
          */
         AccessType: "access" | "read" | "write" | "read_write";
+        /**
+         * AddressAllocate
+         * @description Whichever address the subnet has free next, given to one element.
+         */
+        AddressAllocate: {
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+        };
+        /**
+         * AddressAssign
+         * @description One address, given to one element.
+         */
+        AddressAssign: {
+            /**
+             * Address
+             * @description An IPv4 or IPv6 address.
+             */
+            address: string;
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /**
+             * Vrf
+             * @description The routing scope an address is unique in.
+             * @default default
+             */
+            vrf?: string;
+        };
+        /**
+         * AddressLocationRead
+         * @description The answer to "this address, that is what?" — in one payload.
+         *
+         *     The assignment says which element answers; the graph says what that element
+         *     is wired to, so the sentence "10.0.1.12 is srv-app-01, and Billing runs on
+         *     it" can be written without a second call.
+         */
+        AddressLocationRead: {
+            address: components["schemas"]["AddressRead"];
+            graph: components["schemas"]["GraphRead"];
+        };
+        /**
+         * AddressRead
+         * @description One assigned address, with the element answering on it.
+         */
+        AddressRead: {
+            /** Address */
+            address: string;
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Element Name */
+            element_name: string;
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Subnet Id
+             * @description The subnet element this address falls in, if one is declared.
+             */
+            subnet_id: string | null;
+            /** Version */
+            version: number;
+            /** Vrf */
+            vrf: string;
+        };
         /**
          * Aspect
          * @description The aspect an element belongs to — the column of the ArchiMate framework.
@@ -716,6 +921,93 @@ export interface components {
              */
             strength: number;
             value: components["schemas"]["RelationshipType"];
+        };
+        /**
+         * SubnetCreate
+         * @description A new subnet: a `communication_network` element carrying a prefix.
+         */
+        SubnetCreate: {
+            /**
+             * Cidr
+             * @description The prefix itself, e.g. `10.0.1.0/24` or `2001:db8::/64`.
+             */
+            cidr: string;
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+            /**
+             * Reserved
+             * @description Addresses set aside, comma-separated: `10.0.1.1, 10.0.1.10-10.0.1.20, 10.0.1.128/25`.
+             * @default
+             */
+            reserved?: string;
+            /**
+             * Vrf
+             * @description The routing scope an address is unique in.
+             * @default default
+             */
+            vrf?: string;
+        };
+        /**
+         * SubnetDetailRead
+         * @description A subnet with its occupants and the address it would hand out next.
+         */
+        SubnetDetailRead: {
+            /** Addresses */
+            addresses: components["schemas"]["AddressRead"][];
+            /**
+             * Next Free
+             * @description Absent when the subnet is full.
+             */
+            next_free: string | null;
+            subnet: components["schemas"]["SubnetRead"];
+        };
+        /**
+         * SubnetRead
+         * @description A subnet and how full it is.
+         *
+         *     `capacity` is what the prefix can hand out at all, `reserved` what is set
+         *     aside by hand, `used` what is assigned and `free` what is left — four
+         *     numbers rather than a percentage, because a client that only has the
+         *     percentage cannot say "three addresses left" and that is the sentence
+         *     somebody acts on.
+         */
+        SubnetRead: {
+            /** Capacity */
+            capacity: number;
+            /** Cidr */
+            cidr: string;
+            /** Description */
+            description: string;
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Free */
+            free: number;
+            /** Name */
+            name: string;
+            /**
+             * Reservations
+             * @description The reservations exactly as written, so a client can edit them back.
+             */
+            reservations: string;
+            /** Reserved */
+            reserved: number;
+            /** Used */
+            used: number;
+            /**
+             * Version
+             * @description 4 or 6.
+             */
+            version: number;
+            /** Vrf */
+            vrf: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1306,6 +1598,367 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    list_addresses_ipam_addresses_get: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one routing scope. */
+                vrf?: string | null;
+                /** @description Only addresses inside this prefix, e.g. `10.0.1.0/26`. */
+                within?: string | null;
+                search?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddressRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_address_ipam_addresses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressAssign"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddressRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    locate_address_ipam_addresses__address__get: {
+        parameters: {
+            query?: {
+                vrf?: string;
+            };
+            header?: never;
+            path: {
+                /** @description An IPv4 or IPv6 address. */
+                address: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddressLocationRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    release_address_ipam_elements__element_id__address_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_subnets_ipam_subnets_get: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one routing scope. */
+                vrf?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubnetRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    declare_subnet_ipam_subnets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubnetCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubnetRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_subnet_ipam_subnets__subnet_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subnet_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubnetDetailRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    allocate_address_ipam_subnets__subnet_id__allocate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                subnet_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressAllocate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddressRead"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

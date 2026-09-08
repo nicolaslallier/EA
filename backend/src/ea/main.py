@@ -11,16 +11,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ea.api.architecture import router as architecture_router
-from ea.api.dependencies import architecture_service_of, document_service_of
+from ea.api.dependencies import (
+    architecture_service_of,
+    document_service_of,
+    ipam_service_of,
+)
 from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
+from ea.api.ipam import router as ipam_router
 from ea.api.metamodel import router as metamodel_router
 from ea.core.config import Settings, get_settings
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
-from ea.domain.ports import DocumentRepository
+from ea.domain.ports import DocumentRepository, IpamRepository
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
@@ -29,6 +34,7 @@ from ea.repositories.embeddings import HttpEmbedder
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
+from ea.services.ipam import IpamService
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +114,10 @@ def _lifespan(
                 app.state.architecture_service = ArchitectureService(
                     repository, attachments=attachments
                 )
+                # The IP addressing is a reading of that same graph and adds no
+                # store, so it is built from the very repository above — see
+                # `docs/adr/0020`.
+                app.state.ipam_service = IpamService(app.state.architecture_service, repository)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
@@ -162,9 +172,9 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     regenerating for it. And the sub-application's own lifespan is dropped,
     which is why its session manager is handed to `_lifespan` instead.
 
-    Both services are looked up per call, off `app.state`, for the same reason:
-    they are built by the lifespan and this runs while the app is still being
-    assembled. A deployment with the relational store shut therefore serves the
+    All three services are looked up per call, off `app.state`, for the same
+    reason: they are built by the lifespan and this runs while the app is still
+    being assembled. A deployment with the relational store shut therefore serves the
     document tools and fails them one by one — the wiring fault the REST
     adapter answers with a 500, said in the other protocol.
 
@@ -177,6 +187,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     server = build_mcp_server(
         lambda: architecture_service_of(app),
         lambda: document_service_of(app),
+        lambda: ipam_service_of(app),
         version=app.version,
     )
     transport = server.streamable_http_app(
@@ -196,6 +207,7 @@ def create_app(
     architecture_service: ArchitectureService | None = None,
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
+    ipam: IpamRepository | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -233,6 +245,8 @@ def create_app(
             app.state.document_service = DocumentService(
                 documents, architecture_service, indexer=indexer
             )
+        if ipam is not None:
+            app.state.ipam_service = IpamService(architecture_service, ipam)
 
     app.add_middleware(
         CORSMiddleware,
@@ -246,6 +260,7 @@ def create_app(
     app.include_router(metamodel_router)
     app.include_router(architecture_router)
     app.include_router(documents_router)
+    app.include_router(ipam_router)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
     return app
