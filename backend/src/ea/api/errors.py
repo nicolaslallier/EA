@@ -22,6 +22,7 @@ from ea.domain.errors import (
     DuplicateElementError,
     ElementNotFoundError,
     IllegalRelationshipError,
+    SearchUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DuplicateElementError: (status.HTTP_409_CONFLICT, "duplicate"),
     DuplicateDocumentError: (status.HTTP_409_CONFLICT, "duplicate"),
     CyclicContainmentError: (status.HTTP_409_CONFLICT, "cyclic_containment"),
+    # A deployment with `EA_EMBEDDINGS_ENABLED` off, which is a configuration
+    # and not a request that was wrong — hence 503 and not 4xx.
+    SearchUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "search_unavailable"),
     IllegalRelationshipError: (
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "illegal_relationship",

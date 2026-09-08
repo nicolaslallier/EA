@@ -27,6 +27,14 @@ def server(service: ArchitectureService, document_service: DocumentService) -> M
     return build_mcp_server(lambda: service, lambda: document_service)
 
 
+@pytest.fixture
+def server_without_an_index(
+    service: ArchitectureService, document_service_without_an_index: DocumentService
+) -> MCPServer[Any]:
+    """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
+    return build_mcp_server(lambda: service, lambda: document_service_without_an_index)
+
+
 async def call(server: MCPServer[Any], tool: str, **arguments: Any) -> Any:
     """Call a tool and hand back the structured payload an agent would read."""
     result = await server.call_tool(tool, arguments)
@@ -66,6 +74,7 @@ class TestTheToolset:
             "read_document",
             "revise_document",
             "discard_document",
+            "search_documents",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -555,3 +564,60 @@ class TestDocuments:
 
         with pytest.raises(ToolError):
             await call(server, "read_document", document_id=stored["id"])
+
+
+@pytest.mark.asyncio
+class TestSearchingTheDocuments:
+    """The tool an agent reaches for when it does not know which file to read."""
+
+    async def test_it_answers_with_passages_rather_than_file_names(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "application_component", "Facturation")
+        await call(
+            server,
+            "attach_document",
+            element_id=element["id"],
+            filename="runbook.md",
+            content="# Runbook\n\nQuoi faire.\n\n## Escalade\n\nAppeler Nicolas.\n",
+        )
+
+        hits = await call(server, "search_documents", question="Escalade")
+
+        assert hits["result"][0]["trail"] == "runbook.md > Runbook > Escalade"
+        assert hits["result"][0]["text"] == "Appeler Nicolas."
+        assert hits["result"][0]["element_id"] == element["id"]
+
+    async def test_it_can_be_scoped_to_one_element(self, server: MCPServer[Any]) -> None:
+        first = await an_element(server, "application_component", "Facturation")
+        second = await an_element(server, "application_component", "Commandes")
+        for element in (first, second):
+            await call(
+                server,
+                "attach_document",
+                element_id=element["id"],
+                filename="runbook.md",
+                content="# Runbook\n\n## Escalade\n\nAppeler Nicolas.\n",
+            )
+
+        hits = await call(server, "search_documents", question="Escalade", element_id=second["id"])
+
+        assert {hit["element_id"] for hit in hits["result"]} == {second["id"]}
+
+    async def test_it_reads_the_index_and_never_writes(self, server: MCPServer[Any]) -> None:
+        """A client shows this hint to whoever has to approve the call."""
+        tool = next(t for t in await server.list_tools() if t.name == "search_documents")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
+
+    async def test_a_deployment_with_no_index_says_so_in_a_sentence(
+        self, server_without_an_index: MCPServer[Any]
+    ) -> None:
+        """Not "error executing tool": the agent can read this and stop trying."""
+        with pytest.raises(ToolError, match="not enabled"):
+            await call(server_without_an_index, "search_documents", question="quoi que ce soit")
+
+    async def test_a_blank_question_is_refused_with_a_reason(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="needs a question"):
+            await call(server, "search_documents", question="   ")

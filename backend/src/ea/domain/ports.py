@@ -14,6 +14,7 @@ from uuid import UUID
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
+from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,15 +143,22 @@ class ElementAttachments(Protocol):
 
 
 class DocumentRepository(ElementAttachments, Protocol):
-    """Persistence for the markdown attached to elements.
+    """Persistence for the markdown attached to elements, and for its index.
 
     A `DocumentSummary` is what a listing returns and a `Document` what a read
     returns: the difference is the content, and loading a megabyte per row to
     render a list of file names is the mistake the two types prevent.
+
+    The passages are part of this port rather than a second one because they
+    are part of the same aggregate: a document's chunks are derived from its
+    text and are meaningless beside another version of it. `add` and `replace`
+    therefore take both, and write both in one transaction — the two tables are
+    in the same database, which is the first time in this codebase that is
+    true. See docs/adr/0019.
     """
 
-    async def add(self, document: Document) -> Document:
-        """Store a new document, or refuse a file name the element already has."""
+    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+        """Store a new document and its passages, or refuse a name already taken."""
         ...
 
     async def get(self, document_id: UUID) -> Document | None: ...
@@ -159,8 +167,56 @@ class DocumentRepository(ElementAttachments, Protocol):
         """Every document attached to an element, oldest first, without content."""
         ...
 
-    async def replace(self, document: Document) -> Document:
-        """Overwrite the content of a stored document."""
+    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+        """Overwrite a stored document, and replace its passages with these."""
         ...
 
     async def delete(self, document_id: UUID) -> bool: ...
+
+    async def all_document_ids(self) -> tuple[UUID, ...]:
+        """Every stored document, for the one job that walks the whole corpus.
+
+        Ids and not documents: a reindex reads them back one at a time, so that
+        rebuilding the index of a large corpus never holds it all in memory.
+        """
+        ...
+
+    async def search(
+        self,
+        embedding: Sequence[float],
+        *,
+        model: str,
+        element_id: UUID | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+    ) -> tuple[Passage, ...]:
+        """The passages closest to a query vector, nearest first.
+
+        `model` is a filter and not a label: comparing vectors produced by two
+        different models yields a number that means nothing, so a passage
+        embedded by another one is not a worse match, it is not a match.
+        """
+        ...
+
+
+class Embedder(Protocol):
+    """Whatever turns text into a vector — a hosted service, or a fake in a test.
+
+    Two methods rather than one because several embedding families ask for a
+    different prefix on a stored passage than on a query, and a model that
+    wants none implements both the same way. Getting that backwards costs
+    nothing visible and a good deal of recall, so the port makes it a choice
+    someone had to make.
+    """
+
+    @property
+    def model(self) -> str:
+        """The name stored beside every vector this produces."""
+        ...
+
+    async def embed_passages(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        """Embed passages for storage, in the order they were given."""
+        ...
+
+    async def embed_query(self, text: str) -> tuple[float, ...]:
+        """Embed one question, to be compared against stored passages."""
+        ...

@@ -157,3 +157,53 @@ def test_the_mcp_allowlist_rejects_a_bare_wildcard() -> None:
     """`*` here is "any Host header", which is the protection switched off."""
     with pytest.raises(ValueError, match="wildcard"):
         Settings(debug=True, mcp_allowed_hosts="*")
+
+
+class TestTheEmbeddingService:
+    """The settings behind the document search — see docs/adr/0019."""
+
+    def test_it_points_at_the_lm_studio_of_the_cluster_by_default(self) -> None:
+        """The same machine as the two databases, and the same reasoning.
+
+        A developer who never writes a `.env` reaches the service that is
+        actually running rather than a `localhost` that answers nothing.
+        """
+        settings = Settings(debug=True)
+
+        assert settings.embeddings_base_url.startswith("http://192.168.1.252:")
+        assert settings.embeddings_base_url.endswith("/v1")
+
+    def test_the_default_model_is_the_width_the_column_stores(self) -> None:
+        """Otherwise boot refuses it, which is the intended behaviour but a poor default."""
+        from ea.domain.search import EMBEDDING_DIMENSIONS
+
+        assert Settings(debug=True).embeddings_model == "text-embedding-mxbai-embed-large-v1"
+        assert EMBEDDING_DIMENSIONS == 1024
+
+    def test_there_is_no_setting_for_the_width_of_a_vector(self) -> None:
+        """It is the width of the column: a migration and a reindex, not a variable."""
+        assert "embeddings_dimensions" not in Settings.model_fields
+
+    def test_a_query_is_prefixed_and_a_passage_is_not_for_this_model(self) -> None:
+        """`mxbai` is trained with an instruction on the query alone.
+
+        Stated rather than assumed, because swapping the two costs nothing
+        visible and a good deal of recall.
+        """
+        settings = Settings(debug=True)
+
+        assert settings.embeddings_passage_prefix == ""
+        assert "searching relevant passages" in settings.embeddings_query_prefix
+
+    def test_the_api_key_is_a_secret_even_though_lm_studio_wants_none(self) -> None:
+        """Pointing this at a hosted provider must stay a variable, not a patch."""
+        settings = Settings(debug=True, embeddings_api_key="s3cret")
+
+        assert "s3cret" not in repr(settings)
+
+    def test_it_can_be_turned_off_without_turning_the_store_off(self) -> None:
+        """Documents are still stored and served; only the search is gone."""
+        settings = Settings(debug=True, embeddings_enabled=False, postgres_enabled=True)
+
+        assert settings.embeddings_enabled is False
+        assert settings.postgres_enabled is True

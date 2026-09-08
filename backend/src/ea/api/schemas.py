@@ -26,6 +26,7 @@ from ea.domain.archimate import (
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
+from ea.domain.search import Passage
 
 #: Shared constraints, so every endpoint bounds a payload the same way.
 Name = Annotated[str, Field(min_length=1, max_length=200)]
@@ -317,6 +318,47 @@ class DocumentRead(BaseModel):
             created_at=document.created_at,
             updated_at=document.updated_at,
             content=document.content,
+        )
+
+
+class PassageRead(BaseModel):
+    """One hit of a document search: a passage, and how close it came.
+
+    A passage and not a file, which is the whole point of docs/adr/0019: an
+    answer naming `runbook.md` leaves the reader to find the paragraph, and a
+    caller that had to read a megabyte to check one sentence has not been
+    helped.
+
+    The element is named by id. Names live in the graph, and decorating a
+    relational query with a call to Neo4j would make every search pay for a
+    field the caller may not want — `get_element` is one call away when it
+    does.
+
+    It lives here, with the API's other read models, though no route serves it
+    yet: it is the shape a passage has, and keeping it here is what stops the
+    MCP adapter from growing a private rendering of the same thing.
+    """
+
+    document_id: UUID
+    element_id: UUID
+    filename: str
+    trail: str = Field(
+        description="Where the passage sits, e.g. `runbook.md > Incidents > Escalation`."
+    )
+    heading_path: list[str] = Field(description="The headings above the passage, outermost first.")
+    text: str = Field(description="The passage itself, as markdown.")
+    score: float = Field(description="Cosine similarity to the question; larger is closer.")
+
+    @classmethod
+    def of(cls, passage: Passage) -> PassageRead:
+        return cls(
+            document_id=passage.document_id,
+            element_id=passage.element_id,
+            filename=passage.filename,
+            trail=passage.trail,
+            heading_path=list(passage.heading_path),
+            text=passage.text,
+            score=passage.score,
         )
 
 

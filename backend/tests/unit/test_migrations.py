@@ -111,3 +111,55 @@ def test_the_element_a_document_names_carries_no_foreign_key() -> None:
 
     assert element_id.foreign_keys == set()
     assert element_id.index is True
+
+
+def test_the_passages_table_can_state_the_foreign_key_the_documents_could_not() -> None:
+    """The difference docs/adr/0019 turns on: a document *is* a row here.
+
+    `element_documents.element_id` names a Neo4j node and can reference
+    nothing, which is why its cascade is written by hand in a service. A
+    passage names a document, so its cascade is one line of DDL — and this is
+    the assertion that says the database is doing it.
+    """
+    document_id = Base.metadata.tables["document_chunks"].c.document_id
+    key = next(iter(document_id.foreign_keys))
+
+    assert key.column.table.name == "element_documents"
+    assert key.ondelete == "CASCADE"
+
+
+def test_the_vector_column_is_as_wide_as_the_one_number_everything_reads() -> None:
+    """Settings, migration and model agree by importing, not by retyping."""
+    from ea.domain.search import EMBEDDING_DIMENSIONS
+
+    embedding = Base.metadata.tables["document_chunks"].c.embedding
+
+    assert embedding.type.dim == EMBEDDING_DIMENSIONS
+    assert embedding.nullable is False
+
+
+def test_a_passage_records_the_model_that_embedded_it() -> None:
+    """Cosine distance between vectors from two models is a meaningless number.
+
+    Storing the model is what lets a search filter on it, which is what makes a
+    half-finished reindex return too little rather than something plausible.
+    """
+    model = Base.metadata.tables["document_chunks"].c.model
+
+    assert model.nullable is False
+
+
+def test_the_vector_index_is_built_for_the_distance_the_repository_orders_by() -> None:
+    """An index built for another operator class is simply never used.
+
+    Nothing fails: the search quietly becomes a full scan of every passage in
+    the corpus, and says nothing about it.
+    """
+    index = next(
+        index
+        for index in Base.metadata.tables["document_chunks"].indexes
+        if index.name == "ix_document_chunks_embedding"
+    )
+
+    assert index.dialect_options["postgresql"]["using"] == "hnsw"
+    assert index.dialect_options["postgresql"]["ops"] == {"embedding": "vector_cosine_ops"}

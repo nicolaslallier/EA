@@ -10,6 +10,15 @@ can reach.
 The other half of that missing foreign key is the cascade, and it lives where
 the deletion does: `ArchitectureService.delete_element` discards the documents
 through the narrow `ElementAttachments` port.
+
+Since docs/adr/0019 this layer owns a second rule of the same kind: **a stored
+document and the passages it is searchable by are written together**. The
+embedding call happens before the write, never inside it — holding a
+transaction open across a call to another machine is how a slow embedder
+becomes a locked table — and the repository then commits both tables at once.
+The `indexer` is optional because the deployment may have no embedding service
+(`EA_EMBEDDINGS_ENABLED`); an upload must not depend on a second service being
+up, so a document is stored either way and `reindex_all` catches it up.
 """
 
 from __future__ import annotations
@@ -20,11 +29,13 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ea.domain.documents import Document, DocumentSummary, clean_filename, decode_markdown
-from ea.domain.errors import DocumentNotFoundError
+from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
+from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     from ea.domain.ports import DocumentRepository
     from ea.services.architecture import ArchitectureService
+    from ea.services.indexing import DocumentIndexer
 
 Clock = Callable[[], datetime]
 
@@ -42,10 +53,12 @@ class DocumentService:
         architecture: ArchitectureService,
         *,
         clock: Clock = _utc_now,
+        indexer: DocumentIndexer | None = None,
     ) -> None:
         self._repository = repository
         self._architecture = architecture
         self._now = clock
+        self._indexer = indexer
 
     async def attach(self, element_id: UUID, *, filename: str, raw: bytes) -> Document:
         """Attach an uploaded markdown file to an element.
@@ -73,7 +86,7 @@ class DocumentService:
             content=content,
             now=self._now(),
         )
-        return await self._repository.add(document)
+        return await self._repository.add(document, await self._passages_of(document))
 
     async def get(self, document_id: UUID) -> Document:
         """One document, content included, or a clear statement that it is gone."""
@@ -116,9 +129,85 @@ class DocumentService:
             msg = f"this document is {current.filename!r}, and the file offered is {offered!r}"
             raise ValueError(msg)
         revised = current.revise(content, now=self._now())
-        return await self._repository.replace(revised)
+        return await self._repository.replace(revised, await self._passages_of(revised))
 
     async def discard(self, document_id: UUID) -> None:
         if not await self._repository.delete(document_id):
             msg = f"no document with id {document_id}"
             raise DocumentNotFoundError(msg)
+
+    # --- Finding a passage rather than a file -----------------------------
+
+    async def search(
+        self,
+        question: str,
+        *,
+        element_id: UUID | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+    ) -> tuple[Passage, ...]:
+        """The passages that answer a question, closest first — see docs/adr/0019.
+
+        `element_id` narrows the search to what is written about one element.
+        That element is read first, for the same reason `list_for_element`
+        reads it: an empty result would otherwise read as "nothing is written
+        about this element" when the truth is "there is no such element".
+        """
+        if not question.strip():
+            msg = "a search needs a question"
+            raise ValueError(msg)
+        if not 1 <= limit <= MAX_SEARCH_LIMIT:
+            msg = f"a search returns at most {MAX_SEARCH_LIMIT} passages"
+            raise ValueError(msg)
+        indexer = self._index()
+        if element_id is not None:
+            await self._architecture.get_element(element_id)
+        return await self._repository.search(
+            await indexer.embed_query(question),
+            model=indexer.model,
+            element_id=element_id,
+            limit=limit,
+        )
+
+    async def reindex_all(self) -> int:
+        """Rebuild the index over every stored document, and say how many.
+
+        The catch-up an index needs whenever it can fall behind the store: a
+        document attached while `EA_EMBEDDINGS_ENABLED` was off, or a corpus
+        whose embedding model changed and which therefore matches nothing until
+        this has run.
+
+        Documents are read back one at a time rather than all at once, so
+        rebuilding a large corpus never holds it in memory. It is deliberately
+        not a transaction over the whole corpus: interrupted halfway it leaves
+        half the documents reindexed, which is a state running it again fixes.
+        """
+        indexer = self._index()
+        indexed = 0
+        for document_id in await self._repository.all_document_ids():
+            document = await self._repository.get(document_id)
+            if document is None:  # pragma: no cover - deleted mid-walk, not a bug
+                continue
+            await self._repository.replace(document, await indexer.passages_of(document))
+            indexed += 1
+        return indexed
+
+    def _index(self) -> DocumentIndexer:
+        """The indexer, or the sentence that says why there is none.
+
+        A `SearchUnavailableError` and not a `RuntimeError`: the deployment is
+        configured this way on purpose, so the caller — an agent, or a person —
+        is told what is missing instead of being handed "error executing tool".
+        """
+        if self._indexer is None:
+            msg = "semantic search is not enabled on this deployment"
+            raise SearchUnavailableError(msg)
+        return self._indexer
+
+    async def _passages_of(self, document: Document) -> tuple[EmbeddedChunk, ...]:
+        """The passages to store beside a document, or none when there is no index.
+
+        Deliberately not `_index()`: storing a document must not depend on the
+        embedding service being up, and a deployment without one still keeps
+        every file it is given.
+        """
+        return () if self._indexer is None else await self._indexer.passages_of(document)

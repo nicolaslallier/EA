@@ -15,7 +15,11 @@
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # pgvector/pgvector plutôt que postgres : l'extension `vector` doit être
+    # présente dans l'image, pas seulement activée dans la base — la migration
+    # 0003 fait `CREATE EXTENSION vector` et échoue sur une image qui ne l'a
+    # pas. La base du cluster a la même exigence (docs/adr/0019).
+    image: pgvector/pgvector:pg17
     container_name: ea-postgres
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

@@ -58,7 +58,11 @@ POSTGRES_HOST ?= 192.168.1.252
 POSTGRES_PORT ?= 5432
 POSTGRES_USER ?= ea
 POSTGRES_DB   ?= ea
-POSTGRES_IMAGE ?= postgres:17-alpine
+# L'image porte pgvector : l'extension `vector` doit exister *dans l'image*,
+# pas seulement être activée dans la base — la migration 0003 fait
+# `CREATE EXTENSION vector`. Le conteneur jetable de docker-compose.yml part de
+# la même image, et la base du cluster a la même exigence (docs/adr/0019).
+POSTGRES_IMAGE ?= pgvector/pgvector:pg17
 
 # Comme pour Neo4j : pas de valeur par défaut, l'instance est partagée. Vient
 # de l'environnement, sinon de backend/.env (non versionné).
@@ -69,6 +73,11 @@ POSTGRES_PASSWORD ?= $(shell sed -n 's/^EA_POSTGRES_PASSWORD=//p' $(BACKEND)/.en
 # mot de passe est celui que docker-compose.yml porte déjà en clair.
 POSTGRES_TEST_HOST     ?= host.docker.internal
 POSTGRES_TEST_PASSWORD ?= developmentonly
+
+# Service d'embeddings : LM Studio sur le même cluster que les deux bases,
+# servant un /v1/embeddings compatible OpenAI. Voir docs/adr/0019.
+EMBEDDINGS_URL   ?= http://192.168.1.252:1234/v1
+EMBEDDINGS_MODEL ?= text-embedding-mxbai-embed-large-v1
 
 # Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
 OPENAPI_SCHEMA_NAME := openapi.json
@@ -83,7 +92,8 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
-        require-postgres-password openapi openapi-check \
+        pg-vector-check require-postgres-password \
+        embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check
 
 help: ## Liste les cibles disponibles
@@ -244,11 +254,45 @@ pg-revision: | $(VENV_STAMP) ## Génère une migration depuis les modèles (m="a
 	cd $(BACKEND) && uv run alembic revision --autogenerate -m "$(m)"
 	@printf "$(GREEN)Relis le fichier généré avant de le committer.$(NC)\n"
 
+pg-vector-check: | require-postgres-password ## Vérifie que pgvector est disponible sur le cluster
+	@printf "$(GREEN)pgvector sur $(POSTGRES_HOST)/$(POSTGRES_DB) ?$(NC)\n"
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD $(POSTGRES_IMAGE) \
+		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
+		-tAc "SELECT name || ' ' || default_version FROM pg_available_extensions WHERE name = 'vector'" \
+		| grep -q vector \
+	|| { printf "$(RED)L'\''extension vector est absente de ce serveur.$(NC)\n"; \
+	     printf "L'\''image du stack doit être pgvector/pgvector:pgNN — voir docs/adr/0019.\n"; exit 1; }
+	@printf "$(GREEN)pgvector disponible.$(NC)\n"
+
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	docker compose up -d --wait postgres
 
 pg-down: ## Arrête le PostgreSQL jetable local (les données restent dans le volume)
 	docker compose down
+
+## --- Embeddings -----------------------------------------------------------
+#
+# LM Studio tourne sur le cluster et sert un /v1/embeddings compatible OpenAI.
+# Rien ici ne le démarre : comme les deux bases, c'est une instance partagée.
+# La largeur des vecteurs (1024) est celle de la colonne, pas un réglage — voir
+# docs/adr/0019.
+
+embed-models: ## Liste les modèles que LM Studio expose
+	@curl -sf --max-time 10 $(EMBEDDINGS_URL)/models \
+		| python3 -c 'import json,sys; [print(m["id"]) for m in json.load(sys.stdin)["data"]]' \
+	|| { printf "$(RED)Aucune réponse de $(EMBEDDINGS_URL).$(NC)\n"; exit 1; }
+
+embed-ping: ## Vérifie que le modèle d'embedding répond, et à quelle largeur
+	@printf "$(GREEN)$(EMBEDDINGS_MODEL) sur $(EMBEDDINGS_URL) ...$(NC)\n"
+	@curl -sf --max-time 120 $(EMBEDDINGS_URL)/embeddings \
+		-H 'Content-Type: application/json' \
+		-d '{"model":"$(EMBEDDINGS_MODEL)","input":["ping"]}' \
+		| python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]), "dimensions")' \
+	|| { printf "$(RED)Pas de réponse. Le modèle est-il chargé dans LM Studio ?$(NC)\n"; exit 1; }
+
+docs-reindex: | $(VENV_STAMP) ## Reconstruit l'index sémantique de tous les documents
+	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
+	cd $(BACKEND) && uv run python -m ea.reindex
 
 ## --- Contrat front/back ---------------------------------------------------
 #

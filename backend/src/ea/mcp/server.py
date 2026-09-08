@@ -35,6 +35,7 @@ from ea.api.schemas import (
     ElementRead,
     GraphRead,
     MetamodelRead,
+    PassageRead,
     RelationshipMatrixRead,
     RelationshipRead,
 )
@@ -51,6 +52,7 @@ from ea.domain.archimate import (
 )
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.ports import ElementFilter
+from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 from ea.services.architecture import ArchitectureService
@@ -84,7 +86,13 @@ direction the arrow is drawn.
 An element may also carry markdown documents — a runbook, an interface
 contract, a decision note — each a named file kept whole. `list_documents`
 names them and gives their sizes; `read_document` is what carries the text, so
-read one document rather than every document to find out what is there.\
+read one document rather than every document to find out what is there.
+
+`search_documents` is the way in when you do not already know which document
+holds the answer: it searches the *passages* of every document by meaning
+rather than by keyword, and each hit says which section of which file it came
+from. Prefer it to reading documents one by one; `read_document` is then for
+the one you found.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -127,6 +135,15 @@ Markdown = Annotated[
     ),
 ]
 Limit = Annotated[int, Field(ge=1, le=200)]
+Question = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=1000,
+        description="What you want to find, phrased as a question or a topic.",
+    ),
+]
+SearchLimit = Annotated[int, Field(ge=1, le=MAX_SEARCH_LIMIT)]
 Offset = Annotated[int, Field(ge=0)]
 
 # --- What a tool does to the graph, said in the protocol's own terms --------
@@ -455,6 +472,36 @@ def build_mcp_server(
         return DocumentRead.of(
             await get_documents().revise_text(document_id, filename=filename, content=content)
         )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def search_documents(
+        question: Question,
+        element_id: ElementId | None = None,
+        limit: SearchLimit = DEFAULT_SEARCH_LIMIT,
+    ) -> list[PassageRead]:
+        """Find the passages of the attached documents that answer a question.
+
+        This searches by *meaning*, not by keyword, and it answers with
+        passages rather than file names: each hit is one section of one
+        document, with the trail of headings it sits under and the id of the
+        element it is attached to.
+
+        Start here when you do not already know where something is written —
+        it is far cheaper than reading documents one after another, and a
+        document may be a megabyte of text. `read_document` is then for the
+        one you found, when you need the rest of it.
+
+        Pass `element_id` to search only what is written about that element.
+        The `score` is a similarity: larger is closer, and hits come back
+        closest first.
+        """
+        return [
+            PassageRead.of(passage)
+            for passage in await get_documents().search(
+                question, element_id=element_id, limit=limit
+            )
+        ]
 
     @server.tool(annotations=REMOVES)
     @speaking_plainly
