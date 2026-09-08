@@ -69,11 +69,30 @@ POSTGRES_IMAGE ?= pgvector/pgvector:pg17
 # ensuite sur une base qu'elle n'avait jamais interrogée.
 PGCONNECT_TIMEOUT ?= 10
 
-# Le piège de ce poste-ci : `psql` tourne dans un conteneur, et un conteneur ne
-# joint pas forcément le LAN que le Mac joint. Sur macOS, Docker Desktop a
-# besoin de l'autorisation « Réseau local » pour sortir vers 192.168.x.x ; sans
-# elle, Internet passe et le cluster non.
-PG_UNREACHABLE_HINT := printf "Le Mac joint-il $(POSTGRES_HOST) alors qu'un conteneur ne le joint pas ?\n  docker run --rm alpine nc -w5 -z $(POSTGRES_HOST) $(POSTGRES_PORT)\nSi oui : Réglages Système → Confidentialité et sécurité → Réseau local → Docker.\n";
+# Le client psql : celui du Mac s'il y en a un, sinon celui de l'image, dans un
+# conteneur. Le conteneur était le seul chemin, et il ajoute deux pannes que la
+# base n'a pas — le démon Docker peut être arrêté, et un conteneur ne joint pas
+# forcément le LAN que le Mac joint. Une base que pgAdmin interroge pendant que
+# `make pg-ping` la déclare injoignable, c'était l'une des deux, jamais elle.
+PSQL_BIN  := $(shell command -v psql 2>/dev/null)
+PSQL_ARGS  = -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+
+ifeq ($(PSQL_BIN),)
+PSQL     = docker run --rm -e PGPASSWORD -e PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(POSTGRES_IMAGE) psql
+PSQL_TTY = docker run --rm -it -e PGPASSWORD $(POSTGRES_IMAGE) psql
+# Deux pannes, deux indices : un démon arrêté n'est pas une permission réseau
+# manquante, et l'envoyer chercher dans les Réglages Système est un mensonge.
+PG_UNREACHABLE_HINT := \
+	if ! docker info >/dev/null 2>&1; then \
+	  printf "Ici psql tourne dans un conteneur, et le démon Docker ne répond pas.\n  Démarre Docker Desktop, ou installe un client natif : brew install libpq\n"; \
+	else \
+	  printf "Le Mac joint-il $(POSTGRES_HOST) alors qu'un conteneur ne le joint pas ?\n  docker run --rm alpine nc -w5 -z $(POSTGRES_HOST) $(POSTGRES_PORT)\n  Si oui : Réglages Système → Confidentialité et sécurité → Réseau local → Docker.\n"; \
+	fi;
+else
+PSQL     = PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(PSQL_BIN)
+PSQL_TTY = $(PSQL_BIN)
+PG_UNREACHABLE_HINT := printf "Le client est celui du Mac ($(PSQL_BIN)) : ni Docker ni le réseau des conteneurs n'entrent en jeu.\n  Vérifie l'hôte, le port, et EA_POSTGRES_PASSWORD dans $(BACKEND)/.env.\n";
+endif
 
 # Comme pour Neo4j : pas de valeur par défaut, l'instance est partagée. Vient
 # de l'environnement, sinon de backend/.env (non versionné).
@@ -240,16 +259,12 @@ require-postgres-password:
 
 pg-ping: | require-postgres-password ## Vérifie que la base du cluster répond
 	@printf "$(GREEN)Interrogation de $(POSTGRES_USER)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB) ...$(NC)\n"
-	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD \
-		-e PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(POSTGRES_IMAGE) \
-		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
-		-c 'SELECT version()' \
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' $(PSQL) $(PSQL_ARGS) -c 'SELECT version()' \
 	|| { printf "$(RED)Aucune réponse. Vérifie l'hôte et le mot de passe.$(NC)\n"; \
 	     $(PG_UNREACHABLE_HINT) exit 1; }
 
 pg-shell: | require-postgres-password ## Ouvre un psql sur la base du cluster
-	@PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -it -e PGPASSWORD $(POSTGRES_IMAGE) \
-		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+	@PGPASSWORD='$(POSTGRES_PASSWORD)' $(PSQL_TTY) $(PSQL_ARGS)
 
 pg-migrate: | $(VENV_STAMP) ## Applique les migrations Alembic jusqu'à head (base du cluster)
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
@@ -269,9 +284,7 @@ pg-revision: | $(VENV_STAMP) ## Génère une migration depuis les modèles (m="a
 
 pg-vector-check: | require-postgres-password ## Vérifie que pgvector est disponible sur le cluster
 	@printf "$(GREEN)pgvector sur $(POSTGRES_HOST)/$(POSTGRES_DB) ?$(NC)\n"
-	@out=$$(PGPASSWORD='$(POSTGRES_PASSWORD)' docker run --rm -e PGPASSWORD \
-		-e PGCONNECT_TIMEOUT=$(PGCONNECT_TIMEOUT) $(POSTGRES_IMAGE) \
-		psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
+	@out=$$(PGPASSWORD='$(POSTGRES_PASSWORD)' $(PSQL) $(PSQL_ARGS) \
 		-tAc "SELECT default_version FROM pg_available_extensions WHERE name = 'vector'" 2>&1) \
 	|| { printf "$(RED)Connexion impossible : la question n'a pas été posée.$(NC)\n"; \
 	     printf "%s\n" "$$out"; \
