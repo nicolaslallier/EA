@@ -16,7 +16,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 from ea.domain.errors import NotAuthenticatedError
-from ea.repositories.keycloak import AuthServiceError, JwtVerifier
+from ea.repositories.keycloak import (
+    CLOCK_LEEWAY_SECONDS,
+    REQUIRED_CLAIMS,
+    AuthServiceError,
+    JwtVerifier,
+)
 
 ISSUER = "https://keycloak.test/realms/ea"
 AUDIENCE = "ea-api"
@@ -107,6 +112,13 @@ class TestAValidToken:
 
         assert keycloak.fetches == 1
 
+    async def test_an_issue_time_a_few_seconds_ahead_is_clock_drift_not_forgery(self) -> None:
+        # `make run-be` runs on the Mac, Keycloak in the Docker Desktop VM, and
+        # that VM's clock falls behind or ahead after a sleep.
+        caller = await verifier(Keycloak(jwk(KEY, "k1"))).verify(token(iat=int(time.time()) + 5))
+
+        assert caller.username == "alice"
+
     async def test_an_encryption_key_in_the_set_is_ignored(self) -> None:
         other = a_key()
         keycloak = Keycloak(jwk(other, "enc1", use="enc"), jwk(KEY, "k1"))
@@ -119,22 +131,29 @@ class TestRefused:
     @pytest.mark.parametrize(
         "overrides",
         [
-            {"exp": int(time.time()) - 60},
+            {"exp": int(time.time()) - CLOCK_LEEWAY_SECONDS - 15},
             {"aud": "account"},
             {"iss": "https://keycloak.test/realms/jarvis"},
-            {"sub": None},
         ],
-        ids=["expired", "another-audience", "another-realm", "no-subject"],
+        ids=["expired-beyond-the-leeway", "another-audience", "another-realm"],
     )
     async def test_a_token_that_does_not_prove_a_caller(self, overrides: dict[str, Any]) -> None:
-        bad = {k: v for k, v in claims(**overrides).items() if v is not None}
-        forged = jwt.encode(bad, KEY, algorithm="RS256", headers={"kid": "k1"})
+        forged = jwt.encode(claims(**overrides), KEY, algorithm="RS256", headers={"kid": "k1"})
 
         with pytest.raises(NotAuthenticatedError):
             await verifier(Keycloak(jwk(KEY, "k1"))).verify(forged)
 
-    async def test_a_symmetric_signature_even_with_the_public_key_as_secret(self) -> None:
-        forged = jwt.encode(claims(), "not-the-realm-key", algorithm="HS256", headers={"kid": "k1"})
+    @pytest.mark.parametrize("missing", REQUIRED_CLAIMS)
+    async def test_a_token_missing_a_required_claim(self, missing: str) -> None:
+        incomplete = {k: v for k, v in claims().items() if k != missing}
+        forged = jwt.encode(incomplete, KEY, algorithm="RS256", headers={"kid": "k1"})
+
+        with pytest.raises(NotAuthenticatedError):
+            await verifier(Keycloak(jwk(KEY, "k1"))).verify(forged)
+
+    async def test_an_hs256_token_whatever_its_shared_secret(self) -> None:
+        secret = "a-shared-secret-long-enough-for-hs256-not-the-realm-key"
+        forged = jwt.encode(claims(), secret, algorithm="HS256", headers={"kid": "k1"})
 
         with pytest.raises(NotAuthenticatedError):
             await verifier(Keycloak(jwk(KEY, "k1"))).verify(forged)

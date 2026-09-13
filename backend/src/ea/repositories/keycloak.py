@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 ALGORITHMS: Final = ["RS256"]
 REQUIRED_CLAIMS: Final = ["exp", "iat", "iss", "aud", "sub"]
+#: How far `iat`, `nbf` and `exp` may be off the local clock. `make run-be` runs
+#: on the Mac while Keycloak runs in the Docker Desktop VM, whose clock drifts —
+#: notably after a sleep — and pyjwt refuses a token issued even seconds "in the
+#: future". Without it the login's first `/me` is a 401 the SPA must not retry.
+#: Thirty seconds is noise on a clock and nothing on a token that lives minutes.
+CLOCK_LEEWAY_SECONDS: Final = 30
 
 
 class AuthServiceError(RuntimeError):
@@ -97,6 +103,7 @@ class JwtVerifier:
                 algorithms=ALGORITHMS,
                 audience=self._audience,
                 issuer=self._issuer,
+                leeway=CLOCK_LEEWAY_SECONDS,
                 options={"require": REQUIRED_CLAIMS},
             )
         except jwt.PyJWTError as error:
