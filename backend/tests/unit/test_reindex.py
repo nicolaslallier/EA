@@ -18,7 +18,10 @@ import pytest
 
 from ea import reindex as script
 from ea.core.config import Settings
+from ea.domain.auth import SYSTEM
 from ea.repositories.embeddings import EmbeddingServiceError
+from ea.services.caller import current_caller
+from ea.services.documents import DocumentService
 
 
 class Recorder:
@@ -106,6 +109,29 @@ class TestTheRun:
             await script.reindex(Settings(debug=True))
 
         assert {"engine.closed", "embedder.closed", "driver.closed"} <= set(steps)
+
+
+@pytest.mark.asyncio
+async def test_it_runs_as_system(
+    steps: list[str], monkeypatch: pytest.MonkeyPatch, nobody_calling: None
+) -> None:
+    """An operator's script has no request behind it, so it calls as SYSTEM.
+
+    Nobody is calling going in (`nobody_calling`); the use case it reaches
+    must still see a caller — and specifically the one no request could have
+    supplied.
+    """
+    seen: list[object] = []
+
+    async def recording_reindex_all(self: DocumentService) -> int:
+        seen.append(current_caller.get())
+        return 0
+
+    monkeypatch.setattr(DocumentService, "reindex_all", recording_reindex_all)
+
+    await script.reindex(Settings(debug=True))
+
+    assert seen == [SYSTEM]
 
 
 class TestTheEntryPoint:

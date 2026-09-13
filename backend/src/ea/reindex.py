@@ -25,10 +25,12 @@ from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver
 from ea.db.postgres import check_connectivity, create_engine, create_session_factory
+from ea.domain.auth import SYSTEM
 from ea.main import build_embedder
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.services.architecture import ArchitectureService
+from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
 
@@ -59,7 +61,9 @@ async def reindex(settings: Settings) -> int:
             attachments=documents,
         )
         service = DocumentService(documents, architecture, indexer=DocumentIndexer(embedder))
-        return await service.reindex_all()
+        # An operator's script has no request behind it, so it runs as SYSTEM.
+        with acting_as(SYSTEM):
+            return await service.reindex_all()
     finally:
         await embedder.aclose()
         await driver.close()

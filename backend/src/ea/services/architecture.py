@@ -21,6 +21,7 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship
+from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.ports import (
@@ -67,6 +68,7 @@ class ArchitectureService:
         documentation: str = "",
         properties: Mapping[str, str] | None = None,
     ) -> Element:
+        require_editor()
         properties = validate_ipam_properties(element_type, properties)
         element = Element.create(
             element_type=element_type,
@@ -91,6 +93,7 @@ class ArchitectureService:
 
     async def get_element(self, element_id: UUID) -> Element:
         """Fetch an element or say which one is missing."""
+        require_caller()
         element = await self._repository.get_element(element_id)
         if element is None:
             msg = f"no element with id {element_id}"
@@ -98,9 +101,11 @@ class ArchitectureService:
         return element
 
     async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
+        require_caller()
         return await self._repository.list_elements(criteria)
 
     async def count_elements(self, criteria: ElementFilter) -> int:
+        require_caller()
         return await self._repository.count_elements(criteria)
 
     async def update_element(
@@ -118,6 +123,7 @@ class ArchitectureService:
         relationships that are already stored illegal, which is a migration, not
         an edit.
         """
+        require_editor()
         current = await self.get_element(element_id)
         properties = validate_ipam_properties(current.element_type, properties)
         now = self._now()
@@ -180,6 +186,7 @@ class ArchitectureService:
         (`EA_POSTGRES_ENABLED`), which is also the only case in which there is
         nothing attached to discard.
         """
+        require_editor()
         if not await self._repository.delete_element(element_id):
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
@@ -212,6 +219,7 @@ class ArchitectureService:
         properties: Mapping[str, str] | None = None,
     ) -> Relationship:
         """Link two elements, refusing anything the metamodel or the graph forbids."""
+        require_editor()
         source = await self.get_element(source_id)
         target = await self.get_element(target_id)
 
@@ -254,6 +262,7 @@ class ArchitectureService:
         return stored
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship:
+        require_caller()
         relationship = await self._repository.get_relationship(relationship_id)
         if relationship is None:
             msg = f"no relationship with id {relationship_id}"
@@ -268,6 +277,7 @@ class ArchitectureService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[Relationship, ...]:
+        require_caller()
         return await self._repository.list_relationships(
             element_id=element_id,
             relationship_types=relationship_types,
@@ -276,6 +286,7 @@ class ArchitectureService:
         )
 
     async def disconnect(self, relationship_id: UUID) -> None:
+        require_editor()
         if not await self._repository.delete_relationship(relationship_id):
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
@@ -291,6 +302,7 @@ class ArchitectureService:
         relationship_types: Sequence[RelationshipType] = (),
     ) -> GraphView:
         """Everything an element is linked to, ready to be listed or drawn."""
+        require_caller()
         await self.get_element(element_id)
         return await self._repository.relations_of(
             element_id, relationship_types=relationship_types
@@ -306,6 +318,7 @@ class ArchitectureService:
         relationship_types: Sequence[RelationshipType] = (),
     ) -> GraphView:
         """The sub-graph around an element — what a diagram of it would show."""
+        require_caller()
         await self.get_element(element_id)
         return await self._repository.neighbourhood(
             element_id, depth=depth, relationship_types=relationship_types
@@ -319,6 +332,7 @@ class ArchitectureService:
         relationship_types: Sequence[RelationshipType] = (),
     ) -> GraphView:
         """Everything that would be affected if this element stopped working."""
+        require_caller()
         await self.get_element(element_id)
         return await self._repository.impacted_by(
             element_id, depth=depth, relationship_types=relationship_types
