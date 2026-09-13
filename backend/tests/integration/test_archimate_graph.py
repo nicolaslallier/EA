@@ -509,3 +509,40 @@ async def test_a_missing_element_is_absent_rather_than_empty(
     graph_repository: Neo4jArchitectureRepository,
 ) -> None:
     assert await graph_repository.get_element(uuid4()) is None
+
+
+class TestViewOfAChosenSetOfElements:
+    """What a saved diagram reads back — see docs/adr/0031."""
+
+    async def test_only_the_links_with_both_ends_in_the_set_are_returned(
+        self,
+        graph_service: ArchitectureService,
+        graph_repository: Neo4jArchitectureRepository,
+    ) -> None:
+        api = await graph_service.create_element(
+            element_type=E.APPLICATION_SERVICE, name="Invoice API"
+        )
+        process = await graph_service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Order to cash"
+        )
+        outsider = await graph_service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Dunning"
+        )
+        inside = await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=process.id
+        )
+        await graph_service.connect(
+            relationship_type=R.SERVING, source_id=api.id, target_id=outsider.id
+        )
+
+        view = await graph_repository.view_of([api.id, process.id, uuid4()])
+
+        assert {element.id for element in view.elements} == {api.id, process.id}
+        assert [relationship.id for relationship in view.relationships] == [inside.id]
+
+    async def test_an_empty_set_is_an_empty_view(
+        self, graph_repository: Neo4jArchitectureRepository
+    ) -> None:
+        view = await graph_repository.view_of([])
+
+        assert (view.elements, view.relationships) == ((), ())

@@ -35,6 +35,23 @@ class DocumentNotFoundError(DomainError):
     """A document referenced by id is absent from the store."""
 
 
+class DiagramNotFoundError(DomainError):
+    """A diagram referenced by id is absent from the store."""
+
+
+class DuplicateDiagramError(DomainError):
+    """A diagram name is already taken."""
+
+
+class UnknownLayoutElementError(DomainError):
+    """A diagram layout places an element the graph does not hold.
+
+    Its own error rather than `ElementNotFoundError`: that one is a 404 for the
+    resource in the URL, and here the diagram exists — it is the body that is
+    wrong, which is a 422.
+    """
+
+
 class SearchUnavailableError(DomainError):
     """Semantic search was asked for on a deployment that has no index.
 

@@ -15,12 +15,12 @@ counting.
 from __future__ import annotations
 
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from ea.domain.archimate import ElementType as E
-from ea.services.architecture import ArchitectureService
+from ea.services.architecture import AllAttachments, ArchitectureService
 from tests.conftest import FIXED_NOW, InMemoryRepository
 
 pytestmark = pytest.mark.asyncio
@@ -106,3 +106,46 @@ async def test_a_delete_that_discards_cleanly_logs_no_error(
         await service.delete_element(element.id)
 
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+class CountingAttachments:
+    def __init__(self, discarded: int) -> None:
+        self.discarded = discarded
+        self.asked_for: list[UUID] = []
+
+    async def discard_for_element(self, element_id: UUID) -> int:
+        self.asked_for.append(element_id)
+        return self.discarded
+
+
+class TestSeveralStoresAttachedToOneElement:
+    """Documents and diagram nodes both follow an element — one cascade, fanned out."""
+
+    async def test_every_store_is_asked_and_the_counts_add_up(self) -> None:
+        documents, diagrams = CountingAttachments(2), CountingAttachments(3)
+        element_id = uuid4()
+
+        discarded = await AllAttachments(documents, diagrams).discard_for_element(element_id)
+
+        assert discarded == 5
+        assert documents.asked_for == diagrams.asked_for == [element_id]
+
+    async def test_a_failing_store_does_not_stop_the_next_one_and_is_still_raised(
+        self, attachments: RefusingAttachments
+    ) -> None:
+        """The failure must reach `delete_element`, which logs the orphans."""
+        diagrams = CountingAttachments(1)
+        element_id = uuid4()
+
+        with pytest.raises(ConnectionError):
+            await AllAttachments(attachments, diagrams).discard_for_element(element_id)
+
+        assert diagrams.asked_for == [element_id]
+
+    async def test_two_failing_stores_are_both_raised(self) -> None:
+        with pytest.raises(ExceptionGroup) as raised:
+            await AllAttachments(RefusingAttachments(), RefusingAttachments()).discard_for_element(
+                uuid4()
+            )
+
+        assert len(raised.value.exceptions) == 2

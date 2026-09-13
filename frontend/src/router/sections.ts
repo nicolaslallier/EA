@@ -25,6 +25,11 @@ export type Section = {
   group: SectionGroup['id']
   /** The screen, lazily loaded. Absent means "declared, not built yet". */
   view?: RouteRecordRaw['component']
+  /**
+   * The screen needs the whole page rather than the reading column — a canvas,
+   * not prose. The shell lifts its width caps while this route is shown.
+   */
+  wide?: boolean
 }
 
 export const GROUPS: readonly SectionGroup[] = [
@@ -56,6 +61,15 @@ export const SECTIONS: readonly Section[] = [
     summary: "Les types d'éléments et de relations d'ArchiMate 3.2.",
     group: 'model',
     view: () => import('../features/metamodel/MetamodelSection.vue'),
+  },
+  {
+    path: '/diagrammes',
+    name: 'diagrams',
+    label: 'Diagrammes',
+    summary: 'Composer et enregistrer des vues : glisser des éléments, les relier.',
+    group: 'model',
+    view: () => import('../features/diagrams/DiagramsSection.vue'),
+    wide: true,
   },
   {
     path: '/ipam',

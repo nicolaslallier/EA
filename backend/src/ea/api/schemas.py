@@ -9,7 +9,7 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Final
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +23,8 @@ from ea.domain.archimate import (
     RelationshipType,
     permitted_relationships,
 )
+from ea.domain.diagrams import Diagram, DiagramDetail
+from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.ipam import (
     DEFAULT_VRF,
@@ -549,4 +551,98 @@ class AddressLocationRead(BaseModel):
         return cls(
             address=AddressRead.of(location.assignment),
             graph=GraphRead.of(location.graph),
+        )
+
+
+# --- Saved diagrams (docs/adr/0031) ---------------------------------------
+# A diagram is a view: its read model carries the elements and relationships
+# it shows as the catalogue's own `ElementRead` and `RelationshipRead`, so the
+# SPA draws a box from exactly what the catalogue would show.
+
+#: A diagram a person can still read. Past this it is an export, not a view.
+MAX_DIAGRAM_NODES: Final = 500
+#: How far from the origin a box may sit, in canvas units, either way.
+MAX_COORDINATE: Final = 100_000
+Coordinate = Annotated[float, Field(ge=-MAX_COORDINATE, le=MAX_COORDINATE, allow_inf_nan=False)]
+
+
+class DiagramCreate(_Input):
+    name: Name
+    description: Description = ""
+
+
+class DiagramUpdate(_Input):
+    """A partial update. An omitted field keeps its stored value."""
+
+    name: Name | None = None
+    description: Description | None = None
+
+
+class DiagramNode(_Input):
+    """One box: an element, and the top-left corner of the box in canvas units."""
+
+    element_id: UUID
+    x: Coordinate
+    y: Coordinate
+
+    @classmethod
+    def of(cls, node: PlacedNode) -> DiagramNode:
+        return cls(element_id=node.element_id, x=node.x, y=node.y)
+
+    def placed(self) -> PlacedNode:
+        return PlacedNode(element_id=self.element_id, x=self.x, y=self.y)
+
+
+class DiagramLayout(_Input):
+    """Every box of a diagram. It replaces the stored layout whole."""
+
+    nodes: Annotated[list[DiagramNode], Field(max_length=MAX_DIAGRAM_NODES)]
+
+
+class DiagramSummaryRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    node_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, diagram: Diagram) -> DiagramSummaryRead:
+        return cls(
+            id=diagram.id,
+            name=diagram.name,
+            description=diagram.description,
+            node_count=diagram.node_count,
+            created_at=diagram.created_at,
+            updated_at=diagram.updated_at,
+        )
+
+
+class DiagramRead(BaseModel):
+    """A diagram opened: its boxes, the elements they show, the links between them."""
+
+    id: UUID
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+    nodes: list[DiagramNode]
+    elements: list[ElementRead]
+    relationships: list[RelationshipRead] = Field(
+        description="Only the relationships whose two ends are both on the diagram."
+    )
+
+    @classmethod
+    def of(cls, detail: DiagramDetail) -> DiagramRead:
+        diagram = detail.diagram
+        return cls(
+            id=diagram.id,
+            name=diagram.name,
+            description=diagram.description,
+            created_at=diagram.created_at,
+            updated_at=diagram.updated_at,
+            nodes=[DiagramNode.of(node) for node in detail.nodes],
+            elements=[ElementRead.of(element) for element in detail.graph.elements],
+            relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
         )

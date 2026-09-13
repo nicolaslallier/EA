@@ -42,6 +42,24 @@ def test_every_ipam_endpoint_is_described() -> None:
     assert set(paths["/ipam/elements/{element_id}/address"]) == {"delete"}
 
 
+def test_every_diagram_endpoint_is_described() -> None:
+    """The contract of docs/adr/0031, which the SPA's diagram builder is generated from."""
+    paths = openapi_document()["paths"]
+    schemas = openapi_document()["components"]["schemas"]
+
+    assert set(paths["/diagrams"]) == {"get", "post"}
+    assert set(paths["/diagrams/{diagram_id}"]) == {"get", "patch", "delete"}
+    assert set(paths["/diagrams/{diagram_id}/layout"]) == {"put"}
+    assert {
+        "DiagramCreate",
+        "DiagramUpdate",
+        "DiagramNode",
+        "DiagramLayout",
+        "DiagramSummaryRead",
+        "DiagramRead",
+    } <= set(schemas)
+
+
 def test_the_element_schemas_the_client_needs_are_named() -> None:
     schemas = openapi_document()["components"]["schemas"]
 
