@@ -16,6 +16,7 @@ from ea.core.config import Settings
 from ea.main import create_app
 from ea.repositories.keycloak import AuthServiceError
 from ea.services.architecture import ArchitectureService
+from ea.services.caller import acting_as
 from tests.conftest import StaticVerifier, a_reader, an_editor
 
 PUBLIC = {"/health"}
@@ -64,17 +65,34 @@ def bearer(token: str) -> dict[str, str]:
 async def test_every_route_but_health_wants_a_token(
     service: ArchitectureService, client: httpx.AsyncClient
 ) -> None:
+    """The 401 must come from `authenticate`, never as a side effect of the
+    service refusing a caller-less request.
+
+    `client` sits under `nobody_calling`, which — on its own — would let this
+    pass even if a router lost its `Authenticated` dependency: the request
+    would then reach `ArchitectureService` with nobody set, and
+    `require_caller()` raises the very same `NotAuthenticatedError`, with the
+    very same header and envelope, that a missing bearer token produces at the
+    REST layer. Wrapping the loop in `acting_as(an_editor())` closes that gap:
+    an editor is ambiently calling, so a route that reached the service
+    unprotected would succeed (or fail for an unrelated reason — a missing
+    body, a missing double) rather than conveniently answering 401. Only
+    `authenticate` itself can produce the 401 this test asserts.
+    """
     routes = list(api_routes(an_app(service).routes))
     assert routes, "the route walk must actually find the routers this app includes"
-    for route in routes:
-        if route.path in PUBLIC:
-            continue
-        path = re.sub(r"\{[^}]+\}", str(uuid4()), route.path)
-        for method in route.methods:
-            response = await client.request(method, path)
-            assert response.status_code == 401, f"{method} {route.path} -> {response.status_code}"
-            assert response.headers["www-authenticate"] == "Bearer"
-            assert response.json()["error"] == "unauthenticated"
+    with acting_as(an_editor()):
+        for route in routes:
+            if route.path in PUBLIC:
+                continue
+            path = re.sub(r"\{[^}]+\}", str(uuid4()), route.path)
+            for method in route.methods:
+                response = await client.request(method, path)
+                assert response.status_code == 401, (
+                    f"{method} {route.path} -> {response.status_code}"
+                )
+                assert response.headers["www-authenticate"] == "Bearer"
+                assert response.json()["error"] == "unauthenticated"
 
 
 @pytest.mark.asyncio

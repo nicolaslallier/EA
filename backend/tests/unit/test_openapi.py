@@ -41,6 +41,24 @@ def test_every_route_but_health_declares_the_bearer_scheme() -> None:
     assert "security" not in health_get
 
 
+def test_every_protected_route_declares_401_and_403() -> None:
+    """A route behind `Authenticated` can now refuse for either reason, and the
+    client generated from this document needs an `ErrorResponse` for both."""
+    document = openapi_document()
+    schemas = document["components"]["schemas"]
+
+    elements_get = document["paths"]["/elements"]["get"]["responses"]
+    for status_code in ("401", "403"):
+        assert elements_get[status_code]["content"]["application/json"]["schema"]["$ref"] == (
+            "#/components/schemas/ErrorResponse"
+        )
+    assert "ErrorResponse" in schemas
+
+    health_get = document["paths"]["/health"]["get"]["responses"]
+    assert "401" not in health_get
+    assert "403" not in health_get
+
+
 def test_every_ipam_endpoint_is_described() -> None:
     """The addressing is part of the contract, so the client is generated for it."""
     paths = openapi_document()["paths"]

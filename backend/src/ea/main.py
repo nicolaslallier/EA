@@ -25,6 +25,7 @@ from ea.api.ipam import router as ipam_router
 from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
+from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver, prepare_database
@@ -277,6 +278,14 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     app.state.mcp_sessions = server.session_manager
 
 
+#: Every route but `/health` carries `Authenticated`, so every one of them can
+#: now refuse for these two reasons — see `ea/api/auth.py`, docs/adr/0031.
+AUTH_RESPONSES: dict[int | str, dict[str, type[ErrorResponse]]] = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+}
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -354,11 +363,11 @@ def create_app(
     app.add_middleware(RequestLogging)
     register_error_handlers(app)
     app.include_router(health_router)
-    app.include_router(metamodel_router, dependencies=[Authenticated])
-    app.include_router(architecture_router, dependencies=[Authenticated])
-    app.include_router(documents_router, dependencies=[Authenticated])
-    app.include_router(ipam_router, dependencies=[Authenticated])
-    app.include_router(me_router, dependencies=[Authenticated])
+    app.include_router(metamodel_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(architecture_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
     return app
