@@ -135,10 +135,19 @@ def extract[T: BaseModel](
     }
     response = http.post(_CHAT_COMPLETIONS_PATH, json=body)
     response.raise_for_status()
-    choice = response.json()["choices"][0]
-    if choice.get("finish_reason") == "length":
+    try:
+        choice = response.json()["choices"][0]
+        finish_reason = choice.get("finish_reason")
+        content = choice["message"]["content"]
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        # `ValueError` also catches `json.JSONDecodeError`: a non-JSON body is
+        # exactly as unusable as a well-formed one shaped unlike a chat
+        # completion, and neither is worth telling apart from the other.
+        raise ExtractionFailed(
+            f"the gateway's answer for {schema.__name__} is not a usable chat completion"
+        ) from error
+    if finish_reason == "length":
         raise ExtractionFailed(f"the gateway truncated its answer for {schema.__name__}")
-    content = choice["message"]["content"]
     if not content:
         raise ExtractionFailed(f"the gateway returned an empty answer for {schema.__name__}")
     try:

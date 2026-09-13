@@ -170,6 +170,38 @@ def test_extract_defaults_to_the_smart_alias() -> None:
 # --- extract: failure modes ------------------------------------------------
 
 
+def test_no_choices_key_raises_extraction_failed() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    with pytest.raises(ExtractionFailed):
+        extract(_client(handler), "describe it", Parent, enums=ENUMS)
+
+
+def test_empty_choices_list_raises_extraction_failed() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    with pytest.raises(ExtractionFailed):
+        extract(_client(handler), "describe it", Parent, enums=ENUMS)
+
+
+def test_choice_without_message_raises_extraction_failed() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop"}]})
+
+    with pytest.raises(ExtractionFailed):
+        extract(_client(handler), "describe it", Parent, enums=ENUMS)
+
+
+def test_non_json_body_raises_extraction_failed() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json at all")
+
+    with pytest.raises(ExtractionFailed):
+        extract(_client(handler), "describe it", Parent, enums=ENUMS)
+
+
 def test_finish_reason_length_raises_extraction_failed() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return _content_response("{}", finish_reason="length")
