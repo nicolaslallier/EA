@@ -570,13 +570,16 @@ Elements are `:Element` nodes with the ArchiMate type as an indexed property; re
 request id: the adapter that knows who is calling sets it — `api/auth.py`'s
 bearer dependency, `speaking_plainly` for `/mcp`, `acting_as(SYSTEM)` in
 `ea.reindex` — and the service reads it. **Every public method of
-`ArchitectureService`, `DocumentService` and `IpamService` starts with
-`require_caller()` (a read) or `require_editor()` (a write)**, and nobody set
+`ArchitectureService`, `DocumentService`, `IpamService` and `DiagramService`
+starts with `require_caller()` (a read) or `require_editor()` (a write)**, and nobody set
 means `NotAuthenticatedError`: a forgotten wire-up is a 401 in a test, not an
 open door. `tests/unit/test_service_guards.py` reads the source (AST) and fails
 on a public method whose first statement is not one of the two, so adding a use
 case means choosing which. `NotAuthenticatedError` is a 401 with
 `WWW-Authenticate: Bearer`, `NotAuthorisedError` a 403. See `docs/adr/0032`.
+Saved diagrams follow the same rule: any caller lists and opens them, only
+`ea-editor` creates, renames, lays out or deletes one, and the SPA hides the
+palette, the link handle and every such control from a reader.
 
 ## Nothing is logged until something configures logging
 

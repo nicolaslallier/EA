@@ -19,6 +19,7 @@ from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.ipam import IpamService
 from tests.conftest import a_reader
@@ -31,6 +32,7 @@ WRITES = {
         "connect",
         "disconnect",
     },
+    DiagramService: {"create", "update", "delete", "replace_layout"},
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},
 }
@@ -81,3 +83,15 @@ async def test_nobody_reads_nothing(service: ArchitectureService, nobody_calling
 async def test_a_reader_cannot_create(service: ArchitectureService) -> None:
     with acting_as(a_reader()), pytest.raises(NotAuthorisedError):
         await service.create_element(element_type=E.APPLICATION_COMPONENT, name="Billing")
+
+
+@pytest.mark.asyncio
+async def test_a_reader_cannot_create_a_diagram(diagram_service: DiagramService) -> None:
+    with acting_as(a_reader()), pytest.raises(NotAuthorisedError):
+        await diagram_service.create(name="Vente")
+
+
+@pytest.mark.asyncio
+async def test_a_reader_opens_the_diagram_list(diagram_service: DiagramService) -> None:
+    with acting_as(a_reader()):
+        assert await diagram_service.list_diagrams() == ()

@@ -338,6 +338,7 @@ class ArchitectureService:
 
     async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
         """The elements among these ids that still exist, and the links between them."""
+        require_caller()
         return await self._repository.view_of(element_ids)
 
     # --- Analysis ---------------------------------------------------------

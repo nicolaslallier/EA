@@ -2,7 +2,7 @@
 titre: Authentification par Keycloak
 date: 2026-09-13
 statut: Proposition
-affects: backend/src/ea/domain/auth.py, backend/src/ea/domain/errors.py, backend/src/ea/domain/ports.py, backend/src/ea/services/caller.py, backend/src/ea/services/{architecture,documents,ipam}.py, backend/src/ea/repositories/keycloak.py, backend/src/ea/api/auth.py, backend/src/ea/api/me.py, backend/src/ea/api/errors.py, backend/src/ea/mcp/auth.py, backend/src/ea/mcp/errors.py, backend/src/ea/main.py, backend/src/ea/reindex.py, backend/src/ea/core/config.py, .mcp.json, frontend/src/lib/{auth,api,me}.ts, frontend/src/router/, frontend/src/components/UserBadge.vue, pipelines/src/pipelines/auth.py, deploy/ea.stack.yml, frontend/Dockerfile
+affects: backend/src/ea/domain/auth.py, backend/src/ea/domain/errors.py, backend/src/ea/domain/ports.py, backend/src/ea/services/caller.py, backend/src/ea/services/{architecture,documents,ipam,diagrams}.py, backend/src/ea/repositories/keycloak.py, backend/src/ea/api/auth.py, backend/src/ea/api/me.py, backend/src/ea/api/errors.py, backend/src/ea/mcp/auth.py, backend/src/ea/mcp/errors.py, backend/src/ea/main.py, backend/src/ea/reindex.py, backend/src/ea/core/config.py, .mcp.json, frontend/src/lib/{auth,api,me}.ts, frontend/src/router/, frontend/src/components/UserBadge.vue, pipelines/src/pipelines/auth.py, deploy/ea.stack.yml, frontend/Dockerfile
 ---
 
 # 32. Authentification par Keycloak
@@ -50,7 +50,9 @@ accepterait le jeton de n'importe quel client du realm.
 | `ea-pipelines` | confidentiel | *client credentials* seul | aucune ; son compte de service porte `ea-editor` |
 
 **Un rôle, `ea-editor`.** Tout utilisateur du realm lit ; seul `ea-editor`
-écrit. Utilisateurs et attribution du rôle se font à la console ; le secret
+écrit. Les diagrammes enregistrés de `0031` suivent la même règle : tout
+appelant les liste et les ouvre, seul `ea-editor` en crée, renomme, dispose ou
+supprime un. Utilisateurs et attribution du rôle se font à la console ; le secret
 d'`ea-pipelines` est généré par Keycloak, jamais committé.
 
 ### L'API
@@ -63,7 +65,7 @@ d'`ea-pipelines` est généré par Keycloak, jamais committé.
 | Démarrage | Le JWKS est sondé au démarrage, avec `EA_AUTH_CA_CERT` | Comme les deux bases : une API qui ne peut vérifier aucun jeton ne démarre pas |
 | Dépendance | `pyjwt[crypto]>=2.13` déclaré en dépendance directe | Déjà verrouillé par `mcp`, mais on l'importe : le plancher est au-dessus de CVE-2024-53861 |
 | Qui appelle | `current_caller`, un `ContextVar` (`services/caller.py`), posé par l'adaptateur | Même mécanique que l'identifiant de requête de `0021` |
-| Autorisation | Chaque méthode publique des trois services commence par `require_caller()` ou `require_editor()` | La règle est dans `services/`, pas dans un routeur : `/mcp` et l'API la reçoivent sans la répéter |
+| Autorisation | Chaque méthode publique des quatre services — `DiagramService` compris — commence par `require_caller()` ou `require_editor()` | La règle est dans `services/`, pas dans un routeur : `/mcp` et l'API la reçoivent sans la répéter |
 | Échec fermé | Aucun appelant posé → `NotAuthenticatedError` | Un branchement oublié est un 401 dans un test, pas une porte ouverte |
 | Erreurs | `NotAuthenticatedError` → 401 `unauthenticated` + `WWW-Authenticate: Bearer` ; `NotAuthorisedError` → 403 `forbidden` | Messages génériques, dans l'enveloppe habituelle |
 | REST | Dépendance `Authenticated` (`api/auth.py`) sur chaque routeur sauf `health` | `/health` est lu par une sonde qui n'a pas de jeton |

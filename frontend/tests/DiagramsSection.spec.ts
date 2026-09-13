@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 import type { Router } from 'vue-router'
 import { createMemoryHistory } from 'vue-router'
 
 import DiagramsSection from '../src/features/diagrams/DiagramsSection.vue'
+import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
 import { anElement, aPage, METAMODEL, stubApi, type Route } from './support/api'
 
@@ -178,5 +180,41 @@ describe('DiagramsSection — the editor', () => {
     await open(`?diagram=${DIAGRAM_ID}`)
 
     expect(await screen.findByText('Diagramme introuvable.')).toBeInTheDocument()
+  })
+})
+
+describe('DiagramsSection — a reader', () => {
+  function asAReader(): void {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+  }
+
+  it('lists and opens the diagrams, but is offered no way to create or delete one', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open()
+
+    expect(await screen.findByRole('link', { name: 'Vue applicative' })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/nom du diagramme/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Créer' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Supprimer' })).toBeNull()
+  })
+
+  it('sees a diagram without the palette, the link handle or a way to take a box off', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open(`?diagram=${DIAGRAM_ID}&element=${A.id}`)
+
+    const canvas = await screen.findByRole('group', { name: /zone de dessin/i })
+    expect(within(canvas).getByRole('button', { name: /Facturation/ })).toBeInTheDocument()
+    await screen.findByRole('region', { name: /détail de l'élément/i })
+    expect(screen.queryByRole('region', { name: /palette/i })).toBeNull()
+    expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retirer du diagramme' })).toBeNull()
+    expect(screen.queryByText('Enregistré automatiquement.')).toBeNull()
   })
 })

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
 from ea.domain.errors import DiagramNotFoundError, UnknownLayoutElementError
+from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -53,9 +54,11 @@ class DiagramService:
         self._now = clock
 
     async def list_diagrams(self) -> tuple[Diagram, ...]:
+        require_caller()
         return await self._repository.list_all()
 
     async def create(self, *, name: str, description: str = "") -> Diagram:
+        require_editor()
         stored = await self._repository.add(
             Diagram.create(name=name, description=description, now=self._now())
         )
@@ -63,6 +66,7 @@ class DiagramService:
         return stored
 
     async def get(self, diagram_id: UUID) -> Diagram:
+        require_caller()
         diagram = await self._repository.get(diagram_id)
         if diagram is None:
             raise _not_found(diagram_id)
@@ -70,6 +74,7 @@ class DiagramService:
 
     async def open(self, diagram_id: UUID) -> DiagramDetail:
         """A diagram with the part of the graph it shows, stale boxes left out."""
+        require_caller()
         diagram = await self.get(diagram_id)
         nodes = await self._repository.nodes_of(diagram_id)
         graph = await self._architecture.view_of([node.element_id for node in nodes])
@@ -83,6 +88,7 @@ class DiagramService:
     async def update(
         self, diagram_id: UUID, *, name: str | None = None, description: str | None = None
     ) -> Diagram:
+        require_editor()
         current = await self.get(diagram_id)
         stored = await self._repository.save(
             current.revise(name=name, description=description, now=self._now())
@@ -91,6 +97,7 @@ class DiagramService:
         return stored
 
     async def delete(self, diagram_id: UUID) -> None:
+        require_editor()
         if not await self._repository.delete(diagram_id):
             raise _not_found(diagram_id)
         logger.info(
@@ -104,6 +111,7 @@ class DiagramService:
         read; otherwise an unknown diagram is a 404. The elements are checked
         in one graph query, not one per box.
         """
+        require_editor()
         layout = check_layout(nodes)
         diagram = await self.get(diagram_id)
         graph = await self._architecture.view_of([node.element_id for node in layout])

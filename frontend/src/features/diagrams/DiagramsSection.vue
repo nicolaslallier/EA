@@ -9,6 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
+import { useMe } from '../../lib/me'
 import type { Point } from '../../lib/diagramGeometry'
 import { BOX_HEIGHT } from '../../lib/graphLayout'
 import ElementDetail from '../elements/ElementDetail.vue'
@@ -27,6 +28,9 @@ const editor = useDiagram()
 const palette = useElementPalette()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
+// The API refuses a reader's write anyway (docs/adr/0032); this only spares
+// them controls that could not work — every one below changes a stored diagram.
+const { canWrite } = useMe()
 
 /** A query parameter is `string | string[] | null`; only one value means anything here. */
 function one(value: unknown): string {
@@ -163,7 +167,7 @@ function onConnect(sourceId: string, targetId: string): void {
       <p class="hint">Des vues enregistrées : quels éléments, et où. Les faits restent dans le modèle.</p>
     </header>
 
-    <form class="create" aria-label="Créer un diagramme" @submit.prevent="create">
+    <form v-if="canWrite" class="create" aria-label="Créer un diagramme" @submit.prevent="create">
       <div class="field">
         <label for="diagram-name">Nom du diagramme</label>
         <input id="diagram-name" v-model="newName" maxlength="200" autocomplete="off" />
@@ -192,7 +196,9 @@ function onConnect(sourceId: string, targetId: string): void {
         <span class="hint">
           {{ diagram.node_count }} élément{{ diagram.node_count > 1 ? 's' : '' }}
         </span>
-        <button type="button" class="secondary" @click="confirming = diagram">Supprimer</button>
+        <button v-if="canWrite" type="button" class="secondary" @click="confirming = diagram">
+          Supprimer
+        </button>
       </li>
     </ul>
   </section>
@@ -201,7 +207,7 @@ function onConnect(sourceId: string, targetId: string): void {
     <header class="editor__header">
       <RouterLink :to="{ query: {} }">← Tous les diagrammes</RouterLink>
       <h2 v-if="editor.diagram.value">{{ editor.diagram.value.name }}</h2>
-      <p class="hint" aria-live="polite">{{ saveState }}</p>
+      <p v-if="canWrite" class="hint" aria-live="polite">{{ saveState }}</p>
     </header>
 
     <p v-if="editor.status.value === 'error'" class="banner banner--error" role="alert">
@@ -212,8 +218,13 @@ function onConnect(sourceId: string, targetId: string): void {
       Disposition non enregistrée : {{ editor.saveError.value }}
     </p>
 
-    <div v-if="editor.diagram.value" class="editor diagram-editor">
+    <div
+      v-if="editor.diagram.value"
+      class="editor diagram-editor"
+      :class="{ 'editor--reading': !canWrite }"
+    >
       <ElementPalette
+        v-if="canWrite"
         :items="palette.items.value"
         :total="palette.total.value"
         :placed="editor.placed.value"
@@ -225,7 +236,7 @@ function onConnect(sourceId: string, targetId: string): void {
 
       <div class="editor__centre">
         <LinkPopover
-          v-if="link"
+          v-if="link && canWrite"
           :key="`${link.source.id}-${link.target.id}`"
           :source="link.source"
           :target="link.target"
@@ -238,6 +249,7 @@ function onConnect(sourceId: string, targetId: string): void {
           :relationships="editor.relationships.value"
           :selected-id="selectedId"
           :type-label="metamodel.labelOf"
+          :readonly="!canWrite"
           @place="onPlace"
           @move="editor.move"
           @moved="editor.persist"
@@ -257,7 +269,7 @@ function onConnect(sourceId: string, targetId: string): void {
           {{ detail.error.value }}
         </p>
         <template v-if="detail.element.value">
-          <button v-if="editor.placed.value.has(selectedId)" type="button"
+          <button v-if="canWrite && editor.placed.value.has(selectedId)" type="button"
                   @click="removeBox(selectedId)">
             Retirer du diagramme
           </button>
@@ -295,6 +307,9 @@ header h2 {
   grid-template-columns: 12rem minmax(0, 1fr) 16rem;
   align-items: start;
   gap: 1rem;
+}
+.editor--reading {
+  grid-template-columns: minmax(0, 1fr) 16rem;
 }
 .editor__centre,
 .editor__detail {
