@@ -5,7 +5,7 @@ statut: Proposition
 affects: backend/src/ea/domain/auth.py, backend/src/ea/domain/errors.py, backend/src/ea/domain/ports.py, backend/src/ea/services/caller.py, backend/src/ea/services/{architecture,documents,ipam}.py, backend/src/ea/repositories/keycloak.py, backend/src/ea/api/auth.py, backend/src/ea/api/me.py, backend/src/ea/api/errors.py, backend/src/ea/mcp/auth.py, backend/src/ea/mcp/errors.py, backend/src/ea/main.py, backend/src/ea/reindex.py, backend/src/ea/core/config.py, .mcp.json, frontend/src/lib/{auth,api,me}.ts, frontend/src/router/, frontend/src/components/UserBadge.vue, pipelines/src/pipelines/auth.py, deploy/ea.stack.yml, frontend/Dockerfile
 ---
 
-# 31. Authentification par Keycloak
+# 32. Authentification par Keycloak
 
 Amende [`0023`](0023-mcp-reserve-a-la-boucle-locale.md). Remplace la ligne
 « OAuth2 password/bearer … `argon2` » des règles de sécurité de `CLAUDE.md`,

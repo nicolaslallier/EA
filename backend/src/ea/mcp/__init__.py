@@ -7,7 +7,7 @@ back. An MCP server that spoke HTTP to our own REST API instead would put a
 second copy of every payload shape in the tree and add a hop that can only
 fail; worse, it would invite the next tool to reach past the service. Every
 rule an agent must obey — the ArchiMate matrix, the containment loop, and who
-may read or write at all (docs/adr/0031) — is enforced below this line.
+may read or write at all (docs/adr/0032) — is enforced below this line.
 
 See `docs/adr/0014`.
 """

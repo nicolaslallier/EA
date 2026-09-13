@@ -18,7 +18,7 @@ dependencies = [
     "pgvector>=0.3.6",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
-    # Verifies Keycloak access tokens — see docs/adr/0031. Already locked via mcp.
+    # Verifies Keycloak access tokens — see docs/adr/0032. Already locked via mcp.
     # Floor is 2.13 (not 2.10): CVE-2024-53861 (substring issuer match) was
     # fixed in 2.10.1, and this verifier's issuer check depends on it.
     "pyjwt[crypto]>=2.13",

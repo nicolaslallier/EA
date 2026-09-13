@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # --- PostgreSQL, the store for everything that is not the graph ---------
     # Audit and scheduled work will live here rather than in Neo4j — see
     # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
-    # Authentication does not: it is the Keycloak realm `ea`, docs/adr/0031.
+    # Authentication does not: it is the Keycloak realm `ea`, docs/adr/0032.
     #
     # Like the graph, there is one instance, so its address is the useful
     # default — but not on the cluster: since docs/adr/0029 the `ea` database
@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
     # On by default: an agent-facing tool set nobody can reach is not a
     # feature. It is a switch and not a constant because `/mcp` is a *write*
-    # path onto the architecture graph — behind a token since docs/adr/0031,
+    # path onto the architecture graph — behind a token since docs/adr/0032,
     # but a deployment that does not want one at all turns it off here rather
     # than by deleting a mount.
     mcp_enabled: bool = True
@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     #: Whether `/mcp` answers a caller whose TCP peer is not this machine.
     #:
     #: Off, and it is the setting that decides *where* a tool may be called
-    #: from: the token (docs/adr/0031) says who, and this guard stays in front
+    #: from: the token (docs/adr/0032) says who, and this guard stays in front
     #: of it as defence in depth. `mcp_allowed_hosts` below cannot narrow that
     #: — it checks a header the caller writes. The peer address is the one
     #: thing it does not.
@@ -184,7 +184,7 @@ class Settings(BaseSettings):
         "[::1]:*",
     ]
 
-    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0031 ------
+    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0032 ------
     # On by default, like the two stores: an API that anyone on the LAN can
     # write to is the state this replaces. Off is accepted in debug only.
     auth_enabled: bool = True

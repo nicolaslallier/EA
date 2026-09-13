@@ -1,6 +1,6 @@
 # Authentification par Keycloak — conception
 
-Date : 2026-09-13 · Statut : validée en discussion, à planifier · ADR à écrire : `0031-authentification-par-keycloak`
+Date : 2026-09-13 · Statut : validée en discussion, à planifier · ADR à écrire : `0032-authentification-par-keycloak`
 
 ## Objet
 
@@ -155,7 +155,7 @@ Auth coupée : les adaptateurs posent un appelant `LOCAL_DEVELOPER` portant
   monté en lecture seule ; `web` : `VITE_AUTH_AUTHORITY`/`VITE_AUTH_CLIENT_ID`
   en `build.args`. Dans `infra-net`, `keycloak.famillelallier.net` est déjà
   un alias de `nginx`. `nginx/conf.d/ea.conf` inchangé.
-- **Documentation** — ADR `0031` (remplace la ligne « OAuth2 password/bearer
+- **Documentation** — ADR `0032` (remplace la ligne « OAuth2 password/bearer
   + argon2 » de `CLAUDE.md`, amende `0023`) ; `CLAUDE.md` mis à jour dans le
   même commit que le code ; `.env.example` des deux projets.
 

@@ -2,7 +2,7 @@
 
 The pipeline writes to the catalogue, which needs the `ea-editor` role; the
 confidential client `ea-pipelines` holds it through its service account. An
-`httpx.Auth`, so `EaClient` does not know a token exists. See EA docs/adr/0031.
+`httpx.Auth`, so `EaClient` does not know a token exists. See EA docs/adr/0032.
 """
 
 from __future__ import annotations

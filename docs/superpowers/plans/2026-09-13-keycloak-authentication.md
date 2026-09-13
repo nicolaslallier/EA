@@ -30,7 +30,7 @@
 | 2 | 2 (JWT verifier), 3 (service guards) | Both consume Task 1 only |
 | 3 | 4 (REST adapter + `/me` + OpenAPI regen) | Consumes 2 and 3; owns `main.py`, `tests/conftest.py` |
 | 4 | 6 (MCP adapter), 9 (SPA identity + write controls) | 6 edits `main.py` after 4; 9 needs the regenerated client |
-| 5 | 10 (deploy, ADR 0031, CLAUDE.md, env examples) | Documents the names every other task fixed |
+| 5 | 10 (deploy, ADR 0032, CLAUDE.md, env examples) | Documents the names every other task fixed |
 
 ---
 
@@ -137,7 +137,7 @@ Expected: FAIL — `ModuleNotFoundError: ea.domain.auth`, and the settings tests
 
 Pure: no JWT, no Keycloak, no FastAPI. A token is turned into a `Caller` by
 `repositories/keycloak.py`; what a caller may do is decided in `services/`.
-See docs/adr/0031.
+See docs/adr/0032.
 """
 
 from __future__ import annotations
@@ -188,7 +188,7 @@ class NotAuthorisedError(DomainError):
 A `ContextVar`, like the request id of docs/adr/0021: the adapter that knows who
 is calling (the REST dependency, the MCP decorator, `ea.reindex`) sets it, and
 the service reads it. Nobody set it means nobody is calling — refused, so a
-forgotten wire-up is a 401 in a test rather than an open door. See docs/adr/0031.
+forgotten wire-up is a 401 in a test rather than an open door. See docs/adr/0032.
 """
 
 from __future__ import annotations
@@ -231,7 +231,7 @@ def acting_as(caller: Caller) -> Iterator[Caller]:
 In `backend/src/ea/core/config.py`, add a block after the MCP settings (keep the file's comment style — explain *why*):
 
 ```python
-    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0031 ------
+    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0032 ------
     # On by default, like the two stores: an API that anyone on the LAN can
     # write to is the state this replaces. Off is accepted in debug only.
     auth_enabled: bool = True
@@ -497,7 +497,7 @@ Expected: FAIL — `ModuleNotFoundError: ea.repositories.keycloak`.
 A repository in this package's sense: the adapter behind a port the domain
 declared (`AccessTokenVerifier`), with the protocol kept out of everything
 above it. The keys are fetched over `httpx` — `PyJWKClient` would block the
-event loop — and verified by `pyjwt`. See docs/adr/0031.
+event loop — and verified by `pyjwt`. See docs/adr/0032.
 
 **Only RS256.** The algorithm is fixed here and never read from the token: a
 verifier that trusts the header accepts `none`, or an HS256 token "signed" with
@@ -648,7 +648,7 @@ class AccessTokenVerifier(Protocol):
         ...
 ```
 
-Add `"pyjwt[crypto]>=2.10",` to `backend/pyproject.toml` `dependencies` (alphabetical, comment: `# Verifies Keycloak access tokens — see docs/adr/0031. Already locked via mcp.`), then `cd backend && uv lock` (it must not upgrade anything else; check `git diff --stat uv.lock`).
+Add `"pyjwt[crypto]>=2.10",` to `backend/pyproject.toml` `dependencies` (alphabetical, comment: `# Verifies Keycloak access tokens — see docs/adr/0032. Already locked via mcp.`), then `cd backend && uv lock` (it must not upgrade anything else; check `git diff --stat uv.lock`).
 
 - [ ] **Step 4: Run to see them pass**
 
@@ -780,7 +780,7 @@ def a_reader(**overrides: object) -> Caller:
 
 @pytest.fixture(autouse=True)
 def _an_editor_is_calling() -> Iterator[Caller]:
-    """The services refuse a call nobody makes (docs/adr/0031).
+    """The services refuse a call nobody makes (docs/adr/0032).
 
     A suite about what a use case *does* is not about who may run it, so an
     editor calls unless a test says otherwise — `nobody_calling`, `acting_as`.
@@ -979,7 +979,7 @@ Expected: FAIL — `create_app()` has no `verifier` argument.
 It sets the caller the services read (`services/caller.py`) and nothing else:
 what the caller may do is decided there, never here. The value is not reset
 after the request: uvicorn serves each request in its own task, and the context
-goes with it. See docs/adr/0031.
+goes with it. See docs/adr/0032.
 """
 
 from __future__ import annotations
@@ -1034,7 +1034,7 @@ CurrentCaller = Annotated[Caller, Depends(authenticate)]
 """Who the SPA is talking to, and whether it should offer to write.
 
 The SPA asks rather than reading the token: the API decides, and this is the
-same decision the services make. See docs/adr/0031.
+same decision the services make. See docs/adr/0032.
 """
 
 from fastapi import APIRouter
@@ -1063,7 +1063,7 @@ class MeRead(BaseModel):
 `backend/src/ea/api/errors.py` — add to `_STATUS`:
 
 ```python
-    # --- Authentication (docs/adr/0031) ---
+    # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
 ```
@@ -1123,7 +1123,7 @@ Expected: `backend/openapi.json` gains `securitySchemes.HTTPBearer`, `/me`, `MeR
   - `lib/auth.ts`: `AUTH_AUTHORITY: string`, `AUTH_CLIENT_ID: string`, `CALLBACK_PATH = '/auth/callback'`, `createUserManager(origin: string): UserManager`, `accessToken(): Promise<string | null>`, `signIn(returnTo: string): Promise<void>`, `completeSignIn(): Promise<string>` (resolves to the in-app path to return to), `signOut(): Promise<void>`, `safeReturnPath(value: unknown): string`
   - `router/index.ts`: `createAppRouter(history?: RouterHistory, gate?: Gate)` where `type Gate = { accessToken: () => Promise<string | null>; signIn: (returnTo: string) => Promise<void> }`; route `{ path: CALLBACK_PATH, name: 'auth-callback', meta: { public: true } }`
 
-- [ ] **Step 1: Install** `cd frontend && npm install oidc-client-ts@^3.5.0` (a runtime dependency; it is recorded in ADR 0031 by Task 10).
+- [ ] **Step 1: Install** `cd frontend && npm install oidc-client-ts@^3.5.0` (a runtime dependency; it is recorded in ADR 0032 by Task 10).
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -1253,7 +1253,7 @@ Expected: FAIL — `src/lib/auth` does not exist.
 
 ```ts
 // The login, by the Keycloak realm `ea` — authorization code + PKCE, the SPA
-// being a public client. See docs/adr/0031.
+// being a public client. See docs/adr/0032.
 //
 // Tokens live in memory only (CLAUDE.md: never localStorage). A reload forgets
 // them, the router's gate sends the page back to Keycloak, and Keycloak's own
@@ -1310,7 +1310,7 @@ export function signOut(): Promise<void> {
 `frontend/src/lib/api.ts` — import `{ accessToken, signIn }` from `./auth` and register a second middleware **before** the logging one:
 
 ```ts
-// Who is calling (docs/adr/0031): the token on every request, and a 401 —
+// Who is calling (docs/adr/0032): the token on every request, and a 401 —
 // a token Keycloak no longer honours — restarts the login, coming back to
 // exactly this page, query included.
 api.use({
@@ -1380,7 +1380,7 @@ export function createAppRouter(
 ): Router {
   const router = createRouter({ history, routes })
   // Nobody reaches a section without a token. The API decides what they may
-  // do; this only decides that they log in first (docs/adr/0031).
+  // do; this only decides that they log in first (docs/adr/0032).
   router.beforeEach(async (to) => {
     if (to.meta.public || (await gate.accessToken())) {
       return true
@@ -1397,7 +1397,7 @@ export function createAppRouter(
 `frontend/.env.example` — append a French block, like the others:
 
 ```
-# --- Connexion par Keycloak (docs/adr/0031) --------------------------------
+# --- Connexion par Keycloak (docs/adr/0032) --------------------------------
 # Le realm `ea` et le client public `ea-spa`. Laissés vides : les valeurs par
 # défaut, celles du Keycloak de l'Infra. L'origine qui sert le SPA doit figurer
 # dans les « Valid redirect URIs » du client, avec /auth/callback.
@@ -1495,7 +1495,7 @@ Expected: FAIL — `ea.mcp.auth` does not exist.
 The SDK wants a `TokenVerifier` answering an `AccessToken` or `None`; ours
 answers a `Caller`. This is the translation, and nothing more: the roles travel
 in `claims`, and `speaking_plainly` turns them back into the caller the services
-read. See docs/adr/0031.
+read. See docs/adr/0032.
 """
 
 from __future__ import annotations
@@ -1700,7 +1700,7 @@ Expected: FAIL — `ModuleNotFoundError: pipelines.auth`.
 
 The pipeline writes to the catalogue, which needs the `ea-editor` role; the
 confidential client `ea-pipelines` holds it through its service account. An
-`httpx.Auth`, so `EaClient` does not know a token exists. See EA docs/adr/0031.
+`httpx.Auth`, so `EaClient` does not know a token exists. See EA docs/adr/0032.
 """
 
 from __future__ import annotations
@@ -1774,7 +1774,7 @@ class ClientCredentials(httpx.Auth):
 ```python
     #: The realm `ea` of the Infra Keycloak. The worker logs in as the
     #: confidential client `ea-pipelines`, whose service account holds
-    #: `ea-editor` (EA docs/adr/0031). The token endpoint derives from this.
+    #: `ea-editor` (EA docs/adr/0032). The token endpoint derives from this.
     auth_issuer: str = "https://keycloak.famillelallier.net/realms/ea"
     ea_client_id: str = "ea-pipelines"
     ea_client_secret: SecretStr
@@ -1933,7 +1933,7 @@ The `users` array holds **only** the service-account user (no password, no human
 - [ ] **Step 3: Document** (short, in the voice of the existing *Jarvis* sections):
   - After the first `make up` with this file: create the humans in the admin console (realm `ea` → Users), give editors the realm role `ea-editor`; copy the `ea-pipelines` secret (Clients → ea-pipelines → Credentials) into EA's `pipelines/.env` as `PIPELINES_EA_CLIENT_SECRET`.
   - `ea-spa`'s redirect URIs: add each LAN origin that serves the Vite dev server (`http://192.168.x.y:5173/*`) in the console — an exact list, as EA's `EA_CORS_ORIGINS`.
-  - No oauth2-proxy and no `auth_request` for EA: the EA API and `/mcp` verify the token themselves (EA `docs/adr/0031`); `nginx/conf.d/ea.conf` is unchanged.
+  - No oauth2-proxy and no `auth_request` for EA: the EA API and `/mcp` verify the token themselves (EA `docs/adr/0032`); `nginx/conf.d/ea.conf` is unchanged.
   - `--import-realm` is a no-op for an existing realm: changing this file later means editing the live realm in the console too.
 
 - [ ] **Step 4: Commit in the Infra worktree** — `git add keycloak/realm-import/ea-realm.json README.md CLAUDE.md && git commit -m "feat(keycloak): realm ea pour l'application EA"` with the attribution trailer `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Report the worktree path, branch and commit.
@@ -2019,7 +2019,7 @@ Expected: FAIL — module not found.
 ```ts
 // Who is logged in, and whether the SPA should offer to change anything.
 //
-// The API decides (docs/adr/0031): this only asks `GET /me` — once per page
+// The API decides (docs/adr/0032): this only asks `GET /me` — once per page
 // load, shared by every screen — and hides what the answer says the user may
 // not do. Until the answer arrives nothing is offered, so a reader never sees
 // a button flash before it disappears.
@@ -2078,11 +2078,11 @@ Expected: PASS.
 
 ---
 
-### Task 10: Deployment, ADR 0031, CLAUDE.md, backend `.env.example`
+### Task 10: Deployment, ADR 0032, CLAUDE.md, backend `.env.example`
 
 **Files:**
-- Create: `docs/adr/0031-authentification-par-keycloak.md` (from `docs/adr/TEMPLATE.md`, French)
-- Modify: `deploy/ea.stack.yml`, `deploy/ea.env.example`, `frontend/Dockerfile` (two `ARG`/`ENV` for `VITE_AUTH_*`), `backend/.env.example`, `CLAUDE.md`, `docs/adr/0023-mcp-reserve-a-la-boucle-locale.md` (one line at the top: *Amendé par 0031* — do not rewrite history), `scripts/portainer-stack.sh` only if it lists required variables explicitly
+- Create: `docs/adr/0032-authentification-par-keycloak.md` (from `docs/adr/TEMPLATE.md`, French)
+- Modify: `deploy/ea.stack.yml`, `deploy/ea.env.example`, `frontend/Dockerfile` (two `ARG`/`ENV` for `VITE_AUTH_*`), `backend/.env.example`, `CLAUDE.md`, `docs/adr/0023-mcp-reserve-a-la-boucle-locale.md` (one line at the top: *Amendé par 0032* — do not rewrite history), `scripts/portainer-stack.sh` only if it lists required variables explicitly
 - Test: `backend/tests/unit/test_deploy_stack.py` (append)
 
 **Interfaces:**
@@ -2115,7 +2115,7 @@ Run: `cd backend && uv run pytest tests/unit/test_deploy_stack.py -q` → FAIL.
 - [ ] **Step 3: `backend/.env.example`** — a French block after the MCP section:
 
 ```
-# --- Authentification, realm Keycloak `ea` (docs/adr/0031) ----------------
+# --- Authentification, realm Keycloak `ea` (docs/adr/0032) ----------------
 # À true par défaut : toute requête porte un jeton, toute écriture exige le
 # rôle `ea-editor`. false n'est accepté qu'avec EA_DEBUG=true, et chaque appel
 # est alors celui du « local-developer », éditeur.
@@ -2129,11 +2129,11 @@ EA_AUTH_CA_CERT=
 EA_MCP_RESOURCE_URL=http://127.0.0.1:8000/mcp
 ```
 
-- [ ] **Step 4: ADR 0031** — `titre: Authentification par Keycloak`, `date: 2026-09-13`, `statut: Proposition` (nothing is deployed until the realm is imported and the stack redeployed), `affects:` the files of Tasks 1–9. Content from the spec: context (anyone reaching the port writes; Keycloak already runs; Jarvis's oauth2-proxy gap), decision (resource server; realm/clients/role table; fail-closed caller in `services/`; `/me`; `oidc-client-ts` as a new runtime dependency with in-memory tokens and the reload redirect; `pyjwt[crypto]` made a direct dependency; `/mcp` token + kept loopback guard; pipeline client credentials), alternatives table (oauth2-proxy gate, BFF session cookie, `keycloak-js`, hand-written PKCE), consequences (Keycloak down = API does not boot, cached keys keep serving; every new service method needs its check — `test_service_guards.py` enforces it; no Playwright login test; LAN origins to add per host in `ea-spa`; supersedes the CLAUDE.md line "OAuth2 password/bearer … argon2"; amends 0023), references (0014, 0023, 0027, 0028, the Infra realm file, the spec and this plan).
+- [ ] **Step 4: ADR 0032** — `titre: Authentification par Keycloak`, `date: 2026-09-13`, `statut: Proposition` (nothing is deployed until the realm is imported and the stack redeployed), `affects:` the files of Tasks 1–9. Content from the spec: context (anyone reaching the port writes; Keycloak already runs; Jarvis's oauth2-proxy gap), decision (resource server; realm/clients/role table; fail-closed caller in `services/`; `/me`; `oidc-client-ts` as a new runtime dependency with in-memory tokens and the reload redirect; `pyjwt[crypto]` made a direct dependency; `/mcp` token + kept loopback guard; pipeline client credentials), alternatives table (oauth2-proxy gate, BFF session cookie, `keycloak-js`, hand-written PKCE), consequences (Keycloak down = API does not boot, cached keys keep serving; every new service method needs its check — `test_service_guards.py` enforces it; no Playwright login test; LAN origins to add per host in `ea-spa`; supersedes the CLAUDE.md line "OAuth2 password/bearer … argon2"; amends 0023), references (0014, 0023, 0027, 0028, the Infra realm file, the spec and this plan).
 
 - [ ] **Step 5: CLAUDE.md** (same commit as the code, per its own rule):
-  - *Project status*: remove "auth" from **Not yet scaffolded**; add one sentence on Keycloak auth pointing at `docs/adr/0031`.
-  - *Locked stack decisions*: a row `Authentication | Keycloak realm `ea`, EA as resource server (`pyjwt` + JWKS), SPA `oidc-client-ts` PKCE | … — see docs/adr/0031`.
+  - *Project status*: remove "auth" from **Not yet scaffolded**; add one sentence on Keycloak auth pointing at `docs/adr/0032`.
+  - *Locked stack decisions*: a row `Authentication | Keycloak realm `ea`, EA as resource server (`pyjwt` + JWKS), SPA `oidc-client-ts` PKCE | … — see docs/adr/0032`.
   - *Repository layout*: `domain/auth.py`, `services/caller.py`, `repositories/keycloak.py`, `api/auth.py`, `mcp/auth.py`, `pipelines/src/pipelines/auth.py`, `frontend/src/lib/auth.ts`, `lib/me.ts`.
   - *Security rules*: replace the "Auth: OAuth2 password/bearer … argon2" bullet with the Keycloak rule — tokens verified RS256 against the realm JWKS, `aud=ea-api`; authorisation in `services/` via `require_caller`/`require_editor`, fail closed; SPA tokens in memory.
   - *The MCP adapter* and the paragraph on `/mcp` binding: `/mcp` now also requires a bearer token; the loopback guard stays; still off when deployed.
@@ -2145,7 +2145,7 @@ EA_MCP_RESOURCE_URL=http://127.0.0.1:8000/mcp
 Run (root): `make check`
 Expected: green. Report anything red with its output.
 
-- [ ] **Step 7: Report** (commit: `docs(auth): ADR 0031, déploiement et CLAUDE.md pour Keycloak`).
+- [ ] **Step 7: Report** (commit: `docs(auth): ADR 0032, déploiement et CLAUDE.md pour Keycloak`).
 
 ---
 

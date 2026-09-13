@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Who is on screen, and the one control that ends the session (docs/adr/0031).
+// Who is on screen, and the one control that ends the session (docs/adr/0032).
 import { onMounted } from 'vue'
 
 import { signOut } from '../lib/auth'

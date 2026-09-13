@@ -1,7 +1,7 @@
 """Who `/mcp` answers, decided before the MCP transport reads a byte.
 
 The API binds every interface (docs/adr/0016), and the tools write to the
-graph. A Keycloak token says *who* is calling (docs/adr/0031); this guard,
+graph. A Keycloak token says *who* is calling (docs/adr/0032); this guard,
 older than the token and kept as defence in depth, says *from where*. The
 SDK's `Host` allowlist does not narrow that: it is a defence against DNS
 rebinding — a *browser* tricked into calling us cannot choose the `Host` it

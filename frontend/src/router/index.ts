@@ -49,7 +49,7 @@ export function createAppRouter(
 ): Router {
   const router = createRouter({ history, routes })
   // Nobody reaches a section without a token. The API decides what they may
-  // do; this only decides that they log in first (docs/adr/0031).
+  // do; this only decides that they log in first (docs/adr/0032).
   router.beforeEach(async (to) => {
     if (to.meta.public || (await gate.accessToken())) {
       return true

@@ -3,7 +3,7 @@
 A repository in this package's sense: the adapter behind a port the domain
 declared (`AccessTokenVerifier`), with the protocol kept out of everything
 above it. The keys are fetched over `httpx` — `PyJWKClient` would block the
-event loop — and verified by `pyjwt`. See docs/adr/0031.
+event loop — and verified by `pyjwt`. See docs/adr/0032.
 
 **Only RS256.** The algorithm is fixed here and never read from the token: a
 verifier that trusts the header accepts `none`, or an HS256 token "signed" with

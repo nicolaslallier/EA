@@ -53,7 +53,7 @@ export const api = createClient<paths>({
 
 const log = createLogger('api')
 
-// Who is calling (docs/adr/0031): the token on every request, and a 401 —
+// Who is calling (docs/adr/0032): the token on every request, and a 401 —
 // a token Keycloak no longer honours — restarts the login, coming back to
 // exactly this page, query included.
 api.use({

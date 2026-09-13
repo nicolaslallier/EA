@@ -3,7 +3,7 @@
 The SDK wants a `TokenVerifier` answering an `AccessToken` or `None`; ours
 answers a `Caller`. This is the translation, and nothing more: the roles travel
 in `claims`, and `speaking_plainly` turns them back into the caller the services
-read. See docs/adr/0031.
+read. See docs/adr/0032.
 """
 
 from __future__ import annotations

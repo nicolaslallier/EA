@@ -3,7 +3,7 @@
 A `ContextVar`, like the request id of docs/adr/0021: the adapter that knows who
 is calling (the REST dependency, the MCP decorator, `ea.reindex`) sets it, and
 the service reads it. Nobody set it means nobody is calling — refused, so a
-forgotten wire-up is a 401 in a test rather than an open door. See docs/adr/0031.
+forgotten wire-up is a 401 in a test rather than an open door. See docs/adr/0032.
 """
 
 from __future__ import annotations

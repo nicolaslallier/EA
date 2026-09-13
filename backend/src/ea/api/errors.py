@@ -73,7 +73,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "address_outside_any_network",
     ),
-    # --- Authentication (docs/adr/0031) ---
+    # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
 }

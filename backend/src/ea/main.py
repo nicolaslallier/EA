@@ -216,7 +216,7 @@ def _lifespan(
                     # Said at every boot, because it is the one setting that
                     # opens the graph's write path to the whole network — see
                     # docs/adr/0023. With auth on a token still decides who
-                    # writes (docs/adr/0031); behind a proxy every peer is the
+                    # writes (docs/adr/0032); behind a proxy every peer is the
                     # proxy either way.
                     if settings.auth_enabled:
                         logger.warning(
@@ -300,7 +300,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     transport is actually served on.
 
     Behind that guard `/mcp` wants the same bearer token as the REST API
-    (docs/adr/0031): the SDK's resource-server hooks over the app's verifier,
+    (docs/adr/0032): the SDK's resource-server hooks over the app's verifier,
     so a request without one gets a 401 pointing at the protected-resource
     metadata, itself one more spliced route. The SDK puts authentication in
     the transport's *middleware* — two of them — which splicing its routes
@@ -338,7 +338,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
 
 
 #: Every route but `/health` carries `Authenticated`, so every one of them can
-#: now refuse for these two reasons — see `ea/api/auth.py`, docs/adr/0031.
+#: now refuse for these two reasons — see `ea/api/auth.py`, docs/adr/0032.
 AUTH_RESPONSES: dict[int | str, dict[str, type[ErrorResponse]]] = {
     401: {"model": ErrorResponse},
     403: {"model": ErrorResponse},

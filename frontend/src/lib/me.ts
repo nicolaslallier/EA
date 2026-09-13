@@ -1,6 +1,6 @@
 // Who is logged in, and whether the SPA should offer to change anything.
 //
-// The API decides (docs/adr/0031): this only asks `GET /me` — once per page
+// The API decides (docs/adr/0032): this only asks `GET /me` — once per page
 // load, shared by every screen — and hides what the answer says the user may
 // not do. Until the answer arrives nothing is offered, so a reader never sees
 // a button flash before it disappears.

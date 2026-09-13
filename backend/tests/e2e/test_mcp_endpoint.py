@@ -314,7 +314,7 @@ async def initialize_from(app: Any, peer: str, *, host: str = BASE_URL) -> httpx
 
 @pytest.mark.asyncio
 class TestWhoIsServed:
-    """`/mcp` answers this machine only, token or not — docs/adr/0023, 0031.
+    """`/mcp` answers this machine only, token or not — docs/adr/0023, 0032.
 
     The `Host` allowlist above is a defence against DNS rebinding, i.e. against
     a *browser* tricked into calling us. It does nothing against a script on

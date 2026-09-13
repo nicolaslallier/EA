@@ -1,5 +1,5 @@
 // The login, by the Keycloak realm `ea` — authorization code + PKCE, the SPA
-// being a public client. See docs/adr/0031.
+// being a public client. See docs/adr/0032.
 //
 // Tokens live in memory only (CLAUDE.md: never localStorage). A reload forgets
 // them, the router's gate sends the page back to Keycloak, and Keycloak's own

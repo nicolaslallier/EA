@@ -262,7 +262,7 @@ run-be: | $(VENV_STAMP) $(BE_ENV) ## Lance le backend FastAPI (écoute 0.0.0.0:8
 run-fe: | $(FRONTEND)/node_modules ## Lance le frontend Vue/Vite (écoute 0.0.0.0:5173)
 	@printf "$(GREEN)Starting frontend on $(FE_HOST):$(FE_PORT) — $(FE_URL)$(NC)\n"
 	@# http://$(LAN_IP):$(FE_PORT) sert la page mais ne connecte personne : PKCE exige
-	@# crypto.subtle, qu'un navigateur réserve aux contextes sécurisés (docs/adr/0031).
+	@# crypto.subtle, qu'un navigateur réserve aux contextes sécurisés (docs/adr/0032).
 	@test -z "$(LAN_IP)" || printf "  Depuis un autre poste, pas http://$(LAN_IP):$(FE_PORT) (la connexion Keycloak exige un contexte sécurisé) :\n"
 	@test -z "$(LAN_IP)" || printf "    ssh -L $(FE_PORT):127.0.0.1:$(FE_PORT) -L $(BE_PORT):127.0.0.1:$(BE_PORT) $(LAN_IP), puis http://localhost:$(FE_PORT)\n"
 	cd $(FRONTEND) && npm run dev -- --host $(FE_HOST) --port $(FE_PORT)

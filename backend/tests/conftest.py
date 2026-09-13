@@ -79,7 +79,7 @@ class StaticVerifier:
 
 @pytest.fixture(autouse=True)
 def _an_editor_is_calling() -> Iterator[Caller]:
-    """The services refuse a call nobody makes (docs/adr/0031).
+    """The services refuse a call nobody makes (docs/adr/0032).
 
     A suite about what a use case *does* is not about who may run it, so an
     editor calls unless a test says otherwise — `nobody_calling`, `acting_as`.

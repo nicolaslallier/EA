@@ -23,7 +23,7 @@ copy of them.
 The caller lives here too. The transport authenticated the request that carried
 the call, and the SDK hands its token to the handler (`get_access_token`); the
 tool runs as that token's caller, so the services decide on it exactly as they
-do behind the REST dependency (docs/adr/0031).
+do behind the REST dependency (docs/adr/0032).
 """
 
 from __future__ import annotations

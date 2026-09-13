@@ -1,7 +1,7 @@
 """Who the SPA is talking to, and whether it should offer to write.
 
 The SPA asks rather than reading the token: the API decides, and this is the
-same decision the services make. See docs/adr/0031.
+same decision the services make. See docs/adr/0032.
 """
 
 from fastapi import APIRouter

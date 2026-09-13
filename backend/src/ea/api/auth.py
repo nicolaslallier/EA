@@ -3,7 +3,7 @@
 It sets the caller the services read (`services/caller.py`) and nothing else:
 what the caller may do is decided there, never here. The value is not reset
 after the request: uvicorn serves each request in its own task, and the context
-goes with it. See docs/adr/0031.
+goes with it. See docs/adr/0032.
 """
 
 from __future__ import annotations

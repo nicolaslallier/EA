@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     #: The realm `ea` of the Infra Keycloak. The worker logs in as the
     #: confidential client `ea-pipelines`, whose service account holds
-    #: `ea-editor` (EA docs/adr/0031). The token endpoint derives from this.
+    #: `ea-editor` (EA docs/adr/0032). The token endpoint derives from this.
     auth_issuer: str = "https://keycloak.famillelallier.net/realms/ea"
     ea_client_id: str = "ea-pipelines"
     ea_client_secret: SecretStr

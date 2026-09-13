@@ -16,7 +16,7 @@ build over, because it is silent when broken:
   did.
 * `deploy/ea.stack.yml` must hand the API the Infra CA, or it cannot fetch
   the realm's signing keys and refuses to boot, and must build the SPA for the
-  realm — Vite writes both values into the bundle (docs/adr/0031).
+  realm — Vite writes both values into the bundle (docs/adr/0032).
 """
 
 from __future__ import annotations

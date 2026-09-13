@@ -2,7 +2,7 @@
 
 Pure: no JWT, no Keycloak, no FastAPI. A token is turned into a `Caller` by
 `repositories/keycloak.py`; what a caller may do is decided in `services/`.
-See docs/adr/0031.
+See docs/adr/0032.
 """
 
 from __future__ import annotations

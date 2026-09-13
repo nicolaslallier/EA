@@ -34,12 +34,12 @@ services:
       UVICORN_ROOT_PATH: /api
       # Coupé, pas seulement filtré. Derrière un proxy, le pair TCP de /mcp est
       # NGINX, jamais la boucle locale : la garde de docs/adr/0023 ne servirait
-      # personne. /mcp exige désormais un jeton (docs/adr/0031), mais le servir
+      # personne. /mcp exige désormais un jeton (docs/adr/0032), mais le servir
       # derrière NGINX reste une décision à part, avec son ADR. `make run-be`
       # sert toujours /mcp.
       EA_MCP_ENABLED: "false"
 
-      # Chaque requête porte un jeton du realm Keycloak `ea` (docs/adr/0031).
+      # Chaque requête porte un jeton du realm Keycloak `ea` (docs/adr/0032).
       # Dans infra-net, keycloak.famillelallier.net est un alias de `nginx`,
       # qui présente le certificat de l'Infra : sans son CA, l'API ne lit pas
       # les clés du realm et refuse de démarrer.
