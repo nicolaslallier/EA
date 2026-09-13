@@ -39,6 +39,6 @@ class Settings(BaseSettings):
     s3_bucket: str = "ea-catalogue"
     s3_ca_cert: str | None = None
 
-    #: A source is truncated to this many characters before it reaches the
-    #: LLM — the budget of a prompt, not of the document.
+    #: A source longer than this many characters is refused, never truncated,
+    #: before it reaches the LLM — the budget of a prompt, not of the document.
     max_source_chars: int = 60000
