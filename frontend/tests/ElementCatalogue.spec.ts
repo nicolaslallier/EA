@@ -48,9 +48,7 @@ describe('ElementCatalogue', () => {
   it('reports an unreachable backend', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     const router = createAppRouter(createMemoryHistory())
     await router.push('/elements')

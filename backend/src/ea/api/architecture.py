@@ -15,24 +15,29 @@ from fastapi import APIRouter, Query, Response, status
 
 from ea.api.dependencies import Architecture
 from ea.api.schemas import (
+    Depth,
     ElementCreate,
     ElementPage,
     ElementRead,
     ElementUpdate,
     ErrorResponse,
     GraphRead,
+    Limit,
+    Offset,
     RelationshipCreate,
     RelationshipRead,
+    Search,
 )
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.ports import ElementFilter
-from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 
 router = APIRouter(tags=["architecture"])
 
-Depth = Annotated[int, Query(ge=1, le=MAX_TRAVERSAL_DEPTH)]
-Limit = Annotated[int, Query(ge=1, le=200)]
-Offset = Annotated[int, Query(ge=0)]
+# The bounds are `api/schemas.py`'s, shared with the MCP tools; `Query()` only
+# says where FastAPI reads the value from.
+DepthQuery = Annotated[Depth, Query()]
+LimitQuery = Annotated[Limit, Query()]
+OffsetQuery = Annotated[Offset, Query()]
 
 NOT_FOUND: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: {"model": ErrorResponse}
@@ -65,9 +70,9 @@ async def list_elements(
     service: Architecture,
     element_type: Annotated[list[ElementType] | None, Query()] = None,
     layer: Annotated[list[Layer] | None, Query()] = None,
-    search: Annotated[str | None, Query(max_length=200)] = None,
-    limit: Limit = 50,
-    offset: Offset = 0,
+    search: Annotated[Search | None, Query()] = None,
+    limit: LimitQuery = 50,
+    offset: OffsetQuery = 0,
 ) -> ElementPage:
     """Browse the catalogue, narrowed by type, by layer or by a name fragment."""
     criteria = ElementFilter(
@@ -151,8 +156,8 @@ async def list_relationships(
     service: Architecture,
     element_id: Annotated[UUID | None, Query()] = None,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
-    limit: Limit = 50,
-    offset: Offset = 0,
+    limit: LimitQuery = 50,
+    offset: OffsetQuery = 0,
 ) -> list[RelationshipRead]:
     """List links, optionally only those touching one element."""
     relationships = await service.list_relationships(
@@ -206,7 +211,7 @@ async def read_element_relations(
 async def read_neighbourhood(
     element_id: UUID,
     service: Architecture,
-    depth: Depth = 1,
+    depth: DepthQuery = 1,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
 ) -> GraphRead:
     """The sub-graph around an element, following links in either direction."""
@@ -220,7 +225,7 @@ async def read_neighbourhood(
 async def read_impact(
     element_id: UUID,
     service: Architecture,
-    depth: Depth = 5,
+    depth: DepthQuery = 5,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
 ) -> GraphRead:
     """What depends on this element, transitively.

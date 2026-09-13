@@ -22,9 +22,10 @@ from ea.domain.errors import (
     AddressAlreadyAssignedError,
     DomainError,
     DuplicateElementError,
+    DuplicateNetworkError,
     ElementNotFoundError,
 )
-from ea.domain.ipam import ADDRESS_PROPERTY, read_vrf
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
 
@@ -522,19 +523,26 @@ class Neo4jArchitectureRepository:
 def _rejected(element: Element, error: ConstraintError) -> DomainError:
     """Which uniqueness constraint refused this write, said in the caller's terms.
 
-    Two constraints can refuse an element: its name inside its type, and its IP
-    address inside its routing scope (`db/schema.py`). Telling them apart
-    matters — an agent handed "already named" after losing an allocation race
-    would rename the host and try again, forever — and the only thing that can
-    tell them apart is the server's message, which names the properties it
-    found already taken. So the property name is looked for there, and the
-    older failure is what an unrecognised message means.
+    Three constraints can refuse an element: its name inside its type, its IP
+    address inside its routing scope, and the prefix it declares inside its
+    routing scope (`db/schema.py`). Telling them apart matters — an agent
+    handed "already named" after losing an allocation race would rename the
+    host and try again, forever — and the only thing that can tell them apart
+    is the server's message, which names the properties it found already taken.
+    So the property name is looked for there, and the older failure is what an
+    unrecognised message means.
     """
+    message = str(error)
     address_property = f"{PROPERTY_PREFIX}{ADDRESS_PROPERTY}"
-    if address_property in str(error) and (address := element.properties.get(ADDRESS_PROPERTY)):
+    if address_property in message and (address := element.properties.get(ADDRESS_PROPERTY)):
         scope = read_vrf(element.properties)
         msg = f"{address} is already assigned to another element in VRF {scope!r}"
         return AddressAlreadyAssignedError(msg)
+    prefix_property = f"{PROPERTY_PREFIX}{PREFIX_PROPERTY}"
+    if prefix_property in message and (cidr := element.properties.get(PREFIX_PROPERTY)):
+        scope = read_vrf(element.properties)
+        msg = f"{cidr} is already declared in VRF {scope!r}"
+        return DuplicateNetworkError(msg)
     msg = f"an element of type {element.element_type.value} is already named {element.name!r}"
     return DuplicateElementError(msg)
 

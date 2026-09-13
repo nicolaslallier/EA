@@ -8,7 +8,7 @@ export default defineConfig({
     // Every interface, like the API (docs/adr/0016) and for the same reason:
     // the SPA is opened from other machines on the LAN. What this does *not*
     // decide is who the backend answers — that is EA_CORS_ORIGINS, which must
-    // gain this machine's origin before those calls succeed. See docs/adr/0019.
+    // gain this machine's origin before those calls succeed. See docs/adr/0022.
     //
     // `server.allowedHosts` is deliberately left at its default: Vite already
     // answers only a loopback name or a literal IP, and refuses an arbitrary

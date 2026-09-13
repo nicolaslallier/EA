@@ -1,7 +1,7 @@
 // What the SPA says about itself, and how loudly.
 //
 // The browser is the only place this half of the stack leaves a trace. Both
-// servers bind every interface (docs/adr/0016, 0019), so the page is as often
+// servers bind every interface (docs/adr/0016, 0022), so the page is as often
 // opened from another machine as from the one running `make run` — and "look
 // at the terminal" is then no answer at all when a screen stays empty. See
 // docs/adr/0021.

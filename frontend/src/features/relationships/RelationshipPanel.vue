@@ -5,13 +5,22 @@
 // Every rule stays server-side. The form does not know what ArchiMate permits;
 // it asks `/metamodel/relationships` for the pair being built and offers only
 // the answer, so the user never picks a relationship the API would refuse.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { messageOf } from '../../lib/api'
+import { debounce } from '../../lib/debounce'
 import type { ElementRead } from '../elements/useElementCatalogue'
 import { ACCESS_LABELS, RELATIONSHIP_LABELS, verbOf } from './labels'
 import type { AccessType, RelationshipType } from './useElementRelationships'
 import { useElementRelationships } from './useElementRelationships'
+
+/**
+ * How long the search box waits for typing to pause before asking the server.
+ *
+ * Long enough that "ser" typed at a normal pace is one request and not three,
+ * short enough that the list still seems to follow the keyboard.
+ */
+const SEARCH_PAUSE_MS = 250
 
 const props = defineProps<{ element: ElementRead }>()
 const emit = defineEmits<{ close: [] }>()
@@ -52,38 +61,37 @@ const nothingPermitted = computed(
 
 const canSubmit = computed(() => Boolean(pair.value) && relationshipType.value !== '' && !busy.value)
 
+/** What the form's banner says: a refused write first, else why it cannot offer a choice. */
+const formFailure = computed(() => failure.value || relations.lookupError.value)
+
+const search = debounce((term: string) => relations.searchCandidates(term), SEARCH_PAUSE_MS)
+
 onMounted(async () => {
   await relations.open(props.element)
-  await loadCandidates()
+  await relations.searchCandidates('')
 })
 
-async function loadCandidates(term = ''): Promise<void> {
-  try {
-    await relations.searchCandidates(term)
-  } catch (caught) {
-    failure.value = messageOf(caught)
-  }
-}
+// A search still waiting for its pause would otherwise fire into a panel that
+// is no longer on screen.
+onBeforeUnmount(search.cancel)
 
 // A changed pair invalidates the choice that was legal for the previous one, so
 // the type is cleared rather than carried over and refused on submit.
 watch([otherId, direction], async () => {
   relationshipType.value = ''
-  relations.permitted.value = []
+  // Cleared through the composable, which also drops an answer about the
+  // previous pair still on its way — assigning `[]` here would not.
+  relations.clearPermitted()
   const asked = pair.value
   if (!asked) {
     return
   }
   failure.value = ''
-  try {
-    await relations.loadPermitted(asked.source.element_type, asked.target.element_type)
-  } catch (caught) {
-    failure.value = messageOf(caught)
-  }
+  await relations.loadPermitted(asked.source.element_type, asked.target.element_type)
 })
 
-async function onSearch(event: Event): Promise<void> {
-  await loadCandidates((event.target as HTMLInputElement).value)
+function onSearch(event: Event): void {
+  search.call((event.target as HTMLInputElement).value)
 }
 
 async function onSubmit(): Promise<void> {
@@ -184,7 +192,7 @@ async function confirmDelete(): Promise<void> {
     </p>
 
     <form class="form" aria-label="Associer un élément" @submit.prevent="onSubmit">
-      <p v-if="failure" class="banner banner--error" role="alert">{{ failure }}</p>
+      <p v-if="formFailure" class="banner banner--error" role="alert">{{ formFailure }}</p>
 
       <div class="field">
         <label for="relation-direction">Sens</label>

@@ -7,26 +7,26 @@
 import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 import type { ElementType, RelationshipType } from './useMetamodel'
 
 export type RelationshipRule = components['schemas']['RelationshipRuleRead']
-
-type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 export function useMetamodelRules() {
   /** The type the rows start from; '' while nothing has been asked. */
   const source = ref<ElementType | ''>('')
   const rules = ref<RelationshipRule[]>([])
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // Walking the matrix is a click per source type; only the last row counts.
+  const row = useLatestRequest()
+  const { status, error } = row
 
   const byTarget = computed(
     () => new Map(rules.value.map((rule) => [rule.target, rule.relationships])),
   )
 
   /** What `source` may open toward one target — empty when nothing may. */
-  function allowed(target: ElementType | string): RelationshipType[] {
+  function allowed(target: string): RelationshipType[] {
     return byTarget.value.get(target as ElementType) ?? []
   }
 
@@ -39,26 +39,24 @@ export function useMetamodelRules() {
 
   async function load(sourceType: ElementType): Promise<void> {
     source.value = sourceType
-    status.value = 'loading'
-    error.value = ''
-    try {
-      const row = unwrap(
-        await api.GET('/metamodel/matrix', { params: { query: { source: sourceType } } }),
-      )
-      rules.value = row.rules
-      status.value = 'ready'
-    } catch (caught) {
-      rules.value = []
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+    await row.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/metamodel/matrix', { params: { query: { source: sourceType } }, signal }),
+        ),
+      (answer) => {
+        rules.value = answer.rules
+      },
+      () => {
+        rules.value = []
+      },
+    )
   }
 
   function clear(): void {
+    row.cancel()
     source.value = ''
     rules.value = []
-    status.value = 'idle'
-    error.value = ''
   }
 
   return { source, rules, status, error, allowed, reach, load, clear }

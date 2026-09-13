@@ -42,9 +42,10 @@ ces tests — il ne faut pas compter sur eux dans le green CI local.
 
 - Les assertions portent sur le **comportement** via les entrées publiques, pas
   sur des attributs privés.
-- Les fixtures **construisent des objets par leurs usines**
-  (`polyfactory` / `factory_boy`) — ajouter un champ ne casse pas une centaine de
-  tests.
+- Les objets de test se construisent par **de petites fonctions écrites à la
+  main**, avec des valeurs par défaut et des surcharges (`an_element`,
+  `a_document`) — ajouter un champ ne casse pas une centaine de tests. Aucune
+  bibliothèque de fabriques n'est installée.
 - **Pas de `time.sleep`** : on injecte une horloge.
 - Plancher de couverture : **90 %** sur `backend/src`. Une ligne couverte qui ne
   *prouve* rien est une échec, quel que soit le chiffre.

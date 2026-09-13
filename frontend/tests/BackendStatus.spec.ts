@@ -13,7 +13,7 @@ function stubFetch(impl: typeof fetch) {
 
 describe('BackendStatus', () => {
   it('shows the backend status once the call resolves', async () => {
-    stubFetch(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    stubFetch(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })))
 
     render(BackendStatus)
 
@@ -22,9 +22,7 @@ describe('BackendStatus', () => {
   })
 
   it('reports an unreachable backend instead of staying blank', async () => {
-    stubFetch(async () => {
-      throw new TypeError('Failed to fetch')
-    })
+    stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
 
     render(BackendStatus)
 
@@ -32,7 +30,7 @@ describe('BackendStatus', () => {
   })
 
   it('reports a non-2xx response as an error', async () => {
-    stubFetch(async () => new Response('nope', { status: 503 }))
+    stubFetch(() => Promise.resolve(new Response('nope', { status: 503 })))
 
     render(BackendStatus)
 

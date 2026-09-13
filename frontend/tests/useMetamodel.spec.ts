@@ -65,9 +65,7 @@ describe('useMetamodel', () => {
   it('leaves the palette empty rather than throwing when the backend is down', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
 
     const metamodel = useMetamodel()

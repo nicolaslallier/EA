@@ -45,19 +45,19 @@ describe('GraphDiagram', () => {
   })
 
   it('offers every neighbour as the next centre', async () => {
-    const { emitted } = draw()
+    const rendered = draw()
 
     await fireEvent.click(screen.getByRole('button', { name: `Centrer sur ${NEIGHBOUR.name}` }))
 
-    expect(emitted().focus).toEqual([[NEIGHBOUR]])
+    expect(rendered.emitted().focus).toEqual([[NEIGHBOUR]])
   })
 
   it('recentres from the keyboard, not only from a click', async () => {
-    const { emitted } = draw()
+    const rendered = draw()
 
     await fireEvent.keyDown(screen.getByRole('button', { name: /Centrer sur/ }), { key: 'Enter' })
 
-    expect(emitted().focus).toEqual([[NEIGHBOUR]])
+    expect(rendered.emitted().focus).toEqual([[NEIGHBOUR]])
   })
 
   it('counts what it drew, for whoever cannot see the drawing', () => {

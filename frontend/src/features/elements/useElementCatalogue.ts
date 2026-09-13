@@ -7,7 +7,8 @@
 import { computed, reactive, ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { ApiError, api, messageOf, unwrap } from '../../lib/api'
+import { ApiError, api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 
 export type ElementRead = components['schemas']['ElementRead']
 export type ElementCreate = components['schemas']['ElementCreate']
@@ -23,14 +24,14 @@ export type Filters = {
   layer: Layer | ''
 }
 
-type Status = 'idle' | 'loading' | 'ready' | 'error'
-
 export function useElementCatalogue() {
   const items = ref<ElementRead[]>([])
   const total = ref(0)
   const page = ref(0)
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // A filter is a select: turned twice, it sends two queries, and the table
+  // must show what the filters say now rather than whichever query was slower.
+  const listing = useLatestRequest()
+  const { status, error } = listing
   const filters = reactive<Filters>({ search: '', elementType: '', layer: '' })
 
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
@@ -38,31 +39,24 @@ export function useElementCatalogue() {
   const hasPreviousPage = computed(() => page.value > 0)
 
   async function load(): Promise<void> {
-    status.value = 'loading'
-    error.value = ''
-    try {
-      const result = unwrap(
-        await api.GET('/elements', {
-          params: {
-            // An empty filter is left out rather than sent blank: `search=`
-            // would be a filter matching nothing, not the absence of one.
-            query: {
-              limit: PAGE_SIZE,
-              offset: page.value * PAGE_SIZE,
-              ...(filters.search ? { search: filters.search } : {}),
-              ...(filters.elementType ? { element_type: [filters.elementType] } : {}),
-              ...(filters.layer ? { layer: [filters.layer] } : {}),
-            },
-          },
-        }),
-      )
-      items.value = result.items
-      total.value = result.total
-      status.value = 'ready'
-    } catch (caught) {
-      error.value = messageOf(caught)
-      status.value = 'error'
+    // The query is built before the request starts, so a filter changed while
+    // it is in flight belongs to the next load and not, half-applied, to this.
+    const query = {
+      limit: PAGE_SIZE,
+      offset: page.value * PAGE_SIZE,
+      // An empty filter is left out rather than sent blank: `search=` would be
+      // a filter matching nothing, not the absence of one.
+      ...(filters.search ? { search: filters.search } : {}),
+      ...(filters.elementType ? { element_type: [filters.elementType] } : {}),
+      ...(filters.layer ? { layer: [filters.layer] } : {}),
     }
+    await listing.run(
+      async (signal) => unwrap(await api.GET('/elements', { params: { query }, signal })),
+      (result) => {
+        items.value = result.items
+        total.value = result.total
+      },
+    )
   }
 
   /** Re-run the query from the first page — what a changed filter means. */

@@ -1,0 +1,42 @@
+# Les mises à jour de dépendances arrivent en pull request — voir docs/adr/0026.
+#
+# Une PR par écosystème et par semaine pour les mineures et les correctifs,
+# groupées : une file de trente PR que personne ne relit n'est pas une
+# politique de mise à jour. Les majeures restent une PR chacune, parce qu'elles
+# demandent qu'on lise un changelog.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      javascript:
+        update-types: [minor, patch]
+
+  # Les images épinglées par digest : docker-compose.yml à la racine, et les
+  # deux stacks du cluster. Sans ceci, un digest épinglé est un correctif de
+  # sécurité qu'on ne reçoit plus.
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /deploy
+    schedule:
+      interval: weekly

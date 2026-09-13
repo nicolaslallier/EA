@@ -1,0 +1,152 @@
+# Intégration continue — la barrière qualité de docs/adr/0026.
+#
+# Les jobs appellent les cibles du Makefile plutôt que de recopier leurs
+# commandes : `make check` sur un poste et ce fichier vérifient la même chose,
+# et une commande qui change dans le Makefile change ici du même coup. Seuls
+# les tests d'intégration font exception, parce qu'ici leurs bases sont des
+# conteneurs de service GitHub et non ceux de docker-compose.yml.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `uv sync` réécrit un lockfile périmé ; en CI c'est une erreur, pas une
+  # chose à corriger en silence. `make install-be` hérite de ce réglage.
+  UV_LOCKED: "1"
+  NODE_VERSION: "22"
+  FORCE_COLOR: "1"
+
+jobs:
+  backend:
+    name: Backend — lint, types, contrat, tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv ne publie pas de tag majeur flottant : version complète.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      # Node sert au contrat : `openapi-check` régénère le client TypeScript.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: make install
+      - run: make lint-check
+      - run: make typecheck-be
+      - run: make openapi-check
+      # Unitaires et API, avec `--cov=ea` : le plancher de 90 % est dans
+      # pyproject.toml ([tool.coverage.report] fail_under).
+      - run: make test
+
+  frontend:
+    name: Frontend — types, lint, tests, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: make install-fe
+      - run: make typecheck-fe
+      - run: make lint-fe
+      - run: make test-fe
+      - run: npm run build
+        working-directory: frontend
+
+  audit:
+    name: Audit — bandit, pip-audit, npm audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: make install
+      - run: make audit
+
+  integration:
+    name: Intégration — Neo4j et PostgreSQL jetables
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # Les mêmes images que le cluster (deploy/*.stack.yml) : un test qui passe
+    # ici doit passer là-bas, contraintes, Cypher et pgvector compris. Les mots
+    # de passe sont jetables, comme la machine : ce ne sont pas des secrets.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: ea
+          POSTGRES_PASSWORD: ci-disposable-password
+          POSTGRES_DB: ea
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ea -d ea"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/ci-disposable-password
+          NEO4J_server_memory_pagecache_size: 256M
+          NEO4J_server_memory_heap_max__size: 512M
+          NEO4J_server_memory_heap_initial__size: 512M
+        # 7688, le port du Neo4j de test en local (docker-compose.yml) : la
+        # même URI dans les deux mondes.
+        ports:
+          - 7688:7687
+        # cypher-shell lit NEO4J_USERNAME et NEO4J_PASSWORD dans son
+        # environnement, posés pour cette commande seulement.
+        options: >-
+          --health-cmd "NEO4J_USERNAME=neo4j NEO4J_PASSWORD=ci-disposable-password cypher-shell 'RETURN 1'"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 20s
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: make install-be
+      - name: pytest tests/integration
+        working-directory: backend
+        env:
+          EA_ALLOW_DESTRUCTIVE_TESTS: "1"
+          EA_DEBUG: "true"
+          EA_NEO4J_URI: bolt://127.0.0.1:7688
+          EA_NEO4J_PASSWORD: ci-disposable-password
+          EA_POSTGRES_ENABLED: "true"
+          EA_POSTGRES_HOST: 127.0.0.1
+          EA_POSTGRES_PORT: "5432"
+          EA_POSTGRES_PASSWORD: ci-disposable-password
+          # Aucun service d'embeddings ici, et la suite n'en dépend pas : le
+          # démarrage de l'application irait sinon interroger LM Studio.
+          EA_EMBEDDINGS_ENABLED: "false"
+        run: uv run pytest tests/integration -q

@@ -173,6 +173,41 @@ describe('RelationshipPanel', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'DELETE')).toBe(true))
   })
 
+  it('searches once the typing pauses, for what was typed last', async () => {
+    const { calls } = renderPanel([NO_RELATION, CANDIDATES])
+    await screen.findByRole('option', { name: PROCESS.name })
+    const searches = () => calls.filter((call) => call.url.pathname === '/elements')
+    expect(searches()).toHaveLength(1)
+
+    // Only the timers the debounce uses are faked: Testing Library's own
+    // polling keeps running on real ones.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const box = screen.getByLabelText(/rechercher un élément/i)
+      for (const typed of ['s', 'se', 'ser']) {
+        await fireEvent.update(box, typed)
+        vi.advanceTimersByTime(100)
+      }
+      expect(searches()).toHaveLength(1)
+
+      vi.advanceTimersByTime(250)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await waitFor(() => expect(searches()).toHaveLength(2))
+    expect(searches()[1].url.searchParams.get('search')).toBe('ser')
+  })
+
+  it('says why no candidate can be offered when the search fails', async () => {
+    renderPanel([
+      NO_RELATION,
+      { path: '/elements', status: 500, body: { error: 'internal', detail: 'Le graphe est tombé.' } },
+    ])
+
+    expect(await screen.findByText(/le graphe est tombé/i)).toBeInTheDocument()
+  })
+
   it('keeps what the API refused on screen instead of a blank panel', async () => {
     renderPanel([
       NO_RELATION,

@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.routing import Route
 
 from ea.api.architecture import router as architecture_router
 from ea.api.dependencies import (
@@ -30,6 +31,7 @@ from ea.db.postgres import create_engine, create_session_factory
 from ea.domain.ports import DocumentRepository, IpamRepository
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
+from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
@@ -162,6 +164,11 @@ def _lifespan(
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
                 logger.info("MCP tools served at %s", MCP_PATH)
+                if settings.mcp_allow_remote_clients:
+                    # Said at every boot, because it is the one setting that
+                    # hands the graph's write path to the whole network — see
+                    # docs/adr/0023.
+                    logger.warning("MCP tools are served to remote clients, without authentication")
             logger.info(
                 "%s is up and answering on %s:%s", settings.app_name, settings.host, settings.port
             )
@@ -213,8 +220,15 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     The transport security is stated rather than inferred. Given a `host`, the
     SDK enables DNS-rebinding protection *only* when that host is loopback — so
     handing it `settings.host` silently switched the protection off the day the
-    API started binding every interface, on a path that writes to the graph
-    without authentication. The allowlist is its own setting instead.
+    API started binding every interface. The allowlist is its own setting
+    instead.
+
+    That allowlist protects against a browser, not against a caller: it checks
+    a header any script writes. Who is served is decided in front of it, from
+    the TCP peer — loopback only, unless `mcp_allow_remote_clients` says
+    otherwise (docs/adr/0023). The guard wraps the route itself rather than
+    matching the path in a middleware, so it cannot drift from the path the
+    transport is actually served on.
     """
     server = build_mcp_server(
         lambda: architecture_service_of(app),
@@ -229,6 +243,12 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     if transport.user_middleware:  # pragma: no cover - only auth adds any today
         msg = "the MCP transport now ships middleware that splicing its routes would drop"
         raise RuntimeError(msg)
+    if not settings.mcp_allow_remote_clients:
+        for route in transport.routes:
+            if not isinstance(route, Route):  # pragma: no cover - the SDK ships one Route
+                msg = f"cannot restrict an MCP route of type {type(route).__name__}"
+                raise RuntimeError(msg)
+            route.app = LoopbackClientsOnly(route.app)
     app.router.routes.extend(transport.routes)
     app.state.mcp_sessions = server.session_manager
 
@@ -260,9 +280,15 @@ def create_app(
     """
     settings = settings or get_settings()
 
+    # `settings.debug` is deliberately not handed to FastAPI. There it means
+    # "answer an unhandled exception with the traceback page", and this API
+    # binds every interface (docs/adr/0016) while `.env.example` ships
+    # `EA_DEBUG=true`: every file path and local variable on the stack would go
+    # to whoever on the LAN made the request fail. `debug` keeps its own
+    # meanings — the relaxed password rule, readable logs — and a failure goes
+    # to the log, never to the response (`api/errors.py`).
     app = FastAPI(
         title=settings.app_name,
-        debug=settings.debug,
         lifespan=_lifespan(
             settings,
             open_graph=architecture_service is None,

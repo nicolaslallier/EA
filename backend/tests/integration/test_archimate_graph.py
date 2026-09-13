@@ -74,8 +74,16 @@ class TestElementPersistence:
         assert dict((await graph_service.get_element(element.id)).properties) == {"owner": "ops"}
 
     async def test_deleting_an_element_takes_its_relationships_with_it(
-        self, graph_service: ArchitectureService
+        self,
+        graph_service: ArchitectureService,
+        graph_repository: Neo4jArchitectureRepository,
     ) -> None:
+        """Asked of the repository, which answers `None` for a missing link.
+
+        The service would raise for it instead, which proves the link is gone
+        just as well but says nothing about *how* — the repository's `None` is
+        the Cypher's own answer.
+        """
         api = await graph_service.create_element(
             element_type=E.APPLICATION_SERVICE, name="Invoice API"
         )
@@ -88,7 +96,7 @@ class TestElementPersistence:
 
         await graph_service.delete_element(api.id)
 
-        assert await graph_service._repository.get_relationship(link.id) is None
+        assert await graph_repository.get_relationship(link.id) is None
 
     async def test_the_catalogue_filters_by_layer(self, graph_service: ArchitectureService) -> None:
         await graph_service.create_element(element_type=E.APPLICATION_COMPONENT, name="Billing")

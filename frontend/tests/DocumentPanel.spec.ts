@@ -23,7 +23,7 @@ function show(routes: Route[]) {
  * for real, and the only way to drive the control from a test.
  */
 async function pick(file: File): Promise<void> {
-  const input = screen.getByLabelText(/ajouter un fichier/i) as HTMLInputElement
+  const input = screen.getByLabelText<HTMLInputElement>(/ajouter un fichier/i)
   Object.defineProperty(input, 'files', { value: [file], configurable: true })
   await fireEvent.change(input)
 }
@@ -132,12 +132,12 @@ describe('DocumentPanel', () => {
 
   it('closes on demand', async () => {
     const calls = stubApi([{ path: LIST, body: [] }])
-    const { emitted } = render(DocumentPanel, { props: { element: ELEMENT } })
+    const rendered = render(DocumentPanel, { props: { element: ELEMENT } })
     await screen.findByText(/aucun document attaché/i)
 
     await fireEvent.click(screen.getAllByRole('button', { name: /^fermer$/i })[0])
 
-    expect(emitted().close).toBeTruthy()
+    expect(rendered.emitted().close).toBeTruthy()
     expect(calls).toHaveLength(1)
   })
 })

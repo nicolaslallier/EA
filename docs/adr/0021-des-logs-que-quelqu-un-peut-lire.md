@@ -34,7 +34,7 @@ Ce qui manquait, concrètement, quand quelque chose se passe mal :
   sans trace est la seule écriture de ce catalogue dont personne ne peut rendre
   compte après coup.
 - **Côté navigateur**, rien. Le SPA est ouvert depuis une autre machine aussi
-  souvent que depuis celle qui fait tourner `make run` (`docs/adr/0019`), et
+  souvent que depuis celle qui fait tourner `make run` (`docs/adr/0022`), et
   « regarde le terminal » n'est alors pas une réponse.
 
 ## Décision
@@ -130,7 +130,7 @@ une ligne du navigateur à une ligne du serveur.
 
 - ADR liés : [0014](0014-serveur-mcp-pour-les-agents.md),
   [0016](0016-ecoute-sur-toutes-les-interfaces.md),
-  [0019](0019-serveur-vite-sur-toutes-les-interfaces.md)
+  [0022](0022-serveur-vite-sur-toutes-les-interfaces.md)
 - Code concerné : `backend/src/ea/core/logging.py`,
   `backend/src/ea/api/middleware.py`, `backend/src/ea/mcp/errors.py`,
   `frontend/src/lib/logging.ts`

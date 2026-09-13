@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useElementRelationships } from '../src/features/relationships/useElementRelationships'
-import { aGraph, aPage, aRelationship, anElement, stubApi } from './support/api'
+import { aGraph, aPage, aRelationship, anElement, deferApi, stubApi } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -143,12 +143,81 @@ describe('useElementRelationships', () => {
     expect(relations.candidates.value.map((element) => element.id)).toEqual([PROCESS.id])
   })
 
+  it('offers the candidates of the last term typed, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const relations = useElementRelationships()
+
+    const first = relations.searchCandidates('s')
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = relations.searchCandidates('ser')
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(aPage([PROCESS]))
+    calls[0].answer(aPage([API, PROCESS, anElement({ id: 'x', name: 'Stock' })]))
+    await Promise.all([first, second])
+
+    expect(calls[1].url.searchParams.get('search')).toBe('ser')
+    expect(relations.candidates.value.map((element) => element.name)).toEqual(['Order to cash'])
+    expect(relations.lookupError.value).toBe('')
+  })
+
+  it('offers the relationships of the last pair asked about, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const relations = useElementRelationships()
+
+    const first = relations.loadPermitted('application_service', 'business_process')
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = relations.loadPermitted('business_process', 'application_service')
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer([])
+    calls[0].answer(['serving', 'association'])
+    await Promise.all([first, second])
+
+    expect(relations.permitted.value).toEqual([])
+  })
+
+  it('offers nothing late for a pair that was abandoned', async () => {
+    const calls = deferApi()
+    const relations = useElementRelationships()
+
+    const pending = relations.loadPermitted('application_service', 'business_process')
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    relations.clearPermitted()
+    calls[0].answer(['serving'])
+    await pending
+
+    expect(relations.permitted.value).toEqual([])
+  })
+
+  it('reports a failed candidate search itself rather than throwing at its caller', async () => {
+    stubApi([
+      { path: '/elements', status: 500, body: { error: 'internal', detail: 'Le graphe est tombé.' } },
+    ])
+    const relations = useElementRelationships()
+
+    await expect(relations.searchCandidates('ord')).resolves.toBeUndefined()
+
+    expect(relations.lookupError.value).toBe('Le graphe est tombé.')
+    expect(relations.candidates.value).toEqual([])
+  })
+
+  it('reports a failed metamodel question itself rather than throwing at its caller', async () => {
+    stubApi([
+      { path: '/metamodel/relationships', status: 422, body: { error: 'invalid', detail: 'Type inconnu.' } },
+    ])
+    const relations = useElementRelationships()
+
+    await expect(
+      relations.loadPermitted('application_service', 'business_process'),
+    ).resolves.toBeUndefined()
+
+    expect(relations.lookupError.value).toBe('Type inconnu.')
+    expect(relations.permitted.value).toEqual([])
+  })
+
   it('reports a failure instead of leaving the panel blank', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
 
     const relations = useElementRelationships()

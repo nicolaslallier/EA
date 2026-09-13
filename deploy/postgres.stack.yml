@@ -24,7 +24,12 @@ services:
     # 0003 fait `CREATE EXTENSION vector` et échoue sur une image qui ne l'a pas
     # (docs/adr/0019). `make pg-vector-check` pose la question avant la
     # migration ; une image `postgres:17-alpine` y répond non.
-    image: pgvector/pgvector:pg17
+    #
+    # Le tag dit quelle version, le digest dit quels octets : `pg17` est
+    # republié à chaque mineure, et un redéploiement ne doit pas changer de
+    # serveur sans que ce fichier ait changé. Digest de l'index multi-arch ;
+    # Dependabot propose les mises à jour (docs/adr/0026).
+    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
     container_name: ea-postgres
     # La base doit revenir toute seule après un redémarrage de l'hôte : c'est la
     # seule instance, il n'y a pas de `make pg-up` pour la relancer (celui-là

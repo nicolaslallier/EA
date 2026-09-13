@@ -20,9 +20,10 @@ How the graph is shaped, and why:
 That last point is what the IP address management is built on: an address is
 `p_ip_address` on the element that answers on it and a subnet is `p_cidr` on a
 `communication_network`, so the IPAM adds no node kind and no label — see
-`docs/adr/0020`. It does add the one statement below that turns a convention
-into a guarantee: an address may be claimed once per routing scope, and the
-database says so rather than a check that two agents can both pass.
+`docs/adr/0020`. It does add the two statements below that turn a convention
+into a guarantee — an address may be claimed, and a prefix declared, once per
+routing scope — and the database says so rather than a check that two agents
+can both pass.
 """
 
 from __future__ import annotations
@@ -82,6 +83,30 @@ SCHEMA_STATEMENTS: Final[tuple[LiteralString, ...]] = (
     # that declares a prefix"; without these each question is a full scan.
     "CREATE INDEX element_ip_address_index IF NOT EXISTS FOR (e:Element) ON (e.p_ip_address)",
     "CREATE INDEX element_cidr_index IF NOT EXISTS FOR (e:Element) ON (e.p_cidr)",
+    # A prefix may be declared once per routing scope, for the reason the
+    # address constraint above exists: `IpamService.declare_network` looks
+    # before it creates, and two callers can both look. The constraint compares
+    # stored strings, which is why every write path stores `p_cidr` in one
+    # spelling and writes `p_vrf` beside it (`validate_ipam_properties`).
+    #
+    # It is last on purpose. Unlike every statement before it, it can fail on a
+    # database that already has data: a graph written before it existed may
+    # hold one prefix twice in one scope. `CREATE CONSTRAINT` then refuses,
+    # `apply_schema` raises, and since that runs at boot the API does not start
+    # — last, so that everything above is at least in place. Find the
+    # duplicates, then rename or merge them before deploying:
+    #
+    #   MATCH (e:Element) WHERE e.p_cidr IS NOT NULL AND e.p_vrf IS NOT NULL
+    #   WITH e.p_vrf AS vrf, e.p_cidr AS cidr, collect(e.name) AS names
+    #   WHERE size(names) > 1
+    #   RETURN vrf, cidr, names
+    #
+    # Rows written before prefixes were stored canonically, or without a
+    # `p_vrf`, do not make it fail and are not covered by it either:
+    # `MATCH (e:Element) WHERE e.p_cidr IS NOT NULL RETURN e.name, e.p_vrf,
+    # e.p_cidr` lists them for a check by eye.
+    "CREATE CONSTRAINT element_cidr_unique_per_vrf IF NOT EXISTS "
+    "FOR (e:Element) REQUIRE (e.p_vrf, e.p_cidr) IS UNIQUE",
 )
 
 

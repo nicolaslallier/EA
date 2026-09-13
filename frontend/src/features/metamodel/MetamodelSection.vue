@@ -77,7 +77,7 @@ function ask(changes: Record<string, string | undefined>, step = false): void {
   void (step ? router.push({ query }) : router.replace({ query }))
 }
 
-function choose(type: ElementType | string): void {
+function choose(type: string): void {
   ask({ source: type }, true)
 }
 </script>

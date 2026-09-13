@@ -10,6 +10,7 @@ import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
 import { ApiError, api, messageOf, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 
 export type SubnetRead = components['schemas']['SubnetRead']
 export type SubnetDetailRead = components['schemas']['SubnetDetailRead']
@@ -20,14 +21,25 @@ export type SubnetCreate = components['schemas']['SubnetCreate']
 /** The scope an address is unique in. One flat network is still a scope. */
 export const DEFAULT_VRF = 'default'
 
-type Status = 'idle' | 'loading' | 'ready' | 'error'
-
 export function useIpam() {
   const subnets = ref<SubnetRead[]>([])
   const detail = ref<SubnetDetailRead | null>(null)
   const located = ref<AddressLocationRead | null>(null)
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // Three questions, each answered on its own schedule, so three guards: the
+  // scope turned, the subnet opened and the address typed must not cancel one
+  // another — only a newer version of themselves.
+  const listing = useLatestRequest()
+  const opening = useLatestRequest()
+  const lookup = useLatestRequest()
+  const status = listing.status
+  /**
+   * What the banner says: the first of the three questions whose latest answer
+   * was a failure. Each clears its own part when it is asked again, so a lookup
+   * that failed once never keeps the banner up over the one that succeeded.
+   */
+  const error = computed(
+    () => listing.error.value || opening.error.value || lookup.error.value,
+  )
   /** The last write's refusal, kept apart so a failed form never blanks the table. */
   const refusal = ref('')
 
@@ -35,36 +47,39 @@ export function useIpam() {
   const scopes = computed(() => [...new Set(subnets.value.map((subnet) => subnet.vrf))].sort())
 
   async function loadSubnets(vrf = ''): Promise<void> {
-    status.value = 'loading'
-    error.value = ''
-    try {
-      subnets.value = unwrap(
-        await api.GET('/ipam/subnets', { params: { query: vrf ? { vrf } : {} } }),
-      )
-      status.value = 'ready'
-    } catch (caught) {
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+    await listing.run(
+      async (signal) =>
+        unwrap(await api.GET('/ipam/subnets', { params: { query: vrf ? { vrf } : {} }, signal })),
+      (answer) => {
+        subnets.value = answer
+      },
+    )
   }
 
   /** Open one subnet, or close the one open — `''` is "none chosen". */
   async function openSubnet(elementId: string): Promise<void> {
     refusal.value = ''
     if (!elementId) {
+      // Closing is a question too: a subnet still loading must not reopen.
+      opening.cancel()
       detail.value = null
       return
     }
-    try {
-      detail.value = unwrap(
-        await api.GET('/ipam/subnets/{subnet_id}', {
-          params: { path: { subnet_id: elementId } },
-        }),
-      )
-    } catch (caught) {
-      detail.value = null
-      error.value = messageOf(caught)
-    }
+    await opening.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/ipam/subnets/{subnet_id}', {
+            params: { path: { subnet_id: elementId } },
+            signal,
+          }),
+        ),
+      (answer) => {
+        detail.value = answer
+      },
+      () => {
+        detail.value = null
+      },
+    )
   }
 
   /**
@@ -77,21 +92,33 @@ export function useIpam() {
   async function locate(address: string, vrf = DEFAULT_VRF): Promise<void> {
     refusal.value = ''
     if (!address) {
+      lookup.cancel()
       located.value = null
       return
     }
-    try {
-      located.value = unwrap(
-        await api.GET('/ipam/addresses/{address}', {
-          params: { path: { address }, query: { vrf } },
-        }),
-      )
-    } catch (caught) {
-      located.value = null
-      if (!(caught instanceof ApiError && caught.status === 404)) {
-        error.value = messageOf(caught)
-      }
-    }
+    await lookup.run(
+      async (signal) => {
+        try {
+          return unwrap(
+            await api.GET('/ipam/addresses/{address}', {
+              params: { path: { address }, query: { vrf } },
+              signal,
+            }),
+          )
+        } catch (caught) {
+          if (caught instanceof ApiError && caught.status === 404) {
+            return null
+          }
+          throw caught
+        }
+      },
+      (answer) => {
+        located.value = answer
+      },
+      () => {
+        located.value = null
+      },
+    )
   }
 
   /** Run a write, keeping its refusal readable instead of throwing it away. */

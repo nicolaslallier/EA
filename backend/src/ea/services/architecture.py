@@ -67,7 +67,7 @@ class ArchitectureService:
         documentation: str = "",
         properties: Mapping[str, str] | None = None,
     ) -> Element:
-        validate_ipam_properties(element_type, properties)
+        properties = validate_ipam_properties(element_type, properties)
         element = Element.create(
             element_type=element_type,
             name=name,
@@ -119,7 +119,7 @@ class ArchitectureService:
         an edit.
         """
         current = await self.get_element(element_id)
-        validate_ipam_properties(current.element_type, properties)
+        properties = validate_ipam_properties(current.element_type, properties)
         now = self._now()
         updated = current
         if name is not None:
@@ -168,6 +168,14 @@ class ArchitectureService:
         inherited by another element, since ids are random. The other order
         would leave an element whose documentation had silently vanished.
 
+        That failure is not only a crash: the discard can raise while the
+        process lives on, and it is then caught rather than propagated. By that
+        point the node is gone, irreversibly, and gone is what the caller asked
+        for — an error would tell them the element still exists, and their
+        retry would answer 404. What they cannot see, the log must: the orphans
+        are written at ERROR with the element's id in `extra=`, which is the
+        key a clean-up query joins on.
+
         `attachments` is absent whenever the relational store is shut
         (`EA_POSTGRES_ENABLED`), which is also the only case in which there is
         nothing attached to discard.
@@ -176,7 +184,15 @@ class ArchitectureService:
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
         if self._attachments is not None:
-            await self._attachments.discard_for_element(element_id)
+            try:
+                await self._attachments.discard_for_element(element_id)
+            except Exception:
+                # Deliberately broad: whatever the relational store raised, the
+                # graph deletion has already happened and cannot be undone.
+                logger.exception(
+                    "element deleted, but its documents were not: they are orphaned rows",
+                    extra={"action": "attachments_orphaned", "element_id": str(element_id)},
+                )
         logger.info(
             "element deleted, with everything attached to it",
             extra={"action": "deleted", "element_id": str(element_id)},

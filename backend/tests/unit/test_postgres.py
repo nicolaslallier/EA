@@ -241,12 +241,16 @@ async def test_the_lifespan_opens_the_store_and_disposes_it_on_shutdown(
     The engine is a double because the wiring is what is under test — that the
     lifespan checks *before* publishing the factory, and disposes on the way
     out. The real pool is exercised in `tests/integration/test_postgres.py`.
+
+    Embeddings are stated off: with the store open the lifespan has documents
+    to index, and would otherwise probe the real embedding service — a unit
+    test that quietly needed the cluster.
     """
     engine = WorkingEngine()
     monkeypatch.setattr("ea.main.create_engine", lambda _settings: engine)
 
     app = create_app(
-        Settings(debug=True, postgres_enabled=True, mcp_enabled=False),
+        Settings(debug=True, postgres_enabled=True, embeddings_enabled=False, mcp_enabled=False),
         architecture_service=service,
     )
     async with app.router.lifespan_context(app):

@@ -27,7 +27,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "bandit[toml]>=1.8",
     "mypy>=1.11",
+    "pip-audit>=2.9",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
@@ -46,8 +48,8 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "strict"
 markers = [
-    "integration: needs the cluster Neo4j — check it with `make db-ping`",
-    "postgres: needs the local PostgreSQL — start it with `make pg-up`",
+    "integration: needs the throwaway local Neo4j and PostgreSQL — `make test-integration` starts both",
+    "postgres: needs the throwaway local PostgreSQL — start it with `make pg-up`",
 ]
 addopts = "--strict-markers"
 
@@ -72,3 +74,19 @@ packages = ["ea"]
 
 [tool.coverage.run]
 source = ["src/ea"]
+
+[tool.coverage.report]
+# The floor of CLAUDE.md, enforced rather than recited: any run that passes
+# `--cov` fails under it — `make test`, `make check` and the CI all do. A
+# partial run (`pytest tests/unit/test_x.py --cov=ea`) fails too, which is the
+# price of the number meaning the whole suite. See docs/adr/0026.
+fail_under = 90
+show_missing = true
+skip_covered = true
+
+[tool.bandit]
+# `make audit` runs `bandit -c pyproject.toml -r src`. Tests are excluded: they
+# assert on literal passwords and bind addresses on purpose, and a scanner
+# that flags every fixture is one people learn to ignore. A finding in `src`
+# is silenced with `# nosec BXXX` and a comment saying why — never here.
+exclude_dirs = ["tests", ".venv"]

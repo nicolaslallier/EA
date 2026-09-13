@@ -9,6 +9,7 @@ they find. Everything else about the addressing is unit-tested.
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
@@ -140,3 +141,34 @@ class TestTheQueriesBehindTheInventory:
 
         assert str(assigned.address) == "2001:db8::1"
         assert (await graph_ipam.locate("2001:db8::1")).assignment.element.name == "srv-app-01"
+
+
+class TestConcurrentAllocation:
+    async def test_two_simultaneous_allocations_in_one_subnet_hand_out_two_addresses(
+        self, graph_ipam: IpamService, graph_service: ArchitectureService
+    ) -> None:
+        """The race the uniqueness constraint exists for, run for real.
+
+        Both calls read the subnet before either writes, so both compute the
+        same "next free" address; the constraint refuses the second write, and
+        `allocate_next` must take that refusal as "look again" rather than
+        report it. Two agents asking for an address at once is the normal case
+        over MCP, and an allocation that fails half the time is one they learn
+        to route around by writing addresses themselves — see docs/adr/0020.
+        """
+        subnet = await graph_ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+        first = await graph_service.create_element(element_type=E.NODE, name="srv-app-01")
+        second = await graph_service.create_element(element_type=E.NODE, name="srv-app-02")
+
+        one, other = await asyncio.gather(
+            graph_ipam.allocate_next(subnet.element.id, first.id),
+            graph_ipam.allocate_next(subnet.element.id, second.id),
+        )
+
+        assert one.address != other.address
+        detail = await graph_ipam.read_network(subnet.element.id)
+        assert detail.subnet.used == 2
+        assert {str(entry.address) for entry in detail.addresses} == {
+            str(one.address),
+            str(other.address),
+        }
