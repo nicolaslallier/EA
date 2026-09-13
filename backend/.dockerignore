@@ -1,0 +1,8 @@
+# .env porte les mots de passe du poste : jamais dans une image.
+.env
+.venv
+tests
+**/__pycache__
+.*_cache
+.coverage*
+htmlcov
