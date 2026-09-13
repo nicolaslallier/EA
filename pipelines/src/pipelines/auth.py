@@ -51,11 +51,10 @@ class ClientCredentials(httpx.Auth):
 
     def _current(self) -> str:
         if self._token is None or self._clock() >= self._expires_at - self._leeway:
-            self._fetch()
-        assert self._token is not None
+            return self._fetch()
         return self._token
 
-    def _fetch(self) -> None:
+    def _fetch(self) -> str:
         try:
             response = self._http.post(
                 self._token_url,
@@ -76,3 +75,4 @@ class ClientCredentials(httpx.Auth):
             )
             raise AuthFailed(msg) from None
         self._token, self._expires_at = token, self._clock() + lifetime
+        return token
