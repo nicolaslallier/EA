@@ -38,6 +38,7 @@ Do not introduce a second HTTP client, ORM, state manager, or test runner alongs
 Makefile                 # single entry point for local dev and the quality gate — see docs/adr/0001, 0026
 docker-compose.yml       # throwaway Neo4j + PostgreSQL for the integration tests, on 127.0.0.1 only
 deploy/ea.stack.yml      # the API and the SPA as a Portainer stack behind the Infra NGINX — see docs/adr/0027
+scripts/portainer-stack.sh  # `make app-up/down/delete`: that stack driven through Portainer's API
 {backend,frontend}/Dockerfile  # the two images that stack builds
 .pre-commit-config.yaml  # opt-in hooks (`make hooks`): ruff, mypy, vue-tsc, ESLint, gitleaks
 .github/                 # workflows/ci.yml and dependabot.yml — see docs/adr/0026
@@ -105,7 +106,11 @@ make db-test-up                 # start the throwaway Neo4j (Bolt on 127.0.0.1:7
 make pg-up                      # start the throwaway PostgreSQL (127.0.0.1)
 make test-integration           # both throwaway containers, started if needed — never the cluster
 make test-postgres              # only the `postgres`-marked tests, against the throwaway PostgreSQL
-make pg-down                    # stop the throwaway containers
+make pg-down                    # stop the throwaway containers (alias: compose-down)
+make compose-up                 # both throwaway containers, waiting until healthy
+make compose-ps                 # compose-logs s=neo4j, compose-reset drops the PostgreSQL volume
+make app-up                     # create or redeploy the deployed stack through Portainer's API
+make app-ps                     # app-logs s=api, app-down, app-delete CONFIRM=yes
 ```
 
 Backend (run from `backend/`):
@@ -144,7 +149,7 @@ Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.
 
 Two things follow for the SPA. A browser on another machine sends *that machine's* origin, so `EA_CORS_ORIGINS` needs an entry per host that serves the SPA — an origin is an exact string, the validator refuses `*`, and `make run-fe` prints the one to paste. And the API's URL cannot be a constant: `src/lib/api.ts` defaults to **this page's own host** on port 8000 (`defaultApiBaseUrl`, a pure function so it is tested without a DOM), because `http://localhost:8000` read by a browser elsewhere names the viewer's machine. `VITE_API_BASE_URL` still wins, for a backend that is genuinely somewhere else.
 
-**Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts; the graph stays wherever `EA_NEO4J_URI` says. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. `make app-stack` prints the deployment steps.
+**Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts; the graph stays wherever `EA_NEO4J_URI` says. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. **Writes to that stack go through Portainer's API, reads through `docker compose -p ea`**: `make app-up` creates or git-redeploys it (`scripts/portainer-stack.sh`, curl in a throwaway container on `infra-net`, so Portainer stays the stack's owner), `app-down` stops it, `app-delete CONFIRM=yes` removes it, `app-ps` / `app-logs` read the containers on this Docker. Portainer clones GitHub `main`, never this working copy — an unpushed commit is not deployed. The API key (root on the Docker daemon) lives in the git-ignored `.portainer.env` or `PORTAINER_ENV_FILE`, the stack variables in the git-ignored `deploy/ea.env` (from `deploy/ea.env.example`), and `app-up` refuses to leave while a `:?` variable of the stack file is empty there. `make app-stack` prints the steps.
 
 `make check` runs the non-fixing lint on both sides, types on both sides, the generated-client check and the DB-free suites with the coverage floor — the local half of what CI runs (`.github/workflows/ci.yml` adds `make audit` and the integration suite against throwaway containers).
 

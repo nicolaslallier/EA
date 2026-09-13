@@ -10,7 +10,8 @@
 #   → Environment variables : celles marquées `:?` ci-dessous
 #   → Deploy the stack
 #
-# `make app-stack` réaffiche ces instructions. Voir docs/adr/0027.
+# `make app-up` fait la même chose par l'API de Portainer, avec les variables de
+# deploy/ea.env ; `make app-stack` réaffiche ces instructions. Voir docs/adr/0027.
 #
 # Rien ici ne publie de port : la règle d'entrée unique de l'Infra. Les deux
 # conteneurs rejoignent `infra-net` sous un alias, et le vhost

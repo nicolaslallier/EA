@@ -203,6 +203,8 @@ NC    := \033[0m
         db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
+        app-up app-down app-delete app-ps app-logs \
+        compose-up compose-down compose-ps compose-logs compose-reset \
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
@@ -416,12 +418,36 @@ pg-vector-check: | require-postgres-password ## Vérifie que pgvector est dispon
 app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l'Infra
 	@printf "$(GREEN)Stack EA : deploy/ea.stack.yml → https://ea.infra.famillelallier.net$(NC)\n"
 	@printf "  0. Infra : EA_DB_PASSWORD dans .env, puis make provision-app app=ea\n"
-	@printf "  1. Ouvre https://portainer.infra.famillelallier.net → Stacks → Add stack\n"
-	@printf "  2. Repository → https://github.com/nicolaslallier/EA, refs/heads/main,\n"
-	@printf "     Compose path : deploy/ea.stack.yml\n"
-	@printf "  3. Environment variables → EA_NEO4J_URI, EA_NEO4J_PASSWORD,\n"
-	@printf "     EA_POSTGRES_PASSWORD (= EA_DB_PASSWORD de l'Infra)\n"
-	@printf "  4. Deploy the stack, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
+	@printf "  1. .portainer.env : PORTAINER_API_KEY=… (Portainer → My account → Access tokens)\n"
+	@printf "     ou celui de l'Infra : PORTAINER_ENV_FILE=~/OpenCode/Infra/.portainer.env\n"
+	@printf "  2. cp deploy/ea.env.example deploy/ea.env, puis le remplir\n"
+	@printf "  3. make app-up — main doit être poussé : Portainer clone GitHub, pas ce poste\n"
+	@printf "  4. make app-ps, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
+
+# La stack « ea » vit dans le Portainer de l'Infra, sur le Docker de ce Mac.
+# L'écrire passe par l'API de Portainer (scripts/portainer-stack.sh), pour qu'il
+# en reste le propriétaire ; la lire passe par docker compose, qui retrouve le
+# projet `ea` par ses étiquettes, sans fichier. Voir docs/adr/0027.
+PORTAINER_STACK := scripts/portainer-stack.sh
+APP_COMPOSE     := docker compose -p ea
+
+app-up: ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
+	$(PORTAINER_STACK) up
+
+app-down: ## Arrête la stack EA dans Portainer (elle reste déclarée)
+	$(PORTAINER_STACK) down
+
+app-delete: ## Retire la stack EA de Portainer (CONFIRM=yes obligatoire)
+	@test "$$CONFIRM" = "yes" || { \
+		printf "$(RED)Retire la stack ea de Portainer : https://ea.infra.famillelallier.net ne répond plus.$(NC)\n"; \
+		printf "Relance avec : make app-delete CONFIRM=yes\n"; exit 1; }
+	$(PORTAINER_STACK) delete
+
+app-ps: ## État des conteneurs de la stack EA
+	$(APP_COMPOSE) ps
+
+app-logs: ## Suit les logs de la stack EA (s=api ou s=web pour un seul service)
+	$(APP_COMPOSE) logs -f $(if $(s),"$(s)",)
 
 pg-stack: ## Rappelle comment déployer la base relationnelle sur le cluster Docker
 	@printf "$(GREEN)Stack PostgreSQL : deploy/postgres.stack.yml$(NC)\n"
@@ -493,6 +519,21 @@ db-test-up: ## Démarre le Neo4j jetable local (pour les tests d'intégration)
 
 pg-down: ## Arrête les bases jetables locales, PostgreSQL et Neo4j (seul PostgreSQL garde un volume)
 	docker compose down
+
+compose-up: ## Démarre les deux bases jetables locales et attend qu'elles soient saines
+	$(COMPOSE_TEST) up -d --wait
+
+compose-down: pg-down ## Arrête les bases jetables locales (alias de pg-down)
+
+compose-ps: ## État des bases jetables locales
+	docker compose ps
+
+compose-logs: ## Suit les logs des bases jetables (s=postgres ou s=neo4j pour une seule)
+	docker compose logs -f $(if $(s),"$(s)",)
+
+# Jetable veut dire jetable : le volume ne tient que ce que les tests écrivent.
+compose-reset: ## Arrête les bases jetables et supprime le volume de PostgreSQL
+	docker compose down -v
 
 ## --- Embeddings -----------------------------------------------------------
 #
