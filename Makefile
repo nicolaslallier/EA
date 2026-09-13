@@ -639,9 +639,10 @@ hooks: ## Installe les crochets pre-commit dans .git (ruff, mypy, vue-tsc, eslin
 ## --- Pipelines --------------------------------------------------------------
 #
 # Second projet Python, son propre venv, sa propre barrière — voir docs/adr/0027.
-# Aucune cible ici ne démarre Prefect, LiteLLM ou MinIO : ce sont les tâches
-# suivantes qui posent le stack. `pipelines-check` est ce que `check` et la CI
-# appellent ; aucune des deux ne modifie de fichier.
+# Les cibles de vérification ne démarrent ni Prefect, ni LiteLLM, ni MinIO :
+# seules pipelines-up/-down/-run touchent la stack Docker, plus bas.
+# `pipelines-check` est ce que `check` et la CI appellent ; aucune des deux ne
+# modifie de fichier.
 
 $(PL_VENV_STAMP): $(PIPELINES)/pyproject.toml $(PIPELINES)/uv.lock
 	@printf "$(RED)Environnement Python absent ou périmé ($(PL_VENV)).$(NC)\n"
@@ -727,8 +728,7 @@ pipelines-db-howto: ## Rappelle comment préparer les rôles PostgreSQL et le bu
 		"  CREATE ROLE litellm LOGIN;" \
 		"  \password litellm" \
 		"  CREATE DATABASE litellm OWNER litellm;" \
-		"  REVOKE CONNECT ON DATABASE litellm FROM PUBLIC;" \
-		"  \c litellm"
+		"  REVOKE CONNECT ON DATABASE litellm FROM PUBLIC;"
 	@printf "\n$(GREEN)2. MinIO — https://minio-console.famillelallier.net :$(NC)\n"
 	@printf '%s\n' \
 		"  Bucket ea-catalogue" \
