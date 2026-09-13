@@ -23,6 +23,15 @@ updates:
       python:
         update-types: [minor, patch]
 
+  # Second projet Python, son propre lockfile — voir docs/adr/0028.
+  - package-ecosystem: uv
+    directory: /pipelines
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -31,21 +40,25 @@ updates:
       javascript:
         update-types: [minor, patch]
 
-  # Les images épinglées par digest : docker-compose.yml à la racine, et les
-  # deux stacks du cluster. Sans ceci, un digest épinglé est un correctif de
-  # sécurité qu'on ne reçoit plus.
+  # Les images épinglées par digest : docker-compose.yml à la racine, les deux
+  # stacks du cluster, et celui de pipelines/ (docs/adr/0028).
+  # Sans ceci, un digest épinglé est un correctif de sécurité qu'on ne reçoit
+  # plus.
   - package-ecosystem: docker-compose
     directories:
       - /
       - /deploy
+      - /pipelines
     schedule:
       interval: weekly
 
-  # Les images de base des deux Dockerfile construits par deploy/ea.stack.yml,
-  # épinglées par digest pour la même raison.
+  # Les images de base des Dockerfile de backend/ et frontend/ (construits par
+  # deploy/ea.stack.yml) et de pipelines/, épinglées par tag et digest pour la
+  # même raison.
   - package-ecosystem: docker
     directories:
       - /backend
       - /frontend
+      - /pipelines
     schedule:
       interval: weekly
