@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from ea.db.base import Base
 from ea.db.models.chunk import DocumentChunk
+from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
 
-__all__ = ["Base", "DocumentChunk", "ElementDocument"]
+__all__ = ["Base", "DiagramNodeRecord", "DiagramRecord", "DocumentChunk", "ElementDocument"]

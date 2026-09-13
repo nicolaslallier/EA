@@ -3,11 +3,17 @@
 // It holds no screen of its own — every section lives behind a route.
 import AppNav from './components/AppNav.vue'
 import BackendStatus from './components/BackendStatus.vue'
+import { useRoute } from 'vue-router'
+
 import { HOME } from './router/sections'
+
+// A section declares itself wide in `sections.ts`; the shell is the one that
+// owns the width, so no screen reaches out to restyle it.
+const route = useRoute()
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'app--wide': route.meta.wide }">
     <header class="app__header">
       <RouterLink class="app__brand" :to="HOME">EA — Enterprise Architecture</RouterLink>
       <BackendStatus />
@@ -57,6 +63,11 @@ import { HOME } from './router/sections'
   flex: 1;
   min-width: 0;
   max-width: 48rem;
+}
+
+.app--wide,
+.app--wide .app__main {
+  max-width: none;
 }
 
 @media (max-width: 48rem) {

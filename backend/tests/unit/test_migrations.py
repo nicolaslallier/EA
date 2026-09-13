@@ -163,3 +163,27 @@ def test_the_vector_index_is_built_for_the_distance_the_repository_orders_by() -
 
     assert index.dialect_options["postgresql"]["using"] == "hnsw"
     assert index.dialect_options["postgresql"]["ops"] == {"embedding": "vector_cosine_ops"}
+
+
+def test_a_diagram_node_names_its_element_without_a_foreign_key() -> None:
+    """The element is a Neo4j node; the cascade is `discard_for_element` — docs/adr/0031."""
+    element_id = Base.metadata.tables["diagram_nodes"].c.element_id
+
+    assert element_id.foreign_keys == set()
+    assert element_id.index is True
+
+
+def test_a_diagram_node_follows_its_diagram_by_the_foreign_key() -> None:
+    table = Base.metadata.tables["diagram_nodes"]
+    key = next(iter(table.c.diagram_id.foreign_keys))
+
+    assert key.column.table.name == "diagrams"
+    assert key.ondelete == "CASCADE"
+    assert table.primary_key.name == "pk_diagram_nodes"
+    assert [column.name for column in table.primary_key.columns] == ["diagram_id", "element_id"]
+
+
+def test_a_diagram_name_is_unique_by_a_named_constraint() -> None:
+    table = Base.metadata.tables["diagrams"]
+
+    assert "uq_diagrams_name" in {constraint.name for constraint in table.constraints}

@@ -6,15 +6,20 @@ import App from '../src/App.vue'
 import { createAppRouter } from '../src/router'
 
 async function renderApp(path: string) {
-  // The shell mounts BackendStatus, which probes /health on mount.
+  // The shell mounts BackendStatus, which probes /health on mount; a routed
+  // screen may list something on mount too, and gets an empty list.
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))),
+    vi.fn((input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input)
+      const body = url.endsWith('/health') ? { status: 'ok' } : []
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+    }),
   )
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  render(App, { global: { plugins: [router] } })
+  return render(App, { global: { plugins: [router] } })
 }
 
 describe('the application shell', () => {
@@ -23,5 +28,14 @@ describe('the application shell', () => {
 
     expect(screen.getByRole('navigation', { name: /sections/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /introuvable/i })).toBeInTheDocument()
+  })
+
+  it('gives a section that declares itself wide the whole page, and only that one', async () => {
+    const wide = await renderApp('/diagrammes')
+    expect(wide.container.querySelector('.app')).toHaveClass('app--wide')
+    wide.unmount()
+
+    const reading = await renderApp('/une-section-qui-nexiste-pas')
+    expect(reading.container.querySelector('.app')).not.toHaveClass('app--wide')
   })
 })

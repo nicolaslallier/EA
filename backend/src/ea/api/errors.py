@@ -19,8 +19,10 @@ from ea.domain.errors import (
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
     CyclicContainmentError,
+    DiagramNotFoundError,
     DocumentNotFoundError,
     DomainError,
+    DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicateElementError,
     DuplicateNetworkError,
@@ -30,6 +32,7 @@ from ea.domain.errors import (
     NotAddressableError,
     NotASubnetError,
     SearchUnavailableError,
+    UnknownLayoutElementError,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,10 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DuplicateElementError: (status.HTTP_409_CONFLICT, "duplicate"),
     DuplicateDocumentError: (status.HTTP_409_CONFLICT, "duplicate"),
     CyclicContainmentError: (status.HTTP_409_CONFLICT, "cyclic_containment"),
+    # --- Saved diagrams (docs/adr/0031) ---
+    DiagramNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateDiagramError: (status.HTTP_409_CONFLICT, "duplicate"),
+    UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
     # A deployment with `EA_EMBEDDINGS_ENABLED` off, which is a configuration
     # and not a request that was wrong — hence 503 and not 4xx.
     SearchUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "search_unavailable"),

@@ -16,10 +16,13 @@ from uuid import UUID
 import pytest
 
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
+    DiagramNotFoundError,
     DocumentNotFoundError,
+    DuplicateDiagramError,
     DuplicateDocumentError,
     ElementNotFoundError,
 )
@@ -32,7 +35,8 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
-from ea.services.architecture import ArchitectureService
+from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -288,6 +292,20 @@ class InMemoryRepository:
     ) -> GraphView:
         return GraphView(elements=(self.elements[element_id],), relationships=())
 
+    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+        """The elements that exist among these ids, and the links between them."""
+        scope = set(element_ids)
+        return GraphView(
+            elements=tuple(
+                self.elements[element_id] for element_id in scope & self.elements.keys()
+            ),
+            relationships=tuple(
+                link
+                for link in self.relationships.values()
+                if link.source_id in scope and link.target_id in scope
+            ),
+        )
+
     # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
 
     async def networks(self) -> tuple[Element, ...]:
@@ -430,6 +448,71 @@ class InMemoryDocuments:
         return tuple(hits[:limit])
 
 
+class InMemoryDiagrams:
+    """A dictionary pretending to be the `diagrams` and `diagram_nodes` tables.
+
+    It reproduces the unique name, for the same reason the document double
+    reproduces its own constraint: a service test must see the refusal the
+    real table would give.
+    """
+
+    def __init__(self) -> None:
+        self.diagrams: dict[UUID, Diagram] = {}
+        self.nodes: dict[UUID, tuple[DiagramNode, ...]] = {}
+
+    def _counted(self, diagram: Diagram) -> Diagram:
+        return diagram.with_node_count(len(self.nodes.get(diagram.id, ())))
+
+    def _refuse_a_taken_name(self, diagram: Diagram) -> None:
+        if any(d.name == diagram.name and d.id != diagram.id for d in self.diagrams.values()):
+            msg = f"a diagram is already named {diagram.name!r}"
+            raise DuplicateDiagramError(msg)
+
+    async def list_all(self) -> tuple[Diagram, ...]:
+        return tuple(self._counted(d) for d in sorted(self.diagrams.values(), key=lambda d: d.name))
+
+    async def add(self, diagram: Diagram) -> Diagram:
+        self._refuse_a_taken_name(diagram)
+        self.diagrams[diagram.id] = diagram
+        return diagram
+
+    async def get(self, diagram_id: UUID) -> Diagram | None:
+        stored = self.diagrams.get(diagram_id)
+        return self._counted(stored) if stored is not None else None
+
+    async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]:
+        return self.nodes.get(diagram_id, ())
+
+    async def save(self, diagram: Diagram) -> Diagram:
+        if diagram.id not in self.diagrams:
+            raise DiagramNotFoundError(str(diagram.id))
+        self._refuse_a_taken_name(diagram)
+        self.diagrams[diagram.id] = diagram
+        return diagram
+
+    async def delete(self, diagram_id: UUID) -> bool:
+        self.nodes.pop(diagram_id, None)
+        return self.diagrams.pop(diagram_id, None) is not None
+
+    async def replace_layout(
+        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+    ) -> bool:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return False
+        self.nodes[diagram_id] = tuple(nodes)
+        self.diagrams[diagram_id] = stored.touched(now)
+        return True
+
+    async def discard_for_element(self, element_id: UUID) -> int:
+        discarded = 0
+        for diagram_id, nodes in self.nodes.items():
+            kept = tuple(node for node in nodes if node.element_id != element_id)
+            discarded += len(nodes) - len(kept)
+            self.nodes[diagram_id] = kept
+        return discarded
+
+
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     product = sum(a * b for a, b in zip(left, right, strict=True))
     norms = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
@@ -499,13 +582,28 @@ def documents() -> InMemoryDocuments:
 
 
 @pytest.fixture
-def service(repository: InMemoryRepository, documents: InMemoryDocuments) -> ArchitectureService:
+def diagrams() -> InMemoryDiagrams:
+    return InMemoryDiagrams()
+
+
+@pytest.fixture
+def service(
+    repository: InMemoryRepository, documents: InMemoryDocuments, diagrams: InMemoryDiagrams
+) -> ArchitectureService:
     """The service wired to the in-memory graph and to a clock that never moves.
 
     It is handed the attachments too, because deleting an element has to take
-    its documents with it and no foreign key says so — see docs/adr/0017.
+    its documents and its places on diagrams with it and no foreign key says
+    so — see docs/adr/0017 and 0031. Both, as `main.py` wires them.
     """
-    return ArchitectureService(repository, clock=lambda: FIXED_NOW, attachments=documents)
+    return ArchitectureService(
+        repository, clock=lambda: FIXED_NOW, attachments=AllAttachments(documents, diagrams)
+    )
+
+
+@pytest.fixture
+def diagram_service(diagrams: InMemoryDiagrams, service: ArchitectureService) -> DiagramService:
+    return DiagramService(diagrams, service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

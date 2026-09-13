@@ -13,7 +13,7 @@ export const routes: RouteRecordRaw[] = [
     path: section.path,
     name: section.name,
     component: section.view,
-    meta: { label: section.label },
+    meta: { label: section.label, wide: section.wide === true },
   })),
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFound },
 ]

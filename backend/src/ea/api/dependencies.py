@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ea.services.architecture import ArchitectureService
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.ipam import IpamService
 
@@ -57,6 +58,26 @@ def get_document_service(request: Request) -> DocumentService:
 
 
 Documents = Annotated[DocumentService, Depends(get_document_service)]
+
+
+def diagram_service_of(app: FastAPI) -> DiagramService:
+    """The diagram use cases the lifespan attached, or a clear failure.
+
+    Absent means the relational store is shut, and the diagrams live in it —
+    a wiring fault and a 500, never an empty list of diagrams (docs/adr/0031).
+    """
+    service: DiagramService | None = getattr(app.state, "diagram_service", None)
+    if service is None:
+        msg = "no diagram service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_diagram_service(request: Request) -> DiagramService:
+    return diagram_service_of(request.app)
+
+
+Diagrams = Annotated[DiagramService, Depends(get_diagram_service)]
 
 
 def ipam_service_of(app: FastAPI) -> IpamService:
