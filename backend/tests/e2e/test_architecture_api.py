@@ -22,7 +22,7 @@ from ea.services.architecture import ArchitectureService
 
 @pytest_asyncio.fixture
 async def client(service: ArchitectureService) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(Settings(debug=True), architecture_service=service)
+    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

@@ -46,6 +46,7 @@ def an_app(service: ArchitectureService, **overrides: Any) -> Any:
         "debug": True,
         "postgres_enabled": False,
         "embeddings_enabled": False,
+        "auth_enabled": False,
         **overrides,
     }
     return create_app(Settings(**settings), architecture_service=service)
@@ -60,7 +61,7 @@ def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocum
     given none, the lifespan builds the real embedding client and probes it.
     """
     return create_app(
-        Settings(debug=True, postgres_enabled=False),
+        Settings(debug=True, postgres_enabled=False, auth_enabled=False),
         architecture_service=service,
         documents=documents,  # type: ignore[arg-type]
         indexer=DocumentIndexer(FakeEmbedder()),
@@ -194,7 +195,10 @@ class TestTheDocumentTools:
         """The deliberate asymmetry: the tool list is the adapter's, not the
         deployment's, exactly as `/documents` stays routed and answers a 500.
         A shut store is a misconfiguration — see `docs/adr/0018`."""
-        app = create_app(Settings(debug=True, postgres_enabled=False), architecture_service=service)
+        app = create_app(
+            Settings(debug=True, postgres_enabled=False, auth_enabled=False),
+            architecture_service=service,
+        )
         async with agent_over(app) as session:
             names = {tool.name for tool in (await session.list_tools()).tools}
             result = await session.call_tool("list_documents", {"element_id": str(uuid4())})

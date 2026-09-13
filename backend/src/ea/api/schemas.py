@@ -419,6 +419,13 @@ class ErrorResponse(BaseModel):
     detail: str = Field(description="Human-readable message, safe to display.")
 
 
+class MeRead(BaseModel):
+    """The caller, as far as the SPA needs to know it."""
+
+    username: str
+    can_write: bool
+
+
 # --- IP address management (docs/adr/0020) --------------------------------
 # An address is an attribute of an element, so these read models name the
 # element rather than wrapping one: a client drawing an inventory wants the

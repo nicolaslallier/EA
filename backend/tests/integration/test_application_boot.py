@@ -24,7 +24,7 @@ async def test_the_application_boots_against_the_graph_and_serves_a_request(
     graph_driver: object,
 ) -> None:
     """`graph_driver` is only requested to skip when there is no database."""
-    app = create_app(Settings(debug=True))
+    app = create_app(Settings(debug=True, auth_enabled=False))
     transport = httpx.ASGITransport(app=app)
 
     async with (

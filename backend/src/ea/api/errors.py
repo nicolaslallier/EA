@@ -29,6 +29,8 @@ from ea.domain.errors import (
     NetworkExhaustedError,
     NotAddressableError,
     NotASubnetError,
+    NotAuthenticatedError,
+    NotAuthorisedError,
     SearchUnavailableError,
 )
 
@@ -64,6 +66,9 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "address_outside_any_network",
     ),
+    # --- Authentication (docs/adr/0031) ---
+    NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
+    NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
 }
 
 _FALLBACK: Final = (status.HTTP_400_BAD_REQUEST, "invalid_request")
@@ -71,7 +76,12 @@ _FALLBACK: Final = (status.HTTP_400_BAD_REQUEST, "invalid_request")
 
 async def _handle_domain_error(_: Request, error: Exception) -> JSONResponse:
     http_status, code = _STATUS.get(type(error), _FALLBACK)
-    return JSONResponse(status_code=http_status, content={"error": code, "detail": str(error)})
+    headers = (
+        {"WWW-Authenticate": "Bearer"} if http_status == status.HTTP_401_UNAUTHORIZED else None
+    )
+    return JSONResponse(
+        status_code=http_status, content={"error": code, "detail": str(error)}, headers=headers
+    )
 
 
 async def _handle_value_error(_: Request, error: Exception) -> JSONResponse:

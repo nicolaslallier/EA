@@ -27,7 +27,9 @@ async def client(
     service: ArchitectureService, repository: InMemoryRepository
 ) -> AsyncIterator[httpx.AsyncClient]:
     """The app over the in-memory graph, which answers both repository ports."""
-    app = create_app(Settings(debug=True), architecture_service=service, ipam=repository)
+    app = create_app(
+        Settings(debug=True, auth_enabled=False), architecture_service=service, ipam=repository
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

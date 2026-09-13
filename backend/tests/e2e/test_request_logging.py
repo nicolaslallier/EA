@@ -148,7 +148,7 @@ class TestTheRequestId:
 @pytest.mark.asyncio
 async def test_the_real_app_carries_the_middleware_and_exposes_the_header() -> None:
     """A browser can only read the id if CORS says it may."""
-    app = create_app(Settings(debug=True))
+    app = create_app(Settings(debug=True, auth_enabled=False))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/health", headers={"Origin": "http://localhost:5173"})

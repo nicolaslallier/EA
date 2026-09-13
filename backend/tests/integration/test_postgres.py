@@ -93,7 +93,10 @@ async def test_the_application_boots_with_the_relational_store_open(
     relational half of the lifespan, and requiring Neo4j here would make this
     skip on every machine that has PostgreSQL and no access to the cluster.
     """
-    app = create_app(Settings(debug=True, postgres_enabled=True), architecture_service=service)
+    app = create_app(
+        Settings(debug=True, postgres_enabled=True, auth_enabled=False),
+        architecture_service=service,
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with (

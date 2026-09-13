@@ -23,6 +23,7 @@ from ea.domain.errors import (
     DocumentNotFoundError,
     DuplicateDocumentError,
     ElementNotFoundError,
+    NotAuthenticatedError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -57,6 +58,19 @@ def a_reader(**overrides: object) -> Caller:
     return an_editor(
         **{"subject": "reader-1", "username": "reader", "roles": frozenset(), **overrides}
     )
+
+
+class StaticVerifier:
+    """Tokens known in advance — the `AccessTokenVerifier` of every API test."""
+
+    def __init__(self, tokens: dict[str, Caller]) -> None:
+        self.tokens = tokens
+
+    async def verify(self, token: str) -> Caller:
+        try:
+            return self.tokens[token]
+        except KeyError:
+            raise NotAuthenticatedError("the bearer token is not valid") from None
 
 
 @pytest.fixture(autouse=True)

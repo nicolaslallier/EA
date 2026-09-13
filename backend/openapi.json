@@ -644,6 +644,25 @@
         "title": "Layer",
         "type": "string"
       },
+      "MeRead": {
+        "description": "The caller, as far as the SPA needs to know it.",
+        "properties": {
+          "can_write": {
+            "title": "Can Write",
+            "type": "boolean"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "can_write"
+        ],
+        "title": "MeRead",
+        "type": "object"
+      },
       "MetamodelRead": {
         "description": "Everything a client needs to render and validate the ArchiMate palette.",
         "properties": {
@@ -1094,6 +1113,13 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "description": "An access token of the Keycloak realm `ea`.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -1142,6 +1168,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Discard Document",
         "tags": [
           "documents"
@@ -1194,6 +1225,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Document",
         "tags": [
           "documents"
@@ -1266,6 +1302,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Revise Document",
         "tags": [
           "documents"
@@ -1378,6 +1419,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Elements",
         "tags": [
           "architecture"
@@ -1428,6 +1474,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Create Element",
         "tags": [
           "architecture"
@@ -1475,6 +1526,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Delete Element",
         "tags": [
           "architecture"
@@ -1526,6 +1582,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Element",
         "tags": [
           "architecture"
@@ -1588,6 +1649,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Update Element",
         "tags": [
           "architecture"
@@ -1646,6 +1712,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Element Documents",
         "tags": [
           "documents"
@@ -1718,6 +1789,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Attach Document",
         "tags": [
           "documents"
@@ -1803,6 +1879,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Impact",
         "tags": [
           "architecture"
@@ -1888,6 +1969,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Neighbourhood",
         "tags": [
           "architecture"
@@ -1961,6 +2047,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Element Relations",
         "tags": [
           "architecture"
@@ -2075,6 +2166,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Addresses",
         "tags": [
           "ipam"
@@ -2135,6 +2231,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Assign Address",
         "tags": [
           "ipam"
@@ -2212,6 +2313,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Locate Address",
         "tags": [
           "ipam"
@@ -2259,6 +2365,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Release Address",
         "tags": [
           "ipam"
@@ -2316,6 +2427,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Subnets",
         "tags": [
           "ipam"
@@ -2376,6 +2492,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Declare Subnet",
         "tags": [
           "ipam"
@@ -2440,6 +2561,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Subnet",
         "tags": [
           "ipam"
@@ -2514,9 +2640,50 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Allocate Address",
         "tags": [
           "ipam"
+        ]
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "read_me_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Me",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -2536,6 +2703,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Metamodel",
         "tags": [
           "metamodel"
@@ -2580,6 +2752,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Relationship Matrix",
         "tags": [
           "metamodel"
@@ -2638,6 +2815,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Read Permitted Relationships",
         "tags": [
           "metamodel"
@@ -2735,6 +2917,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Relationships",
         "tags": [
           "architecture"
@@ -2795,6 +2982,11 @@
             "description": "Unprocessable Entity"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Create Relationship",
         "tags": [
           "architecture"
@@ -2841,6 +3033,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Delete Relationship",
         "tags": [
           "architecture"

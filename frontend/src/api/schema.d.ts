@@ -334,6 +334,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Me */
+        get: operations["read_me_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metamodel": {
         parameters: {
             query?: never;
@@ -779,6 +796,16 @@ export interface components {
          * @enum {string}
          */
         Layer: "motivation" | "strategy" | "business" | "application" | "technology" | "physical" | "implementation_migration" | "other";
+        /**
+         * MeRead
+         * @description The caller, as far as the SPA needs to know it.
+         */
+        MeRead: {
+            /** Can Write */
+            can_write: boolean;
+            /** Username */
+            username: string;
+        };
         /**
          * MetamodelRead
          * @description Everything a client needs to render and validate the ArchiMate palette.
@@ -1954,6 +1981,35 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_me_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

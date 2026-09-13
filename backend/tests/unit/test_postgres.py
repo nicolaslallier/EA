@@ -250,7 +250,13 @@ async def test_the_lifespan_opens_the_store_and_disposes_it_on_shutdown(
     monkeypatch.setattr("ea.main.create_engine", lambda _settings: engine)
 
     app = create_app(
-        Settings(debug=True, postgres_enabled=True, embeddings_enabled=False, mcp_enabled=False),
+        Settings(
+            debug=True,
+            postgres_enabled=True,
+            embeddings_enabled=False,
+            mcp_enabled=False,
+            auth_enabled=False,
+        ),
         architecture_service=service,
     )
     async with app.router.lifespan_context(app):
@@ -267,7 +273,7 @@ async def test_the_lifespan_leaves_the_store_shut_while_it_is_disabled(
 ) -> None:
     """The default: no table, no pool, and a clear failure if a route asks."""
     app = create_app(
-        Settings(debug=True, postgres_enabled=False, mcp_enabled=False),
+        Settings(debug=True, postgres_enabled=False, mcp_enabled=False, auth_enabled=False),
         architecture_service=service,
     )
 

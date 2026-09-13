@@ -12,6 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from ea.api.architecture import router as architecture_router
+from ea.api.auth import Authenticated
 from ea.api.dependencies import (
     architecture_service_of,
     document_service_of,
@@ -21,6 +22,7 @@ from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
+from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.core.config import Settings, get_settings
@@ -28,13 +30,14 @@ from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
-from ea.domain.ports import DocumentRepository, IpamRepository
+from ea.domain.ports import AccessTokenVerifier, DocumentRepository, IpamRepository
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
+from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
@@ -60,6 +63,15 @@ def build_embedder(settings: Settings) -> HttpEmbedder:
         batch_size=settings.embeddings_batch_size,
         passage_prefix=settings.embeddings_passage_prefix,
         query_prefix=settings.embeddings_query_prefix,
+    )
+
+
+def build_verifier(settings: Settings) -> JwtVerifier:
+    """Keycloak's key set for the realm `ea`, reached through the Infra CA when one is given."""
+    return JwtVerifier(
+        issuer=settings.auth_issuer,
+        audience=settings.auth_audience,
+        http=http_client_for(settings.auth_ca_cert, settings.auth_timeout_seconds),
     )
 
 
@@ -110,9 +122,21 @@ def _lifespan(
                     "postgres": settings.postgres_enabled,
                     "embeddings": settings.embeddings_enabled,
                     "mcp": settings.mcp_enabled,
+                    "auth": settings.auth_enabled,
                     "log_level": settings.log_level,
                 },
             )
+            if settings.auth_enabled and getattr(app.state, "token_verifier", None) is None:
+                verifier = build_verifier(settings)
+                stack.push_async_callback(verifier.aclose)
+                await verifier.probe()
+                app.state.token_verifier = verifier
+                logger.info("tokens verified against %s", settings.auth_issuer)
+            elif not settings.auth_enabled:
+                logger.warning(
+                    "authentication is off: every caller is the local developer, "
+                    "with the editor role"
+                )
             attachments = documents
             if settings.postgres_enabled:
                 engine = create_engine(settings)
@@ -260,6 +284,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -274,6 +299,11 @@ def create_app(
     `indexer` does the same for the embedding service: given one, the search
     answers without a model being loaded anywhere; given none, the lifespan
     builds and probes the real client when `embeddings_enabled` says so.
+
+    `verifier` does the same for authentication: given one — `StaticVerifier`
+    in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
+    without reaching Keycloak; given none, the lifespan builds and probes the
+    real `JwtVerifier` when `auth_enabled` says so.
 
     An injected pair is wired here rather than in the lifespan, because an API
     test drives the app through `ASGITransport` without ever starting it.
@@ -297,6 +327,8 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    if verifier is not None:
+        app.state.token_verifier = verifier
     if architecture_service is not None:
         app.state.architecture_service = architecture_service
         if documents is not None:
@@ -322,10 +354,11 @@ def create_app(
     app.add_middleware(RequestLogging)
     register_error_handlers(app)
     app.include_router(health_router)
-    app.include_router(metamodel_router)
-    app.include_router(architecture_router)
-    app.include_router(documents_router)
-    app.include_router(ipam_router)
+    app.include_router(metamodel_router, dependencies=[Authenticated])
+    app.include_router(architecture_router, dependencies=[Authenticated])
+    app.include_router(documents_router, dependencies=[Authenticated])
+    app.include_router(ipam_router, dependencies=[Authenticated])
+    app.include_router(me_router, dependencies=[Authenticated])
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
     return app

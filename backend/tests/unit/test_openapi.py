@@ -30,6 +30,17 @@ def test_every_element_endpoint_is_described() -> None:
     assert set(paths["/elements/{element_id}"]) == {"get", "patch", "delete"}
 
 
+def test_every_route_but_health_declares_the_bearer_scheme() -> None:
+    """Auth is a router-level dependency, so the schema must show it per route."""
+    document = openapi_document()
+
+    assert document["components"]["securitySchemes"]["HTTPBearer"]["type"] == "http"
+    elements_get = document["paths"]["/elements"]["get"]
+    assert elements_get["security"] == [{"HTTPBearer": []}]
+    health_get = document["paths"]["/health"]["get"]
+    assert "security" not in health_get
+
+
 def test_every_ipam_endpoint_is_described() -> None:
     """The addressing is part of the contract, so the client is generated for it."""
     paths = openapi_document()["paths"]

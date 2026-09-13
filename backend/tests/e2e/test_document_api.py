@@ -30,7 +30,7 @@ async def client(
 ) -> AsyncIterator[httpx.AsyncClient]:
     """The app with both stores doubled, driven without ever starting it."""
     app = create_app(
-        Settings(debug=True),
+        Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         documents=documents,  # type: ignore[arg-type]
     )
@@ -249,7 +249,7 @@ async def test_the_document_routes_say_so_when_the_relational_store_is_shut(
     A 500 rather than an empty list on purpose: an operator who turned the
     store off must not be told, quietly, that every element lost its files.
     """
-    app = create_app(Settings(debug=True), architecture_service=service)
+    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

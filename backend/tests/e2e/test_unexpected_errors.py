@@ -39,7 +39,7 @@ async def client(
         raise RuntimeError(INTERNALS)
 
     monkeypatch.setattr(repository, "get_element", broken)
-    app = create_app(Settings(debug=True), architecture_service=service)
+    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
     # The server re-raises after answering, so the exception reaches the ASGI
     # server's log; the transport must not re-raise it into the test instead of
     # handing back the response the client actually receives.
