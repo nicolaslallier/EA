@@ -5,7 +5,7 @@ statut: Accepté
 affects: Makefile, backend/src/ea/core/config.py, backend/.env.example, frontend/.env.example, deploy/neo4j.stack.yml, deploy/postgres.stack.yml, docker-compose.yml, .github/workflows/ci.yml, backend/tests/integration/throwaway.py, README.md, CLAUDE.md
 ---
 
-# 27. Le cluster change d'adresse, et PostgreSQL le quitte
+# 29. Le cluster change d'adresse, et PostgreSQL le quitte
 
 Date : 2026-09-13
 Statut : Accepté

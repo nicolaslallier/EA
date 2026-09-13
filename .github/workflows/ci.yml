@@ -117,7 +117,7 @@ jobs:
           POSTGRES_PASSWORD: ci-disposable-password
           POSTGRES_DB: ea
         # 5433, le port du PostgreSQL de test en local : les fixtures refusent
-        # 5432, celui de la base partagée (docs/adr/0027).
+        # 5432, celui de la base partagée (docs/adr/0029).
         ports:
           - 5433:5432
         options: >-

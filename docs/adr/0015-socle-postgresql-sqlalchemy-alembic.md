@@ -9,7 +9,7 @@ affects: backend/src/ea/db/, backend/src/ea/core/config.py, backend/src/ea/api/d
 
 Date : 2026-09-07
 Statut : Accepté
-Supersédé en partie par : [`0027`](0027-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) — l'emplacement de l'instance, désormais la stack `~/OpenCode/Infra` du Mac.
+Supersédé en partie par : [`0029`](0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) — l'emplacement de l'instance, désormais la stack `~/OpenCode/Infra` du Mac.
 
 Complète [`0004`](0004-neo4j-pour-le-graphe-d-architecture.md), qui a partagé
 les rôles entre les deux bases et a différé les dépendances relationnelles

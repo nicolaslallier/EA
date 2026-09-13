@@ -102,7 +102,7 @@ async def postgres_engine() -> AsyncIterator[AsyncEngine]:
     test behind it may drop tables, so it refuses any host that is not
     loopback, and the shared database's port, *before* connecting. Without
     that, the settings would come from `backend/.env`, which names the shared
-    database — on this Mac's loopback since docs/adr/0027 — and only a fake
+    database — on this Mac's loopback since docs/adr/0029 — and only a fake
     password stood between this suite and `alembic downgrade base` on it.
     There is no `EA_ALLOW_DESTRUCTIVE_TESTS` on top: a local container holds
     nothing anyone would miss, so the address is the whole question.

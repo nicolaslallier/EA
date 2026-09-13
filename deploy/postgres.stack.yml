@@ -1,10 +1,10 @@
 # PostgreSQL — PLUS DÉPLOYÉ NULLE PART. Ce n'est pas la base de l'application.
 #
-# Depuis docs/adr/0027, la base `ea` vit dans la stack ~/OpenCode/Infra du Mac
+# Depuis docs/adr/0029, la base `ea` vit dans la stack ~/OpenCode/Infra du Mac
 # (127.0.0.1:5432) ; `make pg-stack` dit comment la provisionner. Ce fichier
 # décrivait la stack Portainer du cluster ; il reste versionné tant que sa
 # suppression n'est pas décidée. Le redéployer ouvrirait une seconde base
-# « partagée », vide ou divergente. Voir docs/adr/0015, 0019 et 0027.
+# « partagée », vide ou divergente. Voir docs/adr/0015, 0019 et 0029.
 #
 # Rien ici ne porte de secret : POSTGRES_PASSWORD est déclaré avec `:?`, donc un
 # déploiement sans mot de passe échoue au lieu d'en inventer un.

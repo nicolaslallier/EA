@@ -10,7 +10,7 @@ everyone models against. Loopback cannot be another machine, so it is the only
 thing accepted — the throwaway containers of `docker-compose.yml` publish
 there and nowhere else. See docs/adr/0024.
 
-Since docs/adr/0027 the shared PostgreSQL answers on this Mac's loopback too,
+Since docs/adr/0029 the shared PostgreSQL answers on this Mac's loopback too,
 so for that store the address is no longer the whole question: its port is
 refused as well, and the throwaway container publishes another one.
 """
@@ -80,7 +80,7 @@ def refuse_a_shared_postgres(host: str, port: int) -> str | None:
         return (
             f"refusing to run `alembic downgrade base` on PostgreSQL at {host}:{port}: "
             "loopback, but the port of the shared database, which lives on this Mac "
-            "(docs/adr/0027). Start the throwaway one with `make pg-up` and set "
+            "(docs/adr/0029). Start the throwaway one with `make pg-up` and set "
             f"EA_POSTGRES_PORT={THROWAWAY_POSTGRES_PORT} — `make test-postgres` does both"
         )
     return None

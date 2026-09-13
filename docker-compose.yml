@@ -3,7 +3,7 @@
 # Aucune des deux bases du projet ne tourne ici : le graphe (docs/adr/0006) et
 # le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques et
 # partagées — le graphe sur le cluster Docker (192.168.2.10), PostgreSQL dans la
-# stack ~/OpenCode/Infra de ce Mac, sur 127.0.0.1:5432 (docs/adr/0027). Personne
+# stack ~/OpenCode/Infra de ce Mac, sur 127.0.0.1:5432 (docs/adr/0029). Personne
 # ne modélise contre ce fichier.
 #
 # Ces deux conteneurs existent pour une seule raison : les tests d'intégration
@@ -33,7 +33,7 @@ services:
     image: pgvector/pgvector:pg17
     container_name: ea-postgres
     # 5433, pas 5432 : la base partagée occupe 127.0.0.1:5432 sur ce Mac, et
-    # les fixtures refusent ce port (docs/adr/0027).
+    # les fixtures refusent ce port (docs/adr/0029).
     ports:
       - "127.0.0.1:${POSTGRES_TEST_PORT:-5433}:5432"
     environment:

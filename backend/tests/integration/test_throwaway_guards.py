@@ -78,7 +78,7 @@ class TestPostgres:
 
     @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
     def test_the_shared_instance_is_refused_although_it_is_loopback(self, host: str) -> None:
-        """Since docs/adr/0027 the shared database answers on this Mac's 5432.
+        """Since docs/adr/0029 the shared database answers on this Mac's 5432.
 
         Loopback no longer means "a container nobody uses", so the port the
         settings default to — the shared one — is refused on its own.

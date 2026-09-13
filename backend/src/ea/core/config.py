@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     log_embeddings: bool = False
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
-    # There is one instance, on the Docker cluster (docs/adr/0006, 0027), so its
+    # There is one instance, on the Docker cluster (docs/adr/0006, 0029), so its
     # address is the useful default: a developer who never writes a `.env`
     # reaches the shared graph rather than a `localhost` that answers nothing.
     # It is an address, not a credential — the password below has no default,
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
     #
     # Like the graph, there is one instance, so its address is the useful
-    # default — but not on the cluster: since docs/adr/0027 the `ea` database
+    # default — but not on the cluster: since docs/adr/0029 the `ea` database
     # lives in the `~/OpenCode/Infra` stack on the developer's Mac, behind its
     # NGINX on loopback. A process on another machine needs its own `.env`.
     # The password below has no default — that one is a real shared secret,
