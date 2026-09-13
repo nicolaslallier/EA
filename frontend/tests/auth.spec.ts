@@ -32,8 +32,20 @@ describe('the login client', () => {
 describe('where a login returns', () => {
   it.each([
     ['/elements?element=42', '/elements?element=42'],
+    ['/elements?element=7#x', '/elements?element=7#x'],
     ['https://evil.example/', '/'],
+    ['https://evil.example', '/'],
     ['//evil.example/', '/'],
+    ['//evil.example', '/'],
+    // The URL parser reads `\\` as `/` and drops tab and newline, so each of
+    // these resolves to https://evil.example/. `/%5Cevil.example` reaches the
+    // function already decoded by the router, as the first of them.
+    ['/\\evil.example', '/'],
+    ['/\t/evil.example', '/'],
+    ['/\n/evil.example', '/'],
+    ['/\u0000/x', '/'],
+    ['/\u007f/x', '/'],
+    ['javascript:alert(1)', '/'],
     [undefined, '/'],
     [42, '/'],
   ])('%s → %s', (value, expected) => {

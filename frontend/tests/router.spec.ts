@@ -84,6 +84,19 @@ describe('the login gate', () => {
     expect(screen.getByRole('link', { name: 'Réessayer' })).toHaveAttribute('href', '/elements?element=7')
   })
 
+  it('keeps the retry link in the app when returnTo names another site', async () => {
+    const app = createAppRouter(createMemoryHistory(), {
+      accessToken: () => Promise.resolve(null),
+      signIn: vi.fn(() => Promise.resolve()),
+    })
+    // What `?returnTo=/%5Cevil.example` becomes once the router has decoded it.
+    await app.push({ name: 'login-failed', query: { returnTo: '/\\evil.example' } })
+
+    render(LoginFailed, { global: { plugins: [app] } })
+
+    expect(screen.getByRole('link', { name: 'Réessayer' })).toHaveAttribute('href', '/')
+  })
+
   it('lets the login callback through without a token', async () => {
     const signIn = vi.fn(() => Promise.resolve())
     const app = createAppRouter(createMemoryHistory(), { accessToken: () => Promise.resolve(null), signIn })

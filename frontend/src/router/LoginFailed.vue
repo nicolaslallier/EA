@@ -4,10 +4,12 @@
 // the second is a blank page: the likeliest first failure of a deployment
 // (Keycloak unreachable, a page served over plain http) with no symptom at all.
 //
-// The reason is in the console, where the router logged it; *Réessayer* is a
-// full page load, so the gate runs again from scratch.
+// The reason is in the console, where the router logged it; *Réessayer*
+// navigates back to where the visitor was going, so the gate starts the login
+// again. A `RouterLink`, never a raw `href`: whatever `returnTo` says, the link
+// can only name a route of this app.
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { safeReturnPath } from '../lib/auth'
 
@@ -20,6 +22,6 @@ const retry = computed(() => safeReturnPath(route.query.returnTo))
 
 <template>
   <p role="alert">
-    {{ message }} <a :href="retry">Réessayer</a>
+    {{ message }} <RouterLink :to="retry">Réessayer</RouterLink>
   </p>
 </template>

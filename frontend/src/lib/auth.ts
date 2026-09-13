@@ -38,9 +38,28 @@ export async function accessToken(): Promise<string | null> {
   return user && !user.expired ? user.access_token : null
 }
 
-/** Only an in-app path: a `returnTo` naming another origin would be an open redirect. */
-export function safeReturnPath(value: unknown): string {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : '/'
+/**
+ * Only an in-app path: a `returnTo` naming another origin would be an open redirect.
+ *
+ * "Starts with one `/`" is not enough on its own: the URL parser reads `\` as
+ * `/` and drops tab and newline, so `/\evil.example` is `https://evil.example/`
+ * to a browser. So a backslash or a control character is refused outright, and
+ * what is left is resolved against this origin and kept only if it stays here.
+ */
+export function safeReturnPath(
+  value: unknown,
+  origin: string = globalThis.location?.origin ?? 'http://localhost',
+): string {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    [...value].some((char) => char === '\\' || char < ' ' || char === '\u007f')
+  ) {
+    return '/'
+  }
+  const url = new URL(value, origin)
+  return url.origin === new URL(origin).origin ? `${url.pathname}${url.search}${url.hash}` : '/'
 }
 
 // A page can fire several requests at once; each 401 would otherwise call
