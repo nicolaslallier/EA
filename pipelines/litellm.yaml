@@ -23,7 +23,11 @@ litellm_settings:
   # pipeline (un seul POST httpx) n'en ajoute pas une seconde.
   num_retries: 2
   request_timeout: 300
-  drop_params: true
+  # Jamais `true` : le pipeline n'envoie aucun paramètre d'échantillonnage, et
+  # un `response_format` retiré en silence pour un modèle que LiteLLM ne connaît
+  # pas rendrait du texte libre là où le pipeline exige un schéma strict. Mieux
+  # vaut une erreur franche du fournisseur.
+  drop_params: false
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

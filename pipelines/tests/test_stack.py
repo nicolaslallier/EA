@@ -20,6 +20,8 @@ from pathlib import Path
 
 import yaml
 
+from pipelines.settings import Settings
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINES = REPO_ROOT / "pipelines"
 COMPOSE = PIPELINES / "docker-compose.yml"
@@ -54,6 +56,12 @@ def _locked_prefect_version() -> str:
             assert isinstance(version, str)
             return version
     raise AssertionError("prefect is not in pipelines/uv.lock")
+
+
+def _environment(service: str) -> dict[str, object]:
+    environment = _services()[service].get("environment", {})
+    assert isinstance(environment, dict), f"{service}: environment must be a mapping"
+    return environment
 
 
 def _published_ports(service: dict[str, object]) -> list[str]:
@@ -139,9 +147,58 @@ def test_the_required_secrets_have_no_default() -> None:
         "PREFECT_AUTH_STRING",
         "LITELLM_DATABASE_URL",
         "LITELLM_MASTER_KEY",
+        "PIPELINES_LITELLM_API_KEY",
+        "PIPELINES_S3_ACCESS_KEY",
+        "PIPELINES_S3_SECRET_KEY",
+        "INFRA_CA_CERT",
     ):
         assert f"${{{variable}:?" in compose, variable
         assert f"${{{variable}:-" not in compose, variable
+
+
+# --- The worker gets what `Settings` reads, and no one else's secrets -------
+
+INFRA_CA_IN_CONTAINER = "/etc/ssl/certs/infra-ca.pem"
+
+
+def test_the_worker_reads_no_env_file() -> None:
+    """`env_file: .env` would hand it every secret of the stack, not only its own."""
+    assert "env_file" not in _services()["worker"]
+
+
+def test_the_worker_receives_no_secret_of_the_other_services() -> None:
+    environment = _environment("worker")
+    for variable in (
+        "ANTHROPIC_API_KEY",
+        "LITELLM_MASTER_KEY",
+        "LITELLM_DATABASE_URL",
+        "PREFECT_DATABASE_URL",
+    ):
+        assert variable not in environment, variable
+        for name, value in environment.items():
+            assert variable not in str(value), (name, variable)
+
+
+def test_the_worker_receives_every_setting() -> None:
+    expected = {f"PIPELINES_{name.upper()}" for name in Settings.model_fields}
+    assert expected <= set(_environment("worker"))
+
+
+def test_the_infra_ca_is_mandatory_and_mounted_where_settings_reads_it() -> None:
+    """An empty CA file (`/dev/null` mounted in its place) fails every HTTPS call to MinIO."""
+    assert "/dev/null" not in _text(COMPOSE)
+    volumes = _services()["worker"]["volumes"]
+    assert isinstance(volumes, list)
+    (mount,) = [str(volume) for volume in volumes if INFRA_CA_IN_CONTAINER in str(volume)]
+    assert mount.startswith("${INFRA_CA_CERT:?"), mount
+    assert mount.endswith(f":{INFRA_CA_IN_CONTAINER}:ro"), mount
+    assert _environment("worker")["PIPELINES_S3_CA_CERT"] == INFRA_CA_IN_CONTAINER
+    assert not re.search(r"^PIPELINES_S3_CA_CERT=", _text(ENV_EXAMPLE), re.M)
+
+
+def test_the_prefect_ui_calls_the_api_on_loopback() -> None:
+    """With `--host 0.0.0.0` the UI would otherwise call `http://0.0.0.0:4200/api`."""
+    assert _environment("prefect-server")["PREFECT_UI_API_URL"] == "http://127.0.0.1:4200/api"
 
 
 # --- LiteLLM exposes exactly the two aliases the pipeline is allowed to use --
@@ -157,7 +214,9 @@ def test_litellm_settings_retry_and_timeout_and_master_key() -> None:
     config = yaml.safe_load(_text(LITELLM_CONFIG))
     assert config["litellm_settings"]["num_retries"] == 2
     assert config["litellm_settings"]["request_timeout"] == 300
-    assert config["litellm_settings"]["drop_params"] is True
+    # A `response_format` LiteLLM silently dropped for a model it does not know
+    # would hand the pipeline free text instead of the strict schema it asked for.
+    assert config["litellm_settings"]["drop_params"] is False
     assert config["general_settings"]["master_key"] == "os.environ/LITELLM_MASTER_KEY"
 
 
