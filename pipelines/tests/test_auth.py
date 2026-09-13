@@ -48,6 +48,17 @@ def api(credentials: ClientCredentials, handler) -> httpx.Client:  # type: ignor
     )
 
 
+def test_closing_it_closes_the_client_it_asks_keycloak_with() -> None:
+    http = httpx.Client(transport=httpx.MockTransport(Keycloak()))
+    credentials = ClientCredentials(
+        token_url=TOKEN_URL, client_id="ea-pipelines", client_secret="s3cret", http=http
+    )
+
+    credentials.close()
+
+    assert http.is_closed
+
+
 def test_asks_keycloak_with_the_client_credentials_grant() -> None:
     keycloak = Keycloak()
     seen: list[str] = []

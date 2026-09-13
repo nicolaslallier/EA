@@ -37,6 +37,10 @@ class ClientCredentials(httpx.Auth):
         self._token: str | None = None
         self._expires_at = 0.0
 
+    def close(self) -> None:
+        """Close the client Keycloak is asked with — `httpx.Client` never closes its `auth`."""
+        self._http.close()
+
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         request.headers["Authorization"] = f"Bearer {self._current()}"
         response = yield request

@@ -9,9 +9,11 @@ creates the same element or relationship twice.
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Callable
 from uuid import UUID, uuid4
 
+import certifi
 import httpx
 import pytest
 
@@ -82,6 +84,28 @@ def test_ea_client_carries_the_settings_base_url_and_timeout() -> None:
     assert str(client.http.base_url) == "http://ea.example:8000"
     assert client.http.timeout.connect == 7
     assert isinstance(client.http.auth, ClientCredentials)
+
+
+def test_ea_client_trusts_the_infra_ca_without_a_deprecated_verify_path() -> None:
+    # httpx 0.28 deprecates `verify="<path>"`; the CA goes in an SSLContext.
+    settings = Settings(s3_ca_cert=certifi.where(), **REQUIRED_SECRETS)  # type: ignore[arg-type]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ea_client(settings).close()
+
+
+def test_closing_the_ea_client_closes_its_token_client_too() -> None:
+    token_http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+    credentials = ClientCredentials(
+        token_url="https://keycloak.test/token", client_id="c", client_secret="s", http=token_http
+    )
+    http = httpx.Client(base_url="http://ea.test", auth=credentials)
+
+    EaClient(http).close()
+
+    assert http.is_closed
+    assert token_http.is_closed
 
 
 # --- metamodel -----------------------------------------------------------

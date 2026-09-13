@@ -16,6 +16,7 @@ parameter and field this module uses still exists in `backend/openapi.json`.
 
 from __future__ import annotations
 
+import ssl
 from dataclasses import dataclass
 from typing import Literal, NoReturn
 from uuid import UUID
@@ -92,6 +93,12 @@ class EaClient:
 
     def __init__(self, http: httpx.Client) -> None:
         self.http = http
+
+    def close(self) -> None:
+        """Close the connection pool, and the token client its `auth` holds."""
+        self.http.close()
+        if isinstance(self.http.auth, ClientCredentials):
+            self.http.auth.close()
 
     def metamodel(self) -> Metamodel:
         """`GET /metamodel`, reduced to the type values a flow can pass back in."""
@@ -207,13 +214,17 @@ class EaClient:
 
 def ea_client(settings: Settings) -> EaClient:
     """One pooled client for the EA API, carrying its base URL, timeout and token."""
+    verify: ssl.SSLContext | bool = (
+        ssl.create_default_context(cafile=settings.s3_ca_cert) if settings.s3_ca_cert else True
+    )
     credentials = ClientCredentials(
         token_url=f"{settings.auth_issuer.rstrip('/')}/protocol/openid-connect/token",
         client_id=settings.ea_client_id,
         client_secret=settings.ea_client_secret.get_secret_value(),
         # Keycloak is behind the Infra NGINX, signed by the Infra CA — the same
         # certificate MinIO is reached with.
-        http=httpx.Client(verify=settings.s3_ca_cert or True, timeout=settings.ea_timeout_seconds),
+        # An SSLContext, not the path: httpx 0.28 deprecates `verify="<path>"`.
+        http=httpx.Client(verify=verify, timeout=settings.ea_timeout_seconds),
     )
     return EaClient(
         httpx.Client(
