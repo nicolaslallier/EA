@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 
 import IpamSection from '../src/features/ipam/IpamSection.vue'
+import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
 import {
   aPage,
@@ -186,5 +188,21 @@ describe('IpamSection', () => {
         ),
       ).toBe(true),
     )
+  })
+
+  it('offers a reader no write control, only Chercher', async () => {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+    await open(`?subnet=${DMZ.element_id}`)
+
+    expect(await screen.findByText('10.0.1.0/24')).toBeInTheDocument()
+    expect(screen.queryByText(/déclarer un sous-réseau/i)).toBeNull()
+    expect(screen.queryByLabelText(/attribuer la prochaine adresse à/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Libérer' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Chercher' })).toBeInTheDocument()
   })
 })

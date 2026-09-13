@@ -9,6 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { messageOf } from '../../lib/api'
 import { debounce } from '../../lib/debounce'
+import { useMe } from '../../lib/me'
 import type { ElementRead } from '../elements/useElementCatalogue'
 import { ACCESS_LABELS, RELATIONSHIP_LABELS, verbOf } from './labels'
 import type { AccessType, RelationshipType } from './useElementRelationships'
@@ -28,6 +29,7 @@ const emit = defineEmits<{ close: [] }>()
 /** Which way round the new link runs, seen from the element on screen. */
 type Direction = 'outgoing' | 'incoming'
 
+const { canWrite } = useMe()
 const relations = useElementRelationships()
 
 const direction = ref<Direction>('outgoing')
@@ -177,7 +179,7 @@ async function confirmDelete(): Promise<void> {
           <td>{{ relations.nameOf(link.target_id) }}</td>
           <td>{{ link.name }}</td>
           <td>
-            <button type="button" class="secondary" @click="confirming = link.id">
+            <button v-if="canWrite" type="button" class="secondary" @click="confirming = link.id">
               Dissocier
             </button>
           </td>
@@ -191,7 +193,7 @@ async function confirmDelete(): Promise<void> {
       <button type="button" class="secondary" @click="confirming = null">Renoncer</button>
     </p>
 
-    <form class="form" aria-label="Associer un élément" @submit.prevent="onSubmit">
+    <form v-if="canWrite" class="form" aria-label="Associer un élément" @submit.prevent="onSubmit">
       <p v-if="formFailure" class="banner banner--error" role="alert">{{ formFailure }}</p>
 
       <div class="field">

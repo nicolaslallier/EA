@@ -11,12 +11,14 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { messageOf } from '../../lib/api'
+import { useMe } from '../../lib/me'
 import type { ElementRead } from '../elements/useElementCatalogue'
 import { useElementDocuments } from './useElementDocuments'
 
 const props = defineProps<{ element: ElementRead }>()
 defineEmits<{ close: [] }>()
 
+const { canWrite } = useMe()
 const documents = useElementDocuments()
 const failure = ref('')
 const busy = ref(false)
@@ -95,7 +97,7 @@ function day(iso: string): string {
       Réenvoyer un fichier déjà présent en remplace le contenu.
     </p>
 
-    <p class="upload">
+    <p v-if="canWrite" class="upload">
       <label class="upload__label" for="document-file">Ajouter un fichier</label>
       <input
         id="document-file"
@@ -137,6 +139,7 @@ function day(iso: string): string {
           <td>{{ day(document.updated_at) }}</td>
           <td>
             <button
+              v-if="canWrite"
               type="button"
               class="secondary"
               :aria-label="`Supprimer ${document.filename}`"
