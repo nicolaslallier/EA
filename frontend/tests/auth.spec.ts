@@ -1,9 +1,10 @@
-import { InMemoryWebStorage } from 'oidc-client-ts'
-import { describe, expect, it, vi } from 'vitest'
+import { InMemoryWebStorage, UserManager, type User } from 'oidc-client-ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.unmock('../src/lib/auth')
 
-const { CALLBACK_PATH, createUserManager, safeReturnPath } = await import('../src/lib/auth')
+const { CALLBACK_PATH, completeSignIn, createUserManager, REAUTH_GUARD_MS, safeReturnPath, signInAfterUnauthorised } =
+  await import('../src/lib/auth')
 
 describe('the login client', () => {
   it('returns to this origin after Keycloak', () => {
@@ -30,5 +31,58 @@ describe('where a login returns', () => {
     [42, '/'],
   ])('%s → %s', (value, expected) => {
     expect(safeReturnPath(value)).toBe(expected)
+  })
+})
+
+describe('what a 401 does about the login', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    sessionStorage.clear()
+  })
+
+  /** Record a completed login, the way `completeSignIn` itself does. */
+  async function signInJustNow(): Promise<void> {
+    vi.spyOn(UserManager.prototype, 'signinRedirectCallback').mockResolvedValue({
+      state: { returnTo: '/elements' },
+    } as User)
+    await completeSignIn()
+    vi.restoreAllMocks()
+  }
+
+  it('starts only one redirect when several requests are refused at once', async () => {
+    const redirect = vi.spyOn(UserManager.prototype, 'signinRedirect').mockResolvedValue(undefined)
+
+    await Promise.all([
+      signInAfterUnauthorised('/a'),
+      signInAfterUnauthorised('/b'),
+      signInAfterUnauthorised('/c'),
+    ])
+
+    expect(redirect).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not restart the login right after one just completed — Keycloak would only hand back the same refused token', async () => {
+    await signInJustNow()
+    const redirect = vi.spyOn(UserManager.prototype, 'signinRedirect').mockResolvedValue(undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const started = await signInAfterUnauthorised('/elements')
+
+    expect(started).toBe(false)
+    expect(redirect).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalled()
+  })
+
+  it('redirects again once the grace window has passed', async () => {
+    await signInJustNow()
+    const redirect = vi.spyOn(UserManager.prototype, 'signinRedirect').mockResolvedValue(undefined)
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + REAUTH_GUARD_MS + 1)
+
+    const started = await signInAfterUnauthorised('/elements')
+
+    expect(started).toBe(true)
+    expect(redirect).toHaveBeenCalledTimes(1)
   })
 })

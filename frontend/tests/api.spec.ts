@@ -153,9 +153,10 @@ describe('who the API is told is calling', () => {
       'fetch',
       vi.fn(() => Promise.resolve(new Response('{"error":"unauthenticated"}', { status: 401 }))),
     )
+    const here = `${location.pathname}${location.search}`
 
     await api.GET('/elements')
 
-    expect(auth.signIn).toHaveBeenCalledWith(expect.stringMatching(/^\//))
+    expect(auth.signInAfterUnauthorised).toHaveBeenCalledWith(here)
   })
 })

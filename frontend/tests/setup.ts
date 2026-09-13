@@ -15,6 +15,7 @@ vi.mock('../src/lib/auth', async (importOriginal) => {
     ...actual,
     accessToken: vi.fn(() => Promise.resolve('test-token')),
     signIn: vi.fn(() => Promise.resolve()),
+    signInAfterUnauthorised: vi.fn(() => Promise.resolve(true)),
     signOut: vi.fn(() => Promise.resolve()),
     completeSignIn: vi.fn(() => Promise.resolve('/')),
   }

@@ -7,7 +7,7 @@
 import createClient from 'openapi-fetch'
 
 import type { paths } from '../api/schema'
-import { accessToken, signIn } from './auth'
+import { accessToken, signInAfterUnauthorised } from './auth'
 import { createLogger } from './logging'
 
 /** The port `make run-be` serves the API on. */
@@ -65,7 +65,7 @@ api.use({
   onResponse({ response }) {
     if (response.status === 401) {
       const here = globalThis.location ? `${location.pathname}${location.search}` : '/'
-      void signIn(here)
+      void signInAfterUnauthorised(here)
     }
   },
 })
