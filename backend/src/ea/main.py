@@ -193,9 +193,20 @@ def _lifespan(
                 logger.info("MCP tools served at %s", MCP_PATH)
                 if settings.mcp_allow_remote_clients:
                     # Said at every boot, because it is the one setting that
-                    # hands the graph's write path to the whole network — see
-                    # docs/adr/0023.
-                    logger.warning("MCP tools are served to remote clients, without authentication")
+                    # opens the graph's write path to the whole network — see
+                    # docs/adr/0023. With auth on a token still decides who
+                    # writes (docs/adr/0031); behind a proxy every peer is the
+                    # proxy either way.
+                    if settings.auth_enabled:
+                        logger.warning(
+                            "MCP tools are served to remote clients: a Keycloak token is "
+                            "still required, but behind a proxy every peer looks like the proxy"
+                        )
+                    else:
+                        logger.warning(
+                            "MCP tools are served to remote clients without authentication "
+                            "(debug only)"
+                        )
             logger.info(
                 "%s is up and answering on %s:%s", settings.app_name, settings.host, settings.port
             )

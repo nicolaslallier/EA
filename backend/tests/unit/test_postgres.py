@@ -1,7 +1,7 @@
 """The relational engine: how it is addressed, built and checked.
 
 PostgreSQL is the store for everything that is not the architecture graph —
-auth, audit, scheduled work (docs/adr/0004). No table exists yet; what is
+audit, scheduled work (docs/adr/0004). No table exists yet; what is
 tested here is the connection itself, and above all that the password it
 carries cannot escape into a log line or a traceback.
 """

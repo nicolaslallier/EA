@@ -160,7 +160,7 @@ def test_the_mcp_allowlist_rejects_a_bare_wildcard() -> None:
 
 
 def test_mcp_refuses_remote_clients_unless_told_otherwise() -> None:
-    """Until auth exists, a remote agent is an opt-in — see docs/adr/0023."""
+    """A remote agent is an opt-in, token or not — see docs/adr/0023, 0031."""
     assert Settings(_env_file=None).mcp_allow_remote_clients is False  # type: ignore[call-arg]
 
 

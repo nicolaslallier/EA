@@ -13,6 +13,12 @@ COPY . .
 # le vhost sert l'API sous /api, sur la même origine que le SPA.
 ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+# Le realm et le client public du SPA (docs/adr/0031). La stack les repasse en
+# arguments ; les défauts sont ceux du déploiement de l'Infra.
+ARG VITE_AUTH_AUTHORITY=https://keycloak.famillelallier.net/realms/ea
+ARG VITE_AUTH_CLIENT_ID=ea-spa
+ENV VITE_AUTH_AUTHORITY=$VITE_AUTH_AUTHORITY
+ENV VITE_AUTH_CLIENT_ID=$VITE_AUTH_CLIENT_ID
 RUN npm run build
 
 FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3

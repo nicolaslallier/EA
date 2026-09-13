@@ -255,8 +255,8 @@ voisinage, métamodèle, analyse d'impact.
 
 **Décidé mais pas encore écrit** (ne pas supposer que cela existe) :
 
-- Authentification (OAuth2 / JWT + `argon2`), `SQLAlchemy`, `Alembic`, la première
-  table PostgreSQL.
+- `SQLAlchemy`, `Alembic`, la première table PostgreSQL. (L'authentification,
+  elle, est le realm Keycloak `ea` : [`adr/0031`](adr/0031-authentification-par-keycloak.md).)
 - `bandit`, `pip-audit`, `ESLint` (`npm run lint`), Playwright, `pre-commit`, CI.
 - L'export vers le format d'échange ArchiMate (Open Exchange File) n'est pas
   implémenté, mais rien ne s'y oppose — la taxonomie est complète.

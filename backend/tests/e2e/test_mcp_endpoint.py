@@ -239,8 +239,8 @@ class TestTheMounting:
         assert response.status_code == 200
 
     async def test_it_can_be_switched_off(self, service: ArchitectureService) -> None:
-        """Until auth lands, a deployment that does not want an agent-facing
-        write path on the graph turns it off — see `docs/adr/0014`."""
+        """A deployment that does not want an agent-facing write path on the
+        graph turns it off — see `docs/adr/0014`."""
         app = an_app(service, mcp_enabled=False)
 
         assert MCP_PATH not in {getattr(route, "path", None) for route in app.router.routes}
@@ -314,7 +314,7 @@ async def initialize_from(app: Any, peer: str, *, host: str = BASE_URL) -> httpx
 
 @pytest.mark.asyncio
 class TestWhoIsServed:
-    """Until auth exists `/mcp` answers this machine only — docs/adr/0023.
+    """`/mcp` answers this machine only, token or not — docs/adr/0023, 0031.
 
     The `Host` allowlist above is a defence against DNS rebinding, i.e. against
     a *browser* tricked into calling us. It does nothing against a script on
