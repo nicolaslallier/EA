@@ -1,7 +1,7 @@
 # 6. Le graphe Neo4j tourne sur le cluster Docker, pas sur le poste
 
 Date : 2026-09-07
-Statut : Accepté
+Statut : Supersédé par [`0027`](0027-neo4j-dans-la-stack-infra.md) — le graphe vit dans la stack Infra
 Supersédé en partie par : [`0024`](0024-tests-d-integration-sur-des-bases-jetables.md) — le volet « tests » ; le graphe applicatif reste sur le cluster.
 
 Complète [`0004`](0004-neo4j-pour-le-graphe-d-architecture.md), qui a choisi

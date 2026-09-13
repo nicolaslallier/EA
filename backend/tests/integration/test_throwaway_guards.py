@@ -68,6 +68,16 @@ class TestTheGraph:
     def test_a_local_instance_with_the_opt_in_is_accepted(self, uri: str) -> None:
         assert refuse_a_shared_graph(uri, allow_destructive="1") is None
 
+    @pytest.mark.parametrize(
+        "uri", ["bolt://127.0.0.1:7687", "neo4j://localhost:7687", "bolt://localhost"]
+    )
+    def test_the_shared_graph_is_refused_even_on_loopback(self, uri: str) -> None:
+        """The Infra stack publishes the shared graph on 127.0.0.1:7687 (docs/adr/0027)."""
+        reason = refuse_a_shared_graph(uri, allow_destructive="1")
+
+        assert reason is not None
+        assert "7687" in reason
+
 
 class TestPostgres:
     def test_the_cluster_is_refused(self) -> None:

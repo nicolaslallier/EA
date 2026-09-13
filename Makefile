@@ -36,16 +36,19 @@ FE_URL  ?= http://127.0.0.1:$(FE_PORT)
 # l'afficher : c'est l'origine à ajouter à EA_CORS_ORIGINS.
 LAN_IP ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 
-# Base de données graphe : une instance unique sur le cluster Docker, déployée
-# depuis deploy/neo4j.stack.yml. Rien ne la démarre depuis ce Makefile — voir
-# docs/adr/0006.
-NEO4J_HOST      ?= 192.168.1.252
+# Base de données graphe : le service neo4j de la stack Infra, publié par son
+# nginx sur 127.0.0.1 et nulle part ailleurs. Rien ne la démarre depuis ce
+# Makefile — voir docs/adr/0027.
+NEO4J_HOST      ?= 127.0.0.1
 NEO4J_BOLT_PORT ?= 7687
-NEO4J_HTTP_PORT ?= 7474
 NEO4J_URI       ?= bolt://$(NEO4J_HOST):$(NEO4J_BOLT_PORT)
-NEO4J_BROWSER   ?= http://$(NEO4J_HOST):$(NEO4J_HTTP_PORT)
-NEO4J_IMAGE     ?= neo4j:5.26-community
-PORTAINER_STACKS ?= http://$(NEO4J_HOST):9000/\#!/9/docker/stacks
+NEO4J_IMAGE     ?= neo4j:2026.07.1-community
+# cypher-shell tourne dans un conteneur, où 127.0.0.1 est le conteneur lui-même :
+# il rejoint le graphe par le réseau de l'Infra, sous son nom de service.
+NEO4J_NETWORK   ?= infra-net
+NEO4J_SHELL_URI ?= bolt://neo4j:7687
+NEO4J_CONTAINER ?= infra-neo4j-1
+PORTAINER_STACKS ?= http://$(POSTGRES_HOST):9000/\#!/9/docker/stacks
 
 # Les mots de passe n'ont pas de valeur par défaut : les deux instances sont
 # partagées. Ils viennent de l'environnement, ou à défaut de backend/.env.
@@ -291,35 +294,33 @@ require-neo4j-password:
 		printf "Renseigne EA_NEO4J_PASSWORD dans $(BACKEND)/.env, ou lance :\n"; \
 		printf "  NEO4J_PASSWORD='...' make $(MAKECMDGOALS)\n"; exit 1; }
 
-db-stack: ## Rappelle comment déployer le graphe sur le cluster Docker
-	@printf "$(GREEN)Stack Neo4j : deploy/neo4j.stack.yml$(NC)\n"
-	@printf "  1. Ouvre $(PORTAINER_STACKS)\n"
-	@printf "  2. Add stack → Web editor → colle deploy/neo4j.stack.yml\n"
-	@printf "  3. Environment variables → NEO4J_PASSWORD = <mot de passe>\n"
-	@printf "  4. Deploy the stack, puis : make db-ping\n"
+db-stack: ## Rappelle d'où se déploie le graphe : la stack Infra
+	@printf "$(GREEN)Le graphe est le service neo4j de la stack Infra (docs/adr/0027)$(NC)\n"
+	@printf "  1. Dans le dépôt Infra (github.com/nicolaslallier/Infra) : NEO4J_PASSWORD dans .env\n"
+	@printf "  2. make up — depuis sa copie principale, à jour de main\n"
+	@printf "  3. Puis, ici : make db-ping\n"
 
-db-ping: | require-neo4j-password ## Vérifie que le graphe du cluster répond
+db-ping: | require-neo4j-password ## Vérifie que le graphe partagé répond
 	@printf "$(GREEN)Interrogation de $(NEO4J_URI) ...$(NC)\n"
 	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm \
-		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_URI) --format plain \
+		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_SHELL_URI) --format plain \
 		'MATCH (n:Element) RETURN count(n) AS elements' \
 	|| { printf "$(RED)Aucune réponse. Vérifie la stack : make db-stack$(NC)\n"; exit 1; }
-	@printf "Navigateur : $(NEO4J_BROWSER)\n"
 
-db-shell: | require-neo4j-password ## Ouvre un cypher-shell sur le graphe du cluster
+db-shell: | require-neo4j-password ## Ouvre un cypher-shell sur le graphe partagé
 	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm -it \
-		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_URI)
+		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_SHELL_URI)
 
-db-reset: | require-neo4j-password ## Vide le graphe du cluster (CONFIRM=yes obligatoire)
+db-reset: | require-neo4j-password ## Vide le graphe partagé (CONFIRM=yes obligatoire)
 	@test "$(CONFIRM)" = "yes" || { \
 		printf "$(RED)Cette commande efface le graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"; \
 		printf "$(RED)Tout le monde le perd, il n'y a qu'une instance.$(NC)\n"; \
 		printf "Relance avec : make db-reset CONFIRM=yes\n"; exit 1; }
 	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm \
-		-e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_URI) 'MATCH (n) DETACH DELETE n'
+		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
+		cypher-shell -a $(NEO4J_SHELL_URI) 'MATCH (n) DETACH DELETE n'
 	@printf "$(GREEN)Graphe vidé.$(NC)\n"
 
 # Neo4j Community n'a pas de sauvegarde à chaud : `neo4j-admin database dump`
@@ -328,28 +329,28 @@ db-reset: | require-neo4j-password ## Vide le graphe du cluster (CONFIRM=yes obl
 # `db-stack` rappelle le déploiement — et son nom le dit, pour que personne ne
 # la mette dans une crontab en croyant sauvegarder. Voir docs/adr/0025.
 db-backup-howto: ## Rappelle comment sauvegarder et restaurer le graphe (hors ligne, sur l'hôte)
-	@printf "$(GREEN)Sauvegarde du graphe : hors ligne, sur l'hôte $(NEO4J_HOST) — docs/adr/0025$(NC)\n"
+	@printf "$(GREEN)Sauvegarde du graphe : hors ligne, sur le Mac de la stack Infra — docs/adr/0025, 0027$(NC)\n"
 	@printf '%s\n' \
-		"Rien ne s'exécute d'ici. Sur l'hôte (SSH, ou console Portainer) :" \
+		"Rien ne s'exécute tout seul. Sur le Mac de la stack Infra :" \
 		"" \
-		"  img=\$$(docker inspect -f '{{.Config.Image}}' ea-neo4j)" \
-		"  dir=/srv/backups/ea-neo4j/\$$(date -u +%Y%m%dT%H%M%SZ)" \
-		"  mkdir -p \"\$$dir\" && chown 7474:7474 \"\$$dir\"" \
-		"  docker stop ea-neo4j" \
-		"  docker run --rm --volumes-from ea-neo4j -v \"\$$dir\":/backups \"\$$img\" \\" \
+		"  img=\$$(docker inspect -f '{{.Config.Image}}' $(NEO4J_CONTAINER))" \
+		"  dir=\$$HOME/Backups/ea-neo4j/\$$(date -u +%Y%m%dT%H%M%SZ)" \
+		"  mkdir -p \"\$$dir\"" \
+		"  docker stop $(NEO4J_CONTAINER)" \
+		"  docker run --rm --volumes-from $(NEO4J_CONTAINER) -v \"\$$dir\":/backups \"\$$img\" \\" \
 		"    neo4j-admin database dump neo4j --to-path=/backups" \
-		"  docker start ea-neo4j" \
+		"  docker start $(NEO4J_CONTAINER)" \
 		"" \
 		"Puis, depuis un poste : make db-ping"
 	@printf "$(RED)Copie hors de l'hôte OBLIGATOIRE : un dump sur le disque du volume ne survit pas au disque.$(NC)\n"
 	@printf '%s\n' \
-		"  scp -r <hôte>:\"\$$dir\" <destination hors de $(NEO4J_HOST)>" \
+		"  cp -R \"\$$dir\" <destination hors de ce Mac : NAS, stockage objet>" \
 		"" \
 		"Restauration — REMPLACE le graphe partagé :" \
-		"  docker stop ea-neo4j" \
-		"  docker run --rm --volumes-from ea-neo4j -v <dossier du dump>:/backups \"\$$img\" \\" \
+		"  docker stop $(NEO4J_CONTAINER)" \
+		"  docker run --rm --volumes-from $(NEO4J_CONTAINER) -v <dossier du dump>:/backups \"\$$img\" \\" \
 		"    neo4j-admin database load neo4j --from-path=/backups --overwrite-destination=true" \
-		"  docker start ea-neo4j && make db-ping" \
+		"  docker start $(NEO4J_CONTAINER) && make db-ping" \
 		"" \
 		"Avec PostgreSQL : même fenêtre, sans écriture entre les deux, graphe d'abord (make pg-backup)."
 

@@ -1,12 +1,9 @@
 """Guards on the deployment files themselves.
 
-The graph no longer runs on the developer's machine: it is a stack deployed on
-the Docker host at 192.168.1.252 (see docs/adr/0006). Two invariants of that
-move are worth failing a build over, because both are silent when broken:
+The shared graph is the `neo4j` service of the Infra stack, declared in that
+repository (see docs/adr/0027). What is left to guard here is worth failing a
+build over, because it is silent when broken:
 
-* the committed stack must not carry a password — the cluster instance is
-  shared and reachable on the LAN, so its credentials come from Portainer's
-  own environment variables;
 * `docker-compose.yml` must not grow a Neo4j anybody could model against, or
   half the team ends up with a private graph. It does declare one since
   docs/adr/0024 — the throwaway graph the integration tests wipe — so the
@@ -20,42 +17,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-STACK = REPO_ROOT / "deploy" / "neo4j.stack.yml"
 COMPOSE = REPO_ROOT / "docker-compose.yml"
-
-
-def test_the_stack_file_is_committed() -> None:
-    assert STACK.is_file(), f"missing {STACK.relative_to(REPO_ROOT)}"
-
-
-def test_the_stack_takes_its_password_from_the_environment() -> None:
-    """`:?` makes Portainer refuse the deployment instead of inventing a password."""
-    stack = STACK.read_text(encoding="utf-8")
-
-    assert "${NEO4J_PASSWORD:?" in stack
-    assert "${NEO4J_PASSWORD:-" not in stack, "a default password would be a committed secret"
-    assert "NEO4J_AUTH: neo4j/${NEO4J_PASSWORD" in stack
-
-
-def test_the_stack_pins_the_neo4j_image() -> None:
-    """An unpinned tag turns a redeploy into an unplanned major upgrade."""
-    images = [
-        line.strip()
-        for line in STACK.read_text(encoding="utf-8").splitlines()
-        if line.strip().startswith("image:")
-    ]
-
-    assert images, "the stack declares no image"
-    for image in images:
-        assert ":latest" not in image, image
-        assert image.count(":") >= 2, f"{image} has no version tag"
-
-
-def test_the_stack_publishes_bolt_and_the_browser() -> None:
-    stack = STACK.read_text(encoding="utf-8")
-
-    assert ":7687" in stack, "the backend talks Bolt; the port must be published"
-    assert ":7474" in stack, "the Neo4j browser is how the graph gets inspected"
 
 
 def _compose_declarations() -> str:
@@ -76,7 +38,7 @@ def _published_ports() -> list[str]:
 
 
 def test_the_local_compose_neo4j_is_a_test_instance_not_the_graph() -> None:
-    """One graph, on the cluster — a local one would silently fork the model.
+    """One graph, in the Infra stack — another one would silently fork the model.
 
     The compose file does declare a Neo4j since docs/adr/0024, and it is the
     graph the integration tests wipe, never the one anybody models against. Two

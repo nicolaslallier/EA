@@ -1,8 +1,8 @@
 # Bases jetables, pour les tests — et pour rien d'autre.
 #
-# Aucune des deux bases du projet ne tourne ici : le graphe (docs/adr/0006) et
-# le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques sur le
-# cluster Docker, 192.168.1.252. Personne ne modélise contre ce fichier.
+# Aucune des deux bases du projet ne tourne ici : le graphe est le service neo4j
+# de la stack Infra (docs/adr/0027), le PostgreSQL applicatif une instance du
+# cluster Docker (docs/adr/0015). Personne ne modélise contre ce fichier.
 #
 # Ces deux conteneurs existent pour une seule raison : les tests d'intégration
 # détruisent ce qu'ils touchent. Ceux du graphe vident les `:Element` entre
@@ -12,10 +12,11 @@
 #
 # `make test-integration` démarre les deux et pointe dessus ; `make
 # test-postgres` démarre PostgreSQL seul. `make db-ping`, `db-shell`,
-# `pg-ping`, `pg-shell` et `pg-migrate` visent le cluster, pas ces conteneurs.
+# `pg-ping`, `pg-shell` et `pg-migrate` visent les bases partagées, pas ces conteneurs.
 #
 # Les deux ne publient que sur 127.0.0.1 : les fixtures refusent toute adresse
-# qui n'est pas locale, et un conteneur joignable depuis le LAN deviendrait vite
+# qui n'est pas locale — et, pour le graphe, le port 7687 où la stack Infra
+# publie le graphe partagé, en local lui aussi — et un conteneur joignable depuis le LAN deviendrait vite
 # « le graphe de quelqu'un ». Les ports sont surchargeables — le Makefile passe
 # les mêmes valeurs aux conteneurs et aux tests, pour qu'ils ne divergent pas.
 #
@@ -45,9 +46,9 @@ services:
       retries: 20
 
   neo4j:
-    # La même image que deploy/neo4j.stack.yml : un test qui passe ici doit
-    # passer contre le graphe du cluster, contraintes et Cypher compris.
-    image: neo4j:5.26-community
+    # La même version que le graphe partagé de la stack Infra : un test qui
+    # passe ici doit passer contre lui, contraintes et Cypher compris.
+    image: neo4j:2026.07.1-community
     container_name: ea-neo4j-test
     # Bolt seulement, et seulement en local. Pas de navigateur (7474) : ce
     # graphe est vidé entre chaque test, ce n'est pas un endroit où regarder un
