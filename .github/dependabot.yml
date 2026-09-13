@@ -41,7 +41,7 @@ updates:
         update-types: [minor, patch]
 
   # Les images épinglées par digest : docker-compose.yml à la racine, les deux
-  # stacks du cluster, et celui de pipelines/ (docs/adr/0027, posé en tâche 2).
+  # stacks du cluster, et celui de pipelines/ (docs/adr/0027).
   # Sans ceci, un digest épinglé est un correctif de sécurité qu'on ne reçoit
   # plus.
   - package-ecosystem: docker-compose
@@ -52,7 +52,7 @@ updates:
     schedule:
       interval: weekly
 
-  # Le Dockerfile de pipelines/ (posé en tâche 2) : sa ligne `FROM` est aussi
+  # Le Dockerfile de pipelines/ : sa ligne `FROM` est aussi
   # épinglée par tag et digest.
   - package-ecosystem: docker
     directory: /pipelines

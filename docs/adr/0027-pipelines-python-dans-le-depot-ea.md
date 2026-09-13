@@ -39,7 +39,9 @@ avantage qu'un unique flow manuel n'a pas encore.
 
 **LiteLLM derrière deux alias, `smart` et `fast`.** Le code ne nomme jamais un modèle réel — voir
 `CLAUDE.md`, section *Sécurité* pour la règle équivalente côté secrets. `pipelines/litellm.yaml`
-(ajouté en tâche 2) décide seul quel modèle répond à chaque alias.
+décide seul quel modèle répond à chaque alias. Il laisse `drop_params` à `false` : un
+`response_format` retiré en silence pour un modèle que LiteLLM ne connaît pas rendrait du texte libre
+là où le pipeline exige un schéma strict.
 
 **MinIO de la stack Infra, en lecture seule depuis ce projet.** Le pipeline lit une source, il n'en
 est pas le gestionnaire de cycle de vie.
@@ -50,17 +52,22 @@ repository partagerait la couche que `services/` possède déjà et rendrait le 
 d'écrire un graphe que l'API elle-même refuserait.
 
 **Le métamodèle est demandé à l'exécution, jamais restaté.** Le pipeline appelle `GET /metamodel`
-pour connaître les 61 types et leurs règles, exactement comme le SPA (`CLAUDE.md`, section *La SPA
-ne détient aucune copie du métamodèle*).
+pour connaître les types d'éléments et de relations qu'il peut proposer au modèle, exactement comme
+le SPA (`CLAUDE.md`, section *La SPA ne détient aucune copie du métamodèle*). Il n'en lit pas les
+règles : c'est `POST /relationships` qui refuse une relation que le métamodèle interdit, et le
+pipeline enregistre ce refus.
 
 **Dédoublonnage des éléments par la contrainte `element_name_unique_per_type` ; des relations par
 recherche.** Le catalogue est partagé et déjà peuplé : réécrire un élément existant serait une
 collision silencieuse. Le pipeline recherche une relation déjà là avant d'en créer une, faute d'une
 contrainte équivalente côté relations.
 
-**On complète, on n'écrase pas.** Un modèle qui a mal lu la source ne doit pas remplacer une propriété
-correcte posée par un humain. Une extraction qui contredit l'existant ajoute une propriété
-`ingested_from` traçant sa source et laisse le reste inchangé.
+**On complète, on n'écrase pas.** Un modèle qui a mal lu la source ne doit pas remplacer une valeur
+correcte posée par un humain. Sur un élément déjà là, le pipeline ne remplit qu'une `description`
+vide, et ne touche jamais `properties` : `PATCH /elements/{id}` remplace cette table en entier.
+`ingested_from`, la source, n'est donc posée qu'à la création d'un élément. Une extraction qui
+contredit l'existant ne change rien, et une description complétée ne laisse aucune trace dans le
+catalogue : seul l'artifact Prefect de l'exécution l'enregistre.
 
 **Une couche de réessai par type d'échec.** LiteLLM réessaie l'appel au fournisseur
 (`num_retries: 2`) ; l'appel LLM côté pipeline est un unique `POST httpx`, sans réessai de sa part ;
@@ -96,8 +103,10 @@ discipline que `docs/adr/0026` pour Neo4j et PostgreSQL.
 - **L'API EA doit tourner** (`make run-be`) pour que le pipeline écrive quoi que ce soit : c'est un
   client de plus, pas un adaptateur qui partage le processus.
 - **Un modèle écrit dans le catalogue partagé sans relecture humaine avant écriture.** Atténué par
-  trois choses : `ingested_from` trace la source de chaque propriété posée par le pipeline ; l'exécution
-  Prefect garde un artifact de ce qui a été extrait et écrit, consultable après coup ; la règle
+  trois choses : `ingested_from` trace la source de chaque élément que le pipeline crée ; l'artifact
+  de table de chaque exécution Prefect enregistre ce qui a été créé, complété ou refusé — même quand
+  l'exécution échoue en cours de route — et c'est le seul enregistrement d'une description
+  complétée ; la règle
   « on complète, on n'écrase pas » limite les dégâts d'une mauvaise lecture à des ajouts, jamais à une
   perte.
 - **Les DSN en URL, dans `pipelines/.env`, sont une exception à `CLAUDE.md`** (qui interdit un DSN en
@@ -111,9 +120,13 @@ discipline que `docs/adr/0026` pour Neo4j et PostgreSQL.
   `docs/adr/0019` — les deux n'ont pas vocation à être le même modèle.
 - **Les appels au fournisseur `smart` (Anthropic) coûtent** : chaque exécution du flow a un prix, à
   la différence de tout ce que ce dépôt a fait tourner jusqu'ici.
+- **Prefect 3.8 tire `redis` et `pydocket` comme dépendances Python transitives** (`pipelines/uv.lock`).
+  Ce sont des paquets, pas une infrastructure Redis : aucun serveur Redis n'est déployé, et
+  l'alternative écartée plus haut le reste.
 - **Ce statut reste *Proposition* tant qu'aucun conteneur n'a tourné** : la note Obsidian source
   documente une configuration validée syntaxiquement mais jamais déployée. Le faire passer à
-  *Accepté* attend la vérification de bout en bout (ruling R1 du ledger de la tâche).
+  *Accepté* attend une vérification de bout en bout : la stack démarrée et une exécution réelle du
+  flow sur le catalogue.
 
 ## Références
 
