@@ -35,7 +35,7 @@ def test_a_loopback_host_is_recognised(host: str) -> None:
 @pytest.mark.parametrize(
     "host",
     [
-        "192.168.1.252",
+        "192.168.2.10",
         "host.docker.internal",
         "localhost.example.com",
         "10.0.0.1",
@@ -57,10 +57,10 @@ class TestTheGraph:
 
     def test_the_cluster_is_refused_even_with_the_opt_in(self) -> None:
         """The opt-in says "I mean it"; it does not say *where*."""
-        reason = refuse_a_shared_graph("bolt://192.168.1.252:7687", allow_destructive="1")
+        reason = refuse_a_shared_graph("bolt://192.168.2.10:7687", allow_destructive="1")
 
         assert reason is not None
-        assert "192.168.1.252" in reason
+        assert "192.168.2.10" in reason
 
     @pytest.mark.parametrize(
         "uri", ["bolt://127.0.0.1:7688", "neo4j://localhost:7688", "bolt://[::1]:7688"]
@@ -72,7 +72,7 @@ class TestTheGraph:
         "uri", ["bolt://127.0.0.1:7687", "neo4j://localhost:7687", "bolt://localhost"]
     )
     def test_the_shared_graph_is_refused_even_on_loopback(self, uri: str) -> None:
-        """The Infra stack publishes the shared graph on 127.0.0.1:7687 (docs/adr/0027)."""
+        """The Infra stack publishes the shared graph on 127.0.0.1:7687 (docs/adr/0030)."""
         reason = refuse_a_shared_graph(uri, allow_destructive="1")
 
         assert reason is not None
@@ -80,14 +80,26 @@ class TestTheGraph:
 
 
 class TestPostgres:
-    def test_the_cluster_is_refused(self) -> None:
-        reason = refuse_a_shared_postgres("192.168.1.252", 5432)
+    def test_a_remote_host_is_refused(self) -> None:
+        reason = refuse_a_shared_postgres("192.168.2.10", 5432)
 
         assert reason is not None
-        assert "192.168.1.252" in reason
+        assert "192.168.2.10" in reason
 
-    def test_a_local_instance_is_accepted(self) -> None:
-        assert refuse_a_shared_postgres("127.0.0.1", 5432) is None
+    @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+    def test_the_shared_instance_is_refused_although_it_is_loopback(self, host: str) -> None:
+        """Since docs/adr/0029 the shared database answers on this Mac's 5432.
+
+        Loopback no longer means "a container nobody uses", so the port the
+        settings default to — the shared one — is refused on its own.
+        """
+        reason = refuse_a_shared_postgres(host, 5432)
+
+        assert reason is not None
+        assert "5432" in reason
+
+    def test_the_throwaway_instance_is_accepted(self) -> None:
+        assert refuse_a_shared_postgres("127.0.0.1", 5433) is None
 
 
 def test_no_test_builds_its_own_alembic_config() -> None:

@@ -33,9 +33,13 @@ make run       # backend + frontend en parallèle
 Le graphe n'est pas démarré par ces commandes : c'est une instance unique, le
 service `neo4j` de la stack [Infra](https://github.com/nicolaslallier/Infra),
 publiée par son nginx sur `bolt://127.0.0.1:7687` et nulle part ailleurs — voir
-[`docs/adr/0027`](docs/adr/0027-neo4j-dans-la-stack-infra.md). `make db-stack`
+[`docs/adr/0030`](docs/adr/0030-neo4j-dans-la-stack-infra.md). `make db-stack`
 rappelle d'où la (re)déployer ; le mot de passe est `NEO4J_PASSWORD` dans le
 `.env` d'Infra, et ne figure dans aucun fichier versionné.
+
+PostgreSQL non plus n'est pas démarré ici, mais il n'est pas sur le cluster : la
+base `ea` vit dans la stack `~/OpenCode/Infra` de ce Mac, sur 127.0.0.1:5432 —
+voir [`docs/adr/0029`](docs/adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) et `make pg-stack`.
 
 Puis ouvre <http://localhost:5173>. La page affiche l'état du backend : si elle
 indique « Backend: ok », les deux services communiquent.
@@ -47,6 +51,7 @@ indique « Backend: ok », les deux services communiquent.
 | <http://127.0.0.1:8000/docs> | Documentation OpenAPI |
 | <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
 | `bolt://127.0.0.1:7687` | Graphe Neo4j, dans la stack Infra — `make db-shell` |
+| <https://ea.infra.famillelallier.net> | L'application déployée, derrière le NGINX de l'Infra — `make app-stack` |
 
 ## Commandes
 
@@ -65,7 +70,7 @@ indique « Backend: ok », les deux services communiquent.
 | `make check` | Lint, types, client généré et tests sans base — ne modifie aucun fichier |
 | `make lint` | Corrige le formatage et le lint du backend (`check` ne corrige rien) |
 | `make audit` | `bandit`, `pip-audit`, `npm audit` |
-| `make pg-backup` | Sauvegarde la base PostgreSQL du cluster dans `backups/` |
+| `make pg-backup` | Sauvegarde la base PostgreSQL partagée dans `backups/` |
 | `make db-backup-howto` | Rappelle la sauvegarde du graphe, hors ligne sur l'hôte |
 | `make clean` | Supprime `.venv`, `node_modules`, caches et artefacts de build |
 
@@ -87,8 +92,9 @@ make test-postgres        # seulement les tests PostgreSQL, contre le conteneur 
 Les tests d'intégration détruisent ce qu'ils touchent : ils vident le graphe
 entre chaque cas et annulent la chaîne de migrations. Ils tournent donc sur les
 conteneurs jetables de [`docker-compose.yml`](docker-compose.yml), publiés sur
-127.0.0.1, **jamais sur le cluster** — les fixtures refusent tout hôte qui n'est
-pas local, et sautent le test en le disant. Docker est donc nécessaire pour
+127.0.0.1, **jamais sur les bases partagées** — les fixtures refusent tout hôte
+qui n'est pas local, et le port 5432 de la base partagée, et sautent le test en
+le disant. Docker est donc nécessaire pour
 eux. Voir [`docs/adr/0024`](docs/adr/0024-tests-d-integration-sur-des-bases-jetables.md).
 
 `make hooks` installe, si on le souhaite, les crochets `pre-commit`. La CI

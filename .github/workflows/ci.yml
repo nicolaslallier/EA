@@ -87,6 +87,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: make install
       - run: make audit
+      - run: make pipelines-install pipelines-audit
+
+  pipelines:
+    name: Pipelines — lint, types, tests (docs/adr/0028)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # Son propre lockfile : la variation de cache ne touche pas backend/uv.lock.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: pipelines/uv.lock
+      - run: make pipelines-install pipelines-lint-check pipelines-typecheck pipelines-test
 
   integration:
     name: Intégration — Neo4j et PostgreSQL jetables
@@ -102,8 +116,10 @@ jobs:
           POSTGRES_USER: ea
           POSTGRES_PASSWORD: ci-disposable-password
           POSTGRES_DB: ea
+        # 5433, le port du PostgreSQL de test en local : les fixtures refusent
+        # 5432, celui de la base partagée (docs/adr/0029).
         ports:
-          - 5432:5432
+          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U ea -d ea"
           --health-interval 5s
@@ -144,7 +160,7 @@ jobs:
           EA_NEO4J_PASSWORD: ci-disposable-password
           EA_POSTGRES_ENABLED: "true"
           EA_POSTGRES_HOST: 127.0.0.1
-          EA_POSTGRES_PORT: "5432"
+          EA_POSTGRES_PORT: "5433"
           EA_POSTGRES_PASSWORD: ci-disposable-password
           # Aucun service d'embeddings ici, et la suite n'en dépend pas : le
           # démarrage de l'application irait sinon interroger LM Studio.

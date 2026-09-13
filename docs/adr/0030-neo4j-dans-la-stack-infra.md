@@ -5,12 +5,14 @@ statut: Accepté
 affects: Makefile, docker-compose.yml, deploy/, backend/src/ea/core/config.py, backend/tests/integration/throwaway.py
 ---
 
-# 27. Le graphe Neo4j vit dans la stack Infra
+# 30. Le graphe Neo4j vit dans la stack Infra
 
 Supersède [`0006`](0006-neo4j-sur-le-cluster-docker.md). Amende
 [`0024`](0024-tests-d-integration-sur-des-bases-jetables.md) — le garde du
 graphe — et [`0025`](0025-sauvegardes-des-deux-bases.md) — le nom du conteneur
-et le lieu de la sauvegarde.
+et le lieu de la sauvegarde. Amende aussi
+[`0029`](0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) — l'adresse
+du graphe, que `0029` laissait sur 192.168.2.10.
 
 ## Contexte
 
@@ -84,7 +86,8 @@ de la copie : mêmes ensembles d'`id` de nœuds et de relations des deux côtés
 - **`0025` reste une proposition** : ses commandes nomment `ea-neo4j` et
   `/srv/backups` sur 192.168.1.252 ; `make db-backup-howto` porte la version à
   jour, qui n'a pas plus été restaurée qu'avant.
-- **PostgreSQL n'est pas déplacé par cet ADR.** Il reste décrit par `0015`.
+- **PostgreSQL n'est pas déplacé par cet ADR** : `0029` l'a déjà mis dans la
+  même stack Infra, sur `127.0.0.1:5432`.
 - **L'instance de 192.168.2.10 reste le retour arrière** tant que le nouveau
   graphe n'a pas servi ; l'éteindre est une décision à part.
 

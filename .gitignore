@@ -220,3 +220,13 @@ __marimo__/
 # Dumps of the cluster databases, written by `make pg-backup` (docs/adr/0025).
 # They carry every document attached to the model: never in a commit.
 /backups/
+
+# The Portainer API key (a root token on the Docker daemon) and the variables
+# of the deployed stack, read by scripts/portainer-stack.sh (docs/adr/0027).
+/.portainer.env
+/deploy/ea.env
+
+# pipelines/ config (LiteLLM key, S3 keys) — see docs/adr/0028. Already caught
+# by the bare `.env` pattern above; named explicitly so its absence is a
+# decision, not an omission.
+pipelines/.env

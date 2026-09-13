@@ -1,7 +1,7 @@
 """Guards on the deployment files themselves.
 
 The shared graph is the `neo4j` service of the Infra stack, declared in that
-repository (see docs/adr/0027). What is left to guard here is worth failing a
+repository (see docs/adr/0030). What is left to guard here is worth failing a
 build over, because it is silent when broken:
 
 * `docker-compose.yml` must not grow a Neo4j anybody could model against, or
