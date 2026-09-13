@@ -150,6 +150,7 @@ def test_the_required_secrets_have_no_default() -> None:
         "PIPELINES_LITELLM_API_KEY",
         "PIPELINES_S3_ACCESS_KEY",
         "PIPELINES_S3_SECRET_KEY",
+        "PIPELINES_EA_CLIENT_SECRET",
         "INFRA_CA_CERT",
     ):
         assert f"${{{variable}:?" in compose, variable

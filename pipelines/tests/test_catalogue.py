@@ -235,6 +235,7 @@ def world(harness: None, monkeypatch: pytest.MonkeyPatch) -> World:
     monkeypatch.setenv("PIPELINES_LITELLM_API_KEY", "litellm-key")
     monkeypatch.setenv("PIPELINES_S3_ACCESS_KEY", "s3-access")
     monkeypatch.setenv("PIPELINES_S3_SECRET_KEY", "s3-secret")
+    monkeypatch.setenv("PIPELINES_EA_CLIENT_SECRET", "ea-secret")
     monkeypatch.setenv("PIPELINES_S3_BUCKET", BUCKET)
     world = World(FakeEa(), FakeLlm(), FakeS3({}))
 
@@ -408,6 +409,7 @@ def test_clients_are_built_from_the_settings(monkeypatch: pytest.MonkeyPatch) ->
         "PIPELINES_S3_ENDPOINT": "minio.example:9000",
         "PIPELINES_S3_ACCESS_KEY": "s3-access",
         "PIPELINES_S3_SECRET_KEY": "s3-secret",
+        "PIPELINES_EA_CLIENT_SECRET": "ea-secret",
     }.items():
         monkeypatch.setenv(name, value)
 

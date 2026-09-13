@@ -22,6 +22,7 @@ from uuid import UUID
 
 import httpx
 
+from pipelines.auth import ClientCredentials
 from pipelines.settings import Settings
 
 #: `api/schemas.py`: `Limit = Annotated[int, Field(ge=1, le=200)]` — the API's
@@ -205,7 +206,17 @@ class EaClient:
 
 
 def ea_client(settings: Settings) -> EaClient:
-    """One pooled client for the EA API, carrying its base URL and timeout."""
+    """One pooled client for the EA API, carrying its base URL, timeout and token."""
+    credentials = ClientCredentials(
+        token_url=f"{settings.auth_issuer.rstrip('/')}/protocol/openid-connect/token",
+        client_id=settings.ea_client_id,
+        client_secret=settings.ea_client_secret.get_secret_value(),
+        # Keycloak is behind the Infra NGINX, signed by the Infra CA — the same
+        # certificate MinIO is reached with.
+        http=httpx.Client(verify=settings.s3_ca_cert or True, timeout=settings.ea_timeout_seconds),
+    )
     return EaClient(
-        httpx.Client(base_url=settings.ea_base_url, timeout=settings.ea_timeout_seconds)
+        httpx.Client(
+            base_url=settings.ea_base_url, timeout=settings.ea_timeout_seconds, auth=credentials
+        )
     )

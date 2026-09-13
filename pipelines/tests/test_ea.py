@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
+from pipelines.auth import ClientCredentials
 from pipelines.ea import EaClient, EaRefused, Metamodel, Written, ea_client
 from pipelines.settings import Settings
 
@@ -22,6 +23,7 @@ REQUIRED_SECRETS = {
     "litellm_api_key": "litellm-key",
     "s3_access_key": "s3-access",
     "s3_secret_key": "s3-secret",
+    "ea_client_secret": "ea-secret",
 }
 
 
@@ -79,6 +81,7 @@ def test_ea_client_carries_the_settings_base_url_and_timeout() -> None:
     client = ea_client(settings)
     assert str(client.http.base_url) == "http://ea.example:8000"
     assert client.http.timeout.connect == 7
+    assert isinstance(client.http.auth, ClientCredentials)
 
 
 # --- metamodel -----------------------------------------------------------

@@ -13,6 +13,7 @@ REQUIRED_SECRETS = {
     "litellm_api_key": "litellm-key",
     "s3_access_key": "s3-access",
     "s3_secret_key": "s3-secret",
+    "ea_client_secret": "ea-secret",
 }
 
 
