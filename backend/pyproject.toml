@@ -18,6 +18,8 @@ dependencies = [
     "pgvector>=0.3.6",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
+    # Verifies Keycloak access tokens — see docs/adr/0031. Already locked via mcp.
+    "pyjwt[crypto]>=2.10",
     # Uploading a markdown file is multipart/form-data, which Starlette
     # parses only when this is installed — see docs/adr/0017.
     "python-multipart>=0.0.18",
