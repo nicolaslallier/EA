@@ -191,34 +191,40 @@ def alimenter_catalogue(prefix: str = "inbox/") -> None:
     logger = get_run_logger()
     rows: list[dict[str, str]] = []
     failed: list[str] = []
-    with _clients_for_this_run() as run:
-        metamodel = read_metamodel()
-        # ponytail: files in series — ThreadPoolTaskRunner when volume demands it
-        for key in list_keys(run.s3, run.settings.s3_bucket, prefix):
-            source = f"s3://{run.settings.s3_bucket}/{key}"
-            try:
-                extraction = extract_architecture(key, metamodel)
-            except (ExtractionFailed, httpx.HTTPError, S3Error) as error:
-                logger.error("extraction of %s failed: %s", key, error)
-                failed.append(key)
-                rows.append(_row(key, "", "extraction_failed", str(error)))
-                continue
-            ids: dict[tuple[str, str], UUID] = {}
-            for element in extraction.elements:
-                written = write_element(element, source)
-                if isinstance(written, Refused):
-                    rows.append(_row(key, written.subject, written.code, written.detail))
-                else:
-                    ids[element.name, element.element_type] = written.id
-                    rows.append(_row(key, _element_subject(element), written.outcome))
-            for relationship in extraction.relationships:
-                linked = write_relationship(relationship, ids, source)
-                if isinstance(linked, Refused):
-                    rows.append(_row(key, linked.subject, linked.code, linked.detail))
-                else:
-                    rows.append(_row(key, _relationship_subject(relationship), linked))
-    create_table_artifact(
-        rows, key="alimenter-catalogue", description=f"Alimentation depuis `{prefix}`"
-    )
+    try:
+        with _clients_for_this_run() as run:
+            metamodel = read_metamodel()
+            # ponytail: files in series — ThreadPoolTaskRunner when volume demands it
+            for key in list_keys(run.s3, run.settings.s3_bucket, prefix):
+                source = f"s3://{run.settings.s3_bucket}/{key}"
+                try:
+                    extraction = extract_architecture(key, metamodel)
+                except (ExtractionFailed, httpx.HTTPError, S3Error) as error:
+                    logger.error("extraction of %s failed: %s", key, error)
+                    failed.append(key)
+                    rows.append(_row(key, "", "extraction_failed", str(error)))
+                    continue
+                ids: dict[tuple[str, str], UUID] = {}
+                for element in extraction.elements:
+                    written = write_element(element, source)
+                    if isinstance(written, Refused):
+                        rows.append(_row(key, written.subject, written.code, written.detail))
+                    else:
+                        ids[element.name, element.element_type] = written.id
+                        rows.append(_row(key, _element_subject(element), written.outcome))
+                for relationship in extraction.relationships:
+                    linked = write_relationship(relationship, ids, source)
+                    if isinstance(linked, Refused):
+                        rows.append(_row(key, linked.subject, linked.code, linked.detail))
+                    else:
+                        rows.append(_row(key, _relationship_subject(relationship), linked))
+    finally:
+        # Even when a write exhausts its retries or the metamodel cannot be read,
+        # what was already written is recorded: the artifact is the one trace of
+        # a run in the catalogue's history, and the original exception still
+        # propagates unchanged.
+        create_table_artifact(
+            rows, key="alimenter-catalogue", description=f"Alimentation depuis `{prefix}`"
+        )
     if failed:
         raise RuntimeError(f"{len(failed)} file(s) could not be extracted: {', '.join(failed)}")

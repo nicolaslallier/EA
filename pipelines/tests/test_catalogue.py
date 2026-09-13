@@ -119,9 +119,18 @@ class FakeEa:
 
     elements: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     relationships: list[dict[str, Any]] = field(default_factory=list)
+    #: Once this many elements exist, every further `POST /elements` answers 500.
+    down_after: int | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
+        if (
+            path == "/elements"
+            and method == "POST"
+            and self.down_after is not None
+            and len(self.elements) >= self.down_after
+        ):
+            return httpx.Response(500, json={"error": "internal_error", "detail": "down"})
         if path == "/metamodel":
             return httpx.Response(
                 200,
@@ -346,6 +355,21 @@ def test_a_failed_file_does_not_stop_the_others_and_fails_the_run(
     assert failed == {"inbox/1-latin1.md", "inbox/2-garbage.md", "inbox/3-long.md"}
     # Neither the undecodable file nor the oversized one ever reaches the LLM.
     assert len(world.llm.bodies) == 2
+
+
+def test_a_write_that_exhausts_its_retries_still_records_what_was_written(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No retry delay in a test: the retry policy is not what is under test here.
+    monkeypatch.setattr(catalogue, "write_element", catalogue.write_element.with_options(retries=0))
+    world.ea.down_after = 1
+    world.s3.objects["inbox/a.md"] = b"DOC:a"
+
+    state = world.run()
+
+    assert state.is_failed()
+    assert list(world.ea.elements) == [("application_component", "Billing")]
+    assert outcomes(state) == {("inbox/a.md", "application_component Billing", "created")}
 
 
 def test_a_second_run_creates_nothing(world: World) -> None:
