@@ -78,10 +78,11 @@ for line in lines:
     if not match or match.group(1) not in names:
         continue
     raw = match.group(2).strip()
-    if len(raw) >= 2 and raw[0] == "'" and raw.endswith("'"):
-        value = raw[1:-1]
-    elif len(raw) >= 2 and raw[0] == '"' and raw.endswith('"'):
-        value = raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    quoted = re.match(r"""(['"])(.*?)\1\s*(?:#.*)?\Z""", raw)
+    if quoted and quoted.group(1) == "'":
+        value = quoted.group(2)
+    elif quoted:
+        value = quoted.group(2).replace('\\"', '"').replace("\\\\", "\\")
     else:
         value = re.split(r"\s+#", raw, maxsplit=1)[0]
 sys.stdout.write(value)
