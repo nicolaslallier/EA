@@ -58,3 +58,25 @@ repos:
         language: system
         files: ^frontend/.*\.(ts|tsx|vue|js|mjs|cjs)$
         pass_filenames: false
+
+      # pipelines/ a son propre venv, son propre uv.lock — voir docs/adr/0027.
+      - id: pipelines-ruff-format
+        name: ruff format --check (pipelines)
+        entry: bash -c 'cd pipelines && uv run --extra dev ruff format --check .'
+        language: system
+        files: ^pipelines/.*\.py$
+        pass_filenames: false
+
+      - id: pipelines-ruff-check
+        name: ruff check (pipelines)
+        entry: bash -c 'cd pipelines && uv run --extra dev ruff check .'
+        language: system
+        files: ^pipelines/.*\.py$
+        pass_filenames: false
+
+      - id: pipelines-mypy
+        name: mypy --strict (pipelines)
+        entry: bash -c 'cd pipelines && uv run --extra dev mypy src'
+        language: system
+        files: ^pipelines/.*\.py$
+        pass_filenames: false

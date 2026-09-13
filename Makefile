@@ -3,14 +3,23 @@
 # Cible unique d'entrée pour le stack Python (backend) + Vue (frontend).
 # Voir docs/adr/0001-orchestration-locale-via-makefile.md.
 
-BACKEND  := backend
-FRONTEND := frontend
+BACKEND   := backend
+FRONTEND  := frontend
+# Second projet Python, son propre lockfile : Prefect épingle ses propres
+# FastAPI/SQLAlchemy/Alembic, à des versions que ce dépôt ne contrôle pas — un
+# lockfile commun avec backend/ forcerait l'un des deux à suivre l'autre. Voir
+# docs/adr/0027.
+PIPELINES := pipelines
 
 # Environnement virtuel Python géré par uv (uv sync le crée dans backend/.venv).
 # Le témoin vit *dans* le venv : `make clean` l'emporte avec lui, donc un venv
 # supprimé ne peut pas laisser derrière lui un témoin qui mentirait au garde-fou.
 VENV       := $(BACKEND)/.venv
 VENV_STAMP := $(VENV)/.uv-sync-stamp
+
+# Même garde-fou pour pipelines/, son propre venv.
+PL_VENV       := $(PIPELINES)/.venv
+PL_VENV_STAMP := $(PL_VENV)/.uv-sync-stamp
 
 # Configuration locale, dérivée de l'exemple committé. Jamais versionnée.
 BE_ENV := $(BACKEND)/.env
@@ -207,7 +216,9 @@ NC    := \033[0m
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
         pg-backup pg-restore db-backup-howto \
-        db-test-up
+        db-test-up \
+        pipelines-install pipelines-lint pipelines-lint-check pipelines-typecheck \
+        pipelines-test pipelines-check pipelines-audit
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -216,7 +227,7 @@ help: ## Liste les cibles disponibles
 
 ## --- Installation ---------------------------------------------------------
 
-install: install-be install-fe ## Installe toutes les dépendances (BE + FE)
+install: install-be install-fe pipelines-install ## Installe toutes les dépendances (BE + FE + pipelines)
 
 install-be: $(BE_ENV) ## Crée le venv et installe les dépendances Python
 	@printf "$(GREEN)Installing backend dependencies (uv)...$(NC)\n"
@@ -611,7 +622,7 @@ audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audi
 	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
 	exit $$status
 
-check: lint-check lint-fe typecheck openapi-check test test-fe ## Tout ce que la CI vérifiera (ne modifie aucun fichier)
+check: lint-check lint-fe typecheck openapi-check test test-fe pipelines-check ## Tout ce que la CI vérifiera (ne modifie aucun fichier)
 
 # pre-commit n'est pas une dépendance du projet : uvx le prend à la version
 # épinglée ici. Ses crochets appellent `uv run` et `npm run`, donc ruff et mypy
@@ -623,12 +634,57 @@ hooks: ## Installe les crochets pre-commit dans .git (ruff, mypy, vue-tsc, eslin
 	$(PRE_COMMIT) install
 	@printf "$(GREEN)Crochets installés. Sur tout le dépôt : $(PRE_COMMIT) run --all-files$(NC)\n"
 
+## --- Pipelines --------------------------------------------------------------
+#
+# Second projet Python, son propre venv, sa propre barrière — voir docs/adr/0027.
+# Aucune cible ici ne démarre Prefect, LiteLLM ou MinIO : ce sont les tâches
+# suivantes qui posent le stack. `pipelines-check` est ce que `check` et la CI
+# appellent ; aucune des deux ne modifie de fichier.
+
+$(PL_VENV_STAMP): $(PIPELINES)/pyproject.toml $(PIPELINES)/uv.lock
+	@printf "$(RED)Environnement Python absent ou périmé ($(PL_VENV)).$(NC)\n"
+	@printf "$(RED)Lance d'abord : make pipelines-install$(NC)\n"
+	@exit 1
+
+pipelines-install: ## Crée le venv de pipelines/ et installe ses dépendances Python
+	@printf "$(GREEN)Installing pipelines dependencies (uv)...$(NC)\n"
+	@command -v uv >/dev/null 2>&1 || { \
+		printf "$(RED)uv est introuvable. Installe-le : brew install uv$(NC)\n"; exit 1; }
+	cd $(PIPELINES) && uv sync --all-extras
+	@touch $(PL_VENV_STAMP)
+
+pipelines-lint: | $(PL_VENV_STAMP) ## Corrige : ruff format, puis ruff check --fix (pipelines/)
+	cd $(PIPELINES) && uv run ruff format . && uv run ruff check --fix .
+
+pipelines-lint-check: | $(PL_VENV_STAMP) ## Vérifie sans rien modifier : ruff format --check, ruff check (pipelines/)
+	cd $(PIPELINES) && uv run ruff format --check . && uv run ruff check .
+
+pipelines-typecheck: | $(PL_VENV_STAMP) ## mypy --strict sur pipelines/src
+	cd $(PIPELINES) && uv run mypy src
+
+pipelines-test: | $(PL_VENV_STAMP) ## Tests de pipelines/, plancher de couverture 90 %
+	cd $(PIPELINES) && uv run pytest -q --cov=pipelines
+
+pipelines-check: pipelines-lint-check pipelines-typecheck pipelines-test ## Tout ce que la CI vérifiera pour pipelines/
+
+pipelines-audit: | $(PL_VENV_STAMP) ## bandit et pip-audit sur pipelines/
+	@status=0; \
+	printf "$(GREEN)bandit (pipelines)$(NC)\n"; \
+	(cd $(PIPELINES) && uv run bandit -c pyproject.toml -r src -q) || status=1; \
+	printf "$(GREEN)pip-audit (pipelines)$(NC)\n"; \
+	(cd $(PIPELINES) && uv run pip-audit --skip-editable) || status=1; \
+	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
+	exit $$status
+
 ## --- Nettoyage ------------------------------------------------------------
 
 clean: ## Supprime venv, node_modules, caches et artefacts de build
-	rm -rf $(VENV)
+	rm -rf $(VENV) $(PL_VENV)
 	rm -rf $(FRONTEND)/node_modules $(FRONTEND)/dist
 	rm -rf $(BACKEND)/.pytest_cache $(BACKEND)/.mypy_cache $(BACKEND)/.ruff_cache
 	rm -rf $(BACKEND)/.coverage $(BACKEND)/htmlcov
+	rm -rf $(PIPELINES)/.pytest_cache $(PIPELINES)/.mypy_cache $(PIPELINES)/.ruff_cache
+	rm -rf $(PIPELINES)/.coverage $(PIPELINES)/htmlcov
 	find $(BACKEND) -type d -name "__pycache__" -prune -exec rm -rf {} +
+	find $(PIPELINES) -type d -name "__pycache__" -prune -exec rm -rf {} +
 	@printf "$(GREEN)Cleaned up!$(NC)\n"

@@ -1,0 +1,60 @@
+[project]
+name = "ea-pipelines"
+version = "0.1.0"
+description = "Self-hosted Prefect pipelines for the EA catalogue"
+requires-python = ">=3.12"
+dependencies = [
+    "prefect>=3",
+    "httpx>=0.27",
+    "minio",
+    "pydantic-settings>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "bandit[toml]>=1.8",
+    "mypy>=1.11",
+    "pip-audit>=2.9",
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipelines"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["pipelines"]
+
+[tool.coverage.run]
+source = ["src/pipelines"]
+
+[tool.coverage.report]
+# Same floor as backend/pyproject.toml — see docs/adr/0026.
+fail_under = 90
+show_missing = true
+skip_covered = true
+omit = ["src/pipelines/__main__.py"]
+
+[tool.bandit]
+# Same reasoning as backend/pyproject.toml: tests assert on literal secrets
+# and loopback addresses on purpose.
+exclude_dirs = ["tests", ".venv"]

@@ -1,0 +1,44 @@
+"""Configuration for the pipelines process, read from the environment.
+
+Every field is `PIPELINES_<NAME>` (case-insensitive), from the environment or
+from `pipelines/.env` — never from a literal in code, the same rule
+`backend/src/ea/core/config.py` follows. The three secrets have no default:
+building a `Settings` without them fails loudly, in the same place a missing
+`EA_NEO4J_PASSWORD` fails for the backend.
+"""
+
+from __future__ import annotations
+
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Everything a flow needs to reach the EA API, LiteLLM and MinIO."""
+
+    model_config = SettingsConfigDict(env_prefix="PIPELINES_", env_file=".env")
+
+    #: The EA API, reached over HTTP only — never `/mcp`, never a repository
+    #: (docs/adr/0027). `host.docker.internal` is the default because the
+    #: pipeline runs in Docker while `make run-be` binds the Mac's own ports.
+    ea_base_url: str = "http://host.docker.internal:8000"
+
+    #: LiteLLM, behind the `smart` and `fast` aliases — the code never names a
+    #: real model (see `pipelines/litellm.yaml`, added in a later task).
+    litellm_base_url: str = "http://litellm:4000"
+    litellm_api_key: SecretStr
+
+    llm_timeout_seconds: float = 300
+    ea_timeout_seconds: float = 30
+
+    #: MinIO of the `~/OpenCode/Infra` stack, read-only from this project.
+    s3_endpoint: str = "minio.famillelallier.net"
+    s3_secure: bool = True
+    s3_access_key: SecretStr
+    s3_secret_key: SecretStr
+    s3_bucket: str = "ea-catalogue"
+    s3_ca_cert: str | None = None
+
+    #: A source is truncated to this many characters before it reaches the
+    #: LLM — the budget of a prompt, not of the document.
+    max_source_chars: int = 60000
