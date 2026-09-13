@@ -51,7 +51,7 @@ services:
   neo4j:
     # La même version que le graphe partagé de la stack Infra : un test qui
     # passe ici doit passer contre lui, contraintes et Cypher compris.
-    image: neo4j:2026.07.1-community
+    image: neo4j:2026.08.1-community
     container_name: ea-neo4j-test
     # Bolt seulement, et seulement en local. Pas de navigateur (7474) : ce
     # graphe est vidé entre chaque test, ce n'est pas un endroit où regarder un
