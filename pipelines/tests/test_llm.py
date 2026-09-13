@@ -194,6 +194,14 @@ def test_choice_without_message_raises_extraction_failed() -> None:
         extract(_client(handler), "describe it", Parent, enums=ENUMS)
 
 
+def test_a_choice_that_is_not_an_object_raises_extraction_failed() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": ["x"]})
+
+    with pytest.raises(ExtractionFailed):
+        extract(_client(handler), "describe it", Parent, enums=ENUMS)
+
+
 def test_non_json_body_raises_extraction_failed() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not json at all")

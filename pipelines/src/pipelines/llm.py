@@ -139,7 +139,8 @@ def extract[T: BaseModel](
         choice = response.json()["choices"][0]
         finish_reason = choice.get("finish_reason")
         content = choice["message"]["content"]
-    except (KeyError, IndexError, TypeError, ValueError) as error:
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as error:
+        # `AttributeError` is a choice that is not an object (`"choices": ["x"]`).
         # `ValueError` also catches `json.JSONDecodeError`: a non-JSON body is
         # exactly as unusable as a well-formed one shaped unlike a chat
         # completion, and neither is worth telling apart from the other.
