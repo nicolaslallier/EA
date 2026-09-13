@@ -26,16 +26,16 @@ tourne sur le cluster Docker, pas ici.
 ```bash
 make install   # dépendances Python (uv), Node (npm), et backend/.env
 # puis renseigne EA_NEO4J_PASSWORD dans backend/.env
-make db-ping   # vérifie que le graphe du cluster répond
+make db-ping   # vérifie que le graphe partagé répond
 make run       # backend + frontend en parallèle
 ```
 
-Le graphe n'est pas démarré par ces commandes : c'est une instance unique,
-déployée sur le cluster Docker (192.168.2.10) depuis
-[`deploy/neo4j.stack.yml`](deploy/neo4j.stack.yml) — voir
-[`docs/adr/0006`](docs/adr/0006-neo4j-sur-le-cluster-docker.md). `make db-stack`
-rappelle la marche à suivre pour la (re)déployer, et le mot de passe se demande
-à qui l'a déployée : il ne figure dans aucun fichier versionné.
+Le graphe n'est pas démarré par ces commandes : c'est une instance unique, le
+service `neo4j` de la stack [Infra](https://github.com/nicolaslallier/Infra),
+publiée par son nginx sur `bolt://127.0.0.1:7687` et nulle part ailleurs — voir
+[`docs/adr/0030`](docs/adr/0030-neo4j-dans-la-stack-infra.md). `make db-stack`
+rappelle d'où la (re)déployer ; le mot de passe est `NEO4J_PASSWORD` dans le
+`.env` d'Infra, et ne figure dans aucun fichier versionné.
 
 PostgreSQL non plus n'est pas démarré ici, mais il n'est pas sur le cluster : la
 base `ea` vit dans la stack `~/OpenCode/Infra` de ce Mac, sur 127.0.0.1:5432 —
@@ -50,8 +50,7 @@ indique « Backend: ok », les deux services communiquent.
 | <http://127.0.0.1:8000/health> | Endpoint de santé |
 | <http://127.0.0.1:8000/docs> | Documentation OpenAPI |
 | <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
-| <http://192.168.2.10:7474> | Navigateur Neo4j, sur le cluster (`neo4j`) |
-| <http://192.168.2.10:9000/#!/9/docker/stacks> | Portainer — la stack du graphe |
+| `bolt://127.0.0.1:7687` | Graphe Neo4j, dans la stack Infra — `make db-shell` |
 | <https://ea.infra.famillelallier.net> | L'application déployée, derrière le NGINX de l'Infra — `make app-stack` |
 
 ## Commandes

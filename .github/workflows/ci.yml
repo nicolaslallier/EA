@@ -126,7 +126,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
       neo4j:
-        image: neo4j:5.26-community
+        image: neo4j:2026.07.1-community
         env:
           NEO4J_AUTH: neo4j/ci-disposable-password
           NEO4J_server_memory_pagecache_size: 256M

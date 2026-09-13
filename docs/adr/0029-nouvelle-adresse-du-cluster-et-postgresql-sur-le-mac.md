@@ -9,6 +9,7 @@ affects: Makefile, backend/src/ea/core/config.py, backend/.env.example, frontend
 
 Date : 2026-09-13
 Statut : Accepté
+Supersédé en partie par : [`0030`](0030-neo4j-dans-la-stack-infra.md) — l'adresse du graphe, désormais le service `neo4j` de la stack Infra (`127.0.0.1:7687`) ; 192.168.2.10 ne garde que LM Studio.
 
 Supersède **en partie** [`0006`](0006-neo4j-sur-le-cluster-docker.md) (l'adresse
 du cluster), [`0015`](0015-socle-postgresql-sqlalchemy-alembic.md) (l'emplacement

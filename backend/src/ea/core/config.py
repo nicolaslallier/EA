@@ -65,12 +65,12 @@ class Settings(BaseSettings):
     log_embeddings: bool = False
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
-    # There is one instance, on the Docker cluster (docs/adr/0006, 0029), so its
-    # address is the useful default: a developer who never writes a `.env`
-    # reaches the shared graph rather than a `localhost` that answers nothing.
+    # There is one instance, the `neo4j` service of the Infra stack, and its
+    # nginx publishes Bolt on loopback and nowhere else (docs/adr/0030), so that
+    # address is the useful default.
     # It is an address, not a credential — the password below has no default,
     # and an empty one is only tolerated in debug.
-    neo4j_uri: str = "bolt://192.168.2.10:7687"
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("")
     neo4j_database: str = "neo4j"

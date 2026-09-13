@@ -274,7 +274,7 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0003](adr/0003-uv-comme-chaine-outils-python.md) | `uv` comme chaîne d'outils Python | Accepté |
 | [0004](adr/0004-neo4j-pour-le-graphe-d-architecture.md) | Neo4j pour le graphe d'architecture | Accepté |
 | [0005](adr/0005-archimate-3-2-comme-metamodele.md) | ArchiMate 3.2 comme métamodèle du référentiel | Accepté |
-| [0006](adr/0006-neo4j-sur-le-cluster-docker.md) | Neo4j sur le cluster Docker | Accepté |
+| [0006](adr/0006-neo4j-sur-le-cluster-docker.md) | Neo4j sur le cluster Docker | Supersédé par 0030 |
 | [0007](adr/0007-client-openapi-genere-pour-le-spa.md) | Client OpenAPI généré, et premier écran de CRUD | Accepté |
 | [0008](adr/0008-menu-et-routage-du-spa.md) | Menu de sections et routage du SPA | Accepté |
 | [0009](adr/0009-association-des-elements-dans-le-spa.md) | Associer deux éléments depuis le SPA | Accepté |
@@ -295,4 +295,8 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0024](adr/0024-tests-d-integration-sur-des-bases-jetables.md) | Les tests d'intégration tournent sur des bases jetables, jamais sur le cluster | Accepté |
 | [0025](adr/0025-sauvegardes-des-deux-bases.md) | Sauvegardes des deux bases | Proposition |
 | [0026](adr/0026-la-barriere-qualite.md) | La barrière qualité | Accepté |
+| [0027](adr/0027-application-deployee-derriere-le-nginx-de-l-infra.md) | L'application déployée comme stack Portainer, derrière le NGINX de l'Infra | Proposition |
+| [0028](adr/0028-pipelines-python-dans-le-depot-ea.md) | Pipelines Python dans le dépôt EA — Prefect 3 et LiteLLM, auto-hébergés | Proposition |
+| [0029](adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) | Le cluster change d'adresse, et PostgreSQL le quitte pour la stack Infra du Mac | Accepté |
+| [0030](adr/0030-neo4j-dans-la-stack-infra.md) | Le graphe Neo4j vit dans la stack Infra | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

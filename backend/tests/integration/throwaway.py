@@ -10,6 +10,11 @@ everyone models against. Loopback cannot be another machine, so it is the only
 thing accepted — the throwaway containers of `docker-compose.yml` publish
 there and nowhere else. See docs/adr/0024.
 
+Loopback is no longer sufficient for the graph: the shared one now lives in the
+Infra stack on this very machine, published on 127.0.0.1 at Neo4j's own port.
+So that port is refused too — the throwaway graph publishes on 7688. See
+docs/adr/0030.
+
 Since docs/adr/0029 the shared PostgreSQL answers on this Mac's loopback too,
 so for that store the address is no longer the whole question: its port is
 refused as well, and the throwaway container publishes another one.
@@ -25,6 +30,10 @@ from ea.core.config import Settings
 #: The one variable a developer sets to say "yes, wipe it". Necessary for the
 #: graph, never sufficient: it says the caller means it, not where.
 DESTRUCTIVE_OPT_IN = "EA_ALLOW_DESTRUCTIVE_TESTS"
+
+#: Neo4j's default Bolt port, where the Infra stack publishes the shared graph
+#: on loopback. A URI that names no port means this one.
+SHARED_BOLT_PORT = 7687
 
 #: The port of the shared PostgreSQL, read from the default that reaches it, so
 #: the guard moves in the same commit as the database. Refused even on loopback.
@@ -56,13 +65,20 @@ def refuse_a_shared_graph(uri: str, *, allow_destructive: str | None) -> str | N
             "integration tests empty the graph; run `make test-integration`, "
             f"or set {DESTRUCTIVE_OPT_IN}=1 against a throwaway Neo4j"
         )
-    host = urlsplit(uri).hostname or ""
+    parts = urlsplit(uri)
+    host = parts.hostname or ""
     if not is_loopback(host):
         return (
             f"refusing to empty the graph at {uri}: {host or 'that host'} is not loopback, "
-            "so it may be a graph somebody models against (the shared one is on the "
-            "cluster). Start the throwaway one with `make db-test-up` and point "
+            "so it may be a graph somebody models against. "
+            "Start the throwaway one with `make db-test-up` and point "
             "EA_NEO4J_URI at bolt://127.0.0.1 — `make test-integration` does both"
+        )
+    if (parts.port or SHARED_BOLT_PORT) == SHARED_BOLT_PORT:
+        return (
+            f"refusing to empty the graph at {uri}: port {SHARED_BOLT_PORT} on loopback is "
+            "the shared graph of the Infra stack. The throwaway one publishes on 7688 "
+            "— `make test-integration` points there"
         )
     return None
 
