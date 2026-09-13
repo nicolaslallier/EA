@@ -218,7 +218,9 @@ NC    := \033[0m
         pg-backup pg-restore db-backup-howto \
         db-test-up \
         pipelines-install pipelines-lint pipelines-lint-check pipelines-typecheck \
-        pipelines-test pipelines-check pipelines-audit
+        pipelines-test pipelines-check pipelines-audit \
+        require-pipelines-env pipelines-up pipelines-down pipelines-logs pipelines-run \
+        pipelines-db-howto
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -675,6 +677,63 @@ pipelines-audit: | $(PL_VENV_STAMP) ## bandit et pip-audit sur pipelines/
 	(cd $(PIPELINES) && uv run pip-audit --skip-editable) || status=1; \
 	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
 	exit $$status
+
+# La stack Docker de pipelines/ : Prefect + LiteLLM + le worker qui sert le
+# flow. --env-file pointe pipelines/.env, jamais committé (voir .gitignore) —
+# require-pipelines-env est ce qui donne un message clair plutôt que l'erreur
+# brute de docker compose quand ce fichier manque.
+PL_COMPOSE := docker compose -f $(PIPELINES)/docker-compose.yml --env-file $(PIPELINES)/.env
+
+# Même rôle que $(BE_ENV), sans la création automatique : les secrets de ce
+# fichier (mots de passe, clé LiteLLM) ne peuvent pas venir d'un copier-coller
+# de l'exemple, contrairement à backend/.env qui démarre en EA_DEBUG sans eux.
+require-pipelines-env:
+	@test -f $(PIPELINES)/.env || { \
+		printf "$(RED)$(PIPELINES)/.env absent.$(NC)\n"; \
+		printf "Copie $(PIPELINES)/.env.example vers $(PIPELINES)/.env et renseigne les secrets\n"; \
+		printf "(mots de passe : openssl rand -hex 32) — voir make pipelines-db-howto.\n"; exit 1; }
+
+pipelines-up: | require-pipelines-env ## Démarre Prefect + LiteLLM + le worker (pipelines/docker-compose.yml)
+	$(PL_COMPOSE) up -d --build
+	@printf "$(GREEN)Prefect : http://127.0.0.1:4200 — LiteLLM : http://127.0.0.1:4000$(NC)\n"
+
+pipelines-down: ## Arrête la stack Prefect + LiteLLM + le worker
+	$(PL_COMPOSE) down
+
+pipelines-logs: ## Suit les logs de la stack (docker compose logs -f)
+	$(PL_COMPOSE) logs -f
+
+# inbox/ est le préfixe où le catalogue dépose ce que le flow doit lire — voir
+# la définition du flow alimenter-catalogue.
+PREFIX ?= inbox/
+
+pipelines-run: ## Déclenche alimenter-catalogue/manuel dans le worker (PREFIX=... défaut inbox/)
+	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param prefix=$(PREFIX) --watch
+
+# Imprime seulement, comme pg-stack et db-backup-howto : les rôles et la base
+# partagée (192.168.1.252) et le bucket MinIO ne se créent pas d'ici, et cette
+# cible ne réclame ni mot de passe ni pipelines/.env pour les rappeler.
+pipelines-db-howto: ## Rappelle comment préparer les rôles PostgreSQL et le bucket MinIO de pipelines/
+	@printf "$(GREEN)Préparation manuelle — rien ne s'exécute d'ici$(NC)\n"
+	@printf "\n$(GREEN)1. make pg-shell, puis :$(NC)\n"
+	@printf '%s\n' \
+		"  CREATE ROLE prefect LOGIN;" \
+		"  \password prefect" \
+		"  CREATE DATABASE prefect OWNER prefect;" \
+		"  REVOKE CONNECT ON DATABASE prefect FROM PUBLIC;" \
+		"  \c prefect" \
+		"  CREATE EXTENSION IF NOT EXISTS pg_trgm;" \
+		"" \
+		"  CREATE ROLE litellm LOGIN;" \
+		"  \password litellm" \
+		"  CREATE DATABASE litellm OWNER litellm;" \
+		"  REVOKE CONNECT ON DATABASE litellm FROM PUBLIC;" \
+		"  \c litellm"
+	@printf "\n$(GREEN)2. MinIO — https://minio-console.famillelallier.net :$(NC)\n"
+	@printf '%s\n' \
+		"  Bucket ea-catalogue" \
+		"  Un utilisateur dédié, politique en lecture seule sur ce bucket"
+	@printf "\n$(GREEN)3. Mots de passe : openssl rand -hex 32$(NC)\n"
 
 ## --- Nettoyage ------------------------------------------------------------
 
