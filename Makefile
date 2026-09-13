@@ -708,7 +708,7 @@ pipelines-logs: ## Suit les logs de la stack (docker compose logs -f)
 PREFIX ?= inbox/
 
 pipelines-run: ## Déclenche alimenter-catalogue/manuel dans le worker (PREFIX=... défaut inbox/)
-	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param prefix=$(PREFIX) --watch
+	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param "prefix=$(PREFIX)" --watch
 
 # Imprime seulement, comme pg-stack et db-backup-howto : les rôles et la base
 # partagée (192.168.1.252) et le bucket MinIO ne se créent pas d'ici, et cette
