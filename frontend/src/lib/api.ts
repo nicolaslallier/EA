@@ -7,6 +7,7 @@
 import createClient from 'openapi-fetch'
 
 import type { paths } from '../api/schema'
+import { accessToken, signIn } from './auth'
 import { createLogger } from './logging'
 
 /** The port `make run-be` serves the API on. */
@@ -48,6 +49,25 @@ export const api = createClient<paths>({
   // reach the real backend — which, the graph being shared, means writing to
   // everyone's data from a unit test.
   fetch: (request) => globalThis.fetch(request),
+})
+
+// Who is calling (docs/adr/0031): the token on every request, and a 401 —
+// a token Keycloak no longer honours — restarts the login, coming back to
+// exactly this page, query included.
+api.use({
+  async onRequest({ request }) {
+    const token = await accessToken()
+    if (token) {
+      request.headers.set('Authorization', `Bearer ${token}`)
+    }
+    return request
+  },
+  onResponse({ response }) {
+    if (response.status === 401) {
+      const here = globalThis.location ? `${location.pathname}${location.search}` : '/'
+      void signIn(here)
+    }
+  },
 })
 
 const log = createLogger('api')

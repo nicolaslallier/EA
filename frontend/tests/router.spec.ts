@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 
 import { createAppRouter } from '../src/router'
@@ -33,5 +33,26 @@ describe('the application router', () => {
     await app.push('/une-section-qui-nexiste-pas')
 
     expect(app.currentRoute.value.name).toBe('not-found')
+  })
+})
+
+describe('the login gate', () => {
+  it('sends a visitor without a token to Keycloak, remembering where they were going', async () => {
+    const signIn = vi.fn(() => Promise.resolve())
+    const app = createAppRouter(createMemoryHistory(), { accessToken: () => Promise.resolve(null), signIn })
+
+    await app.push('/elements?element=7')
+
+    expect(signIn).toHaveBeenCalledWith('/elements?element=7')
+  })
+
+  it('lets the login callback through without a token', async () => {
+    const signIn = vi.fn(() => Promise.resolve())
+    const app = createAppRouter(createMemoryHistory(), { accessToken: () => Promise.resolve(null), signIn })
+
+    await app.push('/auth/callback?code=x&state=y')
+
+    expect(app.currentRoute.value.name).toBe('auth-callback')
+    expect(signIn).not.toHaveBeenCalled()
   })
 })

@@ -15,6 +15,7 @@
     "generate:api:check": "openapi-typescript ../backend/openapi.json --default-non-nullable false --output src/api/schema.d.ts --check"
   },
   "dependencies": {
+    "oidc-client-ts": "^3.5.0",
     "openapi-fetch": "^0.17.0",
     "vue": "^3.5.41",
     "vue-router": "^5.3.1"
