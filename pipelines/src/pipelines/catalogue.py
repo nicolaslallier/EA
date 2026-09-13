@@ -11,7 +11,7 @@ artifact, so a run is read in the Prefect UI rather than in its logs.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -175,7 +175,8 @@ def _clients_for_this_run() -> Iterator[_Run]:
     ea, llm, s3 = clients()
     token = _run.set(_Run(Settings(), ea, llm, s3))  # type: ignore[call-arg]
     try:
-        with ea.http, llm:
+        # `closing(ea)`, not `ea.http`: the EA client also owns its token client.
+        with closing(ea), llm:
             yield _run.get()
     finally:
         _run.reset(token)

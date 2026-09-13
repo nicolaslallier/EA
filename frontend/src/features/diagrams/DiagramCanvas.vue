@@ -27,6 +27,8 @@ const props = defineProps<{
   /** The element `?element=` names, or ''. */
   selectedId: string
   typeLabel: (value: string) => string
+  /** A reader's canvas: boxes can be selected, never dropped, moved, linked or removed. */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -102,6 +104,9 @@ function capture(event: PointerEvent): void {
 }
 
 function onDrop(event: DragEvent): void {
+  if (props.readonly) {
+    return
+  }
   const elementId = event.dataTransfer?.getData(ELEMENT_DRAG_TYPE)
   if (elementId) {
     emit('place', elementId, placeCentredAt(at(event)))
@@ -109,7 +114,7 @@ function onDrop(event: DragEvent): void {
 }
 
 function grab(event: PointerEvent, box: Box): void {
-  if (event.button !== 0) {
+  if (event.button !== 0 || props.readonly) {
     return
   }
   capture(event)
@@ -123,7 +128,7 @@ function grab(event: PointerEvent, box: Box): void {
 }
 
 function startLink(event: PointerEvent): void {
-  if (event.button !== 0 || !selected.value) {
+  if (event.button !== 0 || !selected.value || props.readonly) {
     return
   }
   capture(event)
@@ -187,7 +192,7 @@ function release(event: PointerEvent): void {
 }
 
 function removeIfSelected(box: Box): void {
-  if (box.element.id === props.selectedId) {
+  if (box.element.id === props.selectedId && !props.readonly) {
     emit('remove', box.element.id)
   }
 }
@@ -203,7 +208,7 @@ function removeIfSelected(box: Box): void {
       </div>
     </figcaption>
 
-    <p v-if="boxes.length === 0" class="canvas__hint">
+    <p v-if="boxes.length === 0 && !readonly" class="canvas__hint">
       Glisse un élément de la palette jusqu'ici.
     </p>
 
@@ -306,7 +311,7 @@ function removeIfSelected(box: Box): void {
         />
 
         <circle
-          v-if="selected"
+          v-if="selected && !readonly"
           class="canvas__handle"
           :cx="selected.x + BOX_WIDTH"
           :cy="selected.y + BOX_HEIGHT / 2"

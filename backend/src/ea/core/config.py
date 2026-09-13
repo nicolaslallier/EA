@@ -80,8 +80,9 @@ class Settings(BaseSettings):
     neo4j_connection_timeout_seconds: float = 5.0
 
     # --- PostgreSQL, the store for everything that is not the graph ---------
-    # Auth, audit and scheduled work live here rather than in Neo4j — see
+    # Audit and scheduled work will live here rather than in Neo4j — see
     # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
+    # Authentication does not: it is the Keycloak realm `ea`, docs/adr/0032.
     #
     # Like the graph, there is one instance, so its address is the useful
     # default — but not on the cluster: since docs/adr/0029 the `ea` database
@@ -150,18 +151,19 @@ class Settings(BaseSettings):
 
     # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
     # On by default: an agent-facing tool set nobody can reach is not a
-    # feature. It is a switch and not a constant because, until auth exists,
-    # `/mcp` is an unauthenticated *write* path onto the architecture graph —
-    # a deployment that does not want one at all turns it off here rather than
-    # by deleting a mount.
+    # feature. It is a switch and not a constant because `/mcp` is a *write*
+    # path onto the architecture graph — behind a token since docs/adr/0032,
+    # but a deployment that does not want one at all turns it off here rather
+    # than by deleting a mount.
     mcp_enabled: bool = True
 
     #: Whether `/mcp` answers a caller whose TCP peer is not this machine.
     #:
-    #: Off, and it is the setting that actually decides who may call a tool:
-    #: until auth exists the tools write to the graph for whoever reaches them,
-    #: and `mcp_allowed_hosts` below cannot narrow that — it checks a header
-    #: the caller writes. The peer address is the one thing it does not.
+    #: Off, and it is the setting that decides *where* a tool may be called
+    #: from: the token (docs/adr/0032) says who, and this guard stays in front
+    #: of it as defence in depth. `mcp_allowed_hosts` below cannot narrow that
+    #: — it checks a header the caller writes. The peer address is the one
+    #: thing it does not.
     #: Behind a reverse proxy the peer is the proxy, so turning this on there
     #: serves everyone the proxy serves. See docs/adr/0023.
     mcp_allow_remote_clients: bool = False
@@ -181,6 +183,22 @@ class Settings(BaseSettings):
         "localhost:*",
         "[::1]:*",
     ]
+
+    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0032 ------
+    # On by default, like the two stores: an API that anyone on the LAN can
+    # write to is the state this replaces. Off is accepted in debug only.
+    auth_enabled: bool = True
+    auth_issuer: str = "https://keycloak.famillelallier.net/realms/ea"
+    auth_audience: str = "ea-api"
+    #: The Infra CA. From the Mac, keycloak.famillelallier.net resolves to
+    #: 127.0.0.1 behind a certificate the system trust store does not know.
+    auth_ca_cert: str | None = None
+    auth_timeout_seconds: float = 5.0
+    #: The resource identifier `/mcp` publishes (RFC 9728). It names port 8000
+    #: and is not derived from the port uvicorn was started on, which no setting
+    #: here knows: `make run-be BE_PORT=8001` needs this set with it, or the
+    #: published resource no longer matches the URL Claude Code was given.
+    mcp_resource_url: str = "http://127.0.0.1:8000/mcp"
 
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
@@ -240,6 +258,14 @@ class Settings(BaseSettings):
             and not self.postgres_password.get_secret_value()
         ):
             msg = "postgres_password is required when postgres_enabled is on and debug is off"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _authentication_off_only_in_debug(self) -> "Settings":
+        """Turning auth off hands every write to whoever reaches the port."""
+        if not self.auth_enabled and not self.debug:
+            msg = "auth_enabled may only be false when debug is on"
             raise ValueError(msg)
         return self
 

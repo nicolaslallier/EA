@@ -77,10 +77,11 @@ services:
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
       PREFECT_API_AUTH_STRING: ${PREFECT_AUTH_STRING:?PREFECT_AUTH_STRING est obligatoire}
-      # Les trois secrets de Settings, sans défaut.
+      # Les quatre secrets de Settings, sans défaut.
       PIPELINES_LITELLM_API_KEY: ${PIPELINES_LITELLM_API_KEY:?PIPELINES_LITELLM_API_KEY est obligatoire}
       PIPELINES_S3_ACCESS_KEY: ${PIPELINES_S3_ACCESS_KEY:?PIPELINES_S3_ACCESS_KEY est obligatoire}
       PIPELINES_S3_SECRET_KEY: ${PIPELINES_S3_SECRET_KEY:?PIPELINES_S3_SECRET_KEY est obligatoire}
+      PIPELINES_EA_CLIENT_SECRET: ${PIPELINES_EA_CLIENT_SECRET:?PIPELINES_EA_CLIENT_SECRET est obligatoire (client ea-pipelines du realm ea)}
       # Sans valeur ici : repris de .env s'il y est, absent sinon, et c'est
       # alors le défaut de Settings qui s'applique. `${VAR:-}` passerait une
       # chaîne vide, qu'un champ numérique refuse.
@@ -92,12 +93,18 @@ services:
       PIPELINES_S3_SECURE:
       PIPELINES_S3_BUCKET:
       PIPELINES_MAX_SOURCE_CHARS:
+      PIPELINES_AUTH_ISSUER:
+      PIPELINES_EA_CLIENT_ID:
       # Là où le volume ci-dessous monte le CA — fixé ici, pas dans .env.
       PIPELINES_S3_CA_CERT: /etc/ssl/certs/infra-ca.pem
     extra_hosts:
       # `PIPELINES_EA_BASE_URL` par défaut vise l'API du Mac hôte
       # (`make run-be`), jamais démarrée dans ce stack.
       - "host.docker.internal:host-gateway"
+      # Le worker ne rejoint pas infra-net : ce nom doit atteindre le NGINX de
+      # l'Infra publié sur le Mac hôte, dont le certificat est le même CA que
+      # PIPELINES_S3_CA_CERT fait déjà confiance à (MinIO).
+      - "keycloak.famillelallier.net:host-gateway"
     volumes:
       # Le certificat CA de l'infra (MinIO en HTTPS). Obligatoire : un fichier
       # vide monté à sa place ferait échouer chaque appel TLS vers MinIO.

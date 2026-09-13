@@ -27,7 +27,7 @@ async def client(
     service: ArchitectureService, diagrams: InMemoryDiagrams
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
-        Settings(debug=True),
+        Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         diagrams=diagrams,  # type: ignore[arg-type]
     )
@@ -217,7 +217,7 @@ async def test_without_a_diagram_store_the_endpoints_fail_as_a_wiring_fault(
     service: ArchitectureService,
 ) -> None:
     """A shut relational store is a 500, never an empty list of diagrams."""
-    app = create_app(Settings(debug=True), architecture_service=service)
+    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/diagrams")

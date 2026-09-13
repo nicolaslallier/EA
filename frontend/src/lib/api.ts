@@ -7,6 +7,7 @@
 import createClient from 'openapi-fetch'
 
 import type { paths } from '../api/schema'
+import { accessToken, signInAfterUnauthorised } from './auth'
 import { createLogger } from './logging'
 
 /** The port `make run-be` serves the API on. */
@@ -51,6 +52,32 @@ export const api = createClient<paths>({
 })
 
 const log = createLogger('api')
+
+// Who is calling (docs/adr/0032): the token on every request, and a 401 —
+// a token Keycloak no longer honours — restarts the login, coming back to
+// exactly this page, query included.
+api.use({
+  async onRequest({ request }) {
+    const token = await accessToken()
+    if (token) {
+      request.headers.set('Authorization', `Bearer ${token}`)
+    }
+    return request
+  },
+  onResponse({ response }) {
+    if (response.status === 401) {
+      const here = globalThis.location ? `${location.pathname}${location.search}` : '/'
+      // Not awaited — the caller gets its 401 now — but never unhandled: a
+      // redirect that cannot start (Keycloak unreachable) is said in the console.
+      signInAfterUnauthorised(here).catch((error: unknown) => {
+        log.error('the login could not start after a 401', {
+          returnTo: here,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }
+  },
+})
 
 /** When each in-flight call started, by the id openapi-fetch gives it. */
 const started = new Map<string, number>()

@@ -1,8 +1,8 @@
 """What an agent's call leaves behind.
 
-`/mcp` writes to the architecture graph and, until auth exists, does so without
-authenticating anybody (docs/adr/0014). A tool call that leaves no trace is
-therefore the one write to this catalogue nobody can account for afterwards —
+`/mcp` writes to the architecture graph (docs/adr/0014). A tool call that
+leaves no trace is the one write to this catalogue nobody can account for
+afterwards, whoever the token said was calling (docs/adr/0032) —
 which is why the tracing lives in `speaking_plainly`, the decorator every tool
 already carries, rather than in a third one somebody has to remember.
 """

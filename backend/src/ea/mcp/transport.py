@@ -1,16 +1,18 @@
 """Who `/mcp` answers, decided before the MCP transport reads a byte.
 
-Until authentication exists, the tools write to the graph for whoever reaches
-them, and the API binds every interface (docs/adr/0016). The SDK's `Host`
-allowlist does not narrow that: it is a defence against DNS rebinding — a
-*browser* tricked into calling us cannot choose the `Host` it sends — and
-nothing more, because a script on the LAN writes `Host: localhost:8000`
-itself. The TCP peer is the one fact about a caller the caller does not write,
-so that is what decides. See docs/adr/0023.
+The API binds every interface (docs/adr/0016), and the tools write to the
+graph. A Keycloak token says *who* is calling (docs/adr/0032); this guard,
+older than the token and kept as defence in depth, says *from where*. The
+SDK's `Host` allowlist does not narrow that: it is a defence against DNS
+rebinding — a *browser* tricked into calling us cannot choose the `Host` it
+sends — and nothing more, because a script on the LAN writes
+`Host: localhost:8000` itself. The TCP peer is the one fact about a caller
+the caller does not write, so that is what decides. See docs/adr/0023.
 
 Behind a reverse proxy the peer is the proxy: this then admits whatever the
 proxy admits, which is why remote callers are an explicit opt-in
-(`EA_MCP_ALLOW_REMOTE_CLIENTS`) rather than something inferred.
+(`EA_MCP_ALLOW_REMOTE_CLIENTS`) rather than something inferred — and why the
+deployed stack, behind NGINX, serves no `/mcp` at all, token or not.
 """
 
 from __future__ import annotations
@@ -60,8 +62,8 @@ class LoopbackClientsOnly:
                 content={
                     "error": REMOTE_CLIENT_REFUSED,
                     "detail": (
-                        "/mcp only answers clients on this machine until authentication "
-                        "exists; set EA_MCP_ALLOW_REMOTE_CLIENTS to serve others."
+                        "/mcp only answers clients on this machine; "
+                        "set EA_MCP_ALLOW_REMOTE_CLIENTS to serve others."
                     ),
                 },
             )

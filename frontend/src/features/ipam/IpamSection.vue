@@ -13,12 +13,14 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useMe } from '../../lib/me'
 import { useElementCatalogue } from '../elements/useElementCatalogue'
 import { useMetamodel } from '../metamodel/useMetamodel'
 import { DEFAULT_VRF, useIpam } from './useIpam'
 
 const route = useRoute()
 const router = useRouter()
+const { canWrite } = useMe()
 const ipam = useIpam()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
@@ -178,7 +180,7 @@ async function onAllocate(): Promise<void> {
       </tbody>
     </table>
 
-    <details>
+    <details v-if="canWrite">
       <summary>Déclarer un sous-réseau</summary>
       <form class="controls" @submit.prevent="onDeclare">
         <div class="field">
@@ -209,7 +211,7 @@ async function onAllocate(): Promise<void> {
     <template v-if="ipam.detail.value">
       <h3>{{ ipam.detail.value.subnet.name }} — {{ ipam.detail.value.subnet.cidr }}</h3>
 
-      <form class="controls" @submit.prevent="onAllocate">
+      <form v-if="canWrite" class="controls" @submit.prevent="onAllocate">
         <div class="field">
           <label for="ipam-recipient">Attribuer la prochaine adresse à</label>
           <select id="ipam-recipient" v-model="recipient">
@@ -250,7 +252,7 @@ async function onAllocate(): Promise<void> {
             <td>{{ entry.element_name }}</td>
             <td>{{ metamodel.labelOf(entry.element_type) }}</td>
             <td>
-              <button type="button" @click="ipam.release(entry.element_id)">
+              <button v-if="canWrite" type="button" @click="ipam.release(entry.element_id)">
                 Libérer
               </button>
             </td>

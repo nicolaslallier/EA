@@ -9,12 +9,13 @@ from pydantic import ValidationError
 
 from pipelines.settings import Settings
 
-#: The three secrets `Settings` requires — every test that builds one supplies
+#: The four secrets `Settings` requires — every test that builds one supplies
 #: them, exactly as a deployment's `pipelines/.env` would.
 REQUIRED_SECRETS = {
     "litellm_api_key": "litellm-key",
     "s3_access_key": "s3-access",
     "s3_secret_key": "s3-secret",
+    "ea_client_secret": "ea-secret",
 }
 
 
@@ -33,6 +34,8 @@ def test_defaults() -> None:
     assert settings.s3_bucket == "ea-catalogue"
     assert settings.s3_ca_cert is None
     assert settings.max_source_chars == 60000
+    assert settings.auth_issuer == "https://keycloak.famillelallier.net/realms/ea"
+    assert settings.ea_client_id == "ea-pipelines"
 
 
 def test_required_secrets_are_required() -> None:
@@ -40,11 +43,18 @@ def test_required_secrets_are_required() -> None:
         Settings()  # type: ignore[call-arg]
 
 
+def test_ea_client_secret_is_required() -> None:
+    overrides = {k: v for k, v in REQUIRED_SECRETS.items() if k != "ea_client_secret"}
+    with pytest.raises(ValidationError):
+        Settings(**overrides)  # type: ignore[arg-type]
+
+
 def test_env_prefix_is_pipelines(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PIPELINES_EA_BASE_URL", "http://example.test:8000")
     monkeypatch.setenv("PIPELINES_LITELLM_API_KEY", "from-env")
     monkeypatch.setenv("PIPELINES_S3_ACCESS_KEY", "from-env")
     monkeypatch.setenv("PIPELINES_S3_SECRET_KEY", "from-env")
+    monkeypatch.setenv("PIPELINES_EA_CLIENT_SECRET", "from-env")
     settings = Settings()  # type: ignore[call-arg]
     assert settings.ea_base_url == "http://example.test:8000"
     assert settings.litellm_api_key.get_secret_value() == "from-env"

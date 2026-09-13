@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 
 import RelationshipPanel from '../src/features/relationships/RelationshipPanel.vue'
+import { useMe } from '../src/lib/me'
 import { aGraph, aPage, aRelationship, anElement, stubApi, type Route } from './support/api'
 
 afterEach(() => {
@@ -225,5 +227,19 @@ describe('RelationshipPanel', () => {
     await fireEvent.click(screen.getByRole('button', { name: /^associer$/i }))
 
     expect(await screen.findByText(/cela fermerait une boucle/i)).toBeInTheDocument()
+  })
+
+  it('offers a reader no write control, only the list', async () => {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+    renderPanel([RELATIONS, CANDIDATES])
+
+    expect(await screen.findByText(/order to cash/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /dissocier/i })).toBeNull()
+    expect(screen.queryByRole('form', { name: /associer un élément/i })).toBeNull()
   })
 })

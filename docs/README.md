@@ -255,8 +255,8 @@ voisinage, métamodèle, analyse d'impact.
 
 **Décidé mais pas encore écrit** (ne pas supposer que cela existe) :
 
-- Authentification (OAuth2 / JWT + `argon2`), `SQLAlchemy`, `Alembic`, la première
-  table PostgreSQL.
+- `SQLAlchemy`, `Alembic`, la première table PostgreSQL. (L'authentification,
+  elle, est le realm Keycloak `ea` : [`adr/0032`](adr/0032-authentification-par-keycloak.md).)
 - `bandit`, `pip-audit`, `ESLint` (`npm run lint`), Playwright, `pre-commit`, CI.
 - L'export vers le format d'échange ArchiMate (Open Exchange File) n'est pas
   implémenté, mais rien ne s'y oppose — la taxonomie est complète.
@@ -299,4 +299,6 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0028](adr/0028-pipelines-python-dans-le-depot-ea.md) | Pipelines Python dans le dépôt EA — Prefect 3 et LiteLLM, auto-hébergés | Proposition |
 | [0029](adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) | Le cluster change d'adresse, et PostgreSQL le quitte pour la stack Infra du Mac | Accepté |
 | [0030](adr/0030-neo4j-dans-la-stack-infra.md) | Le graphe Neo4j vit dans la stack Infra | Accepté |
+| [0031](adr/0031-diagrammes-enregistres.md) | Les diagrammes enregistrés — des vues ArchiMate stockées dans PostgreSQL | Accepté |
+| [0032](adr/0032-authentification-par-keycloak.md) | Authentification par Keycloak | Proposition |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

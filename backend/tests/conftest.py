@@ -16,6 +16,7 @@ from uuid import UUID
 import pytest
 
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.auth import EDITOR_ROLE, Caller
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
@@ -25,6 +26,7 @@ from ea.domain.errors import (
     DuplicateDiagramError,
     DuplicateDocumentError,
     ElementNotFoundError,
+    NotAuthenticatedError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -36,6 +38,7 @@ from ea.domain.search import (
     Passage,
 )
 from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
@@ -44,6 +47,54 @@ from ea.services.ipam import IpamService
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
 FIXED_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+
+
+def an_editor(**overrides: object) -> Caller:
+    fields: dict[str, object] = {
+        "subject": "editor-1",
+        "username": "editor",
+        "roles": frozenset({EDITOR_ROLE}),
+    }
+    return Caller(**{**fields, **overrides})  # type: ignore[arg-type]
+
+
+def a_reader(**overrides: object) -> Caller:
+    return an_editor(
+        **{"subject": "reader-1", "username": "reader", "roles": frozenset(), **overrides}
+    )
+
+
+class StaticVerifier:
+    """Tokens known in advance — the `AccessTokenVerifier` of every API test."""
+
+    def __init__(self, tokens: dict[str, Caller]) -> None:
+        self.tokens = tokens
+
+    async def verify(self, token: str) -> Caller:
+        try:
+            return self.tokens[token]
+        except KeyError:
+            raise NotAuthenticatedError("the bearer token is not valid") from None
+
+
+@pytest.fixture(autouse=True)
+def _an_editor_is_calling() -> Iterator[Caller]:
+    """The services refuse a call nobody makes (docs/adr/0032).
+
+    A suite about what a use case *does* is not about who may run it, so an
+    editor calls unless a test says otherwise — `nobody_calling`, `acting_as`.
+    """
+    with acting_as(an_editor()) as caller:
+        yield caller
+
+
+@pytest.fixture
+def nobody_calling() -> Iterator[None]:
+    token = current_caller.set(None)
+    try:
+        yield
+    finally:
+        current_caller.reset(token)
 
 
 class NetworkAccessInTestError(RuntimeError):

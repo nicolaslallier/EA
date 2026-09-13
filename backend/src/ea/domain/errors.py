@@ -98,3 +98,11 @@ class AddressOutsideAnyNetworkError(DomainError):
 
 class NetworkExhaustedError(DomainError):
     """A subnet was asked for an address and has none left to give."""
+
+
+class NotAuthenticatedError(DomainError):
+    """No caller, or a token that does not prove one. Mapped to 401 / a ToolError."""
+
+
+class NotAuthorisedError(DomainError):
+    """A known caller asking for something its roles do not allow. Mapped to 403."""

@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 
 import DocumentPanel from '../src/features/documents/DocumentPanel.vue'
+import { useMe } from '../src/lib/me'
 import { MULTIPART, aDocument, aDocumentSummary, aFile, anElement, stubApi } from './support/api'
 import type { Route } from './support/api'
 
@@ -139,5 +141,20 @@ describe('DocumentPanel', () => {
 
     expect(rendered.emitted().close).toBeTruthy()
     expect(calls).toHaveLength(1)
+  })
+
+  it('offers a reader no write control, only the list and Fermer', async () => {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+    show([{ path: LIST, body: [aDocumentSummary({ filename: 'runbook.md' })] }])
+
+    expect(await screen.findByRole('button', { name: 'runbook.md' })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/ajouter un fichier/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /supprimer runbook\.md/i })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /^fermer$/i })[0]).toBeInTheDocument()
   })
 })

@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { computed, ref } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 
 import ElementCatalogue from '../src/features/elements/ElementCatalogue.vue'
+import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
 import { METAMODEL, aGraph, aPage, anElement, stubApi, type Route } from './support/api'
 
@@ -304,5 +306,23 @@ describe('ElementCatalogue', () => {
       await screen.findByRole('region', { name: /relations de l'élément/i }),
     ).toBeInTheDocument()
     expect(await screen.findByRole('form', { name: /associer un élément/i })).toBeInTheDocument()
+  })
+
+  it('offers a reader no write control, only the reads', async () => {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+    const element = anElement({ name: 'Facturation' })
+    await renderCatalogue([{ path: '/elements', body: aPage([element]) }])
+
+    const row = await rowFor(/Facturation/)
+    expect(screen.queryByRole('button', { name: /nouvel élément/i })).toBeNull()
+    expect(row.queryByRole('button', { name: /modifier/i })).toBeNull()
+    expect(row.queryByRole('button', { name: /^supprimer/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /^filtrer$/i })).toBeInTheDocument()
+    expect(row.getByRole('button', { name: 'Facturation' })).toBeInTheDocument()
   })
 })

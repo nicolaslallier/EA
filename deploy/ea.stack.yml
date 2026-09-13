@@ -33,10 +33,18 @@ services:
       # savoir pour que /api/docs aille chercher /api/openapi.json.
       UVICORN_ROOT_PATH: /api
       # Coupé, pas seulement filtré. Derrière un proxy, le pair TCP de /mcp est
-      # NGINX, jamais la boucle locale : l'outil ne servirait personne, et
-      # l'ouvrir aux clients distants l'ouvrirait à tout ce que NGINX sert, sans
-      # authentification (docs/adr/0023). `make run-be` sert toujours /mcp.
+      # NGINX, jamais la boucle locale : la garde de docs/adr/0023 ne servirait
+      # personne. /mcp exige désormais un jeton (docs/adr/0032), mais le servir
+      # derrière NGINX reste une décision à part, avec son ADR. `make run-be`
+      # sert toujours /mcp.
       EA_MCP_ENABLED: "false"
+
+      # Chaque requête porte un jeton du realm Keycloak `ea` (docs/adr/0032).
+      # Dans infra-net, keycloak.famillelallier.net est un alias de `nginx`,
+      # qui présente le certificat de l'Infra : sans son CA, l'API ne lit pas
+      # les clés du realm et refuse de démarrer.
+      EA_AUTH_ISSUER: ${EA_AUTH_ISSUER:-https://keycloak.famillelallier.net/realms/ea}
+      EA_AUTH_CA_CERT: /etc/ssl/certs/infra-ca.pem
 
       # Le graphe n'est pas dans l'Infra : il reste sur le cluster, dont
       # l'adresse a déjà changé deux fois — aucune valeur par défaut.
@@ -52,13 +60,22 @@ services:
       # LM Studio sur le Mac qui porte Docker Desktop. Le démarrage sonde le
       # modèle et refuse une largeur qui n'est pas celle de la colonne.
       EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://host.docker.internal:1234/v1}
+    volumes:
+      - ${INFRA_CA_CERT:?INFRA_CA_CERT est obligatoire, le chemin du CA de l'Infra sur le Mac}:/etc/ssl/certs/infra-ca.pem:ro
     networks:
       infra-net:
         aliases:
           - ea-api
 
   web:
-    build: ../frontend
+    build:
+      context: ../frontend
+      # Vite écrit ces deux valeurs dans le bundle : changer de realm ou de
+      # client est une reconstruction, pas un redémarrage. L'issuer est celui
+      # que l'API vérifie, lu dans la même variable.
+      args:
+        VITE_AUTH_AUTHORITY: ${EA_AUTH_ISSUER:-https://keycloak.famillelallier.net/realms/ea}
+        VITE_AUTH_CLIENT_ID: ea-spa
     pull_policy: build
     restart: unless-stopped
     depends_on:

@@ -12,6 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from ea.api.architecture import router as architecture_router
+from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
     document_service_of,
@@ -22,21 +23,31 @@ from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
+from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
+from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
-from ea.domain.ports import DiagramRepository, DocumentRepository, IpamRepository
+from ea.domain.auth import Caller
+from ea.domain.ports import (
+    AccessTokenVerifier,
+    DiagramRepository,
+    DocumentRepository,
+    IpamRepository,
+)
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
+from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
+from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.services.architecture import AllAttachments, ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -63,6 +74,15 @@ def build_embedder(settings: Settings) -> HttpEmbedder:
         batch_size=settings.embeddings_batch_size,
         passage_prefix=settings.embeddings_passage_prefix,
         query_prefix=settings.embeddings_query_prefix,
+    )
+
+
+def build_verifier(settings: Settings) -> JwtVerifier:
+    """Keycloak's key set for the realm `ea`, reached through the Infra CA when one is given."""
+    return JwtVerifier(
+        issuer=settings.auth_issuer,
+        audience=settings.auth_audience,
+        http=http_client_for(settings.auth_ca_cert, settings.auth_timeout_seconds),
     )
 
 
@@ -114,9 +134,21 @@ def _lifespan(
                     "postgres": settings.postgres_enabled,
                     "embeddings": settings.embeddings_enabled,
                     "mcp": settings.mcp_enabled,
+                    "auth": settings.auth_enabled,
                     "log_level": settings.log_level,
                 },
             )
+            if settings.auth_enabled and getattr(app.state, "token_verifier", None) is None:
+                verifier = build_verifier(settings)
+                stack.push_async_callback(verifier.aclose)
+                await verifier.probe()
+                app.state.token_verifier = verifier
+                logger.info("tokens verified against %s", settings.auth_issuer)
+            elif not settings.auth_enabled:
+                logger.warning(
+                    "authentication is off: every caller is the local developer, "
+                    "with the editor role"
+                )
             attachments = documents
             diagram_store = diagrams
             if settings.postgres_enabled:
@@ -182,9 +214,20 @@ def _lifespan(
                 logger.info("MCP tools served at %s", MCP_PATH)
                 if settings.mcp_allow_remote_clients:
                     # Said at every boot, because it is the one setting that
-                    # hands the graph's write path to the whole network — see
-                    # docs/adr/0023.
-                    logger.warning("MCP tools are served to remote clients, without authentication")
+                    # opens the graph's write path to the whole network — see
+                    # docs/adr/0023. With auth on a token still decides who
+                    # writes (docs/adr/0032); behind a proxy every peer is the
+                    # proxy either way.
+                    if settings.auth_enabled:
+                        logger.warning(
+                            "MCP tools are served to remote clients: a Keycloak token is "
+                            "still required, but behind a proxy every peer looks like the proxy"
+                        )
+                    else:
+                        logger.warning(
+                            "MCP tools are served to remote clients without authentication "
+                            "(debug only)"
+                        )
             logger.info(
                 "%s is up and answering on %s:%s", settings.app_name, settings.host, settings.port
             )
@@ -210,6 +253,16 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
             for scheme in ("http", "https")
         ],
     )
+
+
+class _LazyVerifier:
+    """The app's verifier, looked up per call: the lifespan builds it after `_mount_mcp`."""
+
+    def __init__(self, app: FastAPI) -> None:
+        self._app = app
+
+    async def verify(self, token: str) -> Caller:
+        return await verifier_of(self._app).verify(token)
 
 
 def _mount_mcp(app: FastAPI, settings: Settings) -> None:
@@ -245,28 +298,51 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     otherwise (docs/adr/0023). The guard wraps the route itself rather than
     matching the path in a middleware, so it cannot drift from the path the
     transport is actually served on.
+
+    Behind that guard `/mcp` wants the same bearer token as the REST API
+    (docs/adr/0032): the SDK's resource-server hooks over the app's verifier,
+    so a request without one gets a 401 pointing at the protected-resource
+    metadata, itself one more spliced route. The SDK puts authentication in
+    the transport's *middleware* — two of them — which splicing its routes
+    would drop, so each route is wrapped in that stack itself, innermost
+    first, with the loopback guard outermost: a remote peer is refused before
+    it is invited to log in. With auth off (debug only) each call acts as
+    `LOCAL_DEVELOPER` instead, stated here rather than left to whatever the
+    context happened to hold.
     """
+    auth = settings.auth_enabled
     server = build_mcp_server(
         lambda: architecture_service_of(app),
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
         version=app.version,
+        token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
+        auth=auth_settings(settings) if auth else None,
     )
     transport = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         transport_security=_transport_security(settings),
     )
-    if transport.user_middleware:  # pragma: no cover - only auth adds any today
-        msg = "the MCP transport now ships middleware that splicing its routes would drop"
-        raise RuntimeError(msg)
-    if not settings.mcp_allow_remote_clients:
-        for route in transport.routes:
-            if not isinstance(route, Route):  # pragma: no cover - the SDK ships one Route
-                msg = f"cannot restrict an MCP route of type {type(route).__name__}"
-                raise RuntimeError(msg)
-            route.app = LoopbackClientsOnly(route.app)
+    for route in transport.routes:
+        if not isinstance(route, Route):  # pragma: no cover - the SDK ships Routes only
+            msg = f"cannot wrap an MCP route of type {type(route).__name__}"
+            raise RuntimeError(msg)
+        route_app = route.app if auth else AsTheLocalDeveloper(route.app)
+        for middleware in reversed(transport.user_middleware):
+            route_app = middleware.cls(route_app, *middleware.args, **middleware.kwargs)
+        if not settings.mcp_allow_remote_clients:
+            route_app = LoopbackClientsOnly(route_app)
+        route.app = route_app
     app.router.routes.extend(transport.routes)
     app.state.mcp_sessions = server.session_manager
+
+
+#: Every route but `/health` carries `Authenticated`, so every one of them can
+#: now refuse for these two reasons — see `ea/api/auth.py`, docs/adr/0032.
+AUTH_RESPONSES: dict[int | str, dict[str, type[ErrorResponse]]] = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+}
 
 
 def create_app(
@@ -277,6 +353,7 @@ def create_app(
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
     diagrams: DiagramRepository | None = None,
+    verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -293,6 +370,10 @@ def create_app(
     builds and probes the real client when `embeddings_enabled` says so.
 
     `diagrams` does the same for the saved diagrams (docs/adr/0031).
+    `verifier` does the same for authentication: given one — `StaticVerifier`
+    in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
+    without reaching Keycloak; given none, the lifespan builds and probes the
+    real `JwtVerifier` when `auth_enabled` says so.
 
     An injected pair is wired here rather than in the lifespan, because an API
     test drives the app through `ASGITransport` without ever starting it.
@@ -317,6 +398,8 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    if verifier is not None:
+        app.state.token_verifier = verifier
     if architecture_service is not None:
         app.state.architecture_service = architecture_service
         if documents is not None:
@@ -344,11 +427,12 @@ def create_app(
     app.add_middleware(RequestLogging)
     register_error_handlers(app)
     app.include_router(health_router)
-    app.include_router(metamodel_router)
-    app.include_router(architecture_router)
-    app.include_router(documents_router)
-    app.include_router(diagrams_router)
-    app.include_router(ipam_router)
+    app.include_router(metamodel_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(architecture_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
     return app

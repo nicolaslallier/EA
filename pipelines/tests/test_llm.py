@@ -286,6 +286,7 @@ def test_llm_client_carries_the_base_url_bearer_token_and_timeout() -> None:
         llm_timeout_seconds=12,
         s3_access_key="a",  # type: ignore[arg-type]
         s3_secret_key="b",  # type: ignore[arg-type]
+        ea_client_secret="ea-secret",  # type: ignore[arg-type]
     )
 
     client = llm_client(settings)

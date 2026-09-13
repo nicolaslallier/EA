@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api, API_BASE_URL, defaultApiBaseUrl } from '../src/lib/api'
+import * as auth from '../src/lib/auth'
 
 // The Vite dev server binds every interface (docs/adr/0022), so the SPA is
 // loaded as often from `http://192.168.1.x:5173` as from localhost. A base URL
@@ -126,5 +127,56 @@ describe('what a call leaves in the console', () => {
     await expect(pending).rejects.toThrow()
     expect(error).not.toHaveBeenCalled()
     expect(debug.mock.calls.at(-1)?.[0]).toContain('GET /health')
+  })
+})
+
+describe('who the API is told is calling', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('sends the access token as a bearer', async () => {
+    vi.mocked(auth.accessToken).mockResolvedValue('tok-1')
+    let sent: Request | undefined
+    const fetch = vi.fn((request: Request) => {
+      sent = request
+      return Promise.resolve(new Response('{"status":"ok"}', { status: 200 }))
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await api.GET('/health')
+
+    expect(sent?.headers.get('Authorization')).toBe('Bearer tok-1')
+  })
+
+  it('starts a login, returning here, when the API says 401', async () => {
+    vi.mocked(auth.accessToken).mockResolvedValue('expired')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{"error":"unauthenticated"}', { status: 401 }))),
+    )
+    const here = `${location.pathname}${location.search}`
+
+    await api.GET('/elements')
+
+    expect(auth.signInAfterUnauthorised).toHaveBeenCalledWith(here)
+  })
+
+  it('logs a login that could not start after a 401, rather than leaving it unhandled', async () => {
+    vi.mocked(auth.accessToken).mockResolvedValue('expired')
+    vi.mocked(auth.signInAfterUnauthorised).mockRejectedValueOnce(new Error('Keycloak unreachable'))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{"error":"unauthenticated"}', { status: 401 }))),
+    )
+
+    await api.GET('/elements')
+
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('login'),
+        expect.objectContaining({ reason: 'Keycloak unreachable' }),
+      ),
+    )
+    error.mockRestore()
   })
 })

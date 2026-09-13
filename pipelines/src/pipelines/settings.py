@@ -2,7 +2,7 @@
 
 Every field is `PIPELINES_<NAME>` (case-insensitive), from the environment
 only — never from a literal in code, the same rule
-`backend/src/ea/core/config.py` follows. The three secrets have no default:
+`backend/src/ea/core/config.py` follows. The four secrets have no default:
 building a `Settings` without them fails loudly, in the same place a missing
 `EA_NEO4J_PASSWORD` fails for the backend.
 
@@ -47,3 +47,10 @@ class Settings(BaseSettings):
     #: A source longer than this many characters is refused, never truncated,
     #: before it reaches the LLM — the budget of a prompt, not of the document.
     max_source_chars: int = 60000
+
+    #: The realm `ea` of the Infra Keycloak. The worker logs in as the
+    #: confidential client `ea-pipelines`, whose service account holds
+    #: `ea-editor` (EA docs/adr/0032). The token endpoint derives from this.
+    auth_issuer: str = "https://keycloak.famillelallier.net/realms/ea"
+    ea_client_id: str = "ea-pipelines"
+    ea_client_secret: SecretStr

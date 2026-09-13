@@ -59,6 +59,7 @@ from ea.domain.ipam import (
     read_vrf,
     reserved_by_the_protocol,
 )
+from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.model import Element
@@ -105,6 +106,7 @@ class IpamService:
         constraint (`db/schema.py`) that refuses the second — translated by the
         repository into the same `DuplicateNetworkError`.
         """
+        require_editor()
         prefix = parse_prefix(cidr)
         scope = vrf.strip() or DEFAULT_VRF
         for existing in await self._subnets():
@@ -140,6 +142,7 @@ class IpamService:
 
     async def list_networks(self, *, vrf: str | None = None) -> tuple[Subnet, ...]:
         """Every declared subnet, narrowest prefix last, with how full each is."""
+        require_caller()
         every = await self._subnets()
         assignments = await self._assignments(every)
         chosen = every if vrf is None else tuple(s for s in every if s.network.vrf == vrf)
@@ -149,6 +152,7 @@ class IpamService:
 
     async def read_network(self, element_id: UUID) -> SubnetDetail:
         """One subnet with its occupants and the next address it would hand out."""
+        require_caller()
         element = await self._architecture.get_element(element_id)
         subnet = self._as_subnet(element)
         assignments = await self._assignments()
@@ -173,6 +177,7 @@ class IpamService:
         self, element_id: UUID, address: str, *, vrf: str = DEFAULT_VRF
     ) -> Assignment:
         """Give one element one address, refusing everything the rules forbid."""
+        require_editor()
         wanted = parse_address(address)
         scope = vrf.strip() or DEFAULT_VRF
         element = await self._architecture.get_element(element_id)
@@ -218,6 +223,7 @@ class IpamService:
         next, up to `ALLOCATION_ATTEMPTS` times; after that the refusal goes
         through, because a subnet that loses every race is news for the caller.
         """
+        require_editor()
         attempt = 1
         while True:
             detail = await self.read_network(network_id)
@@ -247,6 +253,7 @@ class IpamService:
 
     async def release_address(self, element_id: UUID) -> None:
         """Take an element's address back. The element itself is left alone."""
+        require_editor()
         element = await self._architecture.get_element(element_id)
         if read_address(element.properties) is None:
             msg = f"{element.name!r} holds no IP address"
@@ -263,6 +270,7 @@ class IpamService:
 
     async def locate(self, address: str, *, vrf: str = DEFAULT_VRF) -> AddressLocation:
         """What answers on an address, and what that thing is wired to."""
+        require_caller()
         wanted = parse_address(address)
         scope = vrf.strip() or DEFAULT_VRF
         element = await self._repository.element_at(str(wanted), vrf=scope)
@@ -283,6 +291,7 @@ class IpamService:
         a subnet id, so "what is in 10.0.1.0/26" is answerable whether or not
         anyone declared that particular slice.
         """
+        require_caller()
         prefix = parse_prefix(within) if within else None
         needle = (search or "").strip().lower()
         return tuple(

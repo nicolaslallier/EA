@@ -15,6 +15,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
+import { useMe } from '../../lib/me'
 import DocumentPanel from '../documents/DocumentPanel.vue'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import RelationshipPanel from '../relationships/RelationshipPanel.vue'
@@ -26,6 +27,7 @@ import { useElementDetail } from './useElementDetail'
 
 const route = useRoute()
 const router = useRouter()
+const { canWrite } = useMe()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
@@ -173,7 +175,7 @@ function day(iso: string): string {
   <section class="catalogue">
     <header class="catalogue__header">
       <h2>Éléments d'architecture</h2>
-      <button type="button" @click="openCreate">Nouvel élément</button>
+      <button v-if="canWrite" type="button" @click="openCreate">Nouvel élément</button>
     </header>
 
     <form class="filters" role="search" aria-label="Filtrer le catalogue"
@@ -288,7 +290,12 @@ function day(iso: string): string {
           <td class="description">{{ element.description }}</td>
           <td>{{ day(element.updated_at) }}</td>
           <td class="row-actions">
-            <button type="button" :aria-label="`Modifier ${element.name}`" @click="openEdit(element)">
+            <button
+              v-if="canWrite"
+              type="button"
+              :aria-label="`Modifier ${element.name}`"
+              @click="openEdit(element)"
+            >
               Modifier
             </button>
             <button
@@ -306,6 +313,7 @@ function day(iso: string): string {
               Documents
             </button>
             <button
+              v-if="canWrite"
               type="button"
               class="secondary"
               :aria-label="`Supprimer ${element.name}`"

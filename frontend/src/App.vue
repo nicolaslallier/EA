@@ -3,6 +3,7 @@
 // It holds no screen of its own — every section lives behind a route.
 import AppNav from './components/AppNav.vue'
 import BackendStatus from './components/BackendStatus.vue'
+import UserBadge from './components/UserBadge.vue'
 import { useRoute } from 'vue-router'
 
 import { HOME } from './router/sections'
@@ -16,7 +17,10 @@ const route = useRoute()
   <div class="app" :class="{ 'app--wide': route.meta.wide }">
     <header class="app__header">
       <RouterLink class="app__brand" :to="HOME">EA — Enterprise Architecture</RouterLink>
-      <BackendStatus />
+      <div class="app__status">
+        <BackendStatus />
+        <UserBadge />
+      </div>
     </header>
 
     <div class="app__body">
@@ -50,6 +54,12 @@ const route = useRoute()
   font-weight: 700;
   color: inherit;
   text-decoration: none;
+}
+
+.app__status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .app__body {

@@ -32,6 +32,7 @@ from uuid import UUID
 from ea.domain.documents import Document, DocumentSummary, clean_filename, decode_markdown
 from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
+from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.ports import DocumentRepository
@@ -71,6 +72,7 @@ class DocumentService:
         (`domain/documents.py`), so every adapter that holds an upload gets the
         same answer for a file that is not UTF-8 — and the same message.
         """
+        require_editor()
         return await self.attach_text(element_id, filename=filename, content=decode_markdown(raw))
 
     async def attach_text(self, element_id: UUID, *, filename: str, content: str) -> Document:
@@ -83,6 +85,7 @@ class DocumentService:
         is checked below this line, in `Document.create`, so the two entry
         points differ by exactly the decoding step and nothing else.
         """
+        require_editor()
         await self._architecture.get_element(element_id)
         document = Document.create(
             element_id=element_id,
@@ -108,6 +111,7 @@ class DocumentService:
 
     async def get(self, document_id: UUID) -> Document:
         """One document, content included, or a clear statement that it is gone."""
+        require_caller()
         document = await self._repository.get(document_id)
         if document is None:
             msg = f"no document with id {document_id}"
@@ -121,6 +125,7 @@ class DocumentService:
         is a 404 rather than an empty list — an empty list would mean "this
         element has no documents", which is a different answer.
         """
+        require_caller()
         await self._architecture.get_element(element_id)
         return await self._repository.list_for_element(element_id)
 
@@ -131,6 +136,7 @@ class DocumentService:
         name, and quietly overwriting `runbook.md` with the contents of
         `notes.md` under the old name is how a reader ends up misled.
         """
+        require_editor()
         return await self.revise_text(document_id, filename=filename, content=decode_markdown(raw))
 
     async def revise_text(self, document_id: UUID, *, filename: str, content: str) -> Document:
@@ -141,6 +147,7 @@ class DocumentService:
         tool call aimed at the wrong id is refused rather than silently
         replacing the wrong file.
         """
+        require_editor()
         current = await self.get(document_id)
         offered = clean_filename(filename)
         if offered != current.filename:
@@ -164,6 +171,7 @@ class DocumentService:
         return stored
 
     async def discard(self, document_id: UUID) -> None:
+        require_editor()
         if not await self._repository.delete(document_id):
             msg = f"no document with id {document_id}"
             raise DocumentNotFoundError(msg)
@@ -188,6 +196,7 @@ class DocumentService:
         reads it: an empty result would otherwise read as "nothing is written
         about this element" when the truth is "there is no such element".
         """
+        require_caller()
         if not question.strip():
             msg = "a search needs a question"
             raise ValueError(msg)
@@ -217,6 +226,7 @@ class DocumentService:
         not a transaction over the whole corpus: interrupted halfway it leaves
         half the documents reindexed, which is a state running it again fixes.
         """
+        require_editor()
         indexer = self._index()
         indexed = 0
         for document_id in await self._repository.all_document_ids():

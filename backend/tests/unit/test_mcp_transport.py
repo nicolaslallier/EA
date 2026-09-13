@@ -1,7 +1,8 @@
 """Who `/mcp` answers, decided from the TCP peer — see docs/adr/0023.
 
-Until authentication exists, the MCP tools write to the graph for whoever
-reaches them. The `Host` allowlist cannot narrow that: a script sets `Host`
+The MCP tools write to the graph; the token says who calls (docs/adr/0032),
+this guard says from where, as defence in depth. The `Host` allowlist cannot
+narrow that: a script sets `Host`
 to whatever the allowlist wants. The peer address is the one fact about a
 caller the caller does not write, so that is what is checked.
 """

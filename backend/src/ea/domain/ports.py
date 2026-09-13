@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
+from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
@@ -301,4 +302,12 @@ class IpamRepository(Protocol):
         Neo4j, which is the whole reason an element holds a single address
         rather than a list — see `domain/ipam.py`.
         """
+        ...
+
+
+class AccessTokenVerifier(Protocol):
+    """Whatever proves who a bearer token belongs to — Keycloak's JWKS in production."""
+
+    async def verify(self, token: str) -> Caller:
+        """The caller the token proves, or `NotAuthenticatedError`."""
         ...

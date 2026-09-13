@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import RelationshipsSection from '../src/features/relationships/RelationshipsSection.vue'
@@ -49,7 +49,7 @@ describe('RelationshipsSection', () => {
     await fireEvent.update(screen.getByLabelText(/rechercher/i), 'invoice')
     await fireEvent.submit(screen.getByRole('search'))
 
-    expect(calls.at(-1)?.url.searchParams.get('search')).toBe('invoice')
+    await waitFor(() => expect(calls.at(-1)?.url.searchParams.get('search')).toBe('invoice'))
   })
 
   it('reports an unreachable backend instead of an empty picker', async () => {

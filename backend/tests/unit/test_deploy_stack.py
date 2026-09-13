@@ -14,6 +14,9 @@ build over, because it is silent when broken:
   one minor version ahead builds cleanly, then dies at start on
   `No module named 'alembic'` — which is what a Dependabot bump of one `FROM`
   did.
+* `deploy/ea.stack.yml` must hand the API the Infra CA, or it cannot fetch
+  the realm's signing keys and refuses to boot, and must build the SPA for the
+  realm — Vite writes both values into the bundle (docs/adr/0032).
 """
 
 from __future__ import annotations
@@ -24,6 +27,26 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = REPO_ROOT / "docker-compose.yml"
 BACKEND_DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
+STACK = REPO_ROOT / "deploy" / "ea.stack.yml"
+
+
+def _stack_service(name: str) -> str:
+    """One service's block of the deployed stack, without its comments.
+
+    From `  name:` to the next key at the same indentation, so a value found
+    here belongs to that service and not to its neighbour.
+    """
+    lines = [
+        line
+        for line in STACK.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    start = lines.index(f"  {name}:")
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"^\S|^  \S", lines[i])),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
 
 
 def _compose_declarations() -> str:
@@ -93,3 +116,23 @@ def test_the_api_image_runs_the_python_its_venv_was_built_for() -> None:
     assert len(images) == 2, images
     assert all(versions), f"no Python version in {images}"
     assert len({match.group(1) for match in versions if match}) == 1, images
+
+
+def test_the_deployed_api_verifies_tokens_with_the_infra_ca_mounted_read_only() -> None:
+    api = _stack_service("api")
+
+    assert re.search(r"^\s+EA_AUTH_CA_CERT: /etc/ssl/certs/infra-ca\.pem\s*$", api, re.M), api
+    assert re.search(r"^\s+- \S.*:/etc/ssl/certs/infra-ca\.pem:ro\s*$", api, re.M), api
+    enabled = re.search(r"^\s+EA_AUTH_ENABLED:\s*(\S+)\s*$", api, re.M)
+    assert enabled is None or enabled.group(1).strip("\"'") == "true", enabled
+
+
+def test_the_spa_image_is_built_for_the_realm() -> None:
+    web = _stack_service("web")
+    args = re.search(
+        r"^    build:\n(?:      .*\n)*?      args:\n((?:        .*(?:\n|$))+)", web, re.M
+    )
+
+    assert args, web
+    assert re.search(r"^\s+VITE_AUTH_AUTHORITY: \S", args.group(1), re.M), args.group(1)
+    assert re.search(r"^\s+VITE_AUTH_CLIENT_ID: \S", args.group(1), re.M), args.group(1)

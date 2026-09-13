@@ -125,6 +125,30 @@ describe('DiagramCanvas', () => {
     expect(document.querySelector('.canvas__band')).toBeNull()
   })
 
+  it('read-only, lets a box be selected but never dropped, moved, linked or removed', async () => {
+    const rendered = draw({ readonly: true, selectedId: A.id })
+    const box = screen.getByRole('button', { name: /Facturation/ })
+    const drop = pointer('drop', 300, 200)
+    Object.defineProperty(drop, 'dataTransfer', { value: { getData: () => B.id } })
+
+    expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
+    await fireEvent(svg(), drop)
+    await fireEvent(box, pointer('pointerdown', 20, 10))
+    await fireEvent(svg(), pointer('pointermove', 120, 70))
+    await fireEvent(svg(), pointer('pointerup', 120, 70))
+    await fireEvent.keyDown(box, { key: 'Delete' })
+    await fireEvent.click(box)
+
+    const emitted = rendered.emitted()
+    expect([emitted.place, emitted.move, emitted.moved, emitted.remove]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ])
+    expect(emitted.select).toEqual([[A.id]])
+  })
+
   it('does not report a move when the box was only clicked', async () => {
     const rendered = draw()
 
