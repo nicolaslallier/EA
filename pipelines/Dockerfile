@@ -8,13 +8,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c37
 
 WORKDIR /app
 
-# Only the lock and the project metadata first, so a code-only change does not
-# invalidate the dependency layer.
-COPY pyproject.toml uv.lock ./
-COPY src ./src
+# No uv cache in the image: it would only add the downloaded wheels a second time.
+ENV UV_NO_CACHE=1
 
+# Only the lock and the project metadata first, and the dependencies without
+# the project itself, so a code-only change does not invalidate that layer.
 # `--locked` refuses to silently update the lock; `--no-dev` leaves ruff,
 # mypy and pytest out of the image that actually runs in production.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+
+COPY src ./src
 RUN uv sync --locked --no-dev
 
 RUN useradd --create-home --shell /usr/sbin/nologin worker \
