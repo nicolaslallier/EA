@@ -48,7 +48,7 @@ LAN_IP ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2
 # Base de données graphe : une instance unique sur le cluster Docker, déployée
 # depuis deploy/neo4j.stack.yml. Rien ne la démarre depuis ce Makefile — voir
 # docs/adr/0006.
-NEO4J_HOST      ?= 192.168.1.252
+NEO4J_HOST      ?= 192.168.2.10
 NEO4J_BOLT_PORT ?= 7687
 NEO4J_HTTP_PORT ?= 7474
 NEO4J_URI       ?= bolt://$(NEO4J_HOST):$(NEO4J_BOLT_PORT)
@@ -101,16 +101,17 @@ export DOTENV_GET_PY
 NEO4J_ENV = export NEO4J_PASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) NEO4J_PASSWORD EA_NEO4J_PASSWORD)";
 
 # Base relationnelle : tout ce qui n'est pas le graphe (auth, audit,
-# planification). Comme le graphe, une seule instance, sur le cluster Docker.
-# Voir docs/adr/0015.
-POSTGRES_HOST ?= 192.168.1.252
+# planification). Comme le graphe, une seule instance — mais pas sur le cluster :
+# la base `ea` vit dans la stack ~/OpenCode/Infra de ce Mac, derrière son NGINX.
+# Voir docs/adr/0015 et 0029.
+POSTGRES_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 POSTGRES_USER ?= ea
 POSTGRES_DB   ?= ea
 # L'image porte pgvector : l'extension `vector` doit exister *dans l'image*,
 # pas seulement être activée dans la base — la migration 0003 fait
 # `CREATE EXTENSION vector`. Le conteneur jetable de docker-compose.yml part de
-# la même image, et la base du cluster a la même exigence (docs/adr/0019).
+# la même image, et la base partagée a la même exigence (docs/adr/0019).
 POSTGRES_IMAGE ?= pgvector/pgvector:pg17
 
 # psql attend indéfiniment par défaut. Un poste dont les conteneurs ne joignent
@@ -149,7 +150,7 @@ endif
 # pg_dump et pg_restore lisent eux-mêmes.
 POSTGRES_ENV = export PGPASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) POSTGRES_PASSWORD EA_POSTGRES_PASSWORD)";
 
-# Sauvegardes de la base du cluster (docs/adr/0025). Même règle que psql : les
+# Sauvegardes de la base partagée (docs/adr/0025). Même règle que psql : les
 # clients du Mac s'il y en a, sinon ceux de l'image. Un dump se restaure avec un
 # pg_restore au moins aussi récent que le pg_dump qui l'a écrit — celui de
 # l'image (17) ne relit pas une archive du client 18 du Mac.
@@ -172,9 +173,11 @@ endif
 
 # Le conteneur jetable de docker-compose.yml, contre lequel tournent les tests
 # d'intégration : `alembic downgrade base` ne doit jamais viser le partagé. Son
-# mot de passe est celui que docker-compose.yml porte déjà en clair.
+# mot de passe est celui que docker-compose.yml porte déjà en clair. Pas 5432 :
+# c'est le port de la base partagée depuis docs/adr/0029, et les fixtures le
+# refusent même sur 127.0.0.1.
 POSTGRES_TEST_PASSWORD ?= developmentonly
-POSTGRES_TEST_PORT     ?= 5432
+POSTGRES_TEST_PORT     ?= 5433
 
 # Le Neo4j jetable de docker-compose.yml, celui que les tests d'intégration
 # vident entre chaque cas — jamais le graphe du cluster (docs/adr/0024). Publié
@@ -193,9 +196,9 @@ COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 	NEO4J_TEST_PASSWORD='$(NEO4J_TEST_PASSWORD)' \
 	docker compose
 
-# Service d'embeddings : LM Studio sur le même cluster que les deux bases,
+# Service d'embeddings : LM Studio sur le cluster, à côté du graphe,
 # servant un /v1/embeddings compatible OpenAI. Voir docs/adr/0019.
-EMBEDDINGS_URL   ?= http://192.168.1.252:1234/v1
+EMBEDDINGS_URL   ?= http://192.168.2.10:1234/v1
 EMBEDDINGS_MODEL ?= text-embedding-mxbai-embed-large-v1
 
 # Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
@@ -370,7 +373,7 @@ db-backup-howto: ## Rappelle comment sauvegarder et restaurer le graphe (hors li
 
 ## --- PostgreSQL -----------------------------------------------------------
 #
-# Comme le graphe, une instance unique sur le cluster ($(POSTGRES_HOST)) :
+# Comme le graphe, une instance unique et partagée ($(POSTGRES_HOST), docs/adr/0029) :
 # `pg-ping`, `pg-shell` et `pg-migrate` s'y connectent, aucune ne la démarre.
 # Le client psql est pris dans l'image Postgres plutôt qu'installé sur le poste.
 #
@@ -390,16 +393,16 @@ require-postgres-password:
 		printf "Renseigne EA_POSTGRES_PASSWORD dans $(BACKEND)/.env, ou lance :\n"; \
 		printf "  POSTGRES_PASSWORD='...' make $(MAKECMDGOALS)\n"; exit 1; }
 
-pg-ping: | require-postgres-password ## Vérifie que la base du cluster répond
+pg-ping: | require-postgres-password ## Vérifie que la base partagée répond
 	@printf "$(GREEN)Interrogation de $(POSTGRES_USER)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB) ...$(NC)\n"
 	@$(POSTGRES_ENV) $(PSQL) $(PSQL_ARGS) -c 'SELECT version()' \
 	|| { printf "$(RED)Aucune réponse. Vérifie l'hôte et le mot de passe.$(NC)\n"; \
 	     $(PG_UNREACHABLE_HINT) exit 1; }
 
-pg-shell: | require-postgres-password ## Ouvre un psql sur la base du cluster
+pg-shell: | require-postgres-password ## Ouvre un psql sur la base partagée
 	@$(POSTGRES_ENV) $(PSQL_TTY) $(PSQL_ARGS)
 
-pg-migrate: | $(VENV_STAMP) ## Applique les migrations Alembic jusqu'à head (base du cluster)
+pg-migrate: | $(VENV_STAMP) ## Applique les migrations Alembic jusqu'à head (base partagée)
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
 	cd $(BACKEND) && uv run alembic upgrade head
 
@@ -415,7 +418,7 @@ pg-revision: | $(VENV_STAMP) ## Génère une migration depuis les modèles (m="a
 	cd $(BACKEND) && uv run alembic revision --autogenerate -m "$(m)"
 	@printf "$(GREEN)Relis le fichier généré avant de le committer.$(NC)\n"
 
-pg-vector-check: | require-postgres-password ## Vérifie que pgvector est disponible sur le cluster
+pg-vector-check: | require-postgres-password ## Vérifie que pgvector est disponible sur la base partagée
 	@printf "$(GREEN)pgvector sur $(POSTGRES_HOST)/$(POSTGRES_DB) ?$(NC)\n"
 	@$(POSTGRES_ENV) out=$$($(PSQL) $(PSQL_ARGS) \
 		-tAc "SELECT default_version FROM pg_available_extensions WHERE name = 'vector'" 2>&1) \
@@ -424,8 +427,8 @@ pg-vector-check: | require-postgres-password ## Vérifie que pgvector est dispon
 	     $(PG_UNREACHABLE_HINT) exit 1; }; \
 	test -n "$$out" \
 	|| { printf "$(RED)Serveur joint, mais l'extension vector y est absente.$(NC)\n"; \
-	     printf "L'image du stack doit être pgvector/pgvector:pgNN, pas postgres:NN —\n"; \
-	     printf "voir deploy/postgres.stack.yml, make pg-stack, docs/adr/0019.\n"; exit 1; }; \
+	     printf "L'image du serveur doit être pgvector/pgvector:pgNN, pas postgres:NN —\n"; \
+	     printf "voir make pg-stack, docs/adr/0019 et 0029.\n"; exit 1; }; \
 	printf "$(GREEN)pgvector disponible (%s).$(NC)\n" "$$out"
 
 app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l'Infra
@@ -462,19 +465,13 @@ app-ps: ## État des conteneurs de la stack EA
 app-logs: ## Suit les logs de la stack EA (s=api ou s=web pour un seul service)
 	$(APP_COMPOSE) logs -f $(if $(s),"$(s)",)
 
-pg-stack: ## Rappelle comment déployer la base relationnelle sur le cluster Docker
-	@printf "$(GREEN)Stack PostgreSQL : deploy/postgres.stack.yml$(NC)\n"
-	@printf "  1. Ouvre $(PORTAINER_STACKS)\n"
-	@printf "  2. Add stack → Web editor → colle deploy/postgres.stack.yml\n"
-	@printf "  3. Environment variables → POSTGRES_PASSWORD = <mot de passe>\n"
-	@printf "  4. Deploy the stack, puis : make pg-ping && make pg-vector-check\n"
-	@printf "\n"
-	@printf "$(RED)Remplacer une image postgres:NN par pgvector/pgvector:pgNN :$(NC)\n"
-	@printf "  le volume est réutilisable (même version majeure), mais il a été\n"
-	@printf "  initialisé sous musl et repart sous glibc : les collations diffèrent.\n"
-	@printf "  Après le redéploiement, une fois : REINDEX DATABASE $(POSTGRES_DB);\n"
-	@printf "  (make pg-shell). Base vide : supprimer le volume est plus simple.\n"
-	@printf "  Puis make pg-migrate pour appliquer la chaîne jusqu'à head.\n"
+pg-stack: ## Rappelle où vit la base relationnelle et comment la provisionner
+	@printf "$(GREEN)PostgreSQL : la stack ~/OpenCode/Infra de ce Mac — docs/adr/0029$(NC)\n"
+	@printf "  1. Dans ~/OpenCode/Infra : make provision-app app=ea\n"
+	@printf "     (rôle ea à moindre privilège, extension vector créée par le superutilisateur)\n"
+	@printf "  2. EA_DB_PASSWORD du .env d'Infra → EA_POSTGRES_PASSWORD de $(BE_ENV)\n"
+	@printf "  3. Puis : make pg-ping && make pg-vector-check && make pg-migrate\n"
+	@printf "deploy/postgres.stack.yml n'est plus déployé nulle part.\n"
 
 # `pg_dump` lit la base en ligne, dans un instantané cohérent : rien à arrêter.
 # Le dump est écrit dans un `.partial` et ne prend son nom qu'une fois pg_dump
@@ -482,7 +479,7 @@ pg-stack: ## Rappelle comment déployer la base relationnelle sur le cluster Doc
 # nom d'une sauvegarde. `backups/` est ignoré par git et fermé aux autres
 # comptes : un dump contient chaque document attaché au modèle. Voir
 # docs/adr/0025.
-pg-backup: | require-postgres-password ## Sauvegarde la base du cluster dans backups/ (pg_dump -Fc)
+pg-backup: | require-postgres-password ## Sauvegarde la base partagée dans backups/ (pg_dump -Fc)
 	@mkdir -p $(BACKUP_DIR) && chmod 700 $(BACKUP_DIR)
 	@$(POSTGRES_ENV) umask 077; \
 	file="$(BACKUP_DIR)/postgres-$(POSTGRES_DB)-$$(date -u +%Y%m%dT%H%M%SZ).dump"; \
@@ -503,7 +500,7 @@ pg-backup: | require-postgres-password ## Sauvegarde la base du cluster dans bac
 # milieu annule tout, la base est restaurée ou inchangée, jamais à moitié.
 # FILE et CONFIRM sont lus par le shell, pas recollés dans la recette : un nom
 # de fichier n'a pas à survivre à l'analyse de make.
-pg-restore: | require-postgres-password ## Restaure un dump dans la base du cluster (FILE=... CONFIRM=yes)
+pg-restore: | require-postgres-password ## Restaure un dump dans la base partagée (FILE=... CONFIRM=yes)
 	@test -n "$$FILE" && test -f "$$FILE" || { \
 		printf "$(RED)FILE ne désigne aucun fichier.$(NC)\n"; \
 		printf "Lance : make pg-restore FILE=$(BACKUP_DIR)/postgres-$(POSTGRES_DB)-<horodatage>.dump CONFIRM=yes\n"; \
@@ -627,12 +624,15 @@ test-integration: | $(VENV_STAMP) ## Tests contre un Neo4j et un PostgreSQL jeta
 
 # Explicitement contre le conteneur jetable, jamais contre le cluster : ces
 # tests appliquent puis annulent la chaîne de migrations. Le port est celui que
-# `COMPOSE_TEST` publie, pas une seconde valeur écrite en dur.
+# `COMPOSE_TEST` publie, pas une seconde valeur écrite en dur. Les embeddings
+# sont coupés comme pour `test-integration` : le démarrage de l'application
+# irait sinon interroger LM Studio, et aucun test ne sort de la machine.
 test-postgres: | $(VENV_STAMP) ## Tests contre le PostgreSQL jetable local (le démarre au besoin)
 	$(COMPOSE_TEST) up -d --wait postgres
 	cd $(BACKEND) && EA_DEBUG=true EA_POSTGRES_ENABLED=true \
 		EA_POSTGRES_HOST=127.0.0.1 EA_POSTGRES_PORT=$(POSTGRES_TEST_PORT) \
 		EA_POSTGRES_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
+		EA_EMBEDDINGS_ENABLED=false \
 		uv run pytest tests/integration -m postgres -q
 
 # Corriger et vérifier sont deux gestes. `lint` réécrit les fichiers, donc ne
@@ -762,24 +762,19 @@ PREFIX ?= inbox/
 pipelines-run: ## Déclenche alimenter-catalogue/manuel dans le worker (PREFIX=... défaut inbox/)
 	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param "prefix=$(PREFIX)" --watch
 
-# Imprime seulement, comme pg-stack et db-backup-howto : les rôles et la base
-# partagée (192.168.1.252) et le bucket MinIO ne se créent pas d'ici, et cette
-# cible ne réclame ni mot de passe ni pipelines/.env pour les rappeler.
+# Imprime seulement, comme pg-stack et db-backup-howto : les rôles et les bases
+# vivent dans le PostgreSQL de la stack ~/OpenCode/Infra (docs/adr/0029), où le
+# rôle `ea` ne crée pas de rôle — la provision passe par l'Infra, comme pour `ea`.
+# Cette cible ne réclame ni mot de passe ni pipelines/.env pour la rappeler.
 pipelines-db-howto: ## Rappelle comment préparer les rôles PostgreSQL et le bucket MinIO de pipelines/
 	@printf "$(GREEN)Préparation manuelle — rien ne s'exécute d'ici$(NC)\n"
-	@printf "\n$(GREEN)1. make pg-shell, puis :$(NC)\n"
+	@printf "\n$(GREEN)1. Dans ~/OpenCode/Infra :$(NC)\n"
 	@printf '%s\n' \
-		"  CREATE ROLE prefect LOGIN;" \
-		"  \password prefect" \
-		"  CREATE DATABASE prefect OWNER prefect;" \
-		"  REVOKE CONNECT ON DATABASE prefect FROM PUBLIC;" \
-		"  \c prefect" \
-		"  CREATE EXTENSION IF NOT EXISTS pg_trgm;" \
-		"" \
-		"  CREATE ROLE litellm LOGIN;" \
-		"  \password litellm" \
-		"  CREATE DATABASE litellm OWNER litellm;" \
-		"  REVOKE CONNECT ON DATABASE litellm FROM PUBLIC;"
+		"  .env : PREFECT_DB_PASSWORD, LITELLM_DB_PASSWORD, et prefect,litellm dans APP_DATABASES" \
+		"  make provision-app app=prefect && make provision-app app=litellm" \
+		"  make psql, puis :" \
+		"  \\c prefect" \
+		"  CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 	@printf "\n$(GREEN)2. MinIO — https://minio-console.famillelallier.net :$(NC)\n"
 	@printf '%s\n' \
 		"  Bucket ea-catalogue" \

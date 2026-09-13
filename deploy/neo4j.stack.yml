@@ -1,9 +1,9 @@
 # Neo4j — le graphe d'architecture, déployé sur le cluster Docker.
 #
 # Ce fichier n'est pas lancé depuis un poste : il est déployé comme *stack*
-# Portainer sur l'hôte 192.168.1.252 (endpoint 9, Docker standalone) :
+# Portainer sur l'hôte 192.168.2.10 (endpoint 9, Docker standalone) :
 #
-#   http://192.168.1.252:9000/#!/9/docker/stacks
+#   http://192.168.2.10:9000/#!/9/docker/stacks
 #   → Add stack → Web editor → coller ce fichier
 #   → Environment variables → NEO4J_PASSWORD = <le mot de passe>
 #   → Deploy the stack
@@ -36,7 +36,7 @@ services:
       EA_HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD est obligatoire}
       # Le pilote Bolt réutilise l'adresse annoncée par le serveur ; sans ceci
       # il reçoit le nom d'hôte du conteneur, injoignable depuis le LAN.
-      NEO4J_server_bolt_advertised__address: "${NEO4J_ADVERTISED_HOST:-192.168.1.252}:${NEO4J_BOLT_PORT:-7687}"
+      NEO4J_server_bolt_advertised__address: "${NEO4J_ADVERTISED_HOST:-192.168.2.10}:${NEO4J_BOLT_PORT:-7687}"
       # Un seul underscore = un point dans neo4j.conf, deux = un underscore :
       # `server.memory.pagecache.size`, `server.memory.heap.max_size`.
       NEO4J_server_memory_pagecache_size: "${NEO4J_PAGECACHE:-1G}"

@@ -65,12 +65,12 @@ class Settings(BaseSettings):
     log_embeddings: bool = False
 
     # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
-    # There is one instance, on the Docker cluster (docs/adr/0006), so its
+    # There is one instance, on the Docker cluster (docs/adr/0006, 0029), so its
     # address is the useful default: a developer who never writes a `.env`
     # reaches the shared graph rather than a `localhost` that answers nothing.
     # It is an address, not a credential — the password below has no default,
     # and an empty one is only tolerated in debug.
-    neo4j_uri: str = "bolt://192.168.1.252:7687"
+    neo4j_uri: str = "bolt://192.168.2.10:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("")
     neo4j_database: str = "neo4j"
@@ -83,20 +83,21 @@ class Settings(BaseSettings):
     # Auth, audit and scheduled work live here rather than in Neo4j — see
     # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
     #
-    # Like the graph, there is one instance and it is on the Docker cluster, so
-    # its address is the useful default: a developer who never writes a `.env`
-    # reaches the shared database rather than a `localhost` that answers
-    # nothing. The password below has no default — that one is a real shared
-    # secret, not a throwaway.
+    # Like the graph, there is one instance, so its address is the useful
+    # default — but not on the cluster: since docs/adr/0029 the `ea` database
+    # lives in the `~/OpenCode/Infra` stack on the developer's Mac, behind its
+    # NGINX on loopback. A process on another machine needs its own `.env`.
+    # The password below has no default — that one is a real shared secret,
+    # not a throwaway.
     #
     # `postgres_enabled` is on since the first table landed: `element_documents`
     # holds the markdown attached to the elements of the graph (docs/adr/0017),
     # so a deployment without PostgreSQL is now a misconfiguration rather than
     # the normal case — exactly as it already is for the graph. A process that
-    # cannot reach the cluster fails at boot, loudly, instead of on the first
+    # cannot reach it fails at boot, loudly, instead of on the first
     # upload of the first user.
     postgres_enabled: bool = True
-    postgres_host: str = "192.168.1.252"
+    postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
     postgres_user: str = "ea"
     postgres_password: SecretStr = SecretStr("")
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
     postgres_connection_timeout_seconds: float = 5.0
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
-    # LM Studio on the same cluster as the two databases, serving an
+    # LM Studio on the cluster, beside the graph, serving an
     # OpenAI-compatible `/v1/embeddings`. The base URL is all that ties us to
     # it: Ollama, text-embeddings-inference and the hosted providers answer the
     # same shape, so changing supplier is this line and a model name.
@@ -122,7 +123,7 @@ class Settings(BaseSettings):
     # the column, `EMBEDDING_DIMENSIONS`, and changing it is a migration plus a
     # full reindex, never an environment variable.
     embeddings_enabled: bool = True
-    embeddings_base_url: str = "http://192.168.1.252:1234/v1"
+    embeddings_base_url: str = "http://192.168.2.10:1234/v1"
 
     #: Measured against the other model LM Studio holds, on French runbook
     #: prose with its heading trail: 4 of 5 questions answered at rank 1,

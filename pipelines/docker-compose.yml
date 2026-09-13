@@ -1,8 +1,8 @@
 # Stack Docker locale du pipeline : Prefect (orchestration), LiteLLM (le seul
 # point qui parle à un modèle réel) et le worker qui exécute les flows.
 #
-# Rien ici ne touche au cluster 192.168.1.252 : Prefect et LiteLLM gardent
-# leur propre état dans PostgreSQL, mais celui du *cluster* — l'URL vient de
+# Rien ici ne démarre de base : Prefect et LiteLLM gardent leur propre état
+# dans le PostgreSQL de la stack ~/OpenCode/Infra (docs/adr/0029) — l'URL vient de
 # l'environnement (voir .env.example), jamais d'un littéral ici. Ce fichier ne
 # fait que déclarer la forme du stack, pas la base qu'il utilise.
 #
