@@ -24,6 +24,8 @@ from collections.abc import Callable
 from typing import Annotated, Any, Final
 from uuid import UUID
 
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
@@ -218,6 +220,8 @@ def build_mcp_server(
     get_ipam: IpamProvider,
     *,
     version: str = "0.1.0",
+    token_verifier: TokenVerifier | None = None,
+    auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
     """Assemble the tool set over the architecture and document services.
 
@@ -230,12 +234,17 @@ def build_mcp_server(
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents.
+
+    `token_verifier` and `auth` make the transport a resource server of the
+    realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
     """
     server: MCPServer[Any] = MCPServer(
         "ea-architecture",
         title="Enterprise Architecture",
         instructions=INSTRUCTIONS,
         version=version,
+        token_verifier=token_verifier,
+        auth=auth,
     )
 
     # --- Elements ---------------------------------------------------------

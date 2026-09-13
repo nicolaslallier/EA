@@ -12,7 +12,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from ea.api.architecture import router as architecture_router
-from ea.api.auth import Authenticated
+from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
     document_service_of,
@@ -31,9 +31,11 @@ from ea.core.logging import configure_logging
 from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
+from ea.domain.auth import Caller
 from ea.domain.ports import AccessTokenVerifier, DocumentRepository, IpamRepository
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
+from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
@@ -221,6 +223,16 @@ def _transport_security(settings: Settings) -> TransportSecuritySettings:
     )
 
 
+class _LazyVerifier:
+    """The app's verifier, looked up per call: the lifespan builds it after `_mount_mcp`."""
+
+    def __init__(self, app: FastAPI) -> None:
+        self._app = app
+
+    async def verify(self, token: str) -> Caller:
+        return await verifier_of(self._app).verify(token)
+
+
 def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     """Serve the MCP tools at `/mcp`, on the app that already serves the API.
 
@@ -254,26 +266,41 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     otherwise (docs/adr/0023). The guard wraps the route itself rather than
     matching the path in a middleware, so it cannot drift from the path the
     transport is actually served on.
+
+    Behind that guard `/mcp` wants the same bearer token as the REST API
+    (docs/adr/0031): the SDK's resource-server hooks over the app's verifier,
+    so a request without one gets a 401 pointing at the protected-resource
+    metadata, itself one more spliced route. The SDK puts authentication in
+    the transport's *middleware* — two of them — which splicing its routes
+    would drop, so each route is wrapped in that stack itself, innermost
+    first, with the loopback guard outermost: a remote peer is refused before
+    it is invited to log in. With auth off (debug only) each call acts as
+    `LOCAL_DEVELOPER` instead, stated here rather than left to whatever the
+    context happened to hold.
     """
+    auth = settings.auth_enabled
     server = build_mcp_server(
         lambda: architecture_service_of(app),
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
         version=app.version,
+        token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
+        auth=auth_settings(settings) if auth else None,
     )
     transport = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         transport_security=_transport_security(settings),
     )
-    if transport.user_middleware:  # pragma: no cover - only auth adds any today
-        msg = "the MCP transport now ships middleware that splicing its routes would drop"
-        raise RuntimeError(msg)
-    if not settings.mcp_allow_remote_clients:
-        for route in transport.routes:
-            if not isinstance(route, Route):  # pragma: no cover - the SDK ships one Route
-                msg = f"cannot restrict an MCP route of type {type(route).__name__}"
-                raise RuntimeError(msg)
-            route.app = LoopbackClientsOnly(route.app)
+    for route in transport.routes:
+        if not isinstance(route, Route):  # pragma: no cover - the SDK ships Routes only
+            msg = f"cannot wrap an MCP route of type {type(route).__name__}"
+            raise RuntimeError(msg)
+        route_app = route.app if auth else AsTheLocalDeveloper(route.app)
+        for middleware in reversed(transport.user_middleware):
+            route_app = middleware.cls(route_app, *middleware.args, **middleware.kwargs)
+        if not settings.mcp_allow_remote_clients:
+            route_app = LoopbackClientsOnly(route_app)
+        route.app = route_app
     app.router.routes.extend(transport.routes)
     app.state.mcp_sessions = server.session_manager
 

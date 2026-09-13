@@ -13,26 +13,35 @@ terms: a `DomainError`'s message is written for a human and names no internals,
 so it is safe to hand over; everything else stays in the logs.
 
 The tracing lives here, in the decorator every tool already carries, rather
-than in a third one to remember: `/mcp` writes to the graph and, until auth
-exists, authenticates nobody (docs/adr/0014), so a call that leaves no trace is
-a write nobody can account for. One INFO line per call says which tool, what
-came of it and how long it took; the arguments are one DEBUG line above it,
-summarised, because an agent attaching a runbook sends forty thousand
-characters and a log is not the place to keep a second copy of them.
+than in a third one to remember: `/mcp` writes to the graph (docs/adr/0014),
+so a call that leaves no trace is a write nobody can account for. One INFO line
+per call says which tool, what came of it and how long it took; the arguments
+are one DEBUG line above it, summarised, because an agent attaching a runbook
+sends forty thousand characters and a log is not the place to keep a second
+copy of them.
+
+The caller lives here too. The transport authenticated the request that carried
+the call, and the SDK hands its token to the handler (`get_access_token`); the
+tool runs as that token's caller, so the services decide on it exactly as they
+do behind the REST dependency (docs/adr/0031).
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager, nullcontext
 from functools import wraps
 from time import perf_counter
 from typing import Any
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.core.logging import TOOLS_LOGGER, summarise
 from ea.domain.errors import DomainError
+from ea.mcp.auth import caller_of
+from ea.services.caller import acting_as
 
 logger = logging.getLogger(TOOLS_LOGGER)
 
@@ -70,8 +79,15 @@ def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awa
                 "duration_ms": round((perf_counter() - started) * 1000, 1),
             }
 
+        # Without a token (auth off, or a test calling the server directly)
+        # whoever the context already acts as stays.
+        token = get_access_token()
+        caller: AbstractContextManager[object] = (
+            nullcontext() if token is None else acting_as(caller_of(token))
+        )
         try:
-            answer = await tool(*args, **kwargs)
+            with caller:
+                answer = await tool(*args, **kwargs)
         except (DomainError, ValueError) as failure:
             # Anticipated: the agent is being told something it can act on, so
             # it is INFO and it carries no traceback.

@@ -25,7 +25,7 @@ from ea.main import create_app
 from ea.mcp import MCP_PATH
 from ea.services.architecture import ArchitectureService
 from ea.services.indexing import DocumentIndexer
-from tests.conftest import FakeEmbedder, InMemoryDocuments
+from tests.conftest import FakeEmbedder, InMemoryDocuments, StaticVerifier, a_reader, an_editor
 
 #: The transport turns on DNS-rebinding protection when it is served on a
 #: loopback host, which checks the `Host` header against `127.0.0.1:*` and
@@ -69,7 +69,7 @@ def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocum
 
 
 @asynccontextmanager
-async def agent_over(app: Any) -> AsyncIterator[ClientSession]:
+async def agent_over(app: Any, token: str | None = None) -> AsyncIterator[ClientSession]:
     """A real MCP client speaking to the real app over an in-process transport.
 
     `httpx.ASGITransport` does not run the application lifespan, and the
@@ -81,11 +81,15 @@ async def agent_over(app: Any) -> AsyncIterator[ClientSession]:
     one that entered it. A yielding fixture is finalised in a different task
     from the test body, so the stack has to open and close inside one `async
     with`, in the test.
+
+    `token`, when given, is sent as `Authorization: Bearer` on every request,
+    the way a client that went through the OAuth flow sends it.
     """
+    headers = {"authorization": f"Bearer {token}"} if token else None
     async with app.router.lifespan_context(app):
         transport = httpx2.ASGITransport(app=app)
         async with (
-            httpx2.AsyncClient(transport=transport, base_url=BASE_URL) as http,
+            httpx2.AsyncClient(transport=transport, base_url=BASE_URL, headers=headers) as http,
             streamable_http_client(f"{BASE_URL}{MCP_PATH}", http_client=http) as (read, write, *_),
             ClientSession(read, write) as session,
         ):
@@ -378,3 +382,114 @@ class TestWhoIsServed:
             response = await client.get("/health")
 
         assert response.status_code == 200
+
+
+#: Tokens the realm could have issued, one per role that decides anything.
+TOKENS = {"reader-token": a_reader(), "editor-token": an_editor()}
+
+
+def an_app_with_auth(service: ArchitectureService, **overrides: Any) -> Any:
+    """The app with authentication on, its verifier a double that knows `TOKENS`."""
+    settings: dict[str, Any] = {
+        "debug": True,
+        "postgres_enabled": False,
+        "embeddings_enabled": False,
+        "auth_enabled": True,
+        **overrides,
+    }
+    return create_app(
+        Settings(**settings), architecture_service=service, verifier=StaticVerifier(TOKENS)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("nobody_calling")
+class TestTheSameTokenAsTheApi:
+    """`/mcp` is a resource server of the realm `ea`, like the REST API.
+
+    `nobody_calling` on the whole class: the autouse editor of the test suite
+    would otherwise ride the context into the transport, and a tool acting as
+    that editor would pass every test here without a token being read at all.
+    """
+
+    async def test_no_token_is_a_401_pointing_at_the_resource_metadata(
+        self, service: ArchitectureService
+    ) -> None:
+        """What starts a client's OAuth flow: RFC 9728 discovery from the 401."""
+        response = await initialize_from(an_app_with_auth(service), "127.0.0.1")
+
+        assert response.status_code == 401
+        assert "resource_metadata=" in response.headers["www-authenticate"]
+
+    async def test_a_forged_token_is_a_401(self, service: ArchitectureService) -> None:
+        app = an_app_with_auth(service)
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+                response = await client.post(
+                    MCP_PATH,
+                    json=INITIALIZE,
+                    headers={
+                        "accept": "application/json, text/event-stream",
+                        "authorization": "Bearer forged",
+                    },
+                )
+
+        assert response.status_code == 401
+
+    async def test_the_protected_resource_metadata_names_the_realm(
+        self, service: ArchitectureService
+    ) -> None:
+        app = an_app_with_auth(service)
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+                response = await client.get("/.well-known/oauth-protected-resource/mcp")
+
+        assert response.status_code == 200
+        servers = [server.rstrip("/") for server in response.json()["authorization_servers"]]
+        assert servers == ["https://keycloak.famillelallier.net/realms/ea"]
+
+    async def test_a_reader_reads_and_is_refused_a_write(
+        self, service: ArchitectureService
+    ) -> None:
+        """The tool sees the token of the request that carried its call, not
+        the context the session was started in — the reader is refused."""
+        async with agent_over(an_app_with_auth(service), token="reader-token") as session:
+            listed = await session.call_tool("list_elements", {})
+            created = await session.call_tool(
+                "create_element", {"element_type": "node", "name": "Billing"}
+            )
+
+        assert not listed.is_error, listed.content
+        assert created.is_error
+        assert "ea-editor" in str(created.content)
+
+    async def test_an_editor_writes(self, service: ArchitectureService) -> None:
+        async with agent_over(an_app_with_auth(service), token="editor-token") as session:
+            created = await session.call_tool(
+                "create_element", {"element_type": "node", "name": "Billing"}
+            )
+
+        assert not created.is_error, created.content
+
+    async def test_a_remote_peer_is_refused_before_its_token_is_asked_for(
+        self, service: ArchitectureService
+    ) -> None:
+        """The loopback guard stays outermost: a 403, not a 401 inviting a login."""
+        response = await initialize_from(an_app_with_auth(service), "192.168.1.40")
+
+        assert response.status_code == 403
+        assert response.json()["error"] == "remote_client_refused"
+
+    async def test_with_auth_off_a_tool_acts_as_the_local_developer(
+        self, service: ArchitectureService
+    ) -> None:
+        """Debug only: no token, and the write an editor may make goes through —
+        because `_mount_mcp` says who calls, not because a test left one set."""
+        async with agent(service) as session:
+            created = await session.call_tool(
+                "create_element", {"element_type": "node", "name": "Billing"}
+            )
+
+        assert not created.is_error, created.content
