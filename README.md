@@ -39,7 +39,7 @@ rappelle la marche à suivre pour la (re)déployer, et le mot de passe se demand
 
 PostgreSQL non plus n'est pas démarré ici, mais il n'est pas sur le cluster : la
 base `ea` vit dans la stack `~/OpenCode/Infra` de ce Mac, sur 127.0.0.1:5432 —
-voir [`docs/adr/0027`](docs/adr/0027-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) et `make pg-stack`.
+voir [`docs/adr/0029`](docs/adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) et `make pg-stack`.
 
 Puis ouvre <http://localhost:5173>. La page affiche l'état du backend : si elle
 indique « Backend: ok », les deux services communiquent.
@@ -52,6 +52,7 @@ indique « Backend: ok », les deux services communiquent.
 | <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
 | <http://192.168.2.10:7474> | Navigateur Neo4j, sur le cluster (`neo4j`) |
 | <http://192.168.2.10:9000/#!/9/docker/stacks> | Portainer — la stack du graphe |
+| <https://ea.infra.famillelallier.net> | L'application déployée, derrière le NGINX de l'Infra — `make app-stack` |
 
 ## Commandes
 

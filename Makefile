@@ -3,14 +3,23 @@
 # Cible unique d'entrée pour le stack Python (backend) + Vue (frontend).
 # Voir docs/adr/0001-orchestration-locale-via-makefile.md.
 
-BACKEND  := backend
-FRONTEND := frontend
+BACKEND   := backend
+FRONTEND  := frontend
+# Second projet Python, son propre lockfile : Prefect épingle ses propres
+# FastAPI/SQLAlchemy/Alembic, à des versions que ce dépôt ne contrôle pas — un
+# lockfile commun avec backend/ forcerait l'un des deux à suivre l'autre. Voir
+# docs/adr/0028.
+PIPELINES := pipelines
 
 # Environnement virtuel Python géré par uv (uv sync le crée dans backend/.venv).
 # Le témoin vit *dans* le venv : `make clean` l'emporte avec lui, donc un venv
 # supprimé ne peut pas laisser derrière lui un témoin qui mentirait au garde-fou.
 VENV       := $(BACKEND)/.venv
 VENV_STAMP := $(VENV)/.uv-sync-stamp
+
+# Même garde-fou pour pipelines/, son propre venv.
+PL_VENV       := $(PIPELINES)/.venv
+PL_VENV_STAMP := $(PL_VENV)/.uv-sync-stamp
 
 # Configuration locale, dérivée de l'exemple committé. Jamais versionnée.
 BE_ENV := $(BACKEND)/.env
@@ -94,7 +103,7 @@ NEO4J_ENV = export NEO4J_PASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) NEO
 # Base relationnelle : tout ce qui n'est pas le graphe (auth, audit,
 # planification). Comme le graphe, une seule instance — mais pas sur le cluster :
 # la base `ea` vit dans la stack ~/OpenCode/Infra de ce Mac, derrière son NGINX.
-# Voir docs/adr/0015 et 0027.
+# Voir docs/adr/0015 et 0029.
 POSTGRES_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 POSTGRES_USER ?= ea
@@ -165,7 +174,7 @@ endif
 # Le conteneur jetable de docker-compose.yml, contre lequel tournent les tests
 # d'intégration : `alembic downgrade base` ne doit jamais viser le partagé. Son
 # mot de passe est celui que docker-compose.yml porte déjà en clair. Pas 5432 :
-# c'est le port de la base partagée depuis docs/adr/0027, et les fixtures le
+# c'est le port de la base partagée depuis docs/adr/0029, et les fixtures le
 # refusent même sur 127.0.0.1.
 POSTGRES_TEST_PASSWORD ?= developmentonly
 POSTGRES_TEST_PORT     ?= 5433
@@ -205,12 +214,16 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
-        pg-vector-check pg-stack require-postgres-password \
+        pg-vector-check pg-stack app-stack require-postgres-password \
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
         pg-backup pg-restore db-backup-howto \
-        db-test-up
+        db-test-up \
+        pipelines-install pipelines-lint pipelines-lint-check pipelines-typecheck \
+        pipelines-test pipelines-check pipelines-audit \
+        require-pipelines-env pipelines-up pipelines-down pipelines-logs pipelines-run \
+        pipelines-db-howto
 
 help: ## Liste les cibles disponibles
 	@printf "$(GREEN)Cibles disponibles :$(NC)\n"
@@ -219,7 +232,7 @@ help: ## Liste les cibles disponibles
 
 ## --- Installation ---------------------------------------------------------
 
-install: install-be install-fe ## Installe toutes les dépendances (BE + FE)
+install: install-be install-fe pipelines-install ## Installe toutes les dépendances (BE + FE + pipelines)
 
 install-be: $(BE_ENV) ## Crée le venv et installe les dépendances Python
 	@printf "$(GREEN)Installing backend dependencies (uv)...$(NC)\n"
@@ -358,7 +371,7 @@ db-backup-howto: ## Rappelle comment sauvegarder et restaurer le graphe (hors li
 
 ## --- PostgreSQL -----------------------------------------------------------
 #
-# Comme le graphe, une instance unique et partagée ($(POSTGRES_HOST), docs/adr/0027) :
+# Comme le graphe, une instance unique et partagée ($(POSTGRES_HOST), docs/adr/0029) :
 # `pg-ping`, `pg-shell` et `pg-migrate` s'y connectent, aucune ne la démarre.
 # Le client psql est pris dans l'image Postgres plutôt qu'installé sur le poste.
 #
@@ -413,11 +426,21 @@ pg-vector-check: | require-postgres-password ## Vérifie que pgvector est dispon
 	test -n "$$out" \
 	|| { printf "$(RED)Serveur joint, mais l'extension vector y est absente.$(NC)\n"; \
 	     printf "L'image du serveur doit être pgvector/pgvector:pgNN, pas postgres:NN —\n"; \
-	     printf "voir make pg-stack, docs/adr/0019 et 0027.\n"; exit 1; }; \
+	     printf "voir make pg-stack, docs/adr/0019 et 0029.\n"; exit 1; }; \
 	printf "$(GREEN)pgvector disponible (%s).$(NC)\n" "$$out"
 
+app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l'Infra
+	@printf "$(GREEN)Stack EA : deploy/ea.stack.yml → https://ea.infra.famillelallier.net$(NC)\n"
+	@printf "  0. Infra : EA_DB_PASSWORD dans .env, puis make provision-app app=ea\n"
+	@printf "  1. Ouvre https://portainer.infra.famillelallier.net → Stacks → Add stack\n"
+	@printf "  2. Repository → https://github.com/nicolaslallier/EA, refs/heads/main,\n"
+	@printf "     Compose path : deploy/ea.stack.yml\n"
+	@printf "  3. Environment variables → EA_NEO4J_URI, EA_NEO4J_PASSWORD,\n"
+	@printf "     EA_POSTGRES_PASSWORD (= EA_DB_PASSWORD de l'Infra)\n"
+	@printf "  4. Deploy the stack, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
+
 pg-stack: ## Rappelle où vit la base relationnelle et comment la provisionner
-	@printf "$(GREEN)PostgreSQL : la stack ~/OpenCode/Infra de ce Mac — docs/adr/0027$(NC)\n"
+	@printf "$(GREEN)PostgreSQL : la stack ~/OpenCode/Infra de ce Mac — docs/adr/0029$(NC)\n"
 	@printf "  1. Dans ~/OpenCode/Infra : make provision-app app=ea\n"
 	@printf "     (rôle ea à moindre privilège, extension vector créée par le superutilisateur)\n"
 	@printf "  2. EA_DB_PASSWORD du .env d'Infra → EA_POSTGRES_PASSWORD de $(BE_ENV)\n"
@@ -611,7 +634,7 @@ audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audi
 	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
 	exit $$status
 
-check: lint-check lint-fe typecheck openapi-check test test-fe ## Tout ce que la CI vérifiera (ne modifie aucun fichier)
+check: lint-check lint-fe typecheck openapi-check test test-fe pipelines-check ## Tout ce que la CI vérifiera (ne modifie aucun fichier)
 
 # pre-commit n'est pas une dépendance du projet : uvx le prend à la version
 # épinglée ici. Ses crochets appellent `uv run` et `npm run`, donc ruff et mypy
@@ -623,12 +646,109 @@ hooks: ## Installe les crochets pre-commit dans .git (ruff, mypy, vue-tsc, eslin
 	$(PRE_COMMIT) install
 	@printf "$(GREEN)Crochets installés. Sur tout le dépôt : $(PRE_COMMIT) run --all-files$(NC)\n"
 
+## --- Pipelines --------------------------------------------------------------
+#
+# Second projet Python, son propre venv, sa propre barrière — voir docs/adr/0028.
+# Les cibles de vérification ne démarrent ni Prefect, ni LiteLLM, ni MinIO :
+# seules pipelines-up/-down/-run touchent la stack Docker, plus bas.
+# `pipelines-check` est ce que `check` et la CI appellent ; aucune des deux ne
+# modifie de fichier.
+
+$(PL_VENV_STAMP): $(PIPELINES)/pyproject.toml $(PIPELINES)/uv.lock
+	@printf "$(RED)Environnement Python absent ou périmé ($(PL_VENV)).$(NC)\n"
+	@printf "$(RED)Lance d'abord : make pipelines-install$(NC)\n"
+	@exit 1
+
+pipelines-install: ## Crée le venv de pipelines/ et installe ses dépendances Python
+	@printf "$(GREEN)Installing pipelines dependencies (uv)...$(NC)\n"
+	@command -v uv >/dev/null 2>&1 || { \
+		printf "$(RED)uv est introuvable. Installe-le : brew install uv$(NC)\n"; exit 1; }
+	cd $(PIPELINES) && uv sync --all-extras
+	@touch $(PL_VENV_STAMP)
+
+pipelines-lint: | $(PL_VENV_STAMP) ## Corrige : ruff format, puis ruff check --fix (pipelines/)
+	cd $(PIPELINES) && uv run ruff format . && uv run ruff check --fix .
+
+pipelines-lint-check: | $(PL_VENV_STAMP) ## Vérifie sans rien modifier : ruff format --check, ruff check (pipelines/)
+	cd $(PIPELINES) && uv run ruff format --check . && uv run ruff check .
+
+pipelines-typecheck: | $(PL_VENV_STAMP) ## mypy --strict sur pipelines/src
+	cd $(PIPELINES) && uv run mypy src
+
+pipelines-test: | $(PL_VENV_STAMP) ## Tests de pipelines/, plancher de couverture 90 %
+	cd $(PIPELINES) && uv run pytest -q --cov=pipelines
+
+pipelines-check: pipelines-lint-check pipelines-typecheck pipelines-test ## Tout ce que la CI vérifiera pour pipelines/
+
+pipelines-audit: | $(PL_VENV_STAMP) ## bandit et pip-audit sur pipelines/
+	@status=0; \
+	printf "$(GREEN)bandit (pipelines)$(NC)\n"; \
+	(cd $(PIPELINES) && uv run bandit -c pyproject.toml -r src -q) || status=1; \
+	printf "$(GREEN)pip-audit (pipelines)$(NC)\n"; \
+	(cd $(PIPELINES) && uv run pip-audit --skip-editable) || status=1; \
+	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
+	exit $$status
+
+# La stack Docker de pipelines/ : Prefect + LiteLLM + le worker qui sert le
+# flow. --env-file pointe pipelines/.env, jamais committé (voir .gitignore) —
+# require-pipelines-env est ce qui donne un message clair plutôt que l'erreur
+# brute de docker compose quand ce fichier manque.
+PL_COMPOSE := docker compose -f $(PIPELINES)/docker-compose.yml --env-file $(PIPELINES)/.env
+
+# Même rôle que $(BE_ENV), sans la création automatique : les secrets de ce
+# fichier (mots de passe, clé LiteLLM) ne peuvent pas venir d'un copier-coller
+# de l'exemple, contrairement à backend/.env qui démarre en EA_DEBUG sans eux.
+require-pipelines-env:
+	@test -f $(PIPELINES)/.env || { \
+		printf "$(RED)$(PIPELINES)/.env absent.$(NC)\n"; \
+		printf "Copie $(PIPELINES)/.env.example vers $(PIPELINES)/.env et renseigne les secrets\n"; \
+		printf "(mots de passe : openssl rand -hex 32) — voir make pipelines-db-howto.\n"; exit 1; }
+
+pipelines-up: | require-pipelines-env ## Démarre Prefect + LiteLLM + le worker (pipelines/docker-compose.yml)
+	$(PL_COMPOSE) up -d --build
+	@printf "$(GREEN)Prefect : http://127.0.0.1:4200 — LiteLLM : http://127.0.0.1:4000$(NC)\n"
+
+pipelines-down: ## Arrête la stack Prefect + LiteLLM + le worker
+	$(PL_COMPOSE) down
+
+pipelines-logs: ## Suit les logs de la stack (docker compose logs -f)
+	$(PL_COMPOSE) logs -f
+
+# inbox/ est le préfixe où le catalogue dépose ce que le flow doit lire — voir
+# la définition du flow alimenter-catalogue.
+PREFIX ?= inbox/
+
+pipelines-run: ## Déclenche alimenter-catalogue/manuel dans le worker (PREFIX=... défaut inbox/)
+	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param "prefix=$(PREFIX)" --watch
+
+# Imprime seulement, comme pg-stack et db-backup-howto : les rôles et les bases
+# vivent dans le PostgreSQL de la stack ~/OpenCode/Infra (docs/adr/0029), où le
+# rôle `ea` ne crée pas de rôle — la provision passe par l'Infra, comme pour `ea`.
+# Cette cible ne réclame ni mot de passe ni pipelines/.env pour la rappeler.
+pipelines-db-howto: ## Rappelle comment préparer les rôles PostgreSQL et le bucket MinIO de pipelines/
+	@printf "$(GREEN)Préparation manuelle — rien ne s'exécute d'ici$(NC)\n"
+	@printf "\n$(GREEN)1. Dans ~/OpenCode/Infra :$(NC)\n"
+	@printf '%s\n' \
+		"  .env : PREFECT_DB_PASSWORD, LITELLM_DB_PASSWORD, et prefect,litellm dans APP_DATABASES" \
+		"  make provision-app app=prefect && make provision-app app=litellm" \
+		"  make psql, puis :" \
+		"  \\c prefect" \
+		"  CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+	@printf "\n$(GREEN)2. MinIO — https://minio-console.famillelallier.net :$(NC)\n"
+	@printf '%s\n' \
+		"  Bucket ea-catalogue" \
+		"  Un utilisateur dédié, politique en lecture seule sur ce bucket"
+	@printf "\n$(GREEN)3. Mots de passe : openssl rand -hex 32$(NC)\n"
+
 ## --- Nettoyage ------------------------------------------------------------
 
 clean: ## Supprime venv, node_modules, caches et artefacts de build
-	rm -rf $(VENV)
+	rm -rf $(VENV) $(PL_VENV)
 	rm -rf $(FRONTEND)/node_modules $(FRONTEND)/dist
 	rm -rf $(BACKEND)/.pytest_cache $(BACKEND)/.mypy_cache $(BACKEND)/.ruff_cache
 	rm -rf $(BACKEND)/.coverage $(BACKEND)/htmlcov
+	rm -rf $(PIPELINES)/.pytest_cache $(PIPELINES)/.mypy_cache $(PIPELINES)/.ruff_cache
+	rm -rf $(PIPELINES)/.coverage $(PIPELINES)/htmlcov
 	find $(BACKEND) -type d -name "__pycache__" -prune -exec rm -rf {} +
+	find $(PIPELINES) -type d -name "__pycache__" -prune -exec rm -rf {} +
 	@printf "$(GREEN)Cleaned up!$(NC)\n"
