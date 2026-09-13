@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -59,3 +61,23 @@ def test_secrets_are_never_shown_in_repr() -> None:
     rendered = repr(settings)
     for value in REQUIRED_SECRETS.values():
         assert value not in rendered
+
+
+def test_a_dotenv_in_the_working_directory_is_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pipelines/.env` feeds docker compose, and holds keys `Settings` has no field for.
+
+    Reading it would refuse to build (`extra="forbid"` on `LITELLM_DATABASE_URL`)
+    and would let a developer's file leak into every test run from that directory.
+    """
+    (tmp_path / ".env").write_text(
+        "LITELLM_DATABASE_URL=postgresql://litellm:x@db.invalid:5432/litellm\n"
+        "PIPELINES_EA_BASE_URL=http://from-dotenv.invalid:8000\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = _settings()
+
+    assert settings.ea_base_url == "http://host.docker.internal:8000"

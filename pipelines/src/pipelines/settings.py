@@ -1,10 +1,15 @@
 """Configuration for the pipelines process, read from the environment.
 
-Every field is `PIPELINES_<NAME>` (case-insensitive), from the environment or
-from `pipelines/.env` — never from a literal in code, the same rule
+Every field is `PIPELINES_<NAME>` (case-insensitive), from the environment
+only — never from a literal in code, the same rule
 `backend/src/ea/core/config.py` follows. The three secrets have no default:
 building a `Settings` without them fails loudly, in the same place a missing
 `EA_NEO4J_PASSWORD` fails for the backend.
+
+No `env_file`: `pipelines/.env` feeds `docker compose`, which hands the worker
+only its own `PIPELINES_*` variables. That file also holds keys this class has
+no field for (`LITELLM_DATABASE_URL`, ...), which `extra="forbid"` would refuse,
+and reading it would let a developer's file leak into every test run.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Everything a flow needs to reach the EA API, LiteLLM and MinIO."""
 
-    model_config = SettingsConfigDict(env_prefix="PIPELINES_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="PIPELINES_")
 
     #: The EA API, reached over HTTP only — never `/mcp`, never a repository
     #: (docs/adr/0027). `host.docker.internal` is the default because the
@@ -24,7 +29,7 @@ class Settings(BaseSettings):
     ea_base_url: str = "http://host.docker.internal:8000"
 
     #: LiteLLM, behind the `smart` and `fast` aliases — the code never names a
-    #: real model (see `pipelines/litellm.yaml`, added in a later task).
+    #: real model (see `pipelines/litellm.yaml`).
     litellm_base_url: str = "http://litellm:4000"
     litellm_api_key: SecretStr
 
