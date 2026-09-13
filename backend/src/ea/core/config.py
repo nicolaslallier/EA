@@ -182,6 +182,19 @@ class Settings(BaseSettings):
         "[::1]:*",
     ]
 
+    # --- Authentication, by the Keycloak realm `ea` — see docs/adr/0031 ------
+    # On by default, like the two stores: an API that anyone on the LAN can
+    # write to is the state this replaces. Off is accepted in debug only.
+    auth_enabled: bool = True
+    auth_issuer: str = "https://keycloak.famillelallier.net/realms/ea"
+    auth_audience: str = "ea-api"
+    #: The Infra CA. From the Mac, keycloak.famillelallier.net resolves to
+    #: 127.0.0.1 behind a certificate the system trust store does not know.
+    auth_ca_cert: str | None = None
+    auth_timeout_seconds: float = 5.0
+    #: The resource identifier `/mcp` publishes (RFC 9728).
+    mcp_resource_url: str = "http://127.0.0.1:8000/mcp"
+
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -240,6 +253,14 @@ class Settings(BaseSettings):
             and not self.postgres_password.get_secret_value()
         ):
             msg = "postgres_password is required when postgres_enabled is on and debug is off"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _authentication_off_only_in_debug(self) -> "Settings":
+        """Turning auth off hands every write to whoever reaches the port."""
+        if not self.auth_enabled and not self.debug:
+            msg = "auth_enabled may only be false when debug is on"
             raise ValueError(msg)
         return self
 

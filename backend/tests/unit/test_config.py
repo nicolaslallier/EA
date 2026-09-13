@@ -220,3 +220,16 @@ class TestTheEmbeddingService:
 
         assert settings.embeddings_enabled is False
         assert settings.postgres_enabled is True
+
+
+def test_authentication_is_on_by_default() -> None:
+    assert Settings(debug=True).auth_enabled is True
+
+
+def test_authentication_cannot_be_turned_off_outside_debug() -> None:
+    with pytest.raises(ValueError, match="auth_enabled"):
+        Settings(debug=False, auth_enabled=False)
+
+
+def test_debug_may_turn_authentication_off() -> None:
+    assert Settings(debug=True, auth_enabled=False).auth_enabled is False
