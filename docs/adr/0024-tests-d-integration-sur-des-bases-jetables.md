@@ -9,6 +9,7 @@ affects: docker-compose.yml, Makefile (test-integration, test-postgres, pg-up, d
 
 Date : 2026-09-13
 Statut : Accepté
+Supersédé en partie par : [`0027`](0027-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) — le port du PostgreSQL jetable (5433) et son garde, qui refuse aussi le port partagé.
 
 Supersède **le volet « tests »** de
 [`0006`](0006-neo4j-sur-le-cluster-docker.md) : le graphe applicatif reste une

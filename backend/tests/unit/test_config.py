@@ -176,14 +176,14 @@ class TestTheEmbeddingService:
     """The settings behind the document search — see docs/adr/0019."""
 
     def test_it_points_at_the_lm_studio_of_the_cluster_by_default(self) -> None:
-        """The same machine as the two databases, and the same reasoning.
+        """The same machine as the graph, and the same reasoning.
 
         A developer who never writes a `.env` reaches the service that is
         actually running rather than a `localhost` that answers nothing.
         """
         settings = Settings(debug=True)
 
-        assert settings.embeddings_base_url.startswith("http://192.168.1.252:")
+        assert settings.embeddings_base_url.startswith("http://192.168.2.10:")
         assert settings.embeddings_base_url.endswith("/v1")
 
     def test_the_default_model_is_the_width_the_column_stores(self) -> None:

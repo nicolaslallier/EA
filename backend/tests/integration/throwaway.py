@@ -9,6 +9,10 @@ trusted a flag would be one `backend/.env` away from emptying the graph
 everyone models against. Loopback cannot be another machine, so it is the only
 thing accepted — the throwaway containers of `docker-compose.yml` publish
 there and nowhere else. See docs/adr/0024.
+
+Since docs/adr/0027 the shared PostgreSQL answers on this Mac's loopback too,
+so for that store the address is no longer the whole question: its port is
+refused as well, and the throwaway container publishes another one.
 """
 
 from __future__ import annotations
@@ -16,9 +20,18 @@ from __future__ import annotations
 import ipaddress
 from urllib.parse import urlsplit
 
+from ea.core.config import Settings
+
 #: The one variable a developer sets to say "yes, wipe it". Necessary for the
 #: graph, never sufficient: it says the caller means it, not where.
 DESTRUCTIVE_OPT_IN = "EA_ALLOW_DESTRUCTIVE_TESTS"
+
+#: The port of the shared PostgreSQL, read from the default that reaches it, so
+#: the guard moves in the same commit as the database. Refused even on loopback.
+SHARED_POSTGRES_PORT: int = Settings.model_fields["postgres_port"].default
+
+#: Where `make pg-up` publishes the throwaway one — anything but the port above.
+THROWAWAY_POSTGRES_PORT = 5433
 
 
 def is_loopback(host: str) -> bool:
@@ -59,8 +72,15 @@ def refuse_a_shared_postgres(host: str, port: int) -> str | None:
     if not is_loopback(host):
         return (
             f"refusing to run `alembic downgrade base` on PostgreSQL at {host}:{port}: "
-            "it is not loopback, so it may be the shared database on the cluster. "
+            "it is not loopback, so it may be a database somebody uses. "
             "Start the throwaway one with `make pg-up` and set EA_POSTGRES_HOST=127.0.0.1 "
-            "— `make test-postgres` does both"
+            f"EA_POSTGRES_PORT={THROWAWAY_POSTGRES_PORT} — `make test-postgres` does both"
+        )
+    if port == SHARED_POSTGRES_PORT:
+        return (
+            f"refusing to run `alembic downgrade base` on PostgreSQL at {host}:{port}: "
+            "loopback, but the port of the shared database, which lives on this Mac "
+            "(docs/adr/0027). Start the throwaway one with `make pg-up` and set "
+            f"EA_POSTGRES_PORT={THROWAWAY_POSTGRES_PORT} — `make test-postgres` does both"
         )
     return None

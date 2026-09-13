@@ -1,15 +1,10 @@
-# PostgreSQL — tout ce qui n'est pas le graphe, déployé sur le cluster Docker.
+# PostgreSQL — PLUS DÉPLOYÉ NULLE PART. Ce n'est pas la base de l'application.
 #
-# Comme Neo4j (deploy/neo4j.stack.yml), ce fichier n'est pas lancé depuis un
-# poste : il est déployé comme *stack* Portainer sur l'hôte 192.168.1.252
-# (endpoint 9, Docker standalone) :
-#
-#   http://192.168.1.252:9000/#!/9/docker/stacks
-#   → Add stack → Web editor → coller ce fichier
-#   → Environment variables → POSTGRES_PASSWORD = <le mot de passe>
-#   → Deploy the stack
-#
-# `make pg-stack` réaffiche ces instructions. Voir docs/adr/0015 et 0019.
+# Depuis docs/adr/0027, la base `ea` vit dans la stack ~/OpenCode/Infra du Mac
+# (127.0.0.1:5432) ; `make pg-stack` dit comment la provisionner. Ce fichier
+# décrivait la stack Portainer du cluster ; il reste versionné tant que sa
+# suppression n'est pas décidée. Le redéployer ouvrirait une seconde base
+# « partagée », vide ou divergente. Voir docs/adr/0015, 0019 et 0027.
 #
 # Rien ici ne porte de secret : POSTGRES_PASSWORD est déclaré avec `:?`, donc un
 # déploiement sans mot de passe échoue au lieu d'en inventer un.

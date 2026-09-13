@@ -1,8 +1,10 @@
 # Bases jetables, pour les tests — et pour rien d'autre.
 #
 # Aucune des deux bases du projet ne tourne ici : le graphe (docs/adr/0006) et
-# le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques sur le
-# cluster Docker, 192.168.1.252. Personne ne modélise contre ce fichier.
+# le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques et
+# partagées — le graphe sur le cluster Docker (192.168.2.10), PostgreSQL dans la
+# stack ~/OpenCode/Infra de ce Mac, sur 127.0.0.1:5432 (docs/adr/0027). Personne
+# ne modélise contre ce fichier.
 #
 # Ces deux conteneurs existent pour une seule raison : les tests d'intégration
 # détruisent ce qu'ils touchent. Ceux du graphe vident les `:Element` entre
@@ -12,7 +14,7 @@
 #
 # `make test-integration` démarre les deux et pointe dessus ; `make
 # test-postgres` démarre PostgreSQL seul. `make db-ping`, `db-shell`,
-# `pg-ping`, `pg-shell` et `pg-migrate` visent le cluster, pas ces conteneurs.
+# `pg-ping`, `pg-shell` et `pg-migrate` visent les instances partagées, pas ces conteneurs.
 #
 # Les deux ne publient que sur 127.0.0.1 : les fixtures refusent toute adresse
 # qui n'est pas locale, et un conteneur joignable depuis le LAN deviendrait vite
@@ -27,11 +29,13 @@ services:
     # pgvector/pgvector plutôt que postgres : l'extension `vector` doit être
     # présente dans l'image, pas seulement activée dans la base — la migration
     # 0003 fait `CREATE EXTENSION vector` et échoue sur une image qui ne l'a
-    # pas. La base du cluster a la même exigence (docs/adr/0019).
+    # pas. La base partagée a la même exigence (docs/adr/0019).
     image: pgvector/pgvector:pg17
     container_name: ea-postgres
+    # 5433, pas 5432 : la base partagée occupe 127.0.0.1:5432 sur ce Mac, et
+    # les fixtures refusent ce port (docs/adr/0027).
     ports:
-      - "127.0.0.1:${POSTGRES_TEST_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_TEST_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: ea
       POSTGRES_PASSWORD: "${POSTGRES_TEST_PASSWORD:-developmentonly}"

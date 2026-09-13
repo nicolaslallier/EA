@@ -1,7 +1,7 @@
 """Guards on the deployment files themselves.
 
 The graph no longer runs on the developer's machine: it is a stack deployed on
-the Docker host at 192.168.1.252 (see docs/adr/0006). Two invariants of that
+the Docker host at 192.168.2.10 (see docs/adr/0006, 0027). Two invariants of that
 move are worth failing a build over, because both are silent when broken:
 
 * the committed stack must not carry a password — the cluster instance is

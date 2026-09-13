@@ -102,8 +102,10 @@ jobs:
           POSTGRES_USER: ea
           POSTGRES_PASSWORD: ci-disposable-password
           POSTGRES_DB: ea
+        # 5433, le port du PostgreSQL de test en local : les fixtures refusent
+        # 5432, celui de la base partagée (docs/adr/0027).
         ports:
-          - 5432:5432
+          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U ea -d ea"
           --health-interval 5s
@@ -144,7 +146,7 @@ jobs:
           EA_NEO4J_PASSWORD: ci-disposable-password
           EA_POSTGRES_ENABLED: "true"
           EA_POSTGRES_HOST: 127.0.0.1
-          EA_POSTGRES_PORT: "5432"
+          EA_POSTGRES_PORT: "5433"
           EA_POSTGRES_PASSWORD: ci-disposable-password
           # Aucun service d'embeddings ici, et la suite n'en dépend pas : le
           # démarrage de l'application irait sinon interroger LM Studio.
