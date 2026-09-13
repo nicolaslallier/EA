@@ -58,6 +58,7 @@ d'`ea-pipelines` est généré par Keycloak, jamais committé.
 | Point | Choix | Pourquoi |
 |---|---|---|
 | Vérification | `JwtVerifier` (`repositories/keycloak.py`) : **RS256 seul**, `iss`, `aud=ea-api`, `exp`, `iat`, `sub` exigés ; clés lues au JWKS du realm par `httpx` | L'algorithme n'est jamais lu dans le jeton : sinon `none`, ou un HS256 « signé » avec la clé publique, passent. `PyJWKClient` bloquerait la boucle |
+| Horloge | `CLOCK_LEEWAY_SECONDS` = 30 s de tolérance sur `iat`, `nbf` et `exp` | `make run-be` tourne sur le Mac, Keycloak dans la VM de Docker Desktop, dont l'horloge dérive après une veille ; `pyjwt` refuse un `iat` en avance de 5 s, et le premier `/me` après la connexion serait un 401 |
 | Rotation | Un `kid` inconnu recharge le JWKS, au plus une fois par intervalle | Une rotation est prise sans redémarrage ; un flot de `kid` forgés ne devient pas un appel à Keycloak par requête |
 | Démarrage | Le JWKS est sondé au démarrage, avec `EA_AUTH_CA_CERT` | Comme les deux bases : une API qui ne peut vérifier aucun jeton ne démarre pas |
 | Dépendance | `pyjwt[crypto]>=2.13` déclaré en dépendance directe | Déjà verrouillé par `mcp`, mais on l'importe : le plancher est au-dessus de CVE-2024-53861 |
@@ -79,6 +80,16 @@ reçoit un `KeycloakTokenVerifier` au-dessus du même `JwtVerifier`, publie
 avant l'outil. Claude Code découvre Keycloak par ces métadonnées et se connecte
 comme `ea-mcp` (`.mcp.json` : `oauth.clientId`, `oauth.callbackPort: 33418`).
 
+**Claude Code doit faire confiance au CA de l'Infra.** La découverte et
+l'échange de jetons se font dans Claude Code, un processus Node, auprès de
+`https://keycloak.famillelallier.net` ; Node ne lit ni `EA_AUTH_CA_CERT` ni,
+par défaut, le trousseau macOS, et la première connexion à `/mcp` échoue en
+TLS. Claude Code se lance donc avec
+`NODE_EXTRA_CA_CERTS=~/OpenCode/Infra/certs/infra-ca.crt`. Si la découverte
+elle-même échoue, `oauth.authServerMetadataUrl` dans `.mcp.json` nomme
+directement les métadonnées de Keycloak — repli connu, volontairement non
+posé.
+
 **La garde de boucle locale de `0023` reste**, en défense en profondeur : un
 jeton ne rend pas `/mcp` servable derrière un proxy, dont le pair est le proxy.
 La stack déployée garde `EA_MCP_ENABLED=false` ; servir `/mcp` derrière NGINX
@@ -92,6 +103,9 @@ liée à Keycloak. Code + PKCE, jetons en `InMemoryWebStorage` (jamais
 et ne contient aucun jeton. Un rechargement vide la mémoire ; la garde du
 routeur renvoie vers Keycloak, dont le cookie de session répond par une
 redirection, sans formulaire. `/auth/callback` est une route hors `SECTIONS`.
+Une redirection qui ne peut pas partir (Keycloak injoignable, métadonnées
+illisibles, page hors contexte sécurisé) mène à `/auth/failed`, qui le dit et
+propose *Réessayer*, la raison dans la console — pas une page blanche.
 
 `lib/api.ts` pose `Authorization: Bearer` et, sur un 401, relance la connexion
 en gardant l'URL (`?element=` survit). **Une seule redirection par chargement
@@ -143,10 +157,18 @@ bundle.
 - **Aucun test Playwright du vrai parcours de connexion** : Playwright n'est
   pas en place et la CI n'a pas de Keycloak. Le point « comportement visible
   couvert par un E2E » de la définition de fini reste ouvert.
-- **Les redirections sont exactes.** Chaque origine LAN servant le serveur Vite
-  (`0022`) doit avoir son `/auth/callback` ajouté au client `ea-spa` dans la
-  console Keycloak, comme elle a déjà son entrée dans `EA_CORS_ORIGINS`.
-  L'unique redirection d'`ea-mcp` suit le `callbackPort` de `.mcp.json` :
+- **Une origine LAN en http ne se connecte pas.** `oidc-client-ts` construit
+  PKCE avec `crypto.subtle`, que le navigateur ne donne qu'à un contexte
+  sécurisé : sur `http://<ip-LAN>:5173` (`0022`), la redirection vers Keycloak
+  lève avant de partir, et aucune URI ajoutée à `ea-spa` n'y change rien. Avec
+  l'auth, le SPA s'ouvre depuis un contexte sécurisé : `http://localhost:5173`
+  sur la machine qui sert Vite ; depuis un autre poste, par
+  `ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 <hôte>` puis
+  `http://localhost:5173` — `localhost` est un contexte sécurisé, déjà parmi
+  les redirections d'`ea-spa` et dans `EA_CORS_ORIGINS`, qui n'a besoin
+  d'aucune entrée LAN ; ou par le vhost https. `0022` reste vrai pour une page
+  qui ne demande pas de connexion ; il ne l'est plus pour ce SPA.
+- **Les redirections sont exactes.** L'unique redirection d'`ea-mcp` suit le `callbackPort` de `.mcp.json` :
   changer l'un sans l'autre casse la connexion de l'agent.
 - **Deux dépôts bougent ensemble** : le realm vit dans l'Infra, les noms de
   client, de rôle et d'audience ici. En renommer un d'un côté refuse tout le
@@ -154,8 +176,25 @@ bundle.
 - **`EA_MCP_ALLOW_REMOTE_CLIENTS` ne disparaît pas** (question laissée ouverte
   par `0023`) : la garde de boucle locale reste la décision sur le *lieu*, le
   jeton celle sur l'*identité*.
+- **`EA_AUTH_ENABLED=false` ne coupe que l'API.** Le SPA n'a pas
+  d'interrupteur : `make run-fe` redirige toujours vers Keycloak, qui doit
+  donc être joignable pour développer le frontend. À reprendre si ce besoin se
+  présente.
 - **Rien n'est déployé** : le realm n'a pas été importé ni la stack
-  redéployée. D'où le statut *Proposition*.
+  redéployée. D'où le statut *Proposition*, qu'il ne quitte qu'une fois
+  vérifiés en vrai :
+  - la découverte RFC 8414 à chemin inséré
+    (`/.well-known/oauth-authorization-server/realms/ea`) sur Keycloak 26.7,
+    pour l'émetteur `/realms/ea` ;
+  - ce que Keycloak fait du paramètre `resource=` (RFC 8707) que Claude Code
+    peut envoyer ;
+  - que les clients importés reçoivent les *client scopes* par défaut `basic`
+    et `roles` — sans eux, pas de `sub` ni de `realm_access` dans le jeton ;
+  - une connexion du SPA au vhost, puis `GET /api/me` comme lecteur et comme
+    éditeur ;
+  - une exécution d'`alimenter-catalogue` dont le jeton du compte de service
+    porte `realm_access.roles` ;
+  - une connexion à `/mcp` depuis Claude Code.
 
 ## Références
 

@@ -194,7 +194,10 @@ class Settings(BaseSettings):
     #: 127.0.0.1 behind a certificate the system trust store does not know.
     auth_ca_cert: str | None = None
     auth_timeout_seconds: float = 5.0
-    #: The resource identifier `/mcp` publishes (RFC 9728).
+    #: The resource identifier `/mcp` publishes (RFC 9728). It names port 8000
+    #: and is not derived from the port uvicorn was started on, which no setting
+    #: here knows: `make run-be BE_PORT=8001` needs this set with it, or the
+    #: published resource no longer matches the URL Claude Code was given.
     mcp_resource_url: str = "http://127.0.0.1:8000/mcp"
 
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
