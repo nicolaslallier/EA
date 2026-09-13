@@ -1,0 +1,29 @@
+# Les deux seuls alias que le pipeline a le droit de nommer — jamais un
+# identifiant de modèle réel dans pipelines/src/ (voir Settings et le
+# Literal["smart", "fast"] qui borne les appels LLM du pipeline).
+
+model_list:
+  - model_name: smart
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: fast
+    litellm_params:
+      # Un modèle de chat servi par LM Studio sur le cluster — pas celui des
+      # embeddings (EA_EMBEDDINGS_MODEL, docs/adr/0019), qui n'a rien à
+      # répondre à un prompt. Remplacer le nom ci-dessous par un modèle de
+      # chat que `make embed-models` liste réellement.
+      model: openai/replace-with-lm-studio-chat-model
+      api_base: os.environ/LM_STUDIO_API_BASE
+      api_key: "lm-studio"
+
+litellm_settings:
+  # Une seule couche de réessai pour l'appel au fournisseur LLM — l'appel côté
+  # pipeline (un seul POST httpx) n'en ajoute pas une seconde.
+  num_retries: 2
+  request_timeout: 300
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
