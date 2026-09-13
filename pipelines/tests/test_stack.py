@@ -1,4 +1,4 @@
-"""Guards on the Docker stack (compose, Dockerfile, LiteLLM) of docs/adr/0027.
+"""Guards on the Docker stack (compose, Dockerfile, LiteLLM) of docs/adr/0028.
 
 Mirrors `backend/tests/unit/test_postgres_stack.py` and
 `test_deploy_stack.py`: every invariant here is one whose breakage is silent —

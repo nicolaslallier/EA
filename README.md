@@ -48,6 +48,7 @@ indique « Backend: ok », les deux services communiquent.
 | <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
 | <http://192.168.1.252:7474> | Navigateur Neo4j, sur le cluster (`neo4j`) |
 | <http://192.168.1.252:9000/#!/9/docker/stacks> | Portainer — la stack du graphe |
+| <https://ea.infra.famillelallier.net> | L'application déployée, derrière le NGINX de l'Infra — `make app-stack` |
 
 ## Commandes
 

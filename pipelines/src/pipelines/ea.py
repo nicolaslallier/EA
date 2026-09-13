@@ -1,7 +1,7 @@
 """`EaClient`: the pipeline's only door into the EA catalogue.
 
 HTTP, and only HTTP — never `/mcp`, never a repository (see
-`docs/adr/0027` and `CLAUDE.md`'s global constraint on this). A Prefect task
+`docs/adr/0028` and `CLAUDE.md`'s global constraint on this). A Prefect task
 that writes here is retried (`retries=2`), so every write is idempotent: a
 second `ensure_element` for the same type and name never creates a second
 element, and a second `ensure_relationship` never creates a second link. The

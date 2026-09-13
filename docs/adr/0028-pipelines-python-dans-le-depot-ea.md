@@ -5,7 +5,7 @@ statut: Proposition
 affects: pipelines/, Makefile, .github/workflows/ci.yml, .github/dependabot.yml, .pre-commit-config.yaml
 ---
 
-# 27. Pipelines Python dans le dépôt EA
+# 28. Pipelines Python dans le dépôt EA
 
 Date : 2026-09-13
 Statut : Proposition

@@ -13,9 +13,9 @@ lockfile: Prefect 3 and LiteLLM, self-hosted, running one flow,
 `alimenter-catalogue` — it reads a source file from MinIO, asks an LLM for the
 ArchiMate elements and relationships it describes, and writes them into the
 same catalogue through the EA API, never through `/mcp`, never through a
-repository (see `docs/adr/0027`). **Nothing here has been deployed**: the
+repository (see `docs/adr/0028`). **Nothing here has been deployed**: the
 Docker stack (Prefect server, LiteLLM, the worker) has never run against the
-shared cluster, so `docs/adr/0027` is still a *Proposition*.
+shared cluster, so `docs/adr/0028` is still a *Proposition*.
 
 **Not yet scaffolded** (do not assume these exist): auth, Playwright.
 
@@ -38,9 +38,9 @@ shared cluster, so `docs/adr/0027` is still a *Proposition*.
 | Frontend routing | `vue-router` 4, `history` mode | Routes and menu are both derived from one section catalogue — see `docs/adr/0008` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
 | Containers | Docker + `docker compose` for the throwaway Neo4j and PostgreSQL the integration tests run against | Reproducible, and a destructive test never reaches a shared database — see `docs/adr/0024` |
-| Pipeline orchestration | Prefect 3, `flow.serve(name="manuel", limit=1)` — no work pool, no `prefect.yaml` | One flow, triggered by hand while the process runs, is the whole need so far — see `docs/adr/0027` |
-| LLM gateway | LiteLLM, behind the aliases `smart`/`fast` only (`pipelines/litellm.yaml`) | The code never names a real model; the deployment decides which one answers each alias — see `docs/adr/0027` |
-| Pipeline object storage | MinIO of the `~/OpenCode/Infra` stack, read-only from `pipelines/` | The pipeline reads a source file, it is not that store's lifecycle manager — see `docs/adr/0027` |
+| Pipeline orchestration | Prefect 3, `flow.serve(name="manuel", limit=1)` — no work pool, no `prefect.yaml` | One flow, triggered by hand while the process runs, is the whole need so far — see `docs/adr/0028` |
+| LLM gateway | LiteLLM, behind the aliases `smart`/`fast` only (`pipelines/litellm.yaml`) | The code never names a real model; the deployment decides which one answers each alias — see `docs/adr/0028` |
+| Pipeline object storage | MinIO of the `~/OpenCode/Infra` stack, read-only from `pipelines/` | The pipeline reads a source file, it is not that store's lifecycle manager — see `docs/adr/0028` |
 
 Do not introduce a second HTTP client, ORM, state manager, or test runner alongside these without recording an ADR.
 
@@ -49,6 +49,8 @@ Do not introduce a second HTTP client, ORM, state manager, or test runner alongs
 ```
 Makefile                 # single entry point for local dev and the quality gate — see docs/adr/0001, 0026
 docker-compose.yml       # throwaway Neo4j + PostgreSQL for the integration tests, on 127.0.0.1 only
+deploy/ea.stack.yml      # the API and the SPA as a Portainer stack behind the Infra NGINX — see docs/adr/0027
+{backend,frontend}/Dockerfile  # the two images that stack builds
 .pre-commit-config.yaml  # opt-in hooks (`make hooks`): ruff, mypy, vue-tsc, ESLint, gitleaks
 .github/                 # workflows/ci.yml and dependabot.yml — see docs/adr/0026
 backend/
@@ -77,7 +79,7 @@ frontend/
   src/features/                        # one directory per screen: components + its composables
   src/{components,lib}/                # shared components (the shell menu, the graph drawing); hand-written glue (the API client, the ring geometry, `latest.ts`, `debounce.ts`)
   tests/                               # Vitest specs, mirroring src/
-pipelines/                             # second Python project, own pyproject.toml + uv.lock — docs/adr/0027
+pipelines/                             # second Python project, own pyproject.toml + uv.lock — docs/adr/0028
   src/pipelines/
     settings.py                        # PIPELINES_-prefixed env config: the EA API, LiteLLM, MinIO
     llm.py                             # one validated call to the gateway's /v1/chat/completions
@@ -131,7 +133,7 @@ make pg-down                    # stop the throwaway containers
 ```
 
 Pipelines (from the repo root; `pipelines-check` is folded into `make check`,
-`pipelines-install` into `make install` — see `docs/adr/0027`):
+`pipelines-install` into `make install` — see `docs/adr/0028`):
 
 ```bash
 make pipelines-install                  # uv sync --all-extras in pipelines/
@@ -183,6 +185,8 @@ Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.
 **Both servers bind `0.0.0.0`** — the API since `docs/adr/0016`, the Vite dev server since `docs/adr/0022` — and **an address to listen on authorises nobody.** Four settings decide who is actually served, and none of them follows from a bind address: `EA_CORS_ORIGINS` for browsers; `EA_MCP_ALLOW_REMOTE_CLIENTS` (default `false`) for who may call `/mcp` — the request's TCP peer must be loopback or it gets a 403, checked by `mcp/transport.py` around the transport's route, because the peer is the one thing a caller does not write itself; `EA_MCP_ALLOWED_HOSTS`, which is *only* the DNS-rebinding defence, since any script sends whatever `Host` it likes; and Vite's own `server.allowedHosts`, left at its default. Behind a reverse proxy the peer is the proxy, so every client looks local — do not route `/mcp` through one until auth exists. A remote agent takes an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 host`), or the opt-in *plus* its `Host` in the list — see `docs/adr/0023`. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead; setting Vite's `allowedHosts` to `true` would be the same mistake, which is why it is left alone.
 
 Two things follow for the SPA. A browser on another machine sends *that machine's* origin, so `EA_CORS_ORIGINS` needs an entry per host that serves the SPA — an origin is an exact string, the validator refuses `*`, and `make run-fe` prints the one to paste. And the API's URL cannot be a constant: `src/lib/api.ts` defaults to **this page's own host** on port 8000 (`defaultApiBaseUrl`, a pure function so it is tested without a DOM), because `http://localhost:8000` read by a browser elsewhere names the viewer's machine. `VITE_API_BASE_URL` still wins, for a backend that is genuinely somewhere else.
+
+**Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts; the graph stays wherever `EA_NEO4J_URI` says. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. `make app-stack` prints the deployment steps.
 
 `make check` runs the non-fixing lint on both sides, types on both sides, the generated-client check, the DB-free suites with the coverage floor, and `pipelines-check` — the local half of what CI runs (`.github/workflows/ci.yml` adds `make audit`, `pipelines-audit` and the integration suite against throwaway containers).
 
@@ -255,7 +259,7 @@ client regeneration follows from it. See `docs/adr/0014`.
 
 `pipelines/` is a second client of the EA API, exactly as the SPA is one —
 never a third adapter beside `mcp/`, never a repository. Three rules hold for
-every flow there, see `docs/adr/0027`:
+every flow there, see `docs/adr/0028`:
 
 **Each step of a flow is its own `@task`, every LLM output is validated
 against a strict JSON schema before it is trusted, and the code only ever
@@ -511,7 +515,7 @@ Three rules hold for every table, starting with `element_documents`:
    expect a connection string, not the separate fields `dsn_of()` assembles —
    confined to that file, never committed, and passwords generated with
    `openssl rand -hex 32` precisely because nothing here escapes them the way
-   `URL.create` does (see `docs/adr/0027`).
+   `URL.create` does (see `docs/adr/0028`).
 
 A third rule arrived with the second table: **a use case that writes two tables
 writes them in one transaction**, which is possible here and nowhere else in

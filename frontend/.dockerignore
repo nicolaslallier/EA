@@ -1,0 +1,5 @@
+node_modules
+dist
+coverage
+# .env.local changerait le bundle en silence ; l'image ne lit que ses ARG.
+.env*

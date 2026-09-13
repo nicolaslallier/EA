@@ -90,7 +90,7 @@ jobs:
       - run: make pipelines-install pipelines-audit
 
   pipelines:
-    name: Pipelines — lint, types, tests (docs/adr/0027)
+    name: Pipelines — lint, types, tests (docs/adr/0028)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

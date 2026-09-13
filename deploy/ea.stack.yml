@@ -1,0 +1,72 @@
+# EA — l'API et le SPA, déployés comme stack Portainer sur le Docker de l'Infra
+# et servis par son NGINX, à https://ea.infra.famillelallier.net.
+#
+# Stack *Git* et non Web editor : les deux images se construisent depuis le
+# dépôt, et seul un clone donne à Portainer de quoi les construire.
+#
+#   https://portainer.infra.famillelallier.net → Stacks → Add stack → Repository
+#   → Repository URL : https://github.com/nicolaslallier/EA   (public, sans auth)
+#   → Reference : refs/heads/main — Compose path : deploy/ea.stack.yml
+#   → Environment variables : celles marquées `:?` ci-dessous
+#   → Deploy the stack
+#
+# `make app-stack` réaffiche ces instructions. Voir docs/adr/0027.
+#
+# Rien ici ne publie de port : la règle d'entrée unique de l'Infra. Les deux
+# conteneurs rejoignent `infra-net` sous un alias, et le vhost
+# nginx/conf.d/ea.conf du dépôt Infra les atteint par ce nom.
+
+services:
+  api:
+    build: ../backend
+    # Reconstruire à chaque déploiement : sans ceci, compose réutilise l'image
+    # déjà construite et un redéploiement après un commit sert l'ancien code.
+    pull_policy: build
+    restart: unless-stopped
+    environment:
+      EA_DEBUG: "false"
+      # Le SPA et l'API partagent une origine, celle du vhost ; la liste reste
+      # explicite parce que le validateur refuse `*`.
+      EA_CORS_ORIGINS: https://${EA_HOSTNAME:-ea.infra.famillelallier.net}
+      # Le vhost sert l'API sous /api et retire le préfixe : uvicorn doit le
+      # savoir pour que /api/docs aille chercher /api/openapi.json.
+      UVICORN_ROOT_PATH: /api
+      # Coupé, pas seulement filtré. Derrière un proxy, le pair TCP de /mcp est
+      # NGINX, jamais la boucle locale : l'outil ne servirait personne, et
+      # l'ouvrir aux clients distants l'ouvrirait à tout ce que NGINX sert, sans
+      # authentification (docs/adr/0023). `make run-be` sert toujours /mcp.
+      EA_MCP_ENABLED: "false"
+
+      # Le graphe n'est pas dans l'Infra : il reste sur le cluster, dont
+      # l'adresse a déjà changé deux fois — aucune valeur par défaut.
+      EA_NEO4J_URI: ${EA_NEO4J_URI:?EA_NEO4J_URI est obligatoire (bolt://hôte:7687)}
+      EA_NEO4J_PASSWORD: ${EA_NEO4J_PASSWORD:?EA_NEO4J_PASSWORD est obligatoire}
+
+      # Le PostgreSQL de l'Infra, sur infra-net : base et rôle `ea`, créés par
+      # `make provision-app app=ea` côté Infra. Les migrations s'appliquent au
+      # démarrage du conteneur (backend/Dockerfile).
+      EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-postgres}
+      EA_POSTGRES_PASSWORD: ${EA_POSTGRES_PASSWORD:?EA_POSTGRES_PASSWORD est obligatoire (EA_DB_PASSWORD de l'Infra)}
+
+      # LM Studio sur le Mac qui porte Docker Desktop. Le démarrage sonde le
+      # modèle et refuse une largeur qui n'est pas celle de la colonne.
+      EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://host.docker.internal:1234/v1}
+    networks:
+      infra-net:
+        aliases:
+          - ea-api
+
+  web:
+    build: ../frontend
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      infra-net:
+        aliases:
+          - ea-web
+
+networks:
+  infra-net:
+    external: true

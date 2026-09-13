@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PIPELINES_")
 
     #: The EA API, reached over HTTP only — never `/mcp`, never a repository
-    #: (docs/adr/0027). `host.docker.internal` is the default because the
+    #: (docs/adr/0028). `host.docker.internal` is the default because the
     #: pipeline runs in Docker while `make run-be` binds the Mac's own ports.
     ea_base_url: str = "http://host.docker.internal:8000"
 
