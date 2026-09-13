@@ -50,9 +50,10 @@ class ClientCredentials(httpx.Auth):
             yield request
 
     def _current(self) -> str:
-        if self._token is None or self._clock() >= self._expires_at - self._leeway:
+        token = self._token
+        if token is None or self._clock() >= self._expires_at - self._leeway:
             return self._fetch()
-        return self._token
+        return token
 
     def _fetch(self) -> str:
         try:
