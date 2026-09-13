@@ -5,8 +5,12 @@ import type { RouteRecordRaw, Router, RouterHistory } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { accessToken, CALLBACK_PATH, signIn } from '../lib/auth'
+import { createLogger } from '../lib/logging'
+import LoginFailed from './LoginFailed.vue'
 import NotFound from './NotFound.vue'
 import { HOME, isBuilt, SECTIONS } from './sections'
+
+const log = createLogger('auth')
 
 export type Gate = {
   accessToken: () => Promise<string | null>
@@ -27,6 +31,9 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('./AuthCallback.vue'),
     meta: { public: true },
   },
+  // Imported eagerly, like NotFound: the page for a login that could not start
+  // must not itself depend on fetching a chunk.
+  { path: '/auth/failed', name: 'login-failed', component: LoginFailed, meta: { public: true } },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFound },
 ]
 
@@ -47,7 +54,18 @@ export function createAppRouter(
     if (to.meta.public || (await gate.accessToken())) {
       return true
     }
-    await gate.signIn(to.fullPath)
+    try {
+      await gate.signIn(to.fullPath)
+    } catch (error) {
+      // Keycloak unreachable, its metadata unreadable, or a page on plain http
+      // where the browser withholds the crypto PKCE needs: an uncaught
+      // rejection here would abort the navigation and render nothing.
+      log.error('the login could not start', {
+        returnTo: to.fullPath,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      return { name: 'login-failed', query: { returnTo: to.fullPath } }
+    }
     return false
   })
   return router

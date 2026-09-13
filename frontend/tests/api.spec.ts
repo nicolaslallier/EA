@@ -159,4 +159,24 @@ describe('who the API is told is calling', () => {
 
     expect(auth.signInAfterUnauthorised).toHaveBeenCalledWith(here)
   })
+
+  it('logs a login that could not start after a 401, rather than leaving it unhandled', async () => {
+    vi.mocked(auth.accessToken).mockResolvedValue('expired')
+    vi.mocked(auth.signInAfterUnauthorised).mockRejectedValueOnce(new Error('Keycloak unreachable'))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{"error":"unauthenticated"}', { status: 401 }))),
+    )
+
+    await api.GET('/elements')
+
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('login'),
+        expect.objectContaining({ reason: 'Keycloak unreachable' }),
+      ),
+    )
+    error.mockRestore()
+  })
 })

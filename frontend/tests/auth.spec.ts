@@ -3,8 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.unmock('../src/lib/auth')
 
-const { CALLBACK_PATH, completeSignIn, createUserManager, REAUTH_GUARD_MS, safeReturnPath, signInAfterUnauthorised } =
-  await import('../src/lib/auth')
+const {
+  CALLBACK_PATH,
+  completeSignIn,
+  createUserManager,
+  REAUTH_GUARD_MS,
+  safeReturnPath,
+  signIn,
+  signInAfterUnauthorised,
+} = await import('../src/lib/auth')
 
 describe('the login client', () => {
   it('returns to this origin after Keycloak', () => {
@@ -60,6 +67,18 @@ describe('what a 401 does about the login', () => {
     ])
 
     expect(redirect).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a login be tried again after a redirect that failed to start', async () => {
+    const redirect = vi
+      .spyOn(UserManager.prototype, 'signinRedirect')
+      .mockRejectedValueOnce(new Error('Crypto.subtle is available only in secure contexts (HTTPS)'))
+      .mockResolvedValueOnce(undefined)
+
+    await expect(signIn('/a')).rejects.toThrow('secure contexts')
+    await signIn('/b')
+
+    expect(redirect).toHaveBeenCalledTimes(2)
   })
 
   it('does not restart the login right after one just completed — Keycloak would only hand back the same refused token', async () => {

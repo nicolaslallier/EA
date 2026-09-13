@@ -5,6 +5,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { completeSignIn } from '../lib/auth'
+import LoginFailed from './LoginFailed.vue'
 
 const router = useRouter()
 const failed = ref(false)
@@ -19,8 +20,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <p v-if="failed" role="alert">
-    La connexion a échoué. <a href="/">Réessayer</a>
-  </p>
+  <LoginFailed v-if="failed" message="La connexion a échoué." />
   <p v-else>Connexion…</p>
 </template>
