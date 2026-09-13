@@ -29,6 +29,14 @@ describe('the application router', () => {
     }
   })
 
+  it('routes the diagram builder under /diagrammes', async () => {
+    const app = router()
+
+    await app.push('/diagrammes')
+
+    expect(app.currentRoute.value.name).toBe('diagrams')
+  })
+
   it('falls back to a not-found screen instead of a blank one', async () => {
     const app = router()
 

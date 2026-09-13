@@ -250,6 +250,12 @@ _EDGES_WITHIN_SCOPE: Final[LiteralString] = (
 """
 )
 
+#: A chosen set of elements — a saved diagram (docs/adr/0031) — and the links
+#: between them. An id the graph no longer holds simply matches nothing.
+VIEW_OF: Final[LiteralString] = (
+    "MATCH (e:Element) WHERE e.id IN $ids WITH collect(e) AS scope" + _EDGES_WITHIN_SCOPE
+)
+
 
 def _neighbourhood_query(depth: int) -> LiteralString:
     """Everything within `depth` hops, in either direction."""
@@ -471,6 +477,18 @@ class Neo4jArchitectureRepository:
                 for relationship in RelationshipType
                 if relationship.impact_follows_direction
             ],
+        )
+
+    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+        records = await self._run(
+            VIEW_OF,
+            {"ids": [str(element_id) for element_id in element_ids], "relationship_types": []},
+        )
+        if not records:
+            return GraphView(elements=(), relationships=())
+        return GraphView(
+            elements=tuple(element_from_node(node) for node in records[0]["elements"]),
+            relationships=tuple(relationship_from_edge(e) for e in records[0]["relationships"]),
         )
 
     async def _traverse(

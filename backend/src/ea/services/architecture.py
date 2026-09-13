@@ -43,6 +43,34 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class AllAttachments:
+    """Several stores attached to an element, discarded as one `ElementAttachments`.
+
+    Documents (docs/adr/0017) and diagram nodes (docs/adr/0031) both name an
+    element they cannot reference by a foreign key. `delete_element` keeps one
+    cascade; this fans it out. Every store is asked even when one fails, and the
+    failure is raised afterwards, so `delete_element` still logs the orphans.
+    """
+
+    def __init__(self, *stores: ElementAttachments) -> None:
+        self._stores = stores
+
+    async def discard_for_element(self, element_id: UUID) -> int:
+        discarded = 0
+        failures: list[Exception] = []
+        for store in self._stores:
+            try:
+                discarded += await store.discard_for_element(element_id)
+            except Exception as error:  # re-raised below, once every store was asked
+                failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            msg = "several attachment stores failed to discard"
+            raise ExceptionGroup(msg, failures)
+        return discarded
+
+
 class ArchitectureService:
     """The single entry point `api/` uses to read and change the graph."""
 
@@ -197,7 +225,7 @@ class ArchitectureService:
                 # Deliberately broad: whatever the relational store raised, the
                 # graph deletion has already happened and cannot be undone.
                 logger.exception(
-                    "element deleted, but its documents were not: they are orphaned rows",
+                    "element deleted, but what was attached to it was not: orphaned rows",
                     extra={"action": "attachments_orphaned", "element_id": str(element_id)},
                 )
         logger.info(
@@ -307,6 +335,10 @@ class ArchitectureService:
         return await self._repository.relations_of(
             element_id, relationship_types=relationship_types
         )
+
+    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+        """The elements among these ids that still exist, and the links between them."""
+        return await self._repository.view_of(element_ids)
 
     # --- Analysis ---------------------------------------------------------
 

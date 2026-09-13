@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
@@ -16,6 +17,10 @@ from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.model import Element, Relationship
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
+
+if TYPE_CHECKING:
+    # Only for annotations: `diagrams` imports `GraphView` from here.
+    from ea.domain.diagrams import Diagram, DiagramNode
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +132,14 @@ class ArchitectureRepository(Protocol):
         """Whether composing `target` under `source` would make containment cyclic."""
         ...
 
+    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+        """The elements among these ids that exist, and the links with both ends among them.
+
+        What a saved diagram shows (docs/adr/0031): an id the graph no longer
+        holds is simply absent from the answer, never an error.
+        """
+        ...
+
 
 class ElementAttachments(Protocol):
     """The only thing the architecture graph needs to know about attachments.
@@ -139,7 +152,7 @@ class ElementAttachments(Protocol):
     """
 
     async def discard_for_element(self, element_id: UUID) -> int:
-        """Delete every document attached to an element, and say how many."""
+        """Delete every row attached to an element, and say how many."""
         ...
 
 
@@ -196,6 +209,39 @@ class DocumentRepository(ElementAttachments, Protocol):
         different models yields a number that means nothing, so a passage
         embedded by another one is not a worse match, it is not a match.
         """
+        ...
+
+
+class DiagramRepository(ElementAttachments, Protocol):
+    """Persistence for saved diagrams — see docs/adr/0031.
+
+    An `ElementAttachments` too: a box on a diagram names an element by id, and
+    deleting the element has to take the box with it, through the same
+    cascade the documents follow.
+    """
+
+    async def list_all(self) -> tuple[Diagram, ...]:
+        """Every diagram, sorted by name, each with its node count."""
+        ...
+
+    async def add(self, diagram: Diagram) -> Diagram:
+        """Store a new diagram, or refuse a name already taken."""
+        ...
+
+    async def get(self, diagram_id: UUID) -> Diagram | None: ...
+
+    async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]: ...
+
+    async def save(self, diagram: Diagram) -> Diagram:
+        """Overwrite the name, description and update time of a stored diagram."""
+        ...
+
+    async def delete(self, diagram_id: UUID) -> bool: ...
+
+    async def replace_layout(
+        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+    ) -> bool:
+        """Replace every node of a diagram in one transaction; `False` if it is gone."""
         ...
 
 

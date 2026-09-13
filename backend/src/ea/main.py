@@ -18,6 +18,7 @@ from ea.api.dependencies import (
     document_service_of,
     ipam_service_of,
 )
+from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
 from ea.api.health import router as health_router
@@ -32,16 +33,23 @@ from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
 from ea.domain.auth import Caller
-from ea.domain.ports import AccessTokenVerifier, DocumentRepository, IpamRepository
+from ea.domain.ports import (
+    AccessTokenVerifier,
+    DiagramRepository,
+    DocumentRepository,
+    IpamRepository,
+)
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
 from ea.repositories.keycloak import JwtVerifier, http_client_for
-from ea.services.architecture import ArchitectureService
+from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -84,6 +92,7 @@ def _lifespan(
     open_graph: bool,
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
+    diagrams: DiagramRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -141,6 +150,7 @@ def _lifespan(
                     "with the editor role"
                 )
             attachments = documents
+            diagram_store = diagrams
             if settings.postgres_enabled:
                 engine = create_engine(settings)
                 stack.push_async_callback(engine.dispose)
@@ -148,6 +158,8 @@ def _lifespan(
                 app.state.db_sessions = create_session_factory(engine)
                 if attachments is None:
                     attachments = PostgresDocumentRepository(app.state.db_sessions)
+                if diagram_store is None:
+                    diagram_store = PostgresDiagramRepository(app.state.db_sessions)
                 logger.info(
                     "relational store ready at %s:%s/%s",
                     settings.postgres_host,
@@ -159,8 +171,13 @@ def _lifespan(
                 stack.push_async_callback(driver.close)
                 await prepare_database(driver, database=settings.neo4j_database)
                 repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
+                # Documents and diagram nodes both name the element by id, so
+                # deleting it discards both — one cascade, fanned out.
                 app.state.architecture_service = ArchitectureService(
-                    repository, attachments=attachments
+                    repository,
+                    attachments=AllAttachments(
+                        *(store for store in (attachments, diagram_store) if store is not None)
+                    ),
                 )
                 # The IP addressing is a reading of that same graph and adds no
                 # store, so it is built from the very repository above — see
@@ -186,6 +203,10 @@ def _lifespan(
             if attachments is not None:
                 app.state.document_service = DocumentService(
                     attachments, architecture_service_of(app), indexer=index
+                )
+            if diagram_store is not None:
+                app.state.diagram_service = DiagramService(
+                    diagram_store, architecture_service_of(app)
                 )
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
@@ -331,6 +352,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    diagrams: DiagramRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -347,6 +369,7 @@ def create_app(
     answers without a model being loaded anywhere; given none, the lifespan
     builds and probes the real client when `embeddings_enabled` says so.
 
+    `diagrams` does the same for the saved diagrams (docs/adr/0031).
     `verifier` does the same for authentication: given one — `StaticVerifier`
     in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
     without reaching Keycloak; given none, the lifespan builds and probes the
@@ -371,6 +394,7 @@ def create_app(
             open_graph=architecture_service is None,
             documents=documents,
             indexer=indexer,
+            diagrams=diagrams,
         ),
     )
     app.state.settings = settings
@@ -384,6 +408,8 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if diagrams is not None:
+            app.state.diagram_service = DiagramService(diagrams, architecture_service)
 
     app.add_middleware(
         CORSMiddleware,
@@ -404,6 +430,7 @@ def create_app(
     app.include_router(metamodel_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(architecture_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     if settings.mcp_enabled:
