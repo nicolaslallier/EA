@@ -9,6 +9,11 @@ build over, because it is silent when broken:
   docs/adr/0024 — the throwaway graph the integration tests wipe — so the
   guard is on what would turn that into a second model: a published address
   beyond loopback, or data kept in a named volume.
+* `backend/Dockerfile` copies a venv from its build stage into its runtime
+  stage, and a venv only works under the Python that built it. A runtime image
+  one minor version ahead builds cleanly, then dies at start on
+  `No module named 'alembic'` — which is what a Dependabot bump of one `FROM`
+  did.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = REPO_ROOT / "docker-compose.yml"
+BACKEND_DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
 
 
 def _compose_declarations() -> str:
@@ -73,3 +79,17 @@ def test_the_test_graph_healthcheck_keeps_the_password_off_the_command_line() ->
     assert "cypher-shell" in compose
     assert " -p " not in compose
     assert "--password" not in compose
+
+
+def test_the_api_image_runs_the_python_its_venv_was_built_for() -> None:
+    """The build stage's `uv:…-python3.12` and the runtime's `python:3.12.x` agree.
+
+    The venv's packages sit under `lib/python3.12/`; a runtime Python of another
+    minor version does not look there, and every import fails at start.
+    """
+    images = re.findall(r"^FROM\s+(\S+)", BACKEND_DOCKERFILE.read_text(encoding="utf-8"), re.M)
+    versions = [re.search(r"python:?(\d+\.\d+)", image) for image in images]
+
+    assert len(images) == 2, images
+    assert all(versions), f"no Python version in {images}"
+    assert len({match.group(1) for match in versions if match}) == 1, images

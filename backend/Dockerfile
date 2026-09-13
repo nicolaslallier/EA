@@ -18,7 +18,7 @@ RUN uv sync --locked --no-dev --no-editable
 
 # Même Python, même chemin (/usr/local/bin/python3.12) que l'image de build :
 # le venv copié y pointe.
-FROM python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
+FROM python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 
 RUN useradd --system --no-create-home ea
 WORKDIR /app

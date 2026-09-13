@@ -52,13 +52,26 @@ updates:
     schedule:
       interval: weekly
 
-  # Les images de base des Dockerfile de backend/ et frontend/ (construits par
+  # Les images de base des Dockerfile de frontend/ (construit par
   # deploy/ea.stack.yml) et de pipelines/, épinglées par tag et digest pour la
   # même raison.
   - package-ecosystem: docker
     directories:
-      - /backend
       - /frontend
       - /pipelines
     schedule:
       interval: weekly
+
+  # backend/ à part : son venv est construit dans l'image uv et copié dans
+  # l'image python, et il ne marche que sous le Python qui l'a construit.
+  # Dependabot monte chaque FROM séparément ; une montée de version mineure de
+  # Python (3.12 -> 3.14) sur la seule image d'exécution a construit une API
+  # qui meurt au démarrage. Les correctifs passent ; changer de Python se fait
+  # à la main, dans les deux FROM à la fois.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types: [version-update:semver-minor, version-update:semver-major]
