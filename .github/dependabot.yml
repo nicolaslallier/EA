@@ -40,3 +40,12 @@ updates:
       - /deploy
     schedule:
       interval: weekly
+
+  # Les images de base des deux Dockerfile construits par deploy/ea.stack.yml,
+  # épinglées par digest pour la même raison.
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /frontend
+    schedule:
+      interval: weekly

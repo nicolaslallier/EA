@@ -202,7 +202,7 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
-        pg-vector-check pg-stack require-postgres-password \
+        pg-vector-check pg-stack app-stack require-postgres-password \
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
@@ -412,6 +412,16 @@ pg-vector-check: | require-postgres-password ## Vérifie que pgvector est dispon
 	     printf "L'image du stack doit être pgvector/pgvector:pgNN, pas postgres:NN —\n"; \
 	     printf "voir deploy/postgres.stack.yml, make pg-stack, docs/adr/0019.\n"; exit 1; }; \
 	printf "$(GREEN)pgvector disponible (%s).$(NC)\n" "$$out"
+
+app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l'Infra
+	@printf "$(GREEN)Stack EA : deploy/ea.stack.yml → https://ea.infra.famillelallier.net$(NC)\n"
+	@printf "  0. Infra : EA_DB_PASSWORD dans .env, puis make provision-app app=ea\n"
+	@printf "  1. Ouvre https://portainer.infra.famillelallier.net → Stacks → Add stack\n"
+	@printf "  2. Repository → https://github.com/nicolaslallier/EA, refs/heads/main,\n"
+	@printf "     Compose path : deploy/ea.stack.yml\n"
+	@printf "  3. Environment variables → EA_NEO4J_URI, EA_NEO4J_PASSWORD,\n"
+	@printf "     EA_POSTGRES_PASSWORD (= EA_DB_PASSWORD de l'Infra)\n"
+	@printf "  4. Deploy the stack, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
 
 pg-stack: ## Rappelle comment déployer la base relationnelle sur le cluster Docker
 	@printf "$(GREEN)Stack PostgreSQL : deploy/postgres.stack.yml$(NC)\n"
