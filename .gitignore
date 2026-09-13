@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Dumps of the cluster databases, written by `make pg-backup` (docs/adr/0025).
+# They carry every document attached to the model: never in a commit.
+/backups/

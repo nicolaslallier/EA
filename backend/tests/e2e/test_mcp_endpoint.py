@@ -20,10 +20,12 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from ea.core.config import Settings
+from ea.domain.ports import ElementFilter
 from ea.main import create_app
 from ea.mcp import MCP_PATH
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryDocuments
+from ea.services.indexing import DocumentIndexer
+from tests.conftest import FakeEmbedder, InMemoryDocuments
 
 #: The transport turns on DNS-rebinding protection when it is served on a
 #: loopback host, which checks the `Host` header against `127.0.0.1:*` and
@@ -33,20 +35,35 @@ BASE_URL = "http://127.0.0.1:8000"
 
 
 def an_app(service: ArchitectureService, **overrides: Any) -> Any:
-    return create_app(Settings(debug=True, **overrides), architecture_service=service)
+    """The app over the graph double, with every other store stated shut.
+
+    These tests enter the real lifespan, and the settings defaults open
+    PostgreSQL and the embedding service on the cluster — correctly, for a
+    deployment. Left implicit here, they made this suite wait on a timeout off
+    the LAN, and talk to the shared database on it.
+    """
+    settings: dict[str, Any] = {
+        "debug": True,
+        "postgres_enabled": False,
+        "embeddings_enabled": False,
+        **overrides,
+    }
+    return create_app(Settings(**settings), architecture_service=service)
 
 
 def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocuments) -> Any:
-    """The same app with both stores doubled — nothing here touches PostgreSQL.
+    """The same app with every store doubled — nothing here leaves the process.
 
     `postgres_enabled=False` so the lifespan opens no engine; the document
     service is built from the injected repository instead, which is exactly the
-    seam `create_app` documents.
+    seam `create_app` documents. The indexer is injected for the same reason:
+    given none, the lifespan builds the real embedding client and probes it.
     """
     return create_app(
         Settings(debug=True, postgres_enabled=False),
         architecture_service=service,
         documents=documents,  # type: ignore[arg-type]
+        indexer=DocumentIndexer(FakeEmbedder()),
     )
 
 
@@ -255,3 +272,105 @@ class TestTheMounting:
                 )
 
         assert response.status_code == 421
+
+
+#: A JSON-RPC `initialize`, the first thing any MCP client sends.
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "probe", "version": "0"},
+    },
+}
+
+
+async def initialize_from(app: Any, peer: str, *, host: str = BASE_URL) -> httpx.Response:
+    """POST an `initialize` to `/mcp` as if the TCP connection came from `peer`.
+
+    `ASGITransport(client=...)` is what sets `scope["client"]` — the address
+    uvicorn reports for the socket, and the one thing about a caller the caller
+    does not write itself.
+    """
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app, client=(peer, 50000))
+        async with httpx.AsyncClient(transport=transport, base_url=host) as client:
+            return await client.post(
+                MCP_PATH,
+                json=INITIALIZE,
+                headers={"accept": "application/json, text/event-stream"},
+            )
+
+
+@pytest.mark.asyncio
+class TestWhoIsServed:
+    """Until auth exists `/mcp` answers this machine only — docs/adr/0023.
+
+    The `Host` allowlist above is a defence against DNS rebinding, i.e. against
+    a *browser* tricked into calling us. It does nothing against a script on
+    the LAN, which writes `Host: localhost:8000` itself; the test below that
+    does exactly that is the reason this class exists.
+    """
+
+    @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
+    async def test_a_client_on_this_machine_is_served(
+        self, service: ArchitectureService, peer: str
+    ) -> None:
+        """What `.mcp.json` does: Claude Code on the same Mac, at 127.0.0.1."""
+        response = await initialize_from(an_app(service), peer)
+
+        assert response.status_code == 200
+
+    async def test_a_client_on_the_lan_is_refused_whatever_host_it_claims(
+        self, service: ArchitectureService
+    ) -> None:
+        """The regression: a forged loopback `Host` got a remote script served."""
+        response = await initialize_from(
+            an_app(service), "192.168.1.40", host="http://localhost:8000"
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"] == "remote_client_refused"
+        assert "EA_MCP_ALLOW_REMOTE_CLIENTS" in response.json()["detail"]
+
+    async def test_the_refusal_touches_nothing(self, service: ArchitectureService) -> None:
+        """Refused before the transport: no session, no tool, no write."""
+        app = an_app(service)
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app, client=("192.168.1.40", 50000))
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+                response = await client.post(
+                    MCP_PATH,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "create_element",
+                            "arguments": {"element_type": "node", "name": "intruder"},
+                        },
+                    },
+                    headers={"accept": "application/json, text/event-stream"},
+                )
+
+        assert response.status_code == 403
+        assert not await service.list_elements(ElementFilter())
+
+    async def test_remote_clients_are_served_once_the_deployment_opts_in(
+        self, service: ArchitectureService
+    ) -> None:
+        app = an_app(service, mcp_allow_remote_clients=True)
+
+        response = await initialize_from(app, "192.168.1.40")
+
+        assert response.status_code == 200
+
+    async def test_the_rest_api_is_not_narrowed_by_it(self, service: ArchitectureService) -> None:
+        """The SPA is used from other machines; only the agent path is loopback."""
+        transport = httpx.ASGITransport(app=an_app(service), client=("192.168.1.40", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            response = await client.get("/health")
+
+        assert response.status_code == 200

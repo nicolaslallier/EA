@@ -26,9 +26,10 @@ class Settings(BaseSettings):
 
     # Every interface, not loopback: the API is called from other machines on
     # the LAN — a peer's browser, the cluster, a phone. What this does *not*
-    # decide is who may call `/mcp`; that is `mcp_allowed_hosts` below, and the
-    # two are kept apart on purpose.
-    host: str = "0.0.0.0"
+    # decide is who may call `/mcp`; that is `mcp_allow_remote_clients` below,
+    # and the two are kept apart on purpose. Bandit's B104 flags exactly this
+    # bind, which is the decision of docs/adr/0016 rather than an oversight.
+    host: str = "0.0.0.0"  # nosec B104
     port: int = 8000
 
     # Explicit allowlist — never `*`, because the API is called with credentials.
@@ -149,19 +150,31 @@ class Settings(BaseSettings):
     # --- The MCP adapter, mounted on this app at /mcp — see docs/adr/0014 ---
     # On by default: an agent-facing tool set nobody can reach is not a
     # feature. It is a switch and not a constant because, until auth exists,
-    # `/mcp` is an unauthenticated *write* path onto the architecture graph for
-    # anyone who can reach this host — a deployment that does not want that
-    # turns it off here rather than by deleting a mount.
+    # `/mcp` is an unauthenticated *write* path onto the architecture graph —
+    # a deployment that does not want one at all turns it off here rather than
+    # by deleting a mount.
     mcp_enabled: bool = True
+
+    #: Whether `/mcp` answers a caller whose TCP peer is not this machine.
+    #:
+    #: Off, and it is the setting that actually decides who may call a tool:
+    #: until auth exists the tools write to the graph for whoever reaches them,
+    #: and `mcp_allowed_hosts` below cannot narrow that — it checks a header
+    #: the caller writes. The peer address is the one thing it does not.
+    #: Behind a reverse proxy the peer is the proxy, so turning this on there
+    #: serves everyone the proxy serves. See docs/adr/0023.
+    mcp_allow_remote_clients: bool = False
 
     #: Which `Host` headers the MCP transport answers, as an explicit allowlist.
     #:
-    #: The SDK enables DNS-rebinding protection by itself *only* when it is
-    #: served on a loopback host, so handing it `host` would silently disable
-    #: the protection the day the API binds every interface — on a path that
-    #: writes to the graph without authentication. It is therefore its own
-    #: setting, defaulting to loopback: an agent on another machine is added
-    #: here deliberately, the way a CORS origin is.
+    #: This is the defence against DNS rebinding — a page in a browser that
+    #: resolves its own name to this machine, and cannot choose the `Host` it
+    #: sends — and nothing more: a script sets `Host: localhost:8000` itself,
+    #: so who is served is `mcp_allow_remote_clients` above. The SDK enables
+    #: the protection by itself *only* when served on a loopback host, so
+    #: handing it `host` would silently disable it the day the API binds every
+    #: interface. It is therefore its own setting, defaulting to loopback: a
+    #: remote agent needs its `Host` added here *and* the opt-in above.
     mcp_allowed_hosts: Annotated[list[str], NoDecode] = [
         "127.0.0.1:*",
         "localhost:*",

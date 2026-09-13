@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useNeighbourhood } from '../src/features/neighbourhood/useNeighbourhood'
-import { aGraph, anElement, aRelationship, stubApi, type Route } from './support/api'
+import { aGraph, anElement, aRelationship, deferApi, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -75,12 +75,44 @@ describe('useNeighbourhood', () => {
     expect(neighbourhood.graph.value.elements).toHaveLength(0)
   })
 
+  it('draws the element asked for last, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const neighbourhood = useNeighbourhood()
+
+    // Two neighbours clicked in quick succession: the first traversal is slow.
+    const first = neighbourhood.explore(SUBJECT.id, { depth: 1 })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = neighbourhood.explore(NEIGHBOUR.id, { depth: 1 })
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(aGraph([NEIGHBOUR], []))
+    calls[0].answer(aGraph([SUBJECT, NEIGHBOUR], []))
+    await Promise.all([first, second])
+
+    expect(calls[0].aborted()).toBe(true)
+    expect(neighbourhood.subject.value?.name).toBe(NEIGHBOUR.name)
+    expect(neighbourhood.neighbours.value).toBe(0)
+    expect(neighbourhood.status.value).toBe('ready')
+    expect(neighbourhood.error.value).toBe('')
+  })
+
+  it('draws nothing late once the drawing was cleared', async () => {
+    const calls = deferApi()
+    const neighbourhood = useNeighbourhood()
+
+    const pending = neighbourhood.explore(SUBJECT.id, { depth: 1 })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    neighbourhood.clear()
+    calls[0].answer(aGraph([SUBJECT], []))
+    await pending
+
+    expect(neighbourhood.graph.value.elements).toHaveLength(0)
+    expect(neighbourhood.status.value).toBe('idle')
+  })
+
   it('reports an unreachable backend rather than an empty drawing', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     const neighbourhood = useNeighbourhood()
 

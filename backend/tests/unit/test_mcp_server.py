@@ -17,6 +17,15 @@ import pytest
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from ea.api.schemas import (
+    AddressAssign,
+    ElementCreate,
+    ElementUpdate,
+    RelationshipCreate,
+    SubnetCreate,
+)
+from ea.core.config import Settings
+from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
@@ -793,3 +802,98 @@ class TestTheIpAddressing:
                 subnet_id=subnet["element_id"],
                 element_id=latecomer["id"],
             )
+
+
+#: The JSON-schema keywords that *bound* a value. Descriptions are left out on
+#: purpose: the model reads a tool's, a developer reads an endpoint's, and they
+#: are allowed to say different things about the same field.
+BOUNDS = ("minLength", "maxLength", "minimum", "maximum", "pattern")
+
+
+def bounds_of(schema: dict[str, Any]) -> dict[str, Any]:
+    """The bounds of one property, looking inside `anyOf` for an optional one."""
+    found = {key: schema[key] for key in BOUNDS if key in schema}
+    for branch in schema.get("anyOf", ()):
+        found.update(bounds_of(branch))
+    return found
+
+
+def query_parameter(openapi: dict[str, Any], path: str, name: str) -> dict[str, Any]:
+    operation = openapi["paths"][path]["get"]
+    return next(p["schema"] for p in operation["parameters"] if p["name"] == name)
+
+
+@pytest.mark.asyncio
+class TestTheSameBoundsAsTheHttpAdapter:
+    """A tool argument and its HTTP twin must refuse exactly the same values.
+
+    The two adapters used to declare their bounds separately, so a limit
+    raised on one side would have left the other refusing — or accepting —
+    what its sibling does not. This pins every pair; the tool side reads the
+    schema an agent is actually sent.
+    """
+
+    @pytest.mark.parametrize(
+        ("tool", "argument", "model", "field"),
+        [
+            ("create_element", "name", ElementCreate, "name"),
+            ("create_element", "description", ElementCreate, "description"),
+            ("create_element", "documentation", ElementCreate, "documentation"),
+            ("update_element", "name", ElementUpdate, "name"),
+            ("update_element", "description", ElementUpdate, "description"),
+            ("update_element", "documentation", ElementUpdate, "documentation"),
+            ("connect_elements", "name", RelationshipCreate, "name"),
+            ("declare_ip_subnet", "name", SubnetCreate, "name"),
+            ("declare_ip_subnet", "cidr", SubnetCreate, "cidr"),
+            ("declare_ip_subnet", "vrf", SubnetCreate, "vrf"),
+            ("declare_ip_subnet", "reserved", SubnetCreate, "reserved"),
+            ("declare_ip_subnet", "description", SubnetCreate, "description"),
+            ("assign_ip_address", "address", AddressAssign, "address"),
+            ("assign_ip_address", "vrf", AddressAssign, "vrf"),
+            ("locate_ip_address", "address", AddressAssign, "address"),
+        ],
+    )
+    async def test_a_body_field_and_its_tool_argument_agree(
+        self,
+        server: MCPServer[Any],
+        tool: str,
+        argument: str,
+        model: type[Any],
+        field: str,
+    ) -> None:
+        tools = {listed.name: listed for listed in await server.list_tools()}
+        sent_to_the_agent = bounds_of(tools[tool].input_schema["properties"][argument])
+        served_over_http = bounds_of(model.model_json_schema()["properties"][field])
+
+        assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
+        assert sent_to_the_agent == served_over_http
+
+    @pytest.mark.parametrize(
+        ("tool", "argument", "path", "parameter"),
+        [
+            ("list_elements", "limit", "/elements", "limit"),
+            ("list_elements", "offset", "/elements", "offset"),
+            ("list_elements", "search", "/elements", "search"),
+            ("list_relationships", "limit", "/relationships", "limit"),
+            ("list_relationships", "offset", "/relationships", "offset"),
+            ("neighbourhood", "depth", "/elements/{element_id}/neighbourhood", "depth"),
+            ("impact_of", "depth", "/elements/{element_id}/impact", "depth"),
+            ("list_ip_addresses", "search", "/ipam/addresses", "search"),
+        ],
+    )
+    async def test_a_query_parameter_and_its_tool_argument_agree(
+        self,
+        server: MCPServer[Any],
+        service: ArchitectureService,
+        tool: str,
+        argument: str,
+        path: str,
+        parameter: str,
+    ) -> None:
+        openapi = create_app(Settings(debug=True), architecture_service=service).openapi()
+        tools = {listed.name: listed for listed in await server.list_tools()}
+        sent_to_the_agent = bounds_of(tools[tool].input_schema["properties"][argument])
+        served_over_http = bounds_of(query_parameter(openapi, path, parameter))
+
+        assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
+        assert sent_to_the_agent == served_over_http

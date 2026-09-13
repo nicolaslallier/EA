@@ -8,7 +8,7 @@
 // The markdown is shown as the text it is. Rendering it would mean a parser, a
 // sanitiser and an ADR for both — see docs/adr/0017 — and a runbook read as
 // plain text is still a runbook read.
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { messageOf } from '../../lib/api'
 import type { ElementRead } from '../elements/useElementCatalogue'
@@ -47,14 +47,15 @@ async function onPicked(event: Event): Promise<void> {
   }
 }
 
+// A read reports its own failure (`documents.readError`) rather than throwing:
+// two names clicked in a row are two reads, and only the last one may speak.
 async function onOpen(documentId: string): Promise<void> {
   failure.value = ''
-  try {
-    await documents.open(documentId)
-  } catch (caught) {
-    failure.value = messageOf(caught)
-  }
+  await documents.open(documentId)
 }
+
+/** What the banner says: a refused write first, else why a document could not be read. */
+const shownFailure = computed(() => failure.value || documents.readError.value)
 
 async function confirmRemove(): Promise<void> {
   const documentId = confirming.value
@@ -105,7 +106,7 @@ function day(iso: string): string {
       />
     </p>
 
-    <p v-if="failure" class="banner banner--error" role="alert">{{ failure }}</p>
+    <p v-if="shownFailure" class="banner banner--error" role="alert">{{ shownFailure }}</p>
 
     <p v-if="documents.status.value === 'error'" class="banner banner--error" role="alert">
       {{ documents.error.value }}

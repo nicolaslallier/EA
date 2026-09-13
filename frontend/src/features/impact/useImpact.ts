@@ -12,7 +12,8 @@
 import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 import { propagate, type FollowsArrow, type Wave } from './propagation'
 
 export type ElementRead = components['schemas']['ElementRead']
@@ -38,14 +39,13 @@ export type Question = {
   relationshipType?: RelationshipType | ''
 }
 
-type Status = 'idle' | 'loading' | 'ready' | 'error'
-
 export function useImpact(follows: FollowsArrow) {
   /** The element the cascade starts from; '' when nothing is chosen yet. */
   const subjectId = ref('')
   const graph = ref<GraphRead>(EMPTY)
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // Following the cascade is a click per step: a slow answer about the
+  // previous element must never be read as the verdict on the current one.
+  const traversal = useLatestRequest()
 
   // The traversal returns the subject among its own elements, so the screen
   // knows its name without asking `/elements/{id}` a second time.
@@ -69,38 +69,40 @@ export function useImpact(follows: FollowsArrow) {
 
   async function analyse(elementId: string, question: Question): Promise<void> {
     subjectId.value = elementId
-    status.value = 'loading'
-    error.value = ''
-    try {
-      graph.value = unwrap(
-        await api.GET('/elements/{element_id}/impact', {
-          params: {
-            path: { element_id: elementId },
-            // An unset filter is left out rather than sent empty: an empty
-            // `relationship_type` would be a filter matching nothing.
-            query: {
-              depth: question.depth,
-              ...(question.relationshipType
-                ? { relationship_type: [question.relationshipType] }
-                : {}),
+    await traversal.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements/{element_id}/impact', {
+            params: {
+              path: { element_id: elementId },
+              // An unset filter is left out rather than sent empty: an empty
+              // `relationship_type` would be a filter matching nothing.
+              query: {
+                depth: question.depth,
+                ...(question.relationshipType
+                  ? { relationship_type: [question.relationshipType] }
+                  : {}),
+              },
             },
-          },
-        }),
-      )
-      status.value = 'ready'
-    } catch (caught) {
-      graph.value = EMPTY
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+            signal,
+          }),
+        ),
+      (answer) => {
+        graph.value = answer
+      },
+      () => {
+        graph.value = EMPTY
+      },
+    )
   }
 
   function clear(): void {
+    traversal.cancel()
     subjectId.value = ''
     graph.value = EMPTY
-    status.value = 'idle'
-    error.value = ''
   }
+
+  const { status, error } = traversal
 
   return { subjectId, graph, subject, hops, waves, inert, impacted, status, error, analyse, clear }
 }

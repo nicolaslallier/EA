@@ -145,9 +145,7 @@ describe('NeighbourhoodSection', () => {
   it('reports an unreachable backend rather than an empty picker', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     await open()
 

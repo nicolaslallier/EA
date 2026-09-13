@@ -80,6 +80,58 @@ export function stubApi(routes: Route[]): RecordedCall[] {
   return calls
 }
 
+/** A request held open by `deferApi` until the test answers it. */
+export type HeldCall = RecordedCall & {
+  /** Answer this request now, as the backend would. */
+  answer: (body: unknown, status?: number) => void
+  /** Whether the client gave up on it before it was answered. */
+  aborted: () => boolean
+}
+
+/**
+ * Stand in for a backend whose answers arrive when the test says so.
+ *
+ * `stubApi` answers every request at once, in the order they were sent, which
+ * is exactly the case a race never happens in. Here each request waits, so a
+ * spec can answer the second before the first — what a slow traversal next to
+ * a fast one does on a real network. A request whose signal is aborted rejects
+ * with the reason, as `fetch` does, and nothing answers it afterwards.
+ */
+export function deferApi(): HeldCall[] {
+  const calls: HeldCall[] = []
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      return new Promise<Response>((resolve, reject) => {
+        // `abort()` without an argument always rejects with a DOMException, and
+        // a request already aborted never fires the event: `fetch` rejects it
+        // at once.
+        if (request.signal.aborted) {
+          reject(request.signal.reason as Error)
+        }
+        request.signal.addEventListener('abort', () => reject(request.signal.reason as Error))
+        calls.push({
+          method: request.method,
+          url: new URL(request.url),
+          body: undefined,
+          aborted: () => request.signal.aborted,
+          answer: (body, status = 200) =>
+            resolve(
+              new Response(JSON.stringify(body), {
+                status,
+                headers: { 'content-type': 'application/json' },
+              }),
+            ),
+        })
+      })
+    }),
+  )
+
+  return calls
+}
+
 /** An element as the API returns it, with only the interesting fields spelled out. */
 export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
   return {

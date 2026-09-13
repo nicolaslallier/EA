@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import os
 import re
+import socket
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -37,6 +40,102 @@ from ea.services.ipam import IpamService
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
 FIXED_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+
+
+class NetworkAccessInTestError(RuntimeError):
+    """A DB-free test tried to reach another machine.
+
+    A `RuntimeError` and deliberately not an `OSError`: the drivers and the
+    embedding client translate an `OSError` into "store unreachable", which is
+    exactly the misleading sentence this guard exists to replace.
+    """
+
+
+def _is_loopback(host: object) -> bool:
+    """`localhost`, `127.0.0.0/8`, `::1` and their IPv4-mapped spelling."""
+    if host is None:
+        return True  # a passive lookup (`getaddrinfo(None, port)`) goes nowhere
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if not isinstance(host, str):
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(address.is_loopback or (mapped is not None and mapped.is_loopback))
+
+
+@pytest.fixture(autouse=True)
+def _no_network_beyond_this_machine(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse, at once, any connection a test opens to another machine.
+
+    The settings defaults point Neo4j, PostgreSQL and the embedding service at
+    the cluster — the useful default for a developer, and a trap for a test: a
+    lifespan entered with them goes looking for the real stores. On the LAN
+    that test quietly talks to the shared databases; off it, it waits for a
+    timeout and fails as "PostgreSQL unreachable", which reads like an outage
+    rather than a test that forgot to inject its double. Both are the same bug,
+    and this turns it into one immediate failure naming the address.
+
+    Loopback stays open, and that is all `tests/integration` needs: its stores
+    are throwaway containers on 127.0.0.1 (docs/adr/0024), and its fixtures
+    already refuse any other host. The guard applies there too, so a test that
+    slips past those fixtures toward the shared cluster fails here instead of
+    emptying it.
+
+    The patch sits on `socket.socket` itself, below every client in this
+    process: asyncio, and therefore asyncpg, the Neo4j driver and httpx, all
+    end in `sock.connect`. `getaddrinfo` is guarded too, because a lookup with
+    no network can hang for the resolver's own timeout before any connect.
+    In-process transports — `httpx.ASGITransport`, `httpx.MockTransport` —
+    open no socket and are untouched.
+    """
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+    real_getaddrinfo = socket.getaddrinfo
+
+    def refuse(what: str) -> NetworkAccessInTestError:
+        return NetworkAccessInTestError(
+            f"{request.node.nodeid} tried to reach {what}. No test may leave "
+            "this machine: inject a double "
+            "(`architecture_service=`, `documents=`, `indexer=`) or turn the store "
+            "off in the Settings you build (`postgres_enabled=False`, "
+            "`embeddings_enabled=False`)."
+        )
+
+    def _target(address: object) -> tuple[bool, str]:
+        if isinstance(address, str | bytes):  # AF_UNIX: a path on this machine
+            return True, repr(address)
+        if isinstance(address, tuple) and address:
+            return _is_loopback(address[0]), ":".join(str(part) for part in address[:2])
+        return False, repr(address)
+
+    def connect(self: socket.socket, address: Any) -> None:
+        local, shown = _target(address)
+        if not local:
+            raise refuse(shown)
+        real_connect(self, address)
+
+    def connect_ex(self: socket.socket, address: Any) -> int:
+        local, shown = _target(address)
+        if not local:
+            raise refuse(shown)
+        return real_connect_ex(self, address)
+
+    def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if not _is_loopback(host):
+            raise refuse(f"{host!r} (name lookup)")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 function stubFetch(): ReturnType<typeof vi.fn> {
-  const spy = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+  const spy = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })))
   vi.stubGlobal('fetch', spy)
   return spy
 }
@@ -34,7 +34,7 @@ describe('fetchHealth', () => {
   it('raises when the backend answers with a non-2xx status', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('nope', { status: 503 })),
+      vi.fn(() => Promise.resolve(new Response('nope', { status: 503 }))),
     )
 
     await expect(fetchHealth()).rejects.toThrow(/503/)

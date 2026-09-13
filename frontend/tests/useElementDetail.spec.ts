@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useElementDetail } from '../src/features/elements/useElementDetail'
-import { anElement, stubApi } from './support/api'
+import { anElement, deferApi, stubApi } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -41,9 +41,7 @@ describe('useElementDetail', () => {
   it('reports an unreachable backend', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     const detail = useElementDetail()
 
@@ -66,6 +64,38 @@ describe('useElementDetail', () => {
     await pending
 
     expect(detail.element.value?.name).toBe('Grand livre')
+  })
+
+  it('details the element asked for last, whichever answer arrives first', async () => {
+    const other = anElement({ id: '22222222-2222-4222-8222-222222222222', name: 'Grand livre' })
+    const calls = deferApi()
+    const detail = useElementDetail()
+
+    const first = detail.open(ELEMENT.id)
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = detail.open(other.id)
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(other)
+    calls[0].answer(ELEMENT)
+    await Promise.all([first, second])
+
+    expect(detail.element.value?.name).toBe('Grand livre')
+    expect(detail.status.value).toBe('ready')
+    expect(detail.error.value).toBe('')
+  })
+
+  it('shows nothing that arrives after the detail was closed', async () => {
+    const calls = deferApi()
+    const detail = useElementDetail()
+
+    const pending = detail.open(ELEMENT.id)
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    detail.close()
+    calls[0].answer(ELEMENT)
+    await pending
+
+    expect(detail.element.value).toBeNull()
+    expect(detail.status.value).toBe('idle')
   })
 
   it('forgets the element once closed', async () => {

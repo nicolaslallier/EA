@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api, API_BASE_URL, defaultApiBaseUrl } from '../src/lib/api'
 
-// The Vite dev server binds every interface (docs/adr/0019), so the SPA is
+// The Vite dev server binds every interface (docs/adr/0022), so the SPA is
 // loaded as often from `http://192.168.1.x:5173` as from localhost. A base URL
 // hard-wired to `localhost:8000` would then name the *viewer's* machine, and
 // every call would fail on a machine that runs no backend at all.
@@ -42,12 +42,14 @@ describe('API_BASE_URL', () => {
 // See docs/adr/0021.
 describe('what a call leaves in the console', () => {
   function answering(status: number, body: unknown, requestId = 'abc123'): typeof fetch {
-    return vi.fn(async () =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'content-type': 'application/json', 'x-request-id': requestId },
-      }),
-    ) as unknown as typeof fetch
+    return vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json', 'x-request-id': requestId },
+        }),
+      ),
+    )
   }
 
   afterEach(() => {
@@ -93,9 +95,7 @@ describe('what a call leaves in the console', () => {
   it('a backend that never answered is an error, with the reason', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -103,5 +103,28 @@ describe('what a call leaves in the console', () => {
 
     const [message] = error.mock.calls[0] as [string]
     expect(message).toContain('GET /health')
+  })
+
+  it('a call the SPA abandoned itself is not an error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (request: Request) =>
+          new Promise((_, reject) => {
+            request.signal.addEventListener('abort', () => reject(request.signal.reason as Error))
+          }),
+      ),
+    )
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const controller = new AbortController()
+
+    const pending = api.GET('/health', { signal: controller.signal })
+    await vi.waitFor(() => expect(debug).toHaveBeenCalled())
+    controller.abort()
+
+    await expect(pending).rejects.toThrow()
+    expect(error).not.toHaveBeenCalled()
+    expect(debug.mock.calls.at(-1)?.[0]).toContain('GET /health')
   })
 })

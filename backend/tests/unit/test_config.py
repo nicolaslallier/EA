@@ -159,6 +159,19 @@ def test_the_mcp_allowlist_rejects_a_bare_wildcard() -> None:
         Settings(debug=True, mcp_allowed_hosts="*")
 
 
+def test_mcp_refuses_remote_clients_unless_told_otherwise() -> None:
+    """Until auth exists, a remote agent is an opt-in — see docs/adr/0023."""
+    assert Settings(_env_file=None).mcp_allow_remote_clients is False  # type: ignore[call-arg]
+
+
+def test_remote_mcp_clients_can_be_let_in_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EA_MCP_ALLOW_REMOTE_CLIENTS", "true")
+
+    assert Settings(_env_file=None).mcp_allow_remote_clients is True  # type: ignore[call-arg]
+
+
 class TestTheEmbeddingService:
     """The settings behind the document search — see docs/adr/0019."""
 

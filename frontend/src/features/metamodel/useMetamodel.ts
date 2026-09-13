@@ -111,7 +111,7 @@ export function useMetamodel() {
   )
 
   /** The label for a type, or the raw value while the palette is still loading. */
-  function labelOf(value: ElementType | string): string {
+  function labelOf(value: string): string {
     return labels.value.get(value as ElementType) ?? value
   }
 
@@ -125,7 +125,7 @@ export function useMetamodel() {
    * Until the palette lands, the answer is the majority one — nine of the
    * eleven types follow their arrow — and the cascade redraws when it does.
    */
-  function followsArrow(value: RelationshipType | string): boolean {
+  function followsArrow(value: string): boolean {
     return directions.value.get(value as RelationshipType) ?? true
   }
 

@@ -26,6 +26,7 @@ from ea.api.schemas import (
     AddressLocationRead,
     AddressRead,
     ErrorResponse,
+    Search,
     SubnetCreate,
     SubnetDetailRead,
     SubnetRead,
@@ -111,7 +112,7 @@ async def list_addresses(
         str | None,
         Query(max_length=64, description="Only addresses inside this prefix, e.g. `10.0.1.0/26`."),
     ] = None,
-    search: Annotated[str | None, Query(max_length=200)] = None,
+    search: Annotated[Search | None, Query()] = None,
 ) -> list[AddressRead]:
     """The inventory: every assigned address, in address order."""
     return [

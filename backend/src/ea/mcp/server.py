@@ -29,20 +29,32 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ea.api.schemas import (
+    Address,
     AddressLocationRead,
     AddressRead,
+    Depth,
+    Description,
+    Documentation,
     DocumentRead,
     DocumentSummaryRead,
     ElementPage,
     ElementRead,
     GraphRead,
+    Limit,
+    LinkName,
     MetamodelRead,
+    Name,
+    Offset,
     PassageRead,
     RelationshipMatrixRead,
     RelationshipRead,
+    Reserved,
+    Search,
     SubnetDetailRead,
     SubnetRead,
 )
+from ea.api.schemas import Cidr as PrefixBounds
+from ea.api.schemas import Vrf as VrfBounds
 from ea.domain.archimate import (
     AccessType,
     ElementType,
@@ -59,7 +71,6 @@ from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
-from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.ipam import IpamService
@@ -120,18 +131,20 @@ ServiceProvider = Callable[[], ArchitectureService]
 DocumentProvider = Callable[[], DocumentService]
 IpamProvider = Callable[[], IpamService]
 
-# --- Shared argument constraints, bounded exactly as the HTTP adapter is ----
+# --- Argument constraints --------------------------------------------------
+# Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
+# prefix — is imported from `api/schemas.py` rather than restated, so the two
+# adapters cannot drift into refusing different values. Where the model needs
+# its own sentence, a `Field(description=...)` is laid over the shared type and
+# the bounds come through untouched. What is declared below is what only an
+# agent is offered: a document as text, a search, an id described for a model.
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
 ]
-Name = Annotated[str, Field(min_length=1, max_length=200)]
-Description = Annotated[str, Field(max_length=2000)]
-Documentation = Annotated[str, Field(max_length=20000)]
 Properties = Annotated[
     dict[str, str] | None,
     Field(description="Free-form attributes, e.g. owner or criticality. Keys are identifiers."),
 ]
-Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 DocumentId = Annotated[
     UUID, Field(description="The id of a document, as `list_documents` reports it.")
 ]
@@ -155,7 +168,6 @@ Markdown = Annotated[
         description="The document itself, as markdown text.",
     ),
 ]
-Limit = Annotated[int, Field(ge=1, le=200)]
 Question = Annotated[
     str,
     Field(
@@ -165,30 +177,17 @@ Question = Annotated[
     ),
 ]
 SearchLimit = Annotated[int, Field(ge=1, le=MAX_SEARCH_LIMIT)]
-Offset = Annotated[int, Field(ge=0)]
 Vrf = Annotated[
-    str,
-    Field(
-        min_length=1,
-        max_length=64,
-        description="The routing scope. Leave it alone unless the model has more than one.",
-    ),
+    VrfBounds,
+    Field(description="The routing scope. Leave it alone unless the model has more than one."),
 ]
-IpAddressArgument = Annotated[
-    str, Field(min_length=2, max_length=64, description="An IPv4 or IPv6 address.")
-]
+IpAddressArgument = Address
 Cidr = Annotated[
-    str,
-    Field(
-        min_length=2,
-        max_length=64,
-        description="A prefix, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
-    ),
+    PrefixBounds, Field(description="A prefix, e.g. `10.0.1.0/24` or `2001:db8::/64`.")
 ]
 ReservedAddresses = Annotated[
-    str,
+    Reserved,
     Field(
-        max_length=2000,
         description=(
             "Addresses to keep out of automatic allocation, comma-separated. "
             "Each entry is an address, a `first-last` range, or a prefix: "
@@ -277,7 +276,7 @@ def build_mcp_server(
     async def list_elements(
         element_types: list[ElementType] | None = None,
         layers: list[Layer] | None = None,
-        search: Annotated[str | None, Field(max_length=200)] = None,
+        search: Search | None = None,
         limit: Limit = 50,
         offset: Offset = 0,
     ) -> ElementPage:
@@ -345,7 +344,7 @@ def build_mcp_server(
         relationship_type: RelationshipType,
         source_id: ElementId,
         target_id: ElementId,
-        name: Annotated[str, Field(max_length=200)] = "",
+        name: LinkName = "",
         access_type: AccessType | None = None,
         directed: bool = False,
         properties: Properties = None,
@@ -673,7 +672,7 @@ def build_mcp_server(
     async def list_ip_addresses(
         vrf: Vrf | None = None,
         within: Cidr | None = None,
-        search: Annotated[str | None, Field(max_length=200)] = None,
+        search: Search | None = None,
     ) -> list[AddressRead]:
         """The inventory: every assigned address, in address order.
 

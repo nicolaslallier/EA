@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useElementCatalogue } from '../src/features/elements/useElementCatalogue'
-import { aPage, anElement, stubApi } from './support/api'
+import { aPage, anElement, deferApi, stubApi } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -33,6 +33,26 @@ describe('useElementCatalogue', () => {
     expect(query.get('element_type')).toBe('application_component')
     expect(query.get('layer')).toBe('application')
     expect(query.get('limit')).toBe('25')
+  })
+
+  it('lists what the last filter asked for, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const catalogue = useElementCatalogue()
+
+    catalogue.filters.layer = 'business'
+    const first = catalogue.search()
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    catalogue.filters.layer = 'application'
+    const second = catalogue.search()
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(aPage([anElement({ name: 'Facturation' })]))
+    calls[0].answer(aPage([anElement({ name: 'Order to cash' })], 7))
+    await Promise.all([first, second])
+
+    expect(catalogue.items.value.map((element) => element.name)).toEqual(['Facturation'])
+    expect(catalogue.total.value).toBe(1)
+    expect(catalogue.status.value).toBe('ready')
+    expect(catalogue.error.value).toBe('')
   })
 
   it('omits a filter that is not set instead of sending an empty one', async () => {
@@ -104,9 +124,7 @@ describe('useElementCatalogue', () => {
   it('reports an unreachable backend instead of staying on "loading"', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
 
     const catalogue = useElementCatalogue()

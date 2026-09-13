@@ -18,7 +18,7 @@ type Origin = { protocol: string; hostname: string }
 /**
  * The API's address when nothing configured one: this page's host, port 8000.
  *
- * Both servers bind every interface (docs/adr/0016 for the API, 0019 for Vite),
+ * Both servers bind every interface (docs/adr/0016 for the API, 0022 for Vite),
  * so the SPA is loaded from `http://192.168.1.x:5173` as readily as from
  * localhost. A constant `http://localhost:8000` would then name the *viewer's*
  * machine — which usually runs no backend at all — so the host is taken from
@@ -93,6 +93,13 @@ api.use({
     }
   },
   onError({ request, error, id }) {
+    // A call the SPA abandoned because a newer question replaced it
+    // (`lib/latest.ts`) is routine, not a fault: logged as one, every quick
+    // double click would print a red line nobody should act on.
+    if (request.signal.aborted) {
+      log.debug(`${request.method} ${path(request)}`, { duration_ms: since(id), aborted: true })
+      return
+    }
     // `fetch` itself never reached the backend: no status, no request id, and
     // the reason is the only thing there is to say.
     log.error(`${request.method} ${path(request)}`, {
@@ -140,7 +147,7 @@ function describe(body: unknown, status: number): string {
     const fields = envelope.detail
       .map((item: ValidationItem) => {
         const field = (item.loc ?? []).filter((part) => part !== 'body').join('.')
-        return field ? `${field} : ${item.msg}` : String(item.msg)
+        return field ? `${field} : ${String(item.msg)}` : String(item.msg)
       })
       .filter(Boolean)
     if (fields.length > 0) {

@@ -15,7 +15,11 @@
 
 services:
   neo4j:
-    image: neo4j:5.26-community
+    # Le tag dit quelle version, le digest dit quels octets : `5.26-community`
+    # est republié à chaque correctif, et un redéploiement ne doit pas changer
+    # de serveur sans que ce fichier ait changé. Digest de l'index multi-arch ;
+    # Dependabot propose les mises à jour (docs/adr/0026).
+    image: neo4j:5.26-community@sha256:22ec5cd05a8cbb372fc4bed5e384c30bc75fd92504c72be4462039761b105f61
     container_name: ea-neo4j
     # Le graphe doit revenir tout seul après un redémarrage de l'hôte : c'est
     # la seule instance, il n'y a pas de `make db-up` pour la relancer.
@@ -42,9 +46,12 @@ services:
       - neo4j-data:/data
       - neo4j-logs:/logs
     healthcheck:
-      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment ;
-      # le mot de passe vient de l'environnement du conteneur, pas du fichier.
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${EA_HEALTHCHECK_PASSWORD}\" 'RETURN 1' || exit 1"]
+      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment. Il
+      # lit NEO4J_USERNAME et NEO4J_PASSWORD dans son environnement : posés pour
+      # cette commande seulement, le mot de passe n'est pas dans ses arguments
+      # (visibles de tous dans `ps` sur l'hôte), et n'est pas une variable du
+      # conteneur que l'image prendrait pour un réglage de neo4j.conf.
+      test: ["CMD-SHELL", "NEO4J_USERNAME=neo4j NEO4J_PASSWORD=\"$${EA_HEALTHCHECK_PASSWORD}\" cypher-shell 'RETURN 1' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10

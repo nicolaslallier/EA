@@ -128,7 +128,7 @@ async function onSubmit(payload: ElementCreate | ElementUpdate): Promise<void> {
   failure.value = ''
   try {
     if (editing.value) {
-      await catalogue.update(editing.value.id, payload as ElementUpdate)
+      await catalogue.update(editing.value.id, payload)
     } else {
       await catalogue.create(payload as ElementCreate)
     }

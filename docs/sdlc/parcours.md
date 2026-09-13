@@ -72,10 +72,16 @@ puis on l'amène au vert. Par couche, d'avant en arrière :
 1. **Unit** (`backend/tests/unit`, zéro I/O) : règles de domaine, validation,
    fonctions pures. En millisecondes.
 2. **Intégration** (`backend/tests/integration`) : repositories et services
-   *contre un vrai Neo4j*. Jamais de driver mocké, jamais d'enregistrement
-   factice — là, on prouve que le Cypher marche.
+   *contre un vrai Neo4j et un vrai PostgreSQL* — les conteneurs jetables de
+   `docker-compose.yml`, jamais le cluster. Jamais de driver mocké, jamais
+   d'enregistrement factice — là, on prouve que le Cypher et le SQL marchent.
 3. **API** (`backend/tests/e2e`) : `httpx.AsyncClient` contre l'application,
-   couverture l'auth, les codes de statut, l'enveloppe d'erreur.
+   couvrant les codes de statut et l'enveloppe d'erreur (et l'auth, quand elle
+   existera).
+
+Aucun test ne sort de la machine : une fixture automatique de
+`backend/tests/conftest.py` lève `NetworkAccessInTestError` à toute connexion
+qui n'est pas locale.
 
 Un test qui a besoin d'une base de données n'est pas un test unit — on le déplace
 en `tests/integration`.
@@ -86,19 +92,19 @@ make test                 # unit + API, toujours sans base
 make test-fe              # Vitest du frontend, une passe
 ```
 
-Les tests d'intégration effacent les `:Element` du **graphe partagé du cluster**
-entre chaque cas (Neo4j Community ne sert qu'une seule base, il n'y a ni schéma
-de test séparé ni transaction à annuler). Ils ne s'exécutent que si
-`EA_ALLOW_DESTRUCTIVE_TESTS=1`, ce que seule la cible `make test-integration`
-positionne ; un `pytest` nu les saute.
+Les tests d'intégration vident le graphe entre chaque cas (Neo4j Community ne
+sert qu'une seule base, il n'y a ni schéma de test séparé ni transaction à
+annuler) et annulent la chaîne de migrations. Ils tournent donc sur un Neo4j et
+un PostgreSQL **jetables et locaux**, publiés sur 127.0.0.1 ; les fixtures
+refusent tout autre hôte et sautent le test en le nommant
+(`backend/tests/integration/throwaway.py`). Le graphe exige en plus
+`EA_ALLOW_DESTRUCTIVE_TESTS=1`. Voir
+[`ADR 0024`](../adr/0024-tests-d-integration-sur-des-bases-jetables.md).
 
 ```bash
-make test-integration     # NE PAS lancer pendant que quelqu'un modélise
+make test-integration     # démarre les deux conteneurs au besoin, et pointe dessus
+make test-postgres        # seulement les tests PostgreSQL
 ```
-
-> Le graphe est celui du cluster, **partagé entre toute l'équipe**. Ne lance pas
-> `make test-integration` sans être sûr que personne n'est dessus : chaque cas
-> efface tout le monde.
 
 Règles qui tiennent ici :
 
@@ -106,33 +112,37 @@ Règles qui tiennent ici :
   reproduit.
 - Les tests affirment le comportement *par ses entrées publiques*, pas par des
   attributs privés.
-- Les fixtures construisent des objets via une fabrique : ajouter un champ ne
-  casse pas cent tests.
+- Les objets de test se construisent par de petites fonctions écrites à la
+  main (`an_element`, `a_document`) : ajouter un champ ne casse pas cent tests.
 - Jamais de `time.sleep` — on injecte une horloge.
-- Le plancher de couverture est de **90 %** sur `backend/src`, mais *une ligne
-  couverte qui ne prouve rien est un échec*, quel que soit le nombre.
+- Le plancher de couverture est de **90 %** sur `backend/src`, imposé par
+  `fail_under = 90` dans `backend/pyproject.toml` (`make test` passe `--cov`),
+  mais *une ligne couverte qui ne prouve rien est un échec*, quel que soit le
+  nombre.
 
 ---
 
 ## 4. Contrôles locaux
 
-Avant de préparer un commit, on tourne le tout ce que la CI vérifiera
-(`# Tout ce que la CI vérifiera` est littéralement le commentaire sur la cible
-`check` du Makefile) :
+Avant de préparer un commit, on tourne ce que la CI vérifiera. `make check` ne
+modifie aucun fichier : il échoue là où `make lint` corrigerait.
 
 ```bash
-make check                # lint + types + client généré + tests sans base (BE + FE)
+make check                # lint-check, ESLint, types, client généré, tests sans base (BE + FE)
+make audit                # bandit, pip-audit, npm audit (réseau requis)
 ```
 
 Détaillé, pour cibler :
 
 | Commande | Effet |
 |---|---|
-| `make lint` | `ruff format .` puis `ruff check --fix .` |
-| `make typecheck` | `mypy --strict` sur `backend/src`, puis `vue-tsc` sur le frontend |
+| `make lint` | Corrige : `ruff format .` puis `ruff check --fix .` |
+| `make lint-check` | Vérifie sans rien modifier : `ruff format --check`, `ruff check` |
+| `make lint-fe` | ESLint sur le frontend |
+| `make typecheck` | `mypy --strict` sur `backend/src` et `migrations`, puis `vue-tsc` sur le frontend |
 | `make openapi-check` | Échoue si `openapi.json` / `src/api/` ne sont plus en phase |
-| `make test` / `make test-fe` | Les suites sans base |
-| `make test-integration` | La suite contre le vrai graphe (destructive, voir §3) |
+| `make test` / `make test-fe` | Les suites sans base ; `make test` échoue sous 90 % de couverture |
+| `make test-integration` | La suite contre les bases jetables locales (voir §3) |
 
 Quand le schéma a bougé, on régénère *avant* de valider :
 
@@ -174,13 +184,14 @@ fix(config): read EA_CORS_ORIGINS as a plain string from the environment
 
 ## 6. Hook pre-commit
 
-Le hook `pre-commit` fait tourner, *localement*, la même chose que la CI : ruff
-(format + check), mypy, et la détection de secrets. Il existe pour ne jamais
-envoyer de vert qui ne le sera pas en CI. On ne l'évite pas avec `--no-verify`.
+Le hook `pre-commit` (`.pre-commit-config.yaml`) fait tourner, *localement*,
+une partie de ce que vérifie la CI : ruff (format + check), mypy, `vue-tsc`,
+ESLint, et gitleaks pour les secrets. Aucun crochet ne modifie de fichier. Il
+existe pour ne jamais envoyer de vert qui ne le sera pas en CI. On ne l'évite
+pas avec `--no-verify`.
 
-> **Encore à poser** (voir §10) : le fichier `.pre-commit-config.yaml` n'existe
-> pas encore. En attendant, `make check` est le substitut équivalent à lancer à
-> la main avant chaque commit.
+Il est **à installer soi-même** : `make hooks`. Rien n'écrit dans `.git/hooks`
+à la place du développeur.
 
 ---
 
@@ -190,8 +201,7 @@ Chaque PR :
 
 - **Petite** — reviewable en une séance : si la PR touche 5 fichiers de
   domaines différents, la fractionner.
-- **Verte en CI** — *voir* §8 ; tant que la CI n'existe pas, `make check` local
-  en fait office.
+- **Verte en CI** — *voir* §8.
 - **Décrit le *quoi* et le *pourquoi*** dans le corps, pas seulement le *que*.
 - **Écrit ses tests d'abord** — la régression est là *avant* le fix, pas après.
 - **Rétablit le contrat** — schéma OpenAPI régénéré et `make openapi-check`
@@ -215,32 +225,28 @@ Checklist, à coller dans le template de PR :
 
 ## 8. CI
 
-La CI vérifie, à la barre, *exactement* `make check` plus la couverture et les
-scans de sécurité :
+La CI (`.github/workflows/ci.yml`, sur chaque push vers `main` et chaque pull
+request) rejoue les cibles du Makefile en quatre jobs — voir
+[`ADR 0026`](../adr/0026-la-barriere-qualite.md) :
 
-| Étape | Commande | Bloque la merge si rouge |
-|---|---|---|
-| Lint | `make lint` | Oui |
-| Types | `make typecheck` | Oui |
-| Tests sans base | `make test` | Oui |
-| Couverture | `pytest --cov=ea --cov-fail-under=90` | Oui, sous 90 % |
-| Tests d'intégration | `make test-integration` (sur un graphe dédié) | Oui |
-| Client généré en phase | `make openapi-check` | Oui |
-| Sécurité Python | `uv run bandit -c pyproject.toml -r src` | Oui |
-| Dépendances | `uv run pip-audit` | Oui |
-| Sécurité frontend | `npm audit --audit-level=high` | Oui |
+| Job | Contenu |
+|---|---|
+| `backend` | `make lint-check`, `typecheck-be`, `openapi-check`, `test` (couverture ≥ 90 %) |
+| `frontend` | `make typecheck-fe`, `lint-fe`, `test-fe`, `npm run build` |
+| `audit` | `make audit` : `bandit`, `pip-audit --skip-editable`, `npm audit --audit-level=high` |
+| `integration` | `pytest tests/integration` contre des conteneurs de service Neo4j et PostgreSQL jetables |
 
-> **Encore à poser** (voir §10) : le pipeline lui-même (`.github/workflows/`) et
-> les outils de sécurité ne sont pas encore en place. `make check` est le
-> contrat : la CI est, par définition, l'automatisation de `make check` plus les
-> trois scans.
+> **Encore à poser** : rien n'*impose* encore une CI verte avant la merge. C'est
+> une règle de protection de branche sur GitHub, à activer.
 
-Deux garde-fous sur l'intégration en CI :
+Deux garde-fous :
 
-- Le graphe d'intégration y est un **graphe dédié, pas celui du cluster partagé** :
-  en CI, « vider entre les cas » ne peut pas toucher la modélisation de l'équipe.
-- Les scans de sécurité bloquent la merge ; Dependabot/Renovate maintient les
-  lockfiles à jour pour que `pip-audit` / `npm audit` restent stables.
+- Les tests d'intégration visent des **bases jetables, jamais le cluster
+  partagé** : « vider entre les cas » ne peut pas toucher la modélisation de
+  l'équipe.
+- Dependabot (`.github/dependabot.yml`) ouvre chaque semaine les mises à jour
+  des actions, de `uv`, de `npm` et des images compose, qui passent par la même
+  CI.
 
 ---
 
@@ -274,18 +280,16 @@ toujours l'état du dépôt aujourd'hui :
 | `make check` (lint, types, client, tests) | En place | `Makefile` |
 | TDD, suites unit/intégration/API | En place | `backend/tests/`, `frontend/tests/` |
 | ADR pour les décisions structurantes | En place | `docs/adr/` |
-| Plancher de couverture 90 % | En place (attendu) | `pytest --cov-fail-under=90` |
-| Hook `pre-commit` | **À poser** | `.pre-commit-config.yaml` absent |
-| Sécurité : `bandit`, `pip-audit`, `npm audit` | **À poser** | Absents |
-| ESLint (`make lint-fe`) | **À poser** | Aucun config |
+| Plancher de couverture 90 % | En place | `fail_under = 90`, `backend/pyproject.toml` |
+| Hook `pre-commit` | En place, à installer soi-même | `.pre-commit-config.yaml`, `make hooks` |
+| Sécurité : `bandit`, `pip-audit`, `npm audit` | En place | `make audit`, job `audit` |
+| ESLint (`make lint-fe`) | En place | `frontend/eslint.config.js` |
+| Pipeline CI | En place | `.github/workflows/ci.yml` |
+| Dependabot | En place | `.github/dependabot.yml` |
+| SQLAlchemy / Alembic | En place | `backend/migrations/`, `element_documents`, `document_chunks` |
+| CI verte obligatoire avant merge | **À poser** | Protection de branche GitHub |
 | Tests E2E frontend (Playwright) | **À poser** | Non configuré |
-| Pipeline CI (`.github/workflows/`) | **À poser** | Absent |
-| Auth / SQLAlchemy / Alembic | **À poser** | Aucune table Postgres |
-
-Pendant que ces cases sont vides, les lignes « À poser » ci-dessus ont un
-substitut à la main : `make check` pour les contrôles, la détection de secrets
-*à l'œil* pour les secrets (et on ne committe jamais `.env`, seulement
-`*.example`).
+| Auth | **À poser** | — |
 
 ---
 
@@ -305,7 +309,7 @@ parce que c'est là qu'elles coûtent cher :
   un type archi fermé (type de relation, bord d'un chemin variable) et chacun le
   justifie dans un commentaire. Un quatrième emplacement doit justifier de même.
 - Les retours d'erreur à l'utilisateur sont typés et génériques ; les traces en
-  pile vont dans les logs structurés JSON (`structlog`, avec un *request id*),
+  pile vont dans les logs structurés (le `logging` de la bibliothèque standard, par `core/logging.py`, avec un *request id*),
   jamais dans le corps de réponse.
 - On ne logge jamais de token, mot de passe ou PII — on masque au niveau du
   process de logging, pas à chaque appel.

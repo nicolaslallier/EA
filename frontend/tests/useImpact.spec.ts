@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useImpact } from '../src/features/impact/useImpact'
-import { aGraph, anElement, aRelationship, stubApi, type Route } from './support/api'
+import { aGraph, anElement, aRelationship, deferApi, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -96,12 +96,29 @@ describe('useImpact', () => {
     expect(impact.waves.value).toEqual([])
   })
 
+  it('shows the cascade of the element asked for last, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const impact = useImpact(follows)
+
+    const first = impact.analyse(SUBJECT.id, { depth: 5 })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = impact.analyse(DEPENDENT.id, { depth: 5 })
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(aGraph([DEPENDENT], []))
+    calls[0].answer(ROUTE.body)
+    await Promise.all([first, second])
+
+    expect(calls[0].aborted()).toBe(true)
+    expect(impact.subject.value?.name).toBe(DEPENDENT.name)
+    expect(impact.impacted.value).toBe(0)
+    expect(impact.status.value).toBe('ready')
+    expect(impact.error.value).toBe('')
+  })
+
   it('reports an unreachable backend rather than an empty cascade', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }),
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
     const impact = useImpact(follows)
 

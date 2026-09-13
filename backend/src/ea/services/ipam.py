@@ -25,7 +25,7 @@ both writing it.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
 from ea.domain.errors import (
@@ -68,6 +68,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: How many times `allocate_next` reads the subnet again after losing a race
+#: for the address it read as free. Enough to ride out a few callers
+#: allocating from one subnet at once; few enough that a subnet which loses
+#: every time is reported to the caller rather than waited on.
+ALLOCATION_ATTEMPTS: Final = 3
+
 
 class IpamService:
     """The IP use cases, over the architecture service and two extra queries."""
@@ -92,6 +98,12 @@ class IpamService:
         A prefix may be declared once per scope, and may sit inside another —
         `10.0.0.0/8` as the corporate range and `10.0.1.0/24` as the DMZ is the
         normal case, and an address then belongs to the longest one holding it.
+
+        The look-before-create below is what names the subnet already there. It
+        is not what makes the rule hold: two declarations can both look and
+        both find nothing, and it is the `(p_vrf, p_cidr)` uniqueness
+        constraint (`db/schema.py`) that refuses the second — translated by the
+        repository into the same `DuplicateNetworkError`.
         """
         prefix = parse_prefix(cidr)
         scope = vrf.strip() or DEFAULT_VRF
@@ -128,15 +140,11 @@ class IpamService:
 
     async def list_networks(self, *, vrf: str | None = None) -> tuple[Subnet, ...]:
         """Every declared subnet, narrowest prefix last, with how full each is."""
-        subnets = await self._subnets()
-        if vrf is not None:
-            subnets = tuple(subnet for subnet in subnets if subnet.network.vrf == vrf)
-        assignments = await self._assignments()
+        every = await self._subnets()
+        assignments = await self._assignments(every)
+        chosen = every if vrf is None else tuple(s for s in every if s.network.vrf == vrf)
         return tuple(
-            sorted(
-                (self._occupancy(subnet, assignments) for subnet in subnets),
-                key=lambda subnet: (subnet.network.vrf, subnet.network.prefix),
-            )
+            sorted((self._occupancy(subnet, assignments) for subnet in chosen), key=_listing_order)
         )
 
     async def read_network(self, element_id: UUID) -> SubnetDetail:
@@ -201,17 +209,41 @@ class IpamService:
         return await self._write_address(element, wanted, scope, subnets)
 
     async def allocate_next(self, network_id: UUID, element_id: UUID) -> Assignment:
-        """Hand the first free address of a subnet to an element."""
-        detail = await self.read_network(network_id)
-        if detail.next_free is None:
-            msg = (
-                f"{detail.subnet.network.prefix.with_prefixlen} has no free address left "
-                f"in VRF {detail.subnet.network.vrf!r}"
-            )
-            raise NetworkExhaustedError(msg)
-        return await self.assign_address(
-            element_id, str(detail.next_free), vrf=detail.subnet.network.vrf
-        )
+        """Hand the first free address of a subnet to an element.
+
+        Two callers allocating at once both read the same address as free, and
+        only one of them may write it — the service's check or, in the same
+        instant, the uniqueness constraint says so. The other asked for *an*
+        address rather than that one, so it reads the subnet again and takes the
+        next, up to `ALLOCATION_ATTEMPTS` times; after that the refusal goes
+        through, because a subnet that loses every race is news for the caller.
+        """
+        attempt = 1
+        while True:
+            detail = await self.read_network(network_id)
+            if detail.next_free is None:
+                msg = (
+                    f"{detail.subnet.network.prefix.with_prefixlen} has no free address left "
+                    f"in VRF {detail.subnet.network.vrf!r}"
+                )
+                raise NetworkExhaustedError(msg)
+            try:
+                return await self.assign_address(
+                    element_id, str(detail.next_free), vrf=detail.subnet.network.vrf
+                )
+            except AddressAlreadyAssignedError:
+                if attempt >= ALLOCATION_ATTEMPTS:
+                    raise
+                logger.info(
+                    "%s was taken while being allocated; reading the subnet again",
+                    detail.next_free,
+                    extra={
+                        "action": "allocation_retried",
+                        "element_id": str(element_id),
+                        "attempt": attempt,
+                    },
+                )
+                attempt += 1
 
     async def release_address(self, element_id: UUID) -> None:
         """Take an element's address back. The element itself is left alone."""
@@ -295,8 +327,16 @@ class IpamService:
                 found.append(Subnet(element=element, network=network, used=0))
         return tuple(found)
 
-    async def _assignments(self) -> tuple[Assignment, ...]:
-        subnets = await self._subnets()
+    async def _assignments(
+        self, subnets: tuple[Subnet, ...] | None = None
+    ) -> tuple[Assignment, ...]:
+        """Every readable address, with the subnet it falls in.
+
+        A caller that has already read the subnets hands them in: they are a
+        query of their own, and listing the subnets used to issue it twice.
+        """
+        if subnets is None:
+            subnets = await self._subnets()
         found: list[Assignment] = []
         for element in await self._repository.addressed_elements():
             try:
@@ -376,3 +416,14 @@ class IpamService:
             },
         )
         return self._assignment(updated, address, vrf, subnets)
+
+
+def _listing_order(subnet: Subnet) -> tuple[str, int, int, int]:
+    """Scope, then family, then address, then the narrower prefix last.
+
+    Family before address because an IPv4 and an IPv6 network are not orderable
+    against each other: sorting on the networks themselves raised `TypeError`
+    for every scope holding both, which is every dual-stack one.
+    """
+    prefix = subnet.network.prefix
+    return (subnet.network.vrf, prefix.version, int(prefix.network_address), prefix.prefixlen)

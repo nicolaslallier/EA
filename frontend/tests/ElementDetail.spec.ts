@@ -61,10 +61,10 @@ describe('ElementDetail', () => {
   })
 
   it('closes on demand', async () => {
-    const { emitted } = await show()
+    const rendered = await show()
 
     await fireEvent.click(screen.getByRole('button', { name: /fermer/i }))
 
-    expect(emitted().close).toBeTruthy()
+    expect(rendered.emitted().close).toBeTruthy()
   })
 })

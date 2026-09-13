@@ -63,7 +63,11 @@ indique « Backend: ok », les deux services communiquent.
 | `make db-stack` | Rappelle comment déployer la stack Neo4j sur le cluster |
 | `make db-shell` | Ouvre un `cypher-shell` sur le graphe |
 | `make db-reset` | Vide le graphe partagé — `CONFIRM=yes` obligatoire |
-| `make check` | Lint, types et tests — ce que la CI vérifiera |
+| `make check` | Lint, types, client généré et tests sans base — ne modifie aucun fichier |
+| `make lint` | Corrige le formatage et le lint du backend (`check` ne corrige rien) |
+| `make audit` | `bandit`, `pip-audit`, `npm audit` |
+| `make pg-backup` | Sauvegarde la base PostgreSQL du cluster dans `backups/` |
+| `make db-backup-howto` | Rappelle la sauvegarde du graphe, hors ligne sur l'hôte |
 | `make clean` | Supprime `.venv`, `node_modules`, caches et artefacts de build |
 
 En cas de conflit de port, les ports sont surchargeables :
@@ -75,17 +79,27 @@ make run-be BE_PORT=8001
 ## Tests
 
 ```bash
-make check                # lint + types + tests sans base de données
-make test-integration     # contre le vrai Neo4j — vide le graphe local
-cd frontend && npm test -- --run && npm run typecheck
+make check                # lint + types + client généré + tests sans base, plancher de couverture 90 %
+make audit                # bandit, pip-audit, npm audit (réseau requis)
+make test-integration     # contre un Neo4j et un PostgreSQL jetables locaux, démarrés au besoin
+make test-postgres        # seulement les tests PostgreSQL, contre le conteneur jetable
 ```
 
-Les tests d'intégration effacent le contenu du graphe entre chaque cas : Neo4j
-Community ne sert qu'une seule base, il n'y a donc ni schéma de test séparé ni
-transaction à annuler. **Ce graphe est celui du cluster, partagé** : ne lance
-pas `make test-integration` pendant que quelqu'un modélise. Ils ne s'exécutent que si `EA_ALLOW_DESTRUCTIVE_TESTS=1`
-est positionné, ce que seule la cible `make test-integration` fait ; un
-`uv run pytest` nu les saute.
+Les tests d'intégration détruisent ce qu'ils touchent : ils vident le graphe
+entre chaque cas et annulent la chaîne de migrations. Ils tournent donc sur les
+conteneurs jetables de [`docker-compose.yml`](docker-compose.yml), publiés sur
+127.0.0.1, **jamais sur le cluster** — les fixtures refusent tout hôte qui n'est
+pas local, et sautent le test en le disant. Docker est donc nécessaire pour
+eux. Voir [`docs/adr/0024`](docs/adr/0024-tests-d-integration-sur-des-bases-jetables.md).
+
+`make hooks` installe, si on le souhaite, les crochets `pre-commit`. La CI
+(`.github/workflows/ci.yml`) rejoue les mêmes cibles — voir
+[`docs/adr/0026`](docs/adr/0026-la-barriere-qualite.md).
+
+Les sauvegardes des deux bases (`make pg-backup`, `make pg-restore`,
+`make db-backup-howto`) sont décrites dans
+[`docs/adr/0025`](docs/adr/0025-sauvegardes-des-deux-bases.md), encore à l'état
+de proposition : aucune n'a été restaurée contre le cluster.
 
 ## Configuration
 
@@ -119,8 +133,9 @@ access: business_process -> application_service is not permitted
 ## Le serveur MCP
 
 Le backend sert aussi le référentiel **à un agent**, en MCP, sur `/mcp` — voir
-[`docs/adr/0014`](docs/adr/0014-serveur-mcp-pour-les-agents.md). Quatorze
-outils : le CRUD des éléments, les liens, les deux parcours et le métamodèle.
+[`docs/adr/0014`](docs/adr/0014-serveur-mcp-pour-les-agents.md). Vingt-huit
+outils : le CRUD des éléments, les liens, les deux parcours, le métamodèle, les
+documents et l'adressage IP.
 Ce ne sont pas des règles réécrites pour l'occasion : chaque outil appelle le
 même service que l'API, donc un agent se voit refuser exactement ce qu'un
 humain se verrait refuser.
@@ -133,10 +148,13 @@ Un agent qui découvre le référentiel commence par `describe_metamodel` : les
 61 types d'éléments et les 11 relations sont des listes fermées, et un nom qui
 n'y figure pas est refusé.
 
-> **`/mcp` n'est pas authentifié**, parce que rien ne l'est encore ici. C'est
-> donc un chemin d'**écriture** sur le graphe pour qui atteint l'hôte de l'API :
-> à réserver à un réseau de confiance, ou à couper avec `EA_MCP_ENABLED=false`,
-> tant que l'auth n'existe pas.
+> **`/mcp` n'est pas authentifié**, parce que rien ne l'est encore ici. Il ne
+> répond donc, par défaut, qu'aux clients de **cette machine** : une requête
+> venue d'ailleurs reçoit un 403, quels que soient ses en-têtes. Un agent
+> distant passe par un tunnel SSH (`ssh -L 8000:127.0.0.1:8000 hôte`), ou
+> `EA_MCP_ALLOW_REMOTE_CLIENTS=true` ouvre l'écriture à tout le réseau — voir
+> [`docs/adr/0023`](docs/adr/0023-mcp-reserve-a-la-boucle-locale.md).
+> `EA_MCP_ENABLED=false` le coupe entièrement.
 
 ## Documentation
 

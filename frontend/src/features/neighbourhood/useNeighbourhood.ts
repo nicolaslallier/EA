@@ -9,7 +9,8 @@
 import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 
 export type ElementRead = components['schemas']['ElementRead']
 export type GraphRead = components['schemas']['GraphRead']
@@ -33,14 +34,13 @@ export type Question = {
   relationshipType?: RelationshipType | ''
 }
 
-type Status = 'idle' | 'loading' | 'ready' | 'error'
-
 export function useNeighbourhood() {
   /** The element the drawing is centred on; '' when nothing is chosen yet. */
   const focusId = ref('')
   const graph = ref<GraphRead>(EMPTY)
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // The subject changes as fast as a neighbour can be clicked, so a slow
+  // traversal must never land over the one asked for after it.
+  const traversal = useLatestRequest()
 
   // The traversal returns the subject among its own elements, so the screen
   // knows its name without asking `/elements/{id}` a second time.
@@ -53,38 +53,40 @@ export function useNeighbourhood() {
 
   async function explore(elementId: string, question: Question): Promise<void> {
     focusId.value = elementId
-    status.value = 'loading'
-    error.value = ''
-    try {
-      graph.value = unwrap(
-        await api.GET('/elements/{element_id}/neighbourhood', {
-          params: {
-            path: { element_id: elementId },
-            // An unset filter is left out rather than sent empty: an empty
-            // `relationship_type` would be a filter matching nothing.
-            query: {
-              depth: question.depth,
-              ...(question.relationshipType
-                ? { relationship_type: [question.relationshipType] }
-                : {}),
+    await traversal.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements/{element_id}/neighbourhood', {
+            params: {
+              path: { element_id: elementId },
+              // An unset filter is left out rather than sent empty: an empty
+              // `relationship_type` would be a filter matching nothing.
+              query: {
+                depth: question.depth,
+                ...(question.relationshipType
+                  ? { relationship_type: [question.relationshipType] }
+                  : {}),
+              },
             },
-          },
-        }),
-      )
-      status.value = 'ready'
-    } catch (caught) {
-      graph.value = EMPTY
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+            signal,
+          }),
+        ),
+      (answer) => {
+        graph.value = answer
+      },
+      () => {
+        graph.value = EMPTY
+      },
+    )
   }
 
   function clear(): void {
+    traversal.cancel()
     focusId.value = ''
     graph.value = EMPTY
-    status.value = 'idle'
-    error.value = ''
   }
+
+  const { status, error } = traversal
 
   return { focusId, graph, subject, neighbours, status, error, explore, clear }
 }

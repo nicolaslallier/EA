@@ -20,6 +20,7 @@ from ea.domain.ipam import (
     MAX_ALLOCATION_SCAN,
     NETWORK_TYPE,
     IpNetwork,
+    assignable_addresses,
     capacity,
     is_addressable,
     next_free_address,
@@ -27,6 +28,7 @@ from ea.domain.ipam import (
     parse_prefix,
     parse_reservations,
     reserved_by_the_protocol,
+    validate_ipam_properties,
 )
 
 
@@ -198,3 +200,156 @@ class TestTheBoundOnAllocation:
         )
 
         assert found is None
+
+
+#: Small enough to walk, so the arithmetic can be checked against a brute force
+#: that visits every address. Both families, and each of the sizes where a
+#: prefix keeps something for itself differently: the ordinary pair, RFC 3021's
+#: /31, the /32 that is a host, IPv6's subnet-router anycast, the /128.
+SMALL_PREFIXES = (
+    "10.0.1.0/28",
+    "10.0.1.0/30",
+    "10.0.1.0/31",
+    "10.0.1.5/32",
+    "2001:db8::/124",
+    "2001:db8::/127",
+    "2001:db8::1/128",
+)
+
+#: Every way two reservations can sit against each other and against a prefix.
+#: Each string mixes families on purpose: an IPv4 range must count for nothing
+#: in an IPv6 prefix, and the other way round.
+RESERVATION_SHAPES = {
+    "nothing": "",
+    "overlapping": (
+        "10.0.1.2-10.0.1.6, 10.0.1.4-10.0.1.9, 10.0.1.5, "
+        "2001:db8::2-2001:db8::6, 2001:db8::4-2001:db8::9, 2001:db8::5"
+    ),
+    "adjacent": (
+        "10.0.1.1-10.0.1.3, 10.0.1.4-10.0.1.7, 2001:db8::1-2001:db8::3, 2001:db8::4-2001:db8::7"
+    ),
+    "partly outside": (
+        "10.0.0.250-10.0.1.2, 10.0.1.14-10.0.2.3, "
+        "2001:db7:ffff:ffff:ffff:ffff:ffff:fff0-2001:db8::2, 2001:db8::e-2001:db8::1:0"
+    ),
+    "what the prefix keeps anyway": (
+        "10.0.1.0, 10.0.1.15, 10.0.1.3, 10.0.1.0/28, 2001:db8::, 2001:db8::/124"
+    ),
+    "wholly outside": "10.0.2.0/24, 192.168.0.1, 2001:db9::/64",
+    "nested": "10.0.1.0/29, 10.0.1.3-10.0.1.12, 2001:db8::/125, 2001:db8::3-2001:db8::c",
+}
+
+
+class TestCountingReservations:
+    """`reserved_count` is computed for every subnet on every listing.
+
+    So it must cost what the *reservations* cost, never what the prefix holds:
+    walking a /64 to count its reserved addresses is eighteen quintillion
+    iterations on the event loop, and every request of the process waits behind
+    them.
+    """
+
+    def test_a_64_is_counted_without_being_walked(self) -> None:
+        network = IpNetwork.read(
+            {"cidr": "2001:db8::/64", "ip_reserved": "2001:db8::/65, 2001:db8::1-2001:db8::ffff"}
+        )
+
+        assert network is not None
+        # The /65 swallows the second range whole, and its first address is the
+        # subnet-router anycast, which the capacity has already set aside.
+        assert network.reserved_count == 2**63 - 1
+
+    @pytest.mark.parametrize("prefix_text", SMALL_PREFIXES)
+    @pytest.mark.parametrize("shape", sorted(RESERVATION_SHAPES))
+    def test_it_agrees_with_walking_every_address(self, prefix_text: str, shape: str) -> None:
+        prefix = ip_network(prefix_text)
+        reserved = parse_reservations(RESERVATION_SHAPES[shape])
+
+        walked = sum(
+            1
+            for address in prefix
+            if address in reserved and not reserved_by_the_protocol(prefix, address)
+        )
+
+        assert reserved.count_within(prefix) == walked
+
+    @pytest.mark.parametrize("prefix_text", SMALL_PREFIXES)
+    @pytest.mark.parametrize("shape", sorted(RESERVATION_SHAPES))
+    def test_capacity_less_reservations_is_exactly_what_can_be_handed_out(
+        self, prefix_text: str, shape: str
+    ) -> None:
+        """The subnet's `free` figure is this subtraction, so it has to be exact.
+
+        A reservation covering the network or broadcast address must not take
+        that address off a second time: the capacity never counted it.
+        """
+        prefix = ip_network(prefix_text)
+        reserved = parse_reservations(RESERVATION_SHAPES[shape])
+        walked = [
+            address
+            for address in prefix
+            if not reserved_by_the_protocol(prefix, address) and address not in reserved
+        ]
+
+        assert list(assignable_addresses(prefix, reserved)) == walked
+        assert capacity(prefix) - reserved.count_within(prefix) == len(walked)
+
+
+class TestAllocatingFromAHugePrefix:
+    def test_a_reserved_stretch_is_jumped_rather_than_walked(self) -> None:
+        """`MAX_ALLOCATION_SCAN` bounds the addresses *offered*, not the ones skipped.
+
+        So a reservation must be stepped over in one move: otherwise the first
+        half of a /64 set aside is 2**63 addresses examined and refused before
+        the bound ever counts one.
+        """
+        found = next_free_address(
+            ip_network("2001:db8::/64"), taken=(), reserved=parse_reservations("2001:db8::/65")
+        )
+
+        assert found == ip_address("2001:db8::8000:0:0:0")
+
+
+class TestTheConventionIsStoredInOneSpelling:
+    """A uniqueness constraint compares strings, not networks.
+
+    `10.0.1.0/24` and `10.0.1.0/255.255.255.0` are one subnet and two values, so
+    a property stored as typed would let the same prefix be declared twice past
+    the constraint that exists to forbid it — and the same goes for an address.
+    Whatever door the properties come through, they leave in canonical form.
+    """
+
+    @pytest.mark.parametrize(
+        ("typed", "stored"),
+        [
+            (" 10.0.1.0/255.255.255.0 ", "10.0.1.0/24"),
+            ("2001:DB8::/64", "2001:db8::/64"),
+            ("2001:0db8:0000::/64", "2001:db8::/64"),
+            ("10.0.1.5", "10.0.1.5/32"),
+        ],
+    )
+    def test_a_prefix_is_stored_as_the_network_it_names(self, typed: str, stored: str) -> None:
+        canonical = validate_ipam_properties(NETWORK_TYPE, {"cidr": typed})
+
+        assert canonical == {"cidr": stored, "vrf": DEFAULT_VRF}
+
+    def test_an_address_is_stored_canonical_beside_its_scope(self) -> None:
+        canonical = validate_ipam_properties(
+            E.NODE, {"ip_address": " 2001:DB8::1 ", "vrf": " dmz ", "owner": "infra"}
+        )
+
+        assert canonical == {"ip_address": "2001:db8::1", "vrf": "dmz", "owner": "infra"}
+
+    def test_an_unstated_scope_is_written_rather_than_implied(self) -> None:
+        """A composite constraint ignores a node missing one of its properties.
+
+        An address or a prefix stored without `vrf` would therefore be outside
+        the only guarantee that it is unique, so the default is written out.
+        """
+        canonical = validate_ipam_properties(E.NODE, {"ip_address": "10.0.1.12"})
+
+        assert canonical == {"ip_address": "10.0.1.12", "vrf": DEFAULT_VRF}
+
+    def test_properties_that_say_nothing_about_addressing_are_left_alone(self) -> None:
+        assert validate_ipam_properties(E.NODE, {"owner": "infra"}) == {"owner": "infra"}
+        assert validate_ipam_properties(E.NODE, None) is None

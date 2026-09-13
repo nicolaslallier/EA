@@ -9,7 +9,8 @@
 import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 
 export type ElementRead = components['schemas']['ElementRead']
 export type RelationshipRead = components['schemas']['RelationshipRead']
@@ -24,8 +25,6 @@ export const CANDIDATE_LIMIT = 20
 /** Shown in place of a name the response did not carry — never a raw uuid. */
 export const UNKNOWN_ENDPOINT = 'élément inconnu'
 
-type Status = 'idle' | 'loading' | 'ready' | 'error'
-
 export function useElementRelationships() {
   /** The element the panel is about; null when it is closed. */
   const subject = ref<ElementRead | null>(null)
@@ -35,8 +34,15 @@ export function useElementRelationships() {
   /** The relationships the metamodel allows for the pair currently being built. */
   const permitted = ref<RelationshipType[]>([])
   const candidates = ref<ElementRead[]>([])
-  const status = ref<Status>('idle')
-  const error = ref('')
+  const listing = useLatestRequest()
+  const { status, error } = listing
+  // The form asks two questions of its own, each as fast as the user changes
+  // a field — a keystroke, a direction flipped — so each keeps only its latest
+  // answer, and neither cancels the other or the list of links.
+  const permission = useLatestRequest()
+  const search = useLatestRequest()
+  /** Why the form cannot offer a choice right now; '' while it can. */
+  const lookupError = computed(() => permission.error.value || search.error.value)
 
   const names = computed(
     () => new Map(endpoints.value.map((element) => [element.id, element.name])),
@@ -52,21 +58,19 @@ export function useElementRelationships() {
     if (!element) {
       return
     }
-    status.value = 'loading'
-    error.value = ''
-    try {
-      const view = unwrap(
-        await api.GET('/elements/{element_id}/relationships', {
-          params: { path: { element_id: element.id } },
-        }),
-      )
-      links.value = view.relationships
-      endpoints.value = view.elements
-      status.value = 'ready'
-    } catch (caught) {
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+    await listing.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements/{element_id}/relationships', {
+            params: { path: { element_id: element.id } },
+            signal,
+          }),
+        ),
+      (view) => {
+        links.value = view.relationships
+        endpoints.value = view.elements
+      },
+    )
   }
 
   /** Point the panel at an element and fetch its links. */
@@ -74,15 +78,17 @@ export function useElementRelationships() {
     subject.value = element
     links.value = []
     endpoints.value = []
+    search.cancel()
     candidates.value = []
-    permitted.value = []
+    clearPermitted()
     await load()
   }
 
   function close(): void {
+    listing.cancel()
+    search.cancel()
+    permission.cancel()
     subject.value = null
-    status.value = 'idle'
-    error.value = ''
   }
 
   /**
@@ -93,22 +99,50 @@ export function useElementRelationships() {
    * which nine would be refused.
    */
   async function loadPermitted(source: ElementType, target: ElementType): Promise<void> {
-    permitted.value = unwrap(
-      await api.GET('/metamodel/relationships', { params: { query: { source, target } } }),
+    await permission.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/metamodel/relationships', {
+            params: { query: { source, target } },
+            signal,
+          }),
+        ),
+      (answer) => {
+        permitted.value = answer
+      },
+      () => {
+        permitted.value = []
+      },
     )
+  }
+
+  /** Forget the pair being built, including an answer about it still on the way. */
+  function clearPermitted(): void {
+    permission.cancel()
+    permitted.value = []
   }
 
   /** Candidate other ends, searched server-side — the graph outgrows one page. */
   async function searchCandidates(term: string): Promise<void> {
-    const page = unwrap(
-      await api.GET('/elements', {
-        params: { query: { limit: CANDIDATE_LIMIT, ...(term ? { search: term } : {}) } },
-      }),
+    await search.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements', {
+            params: { query: { limit: CANDIDATE_LIMIT, ...(term ? { search: term } : {}) } },
+            signal,
+          }),
+        ),
+      (page) => {
+        // ArchiMate permits a self-association, but the panel does not offer
+        // one: "associate X with X" is far more often a mis-click than an
+        // intention, and the API stays free to accept it from another client.
+        candidates.value = page.items.filter((element) => element.id !== subject.value?.id)
+      },
+      () => {
+        // Candidates found for an earlier term are not candidates for this one.
+        candidates.value = []
+      },
     )
-    // ArchiMate permits a self-association, but the panel does not offer one:
-    // "associate X with X" is far more often a mis-click than an intention, and
-    // the API stays free to accept it from another client.
-    candidates.value = page.items.filter((element) => element.id !== subject.value?.id)
   }
 
   async function connect(payload: RelationshipCreate): Promise<void> {
@@ -135,11 +169,13 @@ export function useElementRelationships() {
     candidates,
     status,
     error,
+    lookupError,
     nameOf,
     open,
     close,
     load,
     loadPermitted,
+    clearPermitted,
     searchCandidates,
     connect,
     disconnect,

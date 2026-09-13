@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from uuid import UUID
 
 import pytest
 
@@ -29,7 +30,7 @@ from ea.domain.ipam import ADDRESS_PROPERTY, DEFAULT_VRF
 from ea.domain.model import Element
 from ea.services.architecture import ArchitectureService
 from ea.services.ipam import IpamService
-from tests.conftest import InMemoryRepository
+from tests.conftest import FIXED_NOW, InMemoryRepository
 
 
 @pytest.mark.asyncio
@@ -397,3 +398,181 @@ def _store(repository: InMemoryRepository, element: Element, properties: dict[st
     version of this code that did not check yet.
     """
     repository.elements[element.id] = replace(element, properties=properties)
+
+
+@pytest.mark.asyncio
+class TestListingSubnetsOfBothFamilies:
+    async def test_a_scope_holding_ipv4_and_ipv6_still_lists_its_subnets(
+        self, ipam: IpamService
+    ) -> None:
+        """An IPv4 and an IPv6 network are not orderable against each other.
+
+        Sorting them as networks raised inside every listing of a dual-stack
+        VRF, so one IPv6 subnet made the whole IPAM screen unreadable. Family
+        first, then address, then the narrower prefix last.
+        """
+        await ipam.declare_network(name="DMZ v6", cidr="2001:db8::/64", vrf="dmz")
+        await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24", vrf="dmz")
+        await ipam.declare_network(name="Admin", cidr="10.0.0.0/24", vrf="dmz")
+        await ipam.declare_network(name="Corporate", cidr="10.0.0.0/8", vrf="dmz")
+
+        listed = await ipam.list_networks()
+
+        assert [subnet.element.name for subnet in listed] == [
+            "Corporate",
+            "Admin",
+            "DMZ",
+            "DMZ v6",
+        ]
+
+    async def test_a_64_with_reservations_reports_how_full_it_is_at_once(
+        self, ipam: IpamService
+    ) -> None:
+        await ipam.declare_network(
+            name="DMZ v6", cidr="2001:db8::/64", reserved="2001:db8::1-2001:db8::ff"
+        )
+
+        [subnet] = await ipam.list_networks()
+
+        assert subnet.network.reserved_count == 255
+        assert subnet.free == 2**64 - 1 - 255
+
+    async def test_listing_subnets_reads_the_declared_subnets_once(self) -> None:
+        repository = _CountingNetworkReads()
+        service = ArchitectureService(repository, clock=lambda: FIXED_NOW)
+        ipam = IpamService(service, repository)
+        subnet = await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+        host = await service.create_element(element_type=E.NODE, name="srv-app-01")
+        await ipam.allocate_next(subnet.element.id, host.id)
+        repository.network_reads = 0
+
+        [listed] = await ipam.list_networks()
+
+        assert listed.used == 1
+        assert repository.network_reads == 1
+
+
+@pytest.mark.asyncio
+class TestTheCatalogueWritesTheConventionInOneSpelling:
+    """`create_element` and `update_element` are doors onto the IPAM too.
+
+    The uniqueness constraints compare the stored strings, so a prefix or an
+    address kept as typed would be one spelling away from a duplicate — see
+    `docs/adr/0020`.
+    """
+
+    async def test_a_prefix_written_through_the_catalogue_is_stored_as_the_network(
+        self, service: ArchitectureService
+    ) -> None:
+        network = await service.create_element(
+            element_type=E.COMMUNICATION_NETWORK,
+            name="DMZ",
+            properties={"cidr": "10.0.1.0/255.255.255.0"},
+        )
+
+        stored = await service.get_element(network.id)
+        assert dict(stored.properties) == {"cidr": "10.0.1.0/24", "vrf": DEFAULT_VRF}
+
+    async def test_an_update_through_the_catalogue_is_stored_the_same_way(
+        self, service: ArchitectureService
+    ) -> None:
+        network = await service.create_element(element_type=E.COMMUNICATION_NETWORK, name="DMZ")
+
+        await service.update_element(
+            network.id, properties={"cidr": " 2001:DB8::/64 ", "vrf": "dmz"}
+        )
+
+        stored = await service.get_element(network.id)
+        assert dict(stored.properties) == {"cidr": "2001:db8::/64", "vrf": "dmz"}
+
+    async def test_an_address_written_through_the_catalogue_is_seen_as_taken(
+        self, ipam: IpamService, service: ArchitectureService
+    ) -> None:
+        await ipam.declare_network(name="DMZ v6", cidr="2001:db8::/64")
+        await service.create_element(
+            element_type=E.NODE, name="srv-app-01", properties={"ip_address": "2001:DB8::1"}
+        )
+        second = await service.create_element(element_type=E.NODE, name="srv-app-02")
+
+        with pytest.raises(AddressAlreadyAssignedError, match="srv-app-01"):
+            await ipam.assign_address(second.id, "2001:db8::1")
+
+
+@pytest.mark.asyncio
+class TestLosingAnAllocationRace:
+    """Two callers allocating from one subnet both read the same free address.
+
+    The constraint makes sure only one of them gets it. The other asked for
+    *an* address, not that one, so it is handed the next rather than a refusal
+    it would have to retry by itself — within a bound, so a subnet that keeps
+    being raced for still answers.
+    """
+
+    async def test_the_loser_is_handed_the_next_address(self) -> None:
+        repository, service, ipam = _a_graph_read_before_a_rival_wrote()
+        subnet = await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+        rival = await service.create_element(element_type=E.NODE, name="rival")
+        await ipam.assign_address(rival.id, "10.0.1.1")
+        latecomer = await service.create_element(element_type=E.NODE, name="latecomer")
+        repository.hide(rival.id, reads=1)
+
+        assigned = await ipam.allocate_next(subnet.element.id, latecomer.id)
+
+        assert str(assigned.address) == "10.0.1.2"
+
+    async def test_a_race_lost_every_time_is_reported_rather_than_retried_forever(self) -> None:
+        repository, service, ipam = _a_graph_read_before_a_rival_wrote()
+        subnet = await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+        rival = await service.create_element(element_type=E.NODE, name="rival")
+        await ipam.assign_address(rival.id, "10.0.1.1")
+        latecomer = await service.create_element(element_type=E.NODE, name="latecomer")
+        repository.hide(rival.id, reads=1_000)
+
+        with pytest.raises(AddressAlreadyAssignedError, match="rival"):
+            await ipam.allocate_next(subnet.element.id, latecomer.id)
+
+        assert repository.stale_reads > 900
+
+
+class _CountingNetworkReads(InMemoryRepository):
+    """The graph double, counting how often the declared subnets are fetched."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.network_reads = 0
+
+    async def networks(self) -> tuple[Element, ...]:
+        self.network_reads += 1
+        return await super().networks()
+
+
+class _StaleInventory(InMemoryRepository):
+    """A graph whose inventory is read before a rival's address has landed.
+
+    That is what losing a race looks like from inside the service: the listing
+    says an address is free, and the write then finds it taken.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stale_reads = 0
+        self._hidden: set[UUID] = set()
+
+    def hide(self, element_id: UUID, *, reads: int) -> None:
+        self._hidden.add(element_id)
+        self.stale_reads = reads
+
+    async def addressed_elements(self) -> tuple[Element, ...]:
+        rows = await super().addressed_elements()
+        if self.stale_reads <= 0:
+            return rows
+        self.stale_reads -= 1
+        return tuple(element for element in rows if element.id not in self._hidden)
+
+
+def _a_graph_read_before_a_rival_wrote() -> tuple[
+    _StaleInventory, ArchitectureService, IpamService
+]:
+    repository = _StaleInventory()
+    service = ArchitectureService(repository, clock=lambda: FIXED_NOW)
+    return repository, service, IpamService(service, repository)

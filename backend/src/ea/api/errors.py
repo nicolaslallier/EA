@@ -82,6 +82,21 @@ async def _handle_value_error(_: Request, error: Exception) -> JSONResponse:
     )
 
 
+async def _handle_unexpected_error(_: Request, error: Exception) -> JSONResponse:
+    """Anything nobody anticipated: the envelope, and not one word of the cause.
+
+    Registered for `Exception`, which Starlette installs in its outermost
+    middleware. That middleware re-raises once this answer is sent, so the
+    traceback still reaches the ASGI server's log; the client, which may be any
+    machine on the LAN (docs/adr/0016), gets a sentence that names nothing.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": "internal_error", "detail": "The server failed to answer this request."},
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DomainError, _handle_domain_error)
     app.add_exception_handler(ValueError, _handle_value_error)
+    app.add_exception_handler(Exception, _handle_unexpected_error)

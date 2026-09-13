@@ -81,7 +81,9 @@ ADDRESSABLE_TYPES: Final[frozenset[ElementType]] = frozenset(
 #: million addresses; scanning them all to answer "the first one free" would
 #: turn one API call into a minute of arithmetic. Past this bound the honest
 #: answer is that the prefix is too large to allocate from linearly, not a
-#: number that arrived late.
+#: number that arrived late. It counts the addresses *offered*, which bounds the
+#: work only because `assignable_addresses` steps over a reserved stretch in one
+#: move instead of refusing its addresses one at a time.
 MAX_ALLOCATION_SCAN: Final = 100_000
 
 
@@ -139,18 +141,26 @@ def reserved_by_the_protocol(prefix: IpPrefix, address: IpAddress) -> bool:
     broadcast, but the first address of a subnet is the subnet-router anycast
     address (RFC 4291) and is not a host's either.
     """
+    return address in _kept_by_the_protocol(prefix)
+
+
+def _kept_by_the_protocol(prefix: IpPrefix) -> tuple[IpAddress, ...]:
+    """The addresses `reserved_by_the_protocol` names, listed: never more than two.
+
+    Listed once so that the capacity, the reservation count and the allocator
+    cannot disagree about them — `Subnet.free` is a subtraction of the first two,
+    and it is only right if both left out exactly the same addresses.
+    """
     if prefix.prefixlen >= prefix.max_prefixlen - 1:
-        return False
+        return ()
     if isinstance(prefix, IPv6Network):
-        return address == prefix.network_address
-    return address in (prefix.network_address, prefix.broadcast_address)
+        return (prefix.network_address,)
+    return (prefix.network_address, prefix.broadcast_address)
 
 
 def capacity(prefix: IpPrefix) -> int:
     """How many addresses this prefix can actually hand to hosts."""
-    if prefix.prefixlen >= prefix.max_prefixlen - 1:
-        return prefix.num_addresses
-    return prefix.num_addresses - (1 if isinstance(prefix, IPv6Network) else 2)
+    return prefix.num_addresses - len(_kept_by_the_protocol(prefix))
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,14 +184,46 @@ class Reservations:
             for first, last in self.ranges
         )
 
-    def count_within(self, prefix: IpPrefix) -> int:
-        """How many of this prefix's addresses the reservations cover.
+    def spans_within(self, prefix: IpPrefix) -> tuple[tuple[int, int], ...]:
+        """The reserved stretches of this prefix as integer bounds: clipped, merged, in order.
 
-        Counted by walking the prefix's own addresses rather than by adding the
-        range sizes, because two reservations may overlap and a total that
-        double-counts them would report a subnet as fuller than it is.
+        Two reservations may overlap or touch — a DHCP pool written as a range
+        and a gateway inside it written again — so they are merged before
+        anything is counted or skipped. Everything that reasons about the
+        reservations in bulk goes through here, which is what keeps that work
+        proportional to the reservations written, never to the size of the
+        prefix: a /64 cannot be walked.
         """
-        return sum(1 for address in prefix if address in self)
+        low, high = int(prefix.network_address), int(prefix.broadcast_address)
+        clipped = sorted(
+            (max(int(first), low), min(int(last), high))
+            for first, last in self.ranges
+            if first.version == prefix.version and int(first) <= high and int(last) >= low
+        )
+        merged: list[tuple[int, int]] = []
+        for first, last in clipped:
+            if merged and first <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], last))
+            else:
+                merged.append((first, last))
+        return tuple(merged)
+
+    def count_within(self, prefix: IpPrefix) -> int:
+        """How many of the addresses this prefix could hand out the reservations cover.
+
+        Summed over merged spans rather than by adding the range sizes, because
+        two reservations may overlap and a total that double-counts them would
+        report a subnet as fuller than it is. And computed rather than walked:
+        this runs for every subnet of every listing.
+
+        An address the protocol keeps anyway — network, broadcast, subnet-router
+        anycast — is not counted even when a reservation covers it: `capacity`
+        never included it, and taking it off a second time would leave
+        `Subnet.free` short.
+        """
+        covered = sum(last - first + 1 for first, last in self.spans_within(prefix))
+        kept = sum(1 for address in _kept_by_the_protocol(prefix) if address in self)
+        return covered - kept
 
 
 def parse_reservations(text: str) -> Reservations:
@@ -214,11 +256,26 @@ def _parse_reservation(entry: str) -> tuple[IpAddress, IpAddress]:
 
 
 def assignable_addresses(prefix: IpPrefix, reserved: Reservations) -> Iterator[IpAddress]:
-    """Every address of the prefix a host may be given, in order."""
-    for address in prefix:
-        if reserved_by_the_protocol(prefix, address) or address in reserved:
-            continue
-        yield address
+    """Every address of the prefix a host may be given, in order.
+
+    A reserved stretch is stepped over in one move rather than walked. The
+    caller bounds how many addresses it is *offered* (`MAX_ALLOCATION_SCAN`),
+    and a bound that never sees the refused ones would let a reserved half of a
+    /64 run for ever before counting a single address.
+    """
+    kept = _kept_by_the_protocol(prefix)
+    make = type(prefix.network_address)
+    candidate = int(prefix.network_address)
+    end = int(prefix.broadcast_address)
+    # The sentinel span just past the prefix drains whatever follows the last
+    # reservation, so the loop needs no second copy of its body.
+    for first, last in (*reserved.spans_within(prefix), (end + 1, end + 1)):
+        while candidate < first:
+            address = make(candidate)
+            if address not in kept:
+                yield address
+            candidate += 1
+        candidate = max(candidate, last + 1)
 
 
 def next_free_address(
@@ -363,19 +420,28 @@ class AddressLocation:
 
 def validate_ipam_properties(
     element_type: ElementType, properties: Mapping[str, str] | None
-) -> None:
+) -> Mapping[str, str] | None:
     """Refuse an IPAM property that contradicts the element carrying it.
 
     Called from `ArchitectureService` on every write, not only from the IPAM
     use cases. The addressing lives in free-form properties, so `PATCH
     /elements/{id}` is a second door onto it; a rule checked behind only one of
     the two doors is a rule the inventory cannot rely on — see `docs/adr/0020`.
+
+    What comes back is what must be stored: the same properties, with the
+    address and the prefix in their one canonical spelling and the scope written
+    out beside them. Both matter to the uniqueness constraints in
+    `db/schema.py`, which compare stored strings — `10.0.1.0/255.255.255.0` and
+    `10.0.1.0/24` are one network and two values — and which ignore a node
+    missing one of their properties, so an unstated VRF would put the row
+    outside the only guarantee that it is unique.
     """
     if not properties:
-        return
+        return properties
+    canonical = dict(properties)
     address = properties.get(ADDRESS_PROPERTY, "").strip()
     if address:
-        parse_address(address)
+        canonical[ADDRESS_PROPERTY] = str(parse_address(address))
         if not is_addressable(element_type):
             msg = (
                 f"an element of type {element_type.value} cannot answer on an IP address; "
@@ -389,6 +455,10 @@ def validate_ipam_properties(
                 f"{NETWORK_TYPE.value} element, not on a {element_type.value}"
             )
             raise NotASubnetError(msg)
-    if prefix := properties.get(PREFIX_PROPERTY, "").strip():
-        parse_prefix(prefix)
+    prefix = properties.get(PREFIX_PROPERTY, "").strip()
+    if prefix:
+        canonical[PREFIX_PROPERTY] = parse_prefix(prefix).with_prefixlen
     parse_reservations(properties.get(RESERVED_PROPERTY, ""))
+    if address or prefix:
+        canonical[VRF_PROPERTY] = read_vrf(properties)
+    return canonical

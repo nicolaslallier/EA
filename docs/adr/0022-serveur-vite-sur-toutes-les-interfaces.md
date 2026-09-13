@@ -5,7 +5,7 @@ statut: Accepté
 affects: frontend/vite.config.ts, frontend/src/lib/api.ts, frontend/.env.example, backend/.env.example, Makefile
 ---
 
-# 19. Servir le SPA depuis le réseau local
+# 22. Servir le SPA depuis le réseau local
 
 Date : 2026-09-08
 Statut : Accepté

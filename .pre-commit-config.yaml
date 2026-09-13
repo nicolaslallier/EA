@@ -1,0 +1,60 @@
+# Ce qui tourne avant chaque commit — voir docs/adr/0026.
+#
+# Rien ne l'installe à ta place : `make hooks` écrit le crochet dans .git, et
+# c'est un choix de chaque poste. Une fois installé, ne le contourne pas avec
+# `--no-verify` : la CI refera les mêmes vérifications, plus tard et plus loin.
+#
+# Les crochets Python et Node sont `local` et passent par `uv run` / `npm run` :
+# ruff et mypy sont ceux de backend/uv.lock, pas une seconde copie épinglée ici
+# qui divergerait du venv, du Makefile et de la CI. Seul le détecteur de
+# secrets vient d'un dépôt externe, parce qu'il n'appartient à aucune des deux
+# chaînes d'outils — sa révision est épinglée.
+#
+# Aucun crochet ne modifie de fichier : un commit qui échoue le dit, et
+# `make lint` corrige. Un crochet qui reformate en silence produit un commit
+# différent de ce qu'on a relu.
+
+minimum_pre_commit_version: "3.2.0"
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format --check (backend)
+        entry: bash -c 'cd backend && uv run --extra dev ruff format --check .'
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff check (backend)
+        entry: bash -c 'cd backend && uv run --extra dev ruff check .'
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy --strict (backend)
+        entry: bash -c 'cd backend && uv run --extra dev mypy src migrations'
+        language: system
+        files: ^backend/(src|migrations)/.*\.py$
+        pass_filenames: false
+
+      - id: frontend-typecheck
+        name: vue-tsc (frontend)
+        entry: bash -c 'cd frontend && npm run --silent typecheck'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|vue|json)$
+        pass_filenames: false
+
+      - id: frontend-lint
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npm run --silent lint'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|vue|js|mjs|cjs)$
+        pass_filenames: false

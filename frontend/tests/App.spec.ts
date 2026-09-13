@@ -9,7 +9,7 @@ async function renderApp(path: string) {
   // The shell mounts BackendStatus, which probes /health on mount.
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
+    vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))),
   )
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)

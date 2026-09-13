@@ -7,37 +7,38 @@
 // detail was opened.
 import { ref } from 'vue'
 
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 import type { ElementRead } from './useElementCatalogue'
-
-type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 export function useElementDetail() {
   const element = ref<ElementRead | null>(null)
-  const status = ref<Status>('idle')
-  const error = ref('')
+  // `?element=` changes with the back button as fast as with a click, and the
+  // detail must name the element the URL names — not the slowest answer.
+  const read = useLatestRequest()
+  const { status, error } = read
 
   async function open(id: string): Promise<void> {
     // The previous element goes first: showing it under the new id, even for
     // the length of one request, would be showing the wrong element.
     element.value = null
-    status.value = 'loading'
-    error.value = ''
-    try {
-      element.value = unwrap(
-        await api.GET('/elements/{element_id}', { params: { path: { element_id: id } } }),
-      )
-      status.value = 'ready'
-    } catch (caught) {
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+    await read.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements/{element_id}', {
+            params: { path: { element_id: id } },
+            signal,
+          }),
+        ),
+      (answer) => {
+        element.value = answer
+      },
+    )
   }
 
   function close(): void {
+    read.cancel()
     element.value = null
-    status.value = 'idle'
-    error.value = ''
   }
 
   return { element, status, error, open, close }

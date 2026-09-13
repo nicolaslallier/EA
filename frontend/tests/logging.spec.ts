@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 // The SPA is loaded from another machine as readily as from localhost
-// (docs/adr/0019), so "check the terminal" is not an answer when a screen stays
+// (docs/adr/0022), so "check the terminal" is not an answer when a screen stays
 // empty: the only trace of what the browser asked for is in the browser. See
 // docs/adr/0021.
 describe('resolveLevel', () => {

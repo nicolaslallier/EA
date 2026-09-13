@@ -282,4 +282,17 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0011](adr/0011-detail-d-un-element-dans-le-catalogue.md) | Le détail d'un élément, ouvert depuis le catalogue | Accepté |
 | [0012](adr/0012-ecran-du-metamodele.md) | L'écran du métamodèle, et la matrice servie par lignes | Accepté |
 | [0013](adr/0013-ecran-d-analyse-d-impact.md) | L'écran d'analyse d'impact, et le dessin partagé par les deux parcours | Accepté |
+| [0014](adr/0014-serveur-mcp-pour-les-agents.md) | Un serveur MCP monté sur l'API | Accepté |
+| [0015](adr/0015-socle-postgresql-sqlalchemy-alembic.md) | Le socle relationnel, sans première table | Accepté |
+| [0016](adr/0016-ecoute-sur-toutes-les-interfaces.md) | Écouter sur 0.0.0.0, sans élargir qui est servi | Accepté |
+| [0017](adr/0017-documents-markdown-attaches-aux-elements.md) | Les documents markdown attachés aux éléments | Accepté |
+| [0018](adr/0018-documents-exposes-aux-agents-via-mcp.md) | Les documents markdown exposés aux agents | Accepté |
+| [0019](adr/0019-recherche-semantique-sur-les-documents.md) | Recherche sémantique sur les documents | Accepté |
+| [0020](adr/0020-adressage-ip-en-proprietes-du-graphe.md) | L'adressage IP en propriétés du graphe | Accepté |
+| [0021](adr/0021-des-logs-que-quelqu-un-peut-lire.md) | Des logs que quelqu'un peut lire | Accepté |
+| [0022](adr/0022-serveur-vite-sur-toutes-les-interfaces.md) | Servir le SPA depuis le réseau local | Accepté |
+| [0023](adr/0023-mcp-reserve-a-la-boucle-locale.md) | Réserver `/mcp` à la boucle locale | Accepté |
+| [0024](adr/0024-tests-d-integration-sur-des-bases-jetables.md) | Les tests d'intégration tournent sur des bases jetables, jamais sur le cluster | Accepté |
+| [0025](adr/0025-sauvegardes-des-deux-bases.md) | Sauvegardes des deux bases | Proposition |
+| [0026](adr/0026-la-barriere-qualite.md) | La barrière qualité | Accepté |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

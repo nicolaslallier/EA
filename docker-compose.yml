@@ -1,17 +1,26 @@
-# PostgreSQL jetable, pour les tests.
+# Bases jetables, pour les tests — et pour rien d'autre.
 #
 # Aucune des deux bases du projet ne tourne ici : le graphe (docs/adr/0006) et
 # le PostgreSQL applicatif (docs/adr/0015) sont deux instances uniques sur le
-# cluster Docker, 192.168.1.252.
+# cluster Docker, 192.168.1.252. Personne ne modélise contre ce fichier.
 #
-# Ce conteneur existe pour une seule raison : les tests d'intégration relationnels
-# appliquent puis annulent la chaîne de migrations (`alembic downgrade base`), ce
-# qu'on ne fait pas sur une base que d'autres utilisent. `make test-postgres` le
-# démarre et pointe dessus explicitement ; `make pg-ping`, `pg-shell` et
-# `pg-migrate` visent le cluster, pas ce conteneur.
+# Ces deux conteneurs existent pour une seule raison : les tests d'intégration
+# détruisent ce qu'ils touchent. Ceux du graphe vident les `:Element` entre
+# chaque cas, ceux de PostgreSQL appliquent puis annulent la chaîne de
+# migrations (`alembic downgrade base`) — ce qu'on ne fait pas sur une base que
+# d'autres utilisent. Voir docs/adr/0024.
 #
-# Le mot de passe ci-dessous est jetable, pas un secret : celui du cluster vit
-# dans backend/.env, jamais dans un fichier versionné.
+# `make test-integration` démarre les deux et pointe dessus ; `make
+# test-postgres` démarre PostgreSQL seul. `make db-ping`, `db-shell`,
+# `pg-ping`, `pg-shell` et `pg-migrate` visent le cluster, pas ces conteneurs.
+#
+# Les deux ne publient que sur 127.0.0.1 : les fixtures refusent toute adresse
+# qui n'est pas locale, et un conteneur joignable depuis le LAN deviendrait vite
+# « le graphe de quelqu'un ». Les ports sont surchargeables — le Makefile passe
+# les mêmes valeurs aux conteneurs et aux tests, pour qu'ils ne divergent pas.
+#
+# Les mots de passe ci-dessous sont jetables, pas des secrets : ceux du cluster
+# vivent dans backend/.env, jamais dans un fichier versionné.
 
 services:
   postgres:
@@ -22,10 +31,10 @@ services:
     image: pgvector/pgvector:pg17
     container_name: ea-postgres
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_TEST_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ea
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-developmentonly}"
+      POSTGRES_PASSWORD: "${POSTGRES_TEST_PASSWORD:-developmentonly}"
       POSTGRES_DB: ea
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -34,6 +43,41 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  neo4j:
+    # La même image que deploy/neo4j.stack.yml : un test qui passe ici doit
+    # passer contre le graphe du cluster, contraintes et Cypher compris.
+    image: neo4j:5.26-community
+    container_name: ea-neo4j-test
+    # Bolt seulement, et seulement en local. Pas de navigateur (7474) : ce
+    # graphe est vidé entre chaque test, ce n'est pas un endroit où regarder un
+    # modèle. Pas de volume nommé non plus, pour la même raison.
+    ports:
+      - "127.0.0.1:${NEO4J_TEST_BOLT_PORT:-7688}:7687"
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_TEST_PASSWORD:-developmentonly}"
+      # Le healthcheck a besoin du mot de passe dans le conteneur, et
+      # NEO4J_AUTH n'est lu qu'une fois. Le nom ne commence pas par NEO4J_ :
+      # l'image traduit toute variable NEO4J_* en réglage de neo4j.conf, et un
+      # réglage inconnu fait échouer le démarrage.
+      EA_HEALTHCHECK_PASSWORD: "${NEO4J_TEST_PASSWORD:-developmentonly}"
+      NEO4J_server_bolt_advertised__address: "localhost:${NEO4J_TEST_BOLT_PORT:-7688}"
+      # Une base de test tient dans peu de mémoire ; les valeurs par défaut de
+      # l'image se dimensionnent sur la machine hôte entière.
+      NEO4J_server_memory_pagecache_size: "256M"
+      NEO4J_server_memory_heap_max__size: "512M"
+      NEO4J_server_memory_heap_initial__size: "512M"
+    healthcheck:
+      # `cypher-shell` est le seul test qui prouve que Bolt répond vraiment. Il
+      # lit NEO4J_PASSWORD dans son environnement : posé pour cette commande
+      # seulement, le mot de passe n'apparaît pas dans ses arguments (`ps`), et
+      # n'est pas une variable du conteneur que l'image prendrait pour un
+      # réglage.
+      test: ["CMD-SHELL", "NEO4J_USERNAME=neo4j NEO4J_PASSWORD=\"$${EA_HEALTHCHECK_PASSWORD}\" cypher-shell 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
 
 volumes:
   postgres-data:

@@ -8,12 +8,11 @@
 import { ref } from 'vue'
 
 import type { components } from '../../api/schema'
-import { api, messageOf, unwrap } from '../../lib/api'
+import { api, unwrap } from '../../lib/api'
+import { useLatestRequest } from '../../lib/latest'
 
 export type DocumentSummary = components['schemas']['DocumentSummaryRead']
 export type DocumentRead = components['schemas']['DocumentRead']
-
-type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 /**
  * The `multipart/form-data` body the two upload endpoints take.
@@ -48,25 +47,29 @@ function filePart(file: File) {
 
 export function useElementDocuments() {
   const items = ref<DocumentSummary[]>([])
-  const status = ref<Status>('idle')
-  const error = ref('')
+  const listing = useLatestRequest()
+  const { status, error } = listing
   /** The document whose markdown is on screen, or nothing. */
   const opened = ref<DocumentRead | null>(null)
+  // Two names clicked in a row are two reads; the text shown must be the
+  // second file's, and a megabyte still downloading for the first is dropped.
+  const reading = useLatestRequest()
+  /** Why the document last clicked could not be read; '' when it could. */
+  const readError = reading.error
 
   async function load(elementId: string): Promise<void> {
-    status.value = 'loading'
-    error.value = ''
-    try {
-      items.value = unwrap(
-        await api.GET('/elements/{element_id}/documents', {
-          params: { path: { element_id: elementId } },
-        }),
-      )
-      status.value = 'ready'
-    } catch (caught) {
-      error.value = messageOf(caught)
-      status.value = 'error'
-    }
+    await listing.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/elements/{element_id}/documents', {
+            params: { path: { element_id: elementId } },
+            signal,
+          }),
+        ),
+      (answer) => {
+        items.value = answer
+      },
+    )
   }
 
   /**
@@ -99,14 +102,25 @@ export function useElementDocuments() {
 
   /** Read the markdown of one document, which the listing never carries. */
   async function open(documentId: string): Promise<void> {
-    opened.value = unwrap(
-      await api.GET('/documents/{document_id}', {
-        params: { path: { document_id: documentId } },
-      }),
+    await reading.run(
+      async (signal) =>
+        unwrap(
+          await api.GET('/documents/{document_id}', {
+            params: { path: { document_id: documentId } },
+            signal,
+          }),
+        ),
+      (answer) => {
+        opened.value = answer
+      },
+      () => {
+        opened.value = null
+      },
     )
   }
 
   function close(): void {
+    reading.cancel()
     opened.value = null
   }
 
@@ -122,5 +136,5 @@ export function useElementDocuments() {
     await load(elementId)
   }
 
-  return { items, status, error, opened, load, upload, open, close, remove }
+  return { items, status, error, opened, readError, load, upload, open, close, remove }
 }

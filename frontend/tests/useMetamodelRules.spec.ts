@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useMetamodelRules } from '../src/features/metamodel/useMetamodelRules'
-import { aMatrix, stubApi } from './support/api'
+import { aMatrix, deferApi, stubApi } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -44,6 +44,23 @@ describe('useMetamodelRules', () => {
 
     expect(rules.reach('serving')).toBe(2)
     expect(rules.reach('')).toBe(3)
+  })
+
+  it('shows the row of the type asked for last, whichever answer arrives first', async () => {
+    const calls = deferApi()
+    const rules = useMetamodelRules()
+
+    const first = rules.load('application_component')
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    const second = rules.load('business_process')
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1].answer(aMatrix('business_process', { business_object: ['access'] }))
+    calls[0].answer(ROW)
+    await Promise.all([first, second])
+
+    expect(rules.source.value).toBe('business_process')
+    expect(rules.rules.value.map((rule) => rule.target)).toEqual(['business_object'])
+    expect(rules.error.value).toBe('')
   })
 
   it('reports a failure instead of showing rules that were never fetched', async () => {

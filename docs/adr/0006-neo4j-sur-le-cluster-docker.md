@@ -2,6 +2,7 @@
 
 Date : 2026-09-07
 Statut : Accepté
+Supersédé en partie par : [`0024`](0024-tests-d-integration-sur-des-bases-jetables.md) — le volet « tests » ; le graphe applicatif reste sur le cluster.
 
 Complète [`0004`](0004-neo4j-pour-le-graphe-d-architecture.md), qui a choisi
 Neo4j sans dire où il tourne.

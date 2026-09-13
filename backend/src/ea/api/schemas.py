@@ -35,8 +35,13 @@ from ea.domain.ipam import (
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
 from ea.domain.search import Passage
+from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
 
-#: Shared constraints, so every endpoint bounds a payload the same way.
+#: Shared constraints, so every endpoint bounds a payload the same way — and so
+#: does every MCP tool, which imports these rather than restating them. The two
+#: adapters describe a field in their own words (a model and a developer need
+#: different sentences) by layering a `Field(description=...)` over the type;
+#: the bounds themselves are declared here and nowhere else.
 Name = Annotated[str, Field(min_length=1, max_length=200)]
 Description = Annotated[str, Field(max_length=2000)]
 Documentation = Annotated[str, Field(max_length=20000)]
@@ -64,6 +69,23 @@ Reserved = Annotated[
         "10.0.1.128/25`.",
     ),
 ]
+Cidr = Annotated[
+    str,
+    Field(
+        min_length=2,
+        max_length=64,
+        description="The prefix itself, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
+    ),
+]
+
+#: The bounds of a page, a traversal, a name search and a link's label. Plain
+#: `Field`s, because `mcp/` takes them as they are; `api/` wraps each one in
+#: `Query()`, which keeps the bounds of the type it is laid over.
+Limit = Annotated[int, Field(ge=1, le=200)]
+Offset = Annotated[int, Field(ge=0)]
+Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
+Search = Annotated[str, Field(max_length=200)]
+LinkName = Annotated[str, Field(max_length=200)]
 
 
 class _Input(BaseModel):
@@ -138,7 +160,7 @@ class RelationshipCreate(_Input):
     relationship_type: RelationshipType
     source_id: UUID
     target_id: UUID
-    name: Annotated[str, Field(max_length=200)] = ""
+    name: LinkName = ""
     access_type: AccessType | None = Field(
         default=None, description="Only meaningful on an access relationship."
     )
@@ -408,14 +430,7 @@ class SubnetCreate(_Input):
     """A new subnet: a `communication_network` element carrying a prefix."""
 
     name: Name
-    cidr: Annotated[
-        str,
-        Field(
-            min_length=2,
-            max_length=64,
-            description="The prefix itself, e.g. `10.0.1.0/24` or `2001:db8::/64`.",
-        ),
-    ]
+    cidr: Cidr
     vrf: Vrf = DEFAULT_VRF
     reserved: Reserved = ""
     description: Description = ""
