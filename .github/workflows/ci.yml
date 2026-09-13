@@ -87,6 +87,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: make install
       - run: make audit
+      - run: make pipelines-install pipelines-audit
+
+  pipelines:
+    name: Pipelines — lint, types, tests (docs/adr/0028)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # Son propre lockfile : la variation de cache ne touche pas backend/uv.lock.
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: pipelines/uv.lock
+      - run: make pipelines-install pipelines-lint-check pipelines-typecheck pipelines-test
 
   integration:
     name: Intégration — Neo4j et PostgreSQL jetables

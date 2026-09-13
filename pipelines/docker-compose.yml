@@ -1,0 +1,110 @@
+# Stack Docker locale du pipeline : Prefect (orchestration), LiteLLM (le seul
+# point qui parle à un modèle réel) et le worker qui exécute les flows.
+#
+# Rien ici ne touche au cluster 192.168.1.252 : Prefect et LiteLLM gardent
+# leur propre état dans PostgreSQL, mais celui du *cluster* — l'URL vient de
+# l'environnement (voir .env.example), jamais d'un littéral ici. Ce fichier ne
+# fait que déclarer la forme du stack, pas la base qu'il utilise.
+#
+# Tous les ports publiés restent sur 127.0.0.1 : ce stack n'a pas d'auth
+# devant lui au-delà de PREFECT_API_AUTH_STRING / LITELLM_MASTER_KEY, et rien
+# ne doit en faire un service joignable depuis le LAN.
+
+name: ea-pipelines
+
+services:
+  prefect-server:
+    # Le tag suit la version de `prefect` verrouillée dans uv.lock (le client
+    # et le serveur doivent parler la même API) ; le digest dit quels octets.
+    image: prefecthq/prefect:3.8.5-python3.12@sha256:83e50f7efe9cfad1dcd49e7f972d5d07b05821ff84d34efb03febd26562bb8b5
+    container_name: ea-pipelines-prefect-server
+    command: prefect server start --host 0.0.0.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4200:4200"
+    environment:
+      # La base d'état de Prefect — jetable, sans rapport avec le catalogue.
+      PREFECT_API_DATABASE_CONNECTION_URL: ${PREFECT_DATABASE_URL:?PREFECT_DATABASE_URL est obligatoire}
+      # Sans ce jeton, quiconque atteint le port peut lire ou écrire les runs.
+      PREFECT_SERVER_API_AUTH_STRING: ${PREFECT_AUTH_STRING:?PREFECT_AUTH_STRING est obligatoire}
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      # L'adresse que le *navigateur* appelle : sans elle, `--host 0.0.0.0`
+      # ferait appeler http://0.0.0.0:4200/api à l'UI.
+      PREFECT_UI_API_URL: http://127.0.0.1:4200/api
+    healthcheck:
+      # Pas de curl dans cette image : `urllib` de la stdlib suffit et évite
+      # une dépendance supplémentaire dans le conteneur.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  litellm:
+    # La variante "-database" tient son propre état (clés, dépenses) dans
+    # PostgreSQL plutôt qu'en mémoire — nécessaire dès que le conteneur peut
+    # redémarrer. Tag numéroté, jamais `main-latest`/`main-stable`, qui bougent
+    # sous le même nom.
+    image: ghcr.io/berriai/litellm-database:v1.100.1@sha256:fc44cf7f72786e636dc4dc1032b4e431818abfec9d54b8e04284fdea7ef03e2a
+    container_name: ea-pipelines-litellm
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./litellm.yaml:/app/config.yaml:ro
+    environment:
+      DATABASE_URL: ${LITELLM_DATABASE_URL:?LITELLM_DATABASE_URL est obligatoire}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY est obligatoire}
+      # Le fournisseur de l'alias "smart" (litellm.yaml).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Le fournisseur de l'alias "fast" — LM Studio sur le cluster.
+      LM_STUDIO_API_BASE: ${LM_STUDIO_API_BASE:-}
+
+  worker:
+    build: .
+    container_name: ea-pipelines-worker
+    restart: unless-stopped
+    # Pas d'`env_file` : .env porte aussi la clé Anthropic, la clé maître de
+    # LiteLLM et les deux URL de base, dont le worker n'a pas l'usage. Il ne
+    # reçoit que ce que `pipelines.settings.Settings` lit, plus l'API Prefect.
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_API_AUTH_STRING: ${PREFECT_AUTH_STRING:?PREFECT_AUTH_STRING est obligatoire}
+      # Les trois secrets de Settings, sans défaut.
+      PIPELINES_LITELLM_API_KEY: ${PIPELINES_LITELLM_API_KEY:?PIPELINES_LITELLM_API_KEY est obligatoire}
+      PIPELINES_S3_ACCESS_KEY: ${PIPELINES_S3_ACCESS_KEY:?PIPELINES_S3_ACCESS_KEY est obligatoire}
+      PIPELINES_S3_SECRET_KEY: ${PIPELINES_S3_SECRET_KEY:?PIPELINES_S3_SECRET_KEY est obligatoire}
+      # Sans valeur ici : repris de .env s'il y est, absent sinon, et c'est
+      # alors le défaut de Settings qui s'applique. `${VAR:-}` passerait une
+      # chaîne vide, qu'un champ numérique refuse.
+      PIPELINES_EA_BASE_URL:
+      PIPELINES_EA_TIMEOUT_SECONDS:
+      PIPELINES_LITELLM_BASE_URL:
+      PIPELINES_LLM_TIMEOUT_SECONDS:
+      PIPELINES_S3_ENDPOINT:
+      PIPELINES_S3_SECURE:
+      PIPELINES_S3_BUCKET:
+      PIPELINES_MAX_SOURCE_CHARS:
+      # Là où le volume ci-dessous monte le CA — fixé ici, pas dans .env.
+      PIPELINES_S3_CA_CERT: /etc/ssl/certs/infra-ca.pem
+    extra_hosts:
+      # `PIPELINES_EA_BASE_URL` par défaut vise l'API du Mac hôte
+      # (`make run-be`), jamais démarrée dans ce stack.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Le certificat CA de l'infra (MinIO en HTTPS). Obligatoire : un fichier
+      # vide monté à sa place ferait échouer chaque appel TLS vers MinIO.
+      - ${INFRA_CA_CERT:?INFRA_CA_CERT est obligatoire, le chemin du CA de l'infra sur cette machine}:/etc/ssl/certs/infra-ca.pem:ro
+    command: python -m pipelines
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+      litellm:
+        condition: service_started

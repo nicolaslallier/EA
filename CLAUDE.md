@@ -8,6 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The relational half now holds **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the PostgreSQL of the cluster were wired by `docs/adr/0015`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
 
+A second Python project, `pipelines/`, sits beside `backend/` with its own
+lockfile: Prefect 3 and LiteLLM, self-hosted, running one flow,
+`alimenter-catalogue` — it reads a source file from MinIO, asks an LLM for the
+ArchiMate elements and relationships it describes, and writes them into the
+same catalogue through the EA API, never through `/mcp`, never through a
+repository (see `docs/adr/0028`). **Nothing here has been deployed**: the
+Docker stack (Prefect server, LiteLLM, the worker) has never run against the
+shared cluster, so `docs/adr/0028` is still a *Proposition*.
+
 **Not yet scaffolded** (do not assume these exist): auth, Playwright.
 
 `EA` = Enterprise Architecture. Expect domain modelling (capabilities, applications, flows, owners) to be the core of the backend, not CRUD-for-its-own-sake.
@@ -29,6 +38,9 @@ The relational half now holds **two tables**. `element_documents` stores the mar
 | Frontend routing | `vue-router` 4, `history` mode | Routes and menu are both derived from one section catalogue — see `docs/adr/0008` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
 | Containers | Docker + `docker compose` for the throwaway Neo4j and PostgreSQL the integration tests run against | Reproducible, and a destructive test never reaches a shared database — see `docs/adr/0024` |
+| Pipeline orchestration | Prefect 3, `flow.serve(name="manuel", limit=1)` — no work pool, no `prefect.yaml` | One flow, triggered by hand while the process runs, is the whole need so far — see `docs/adr/0028` |
+| LLM gateway | LiteLLM, behind the aliases `smart`/`fast` only (`pipelines/litellm.yaml`) | The code never names a real model; the deployment decides which one answers each alias — see `docs/adr/0028` |
+| Pipeline object storage | MinIO of the `~/OpenCode/Infra` stack, read-only from `pipelines/` | The pipeline reads a source file, it is not that store's lifecycle manager — see `docs/adr/0028` |
 
 Do not introduce a second HTTP client, ORM, state manager, or test runner alongside these without recording an ADR.
 
@@ -67,6 +79,18 @@ frontend/
   src/features/                        # one directory per screen: components + its composables
   src/{components,lib}/                # shared components (the shell menu, the graph drawing); hand-written glue (the API client, the ring geometry, `latest.ts`, `debounce.ts`)
   tests/                               # Vitest specs, mirroring src/
+pipelines/                             # second Python project, own pyproject.toml + uv.lock — docs/adr/0028
+  src/pipelines/
+    settings.py                        # PIPELINES_-prefixed env config: the EA API, LiteLLM, MinIO
+    llm.py                             # one validated call to the gateway's /v1/chat/completions
+    ea.py                              # EaClient: the only door into the EA catalogue, HTTP only
+    storage.py                         # MinIO read-only access: list a prefix, read one object as text
+    catalogue.py                       # the alimenter-catalogue flow and its @task steps
+    __main__.py                        # `python -m pipelines` — alimenter_catalogue.serve(...)
+  tests/                               # MockTransport / fake S3 doubles, its own socket guard
+  docker-compose.yml                   # Prefect server + LiteLLM + the worker, ports on 127.0.0.1 only
+  Dockerfile                           # the worker image only
+  litellm.yaml                         # the smart/fast aliases and their real models
 docs/adr/                              # architecture decision records
 ```
 
@@ -78,7 +102,7 @@ Everyday local development *and* the quality gate go through the root `Makefile`
 (`make help` lists every target):
 
 ```bash
-make install                    # uv sync --all-extras + npm ci (the lockfile, exactly)
+make install                    # uv sync --all-extras + npm ci + pipelines-install (the lockfiles, exactly)
 make run                        # backend and frontend in parallel, interleaved logs
 make run-be                     # backend only  — binds 0.0.0.0:8000, reachable on the LAN
 make run-fe                     # frontend only — binds 0.0.0.0:5173, prints the LAN origin
@@ -98,7 +122,7 @@ make typecheck                  # typecheck-be (mypy --strict src migrations) + 
 make test                       # backend unit + API suites with --cov=ea: fails under 90%
 make test-unit                  # fast loop, no coverage
 make test-fe                    # Vitest, one pass
-make check                      # lint-check lint-fe typecheck openapi-check test test-fe
+make check                      # lint-check lint-fe typecheck openapi-check test test-fe pipelines-check
 make audit                      # bandit, pip-audit --skip-editable, npm audit --audit-level=high (network)
 make hooks                      # opt-in: install the pre-commit hooks into .git
 make db-test-up                 # start the throwaway Neo4j (Bolt on 127.0.0.1:7688)
@@ -106,6 +130,24 @@ make pg-up                      # start the throwaway PostgreSQL (127.0.0.1)
 make test-integration           # both throwaway containers, started if needed — never the cluster
 make test-postgres              # only the `postgres`-marked tests, against the throwaway PostgreSQL
 make pg-down                    # stop the throwaway containers
+```
+
+Pipelines (from the repo root; `pipelines-check` is folded into `make check`,
+`pipelines-install` into `make install` — see `docs/adr/0028`):
+
+```bash
+make pipelines-install                  # uv sync --all-extras in pipelines/
+make pipelines-lint                     # FIXES: ruff format, then ruff check --fix
+make pipelines-lint-check               # verifies only
+make pipelines-typecheck                # mypy --strict src
+make pipelines-test                     # pytest --cov=pipelines: fails under 90%
+make pipelines-check                    # lint-check + typecheck + test
+make pipelines-audit                    # bandit, pip-audit --skip-editable
+make pipelines-db-howto                 # prints the manual PostgreSQL/MinIO setup — runs nothing
+make pipelines-up                       # docker compose up: Prefect server + LiteLLM + the worker
+make pipelines-down                     # stop that stack
+make pipelines-logs                     # docker compose logs -f
+make pipelines-run PREFIX=inbox/        # trigger alimenter-catalogue/manuel in the worker
 ```
 
 Backend (run from `backend/`):
@@ -146,7 +188,7 @@ Two things follow for the SPA. A browser on another machine sends *that machine'
 
 **Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts; the graph stays wherever `EA_NEO4J_URI` says. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. `make app-stack` prints the deployment steps.
 
-`make check` runs the non-fixing lint on both sides, types on both sides, the generated-client check and the DB-free suites with the coverage floor — the local half of what CI runs (`.github/workflows/ci.yml` adds `make audit` and the integration suite against throwaway containers).
+`make check` runs the non-fixing lint on both sides, types on both sides, the generated-client check, the DB-free suites with the coverage floor, and `pipelines-check` — the local half of what CI runs (`.github/workflows/ci.yml` adds `make audit`, `pipelines-audit` and the integration suite against throwaway containers).
 
 ## Front/back contract
 
@@ -212,6 +254,50 @@ The transport's routes are *spliced* onto the FastAPI app rather than mounted,
 because `Mount("/mcp", …)` answers a bare `POST /mcp` with a 307. It is a
 Starlette route, so **`/mcp` never appears in the OpenAPI schema** and no
 client regeneration follows from it. See `docs/adr/0014`.
+
+## A pipeline writes through the API and never names a model
+
+`pipelines/` is a second client of the EA API, exactly as the SPA is one —
+never a third adapter beside `mcp/`, never a repository. Three rules hold for
+every flow there, see `docs/adr/0028`:
+
+**Each step of a flow is its own `@task`, every LLM output is validated
+against a strict JSON schema before it is trusted, and the code only ever
+names the aliases `smart`/`fast` — never a real model id.** `catalogue.py`'s
+`extract_architecture`, `write_element` and `write_relationship` are separate
+tasks so Prefect can retry one without repeating the others; `llm.extract`
+turns the Pydantic schema into an OpenAI-shaped `strict` `json_schema` and
+raises `ExtractionFailed` on anything that does not validate — a truncated
+answer, invalid JSON, or a value outside an injected `enum`; `Alias =
+Literal["smart", "fast"]` is the only type a caller can pass as `model=`, and
+`pipelines/litellm.yaml` is the one place that maps an alias to a provider.
+
+**Writes reach EA only over its REST API, never over `/mcp`, never through a
+repository.** `/mcp` answers only a loopback peer (`docs/adr/0023`) and the
+pipeline's container is not that peer; a repository would let the pipeline
+write a graph `services/` would have refused. `EaClient` (`pipelines/src/pipelines/ea.py`) calls `GET /metamodel` at the start of every run for the
+element and relationship types it may use — never a restated list — the same
+rule the SPA and the MCP adapter follow.
+
+**Two different mistakes are avoided on write.** Duplicating an element is
+caught by the `element_name_unique_per_type` constraint plus an exact-name
+match on the page it returns (`EaClient._resolve_duplicate_element`); a
+relationship has no equivalent constraint, so `ensure_relationship` searches
+for the exact link before creating it. Completing is not overwriting: a
+`PATCH` only ever fills an empty `description` — never `properties`, because
+`PATCH /elements/{id}` *replaces* that whole map, so writing it here would
+erase whatever a human already recorded there. Every refusal (`EaRefused`,
+a 4xx) is recorded as a row in the flow's table artifact rather than raised;
+only a file whose extraction failed outright fails the run.
+
+**One retry layer per kind of failure.** LiteLLM retries the provider itself
+(`num_retries: 2` in `litellm.yaml`, with `drop_params: false` so a `response_format` the
+provider cannot honour fails loudly instead of being dropped); the pipeline's own call to the gateway
+(`llm.extract`) is a single `httpx` POST with no retry of its own — a
+malformed answer is a schema or a prompt to fix, not a transient fault; the
+tasks that write to EA carry `@task(retries=2, retry_delay_seconds=[2, 10])`,
+for the network between the worker and the Mac. Nothing retries a bad
+extraction: an `ExtractionFailed` is never worth repeating verbatim.
 
 ## Adding a section to the SPA
 
@@ -424,6 +510,12 @@ Three rules hold for every table, starting with `element_documents`:
    `URL.create` — a password holding `@`, `/` or `:` spliced into a URL string
    silently addresses a *different* database. `alembic.ini` carries no
    connection string; `migrations/env.py` reads `Settings` like everything else.
+   **The one exception**: `pipelines/.env` holds `PREFECT_DATABASE_URL` and
+   `LITELLM_DATABASE_URL` as literal URLs, because Prefect and LiteLLM both
+   expect a connection string, not the separate fields `dsn_of()` assembles —
+   confined to that file, never committed, and passwords generated with
+   `openssl rand -hex 32` precisely because nothing here escapes them the way
+   `URL.create` does (see `docs/adr/0028`).
 
 A third rule arrived with the second table: **a use case that writes two tables
 writes them in one transaction**, which is possible here and nowhere else in
@@ -519,6 +611,8 @@ Write the failing test first, watch it fail for the right reason, then make it p
 
 **No test leaves this machine.** An autouse fixture in `tests/conftest.py` patches `socket` and raises `NetworkAccessInTestError` on any connection or name lookup that is not loopback. The settings default to the cluster, so a lifespan test must inject doubles (`architecture_service=`, `documents=`, `indexer=`) or turn the stores off in the `Settings` it builds (`postgres_enabled=False`, `embeddings_enabled=False`).
 
+`pipelines/tests/conftest.py` copies that same autouse socket guard rather than importing it — the two projects share no code, only the rule. Every test doubles the two outbound HTTP calls with `httpx.MockTransport` (the EA API in `test_ea.py`, LiteLLM in `test_llm.py`) and MinIO with a fake S3 object (`test_storage.py`); no test opens a socket to another machine, and `test_network_guard.py` proves the guard refuses one. `prefect_test_harness` (a temporary Prefect server, served on loopback — which is why the guard leaves loopback open) is used only in `test_catalogue.py`, to run the `alimenter-catalogue` flow itself for real — every other suite tests a function directly, with no Prefect runtime involved.
+
 Rules that matter here: every bug fix starts with a regression test reproducing it; tests assert behaviour through public entry points, not private attributes; objects are built by small hand-written helpers with defaults and overrides (`an_element`, `a_document`) so adding a field never breaks a hundred tests — no factory library is installed; no `time.sleep` — inject a clock. Coverage floor is 90% on `backend/src`, enforced by `fail_under = 90` in `pyproject.toml` for any run with `--cov` (`make test`, hence `make check` and CI) — but a covered line proving nothing is a failure regardless of the number.
 
 ## Security rules for this stack
@@ -534,12 +628,13 @@ Rules that matter here: every bug fix starts with a regression test reproducing 
 - Frontend: no `dangerouslySetInnerHTML` without sanitisation; tokens in memory or httpOnly cookies, not `localStorage`.
 - `bandit`, `pip-audit --skip-editable` and `npm audit --audit-level=high` run in CI (`.github/workflows/ci.yml`) and locally as `make audit`. A false positive in `src` is silenced at the line, `# nosec BXXX` with its reason — never by a global exclusion. Dependabot (`.github/dependabot.yml`) keeps the actions, both lockfiles and the compose images current. **Nothing blocks a red merge yet**: requiring green CI is a GitHub branch-protection rule still to switch on.
 - Stack images are pinned by tag *and* digest (`deploy/*.stack.yml`), so a redeploy from Portainer cannot change server without a commit.
+- `pipelines/.env` follows the same rule as `backend/.env`: never committed (`.gitignore`), every secret in `pipelines/.env.example` left blank. The passwords embedded in its two new PostgreSQL URLs (`PREFECT_DATABASE_URL`, `LITELLM_DATABASE_URL`) are generated with `openssl rand -hex 32`, never chosen by hand, and Prefect's and LiteLLM's own connection strings are the one place a DSN is written as a URL rather than assembled field by field (the exception recorded under *The relational store holds the documents and their index*, above). Every port `pipelines/docker-compose.yml` publishes is bound to `127.0.0.1`, enforced by `pipelines/tests/test_stack.py`; the infra CA certificate is mandatory and mounted read-only (`INFRA_CA_CERT` on the host, at the path compose fixes as `PIPELINES_S3_CA_CERT`), never baked into the image — an empty file in its place would fail every TLS call to MinIO. `pipelines/.env` is read by `docker compose --env-file` only: `Settings` has no `env_file`, and the worker has none either, receiving by name only the `PIPELINES_*` variables `Settings` reads — never `ANTHROPIC_API_KEY`, `LITELLM_MASTER_KEY` or the two database URLs (`test_stack.py` checks both).
 
 ## SDLC
 
 - Branch from `main`: `feat/`, `fix/`, `chore/`, `docs/`. `main` stays releasable.
 - [Conventional Commits](https://www.conventionalcommits.org/) — the changelog and version bump are derived from them.
-- `pre-commit` (`.pre-commit-config.yaml`) runs ruff (format + check), mypy, vue-tsc, ESLint and gitleaks, and modifies nothing. It is opt-in: `make hooks` installs it, nothing else writes to `.git/hooks`. Do not `--no-verify`.
+- `pre-commit` (`.pre-commit-config.yaml`) runs ruff (format + check), mypy, vue-tsc, ESLint and gitleaks, and modifies nothing. It is opt-in: `make hooks` installs it, nothing else writes to `.git/hooks`. Do not `--no-verify`. `pipelines/` gets its own three hooks (`pipelines-ruff-format`, `pipelines-ruff-check`, `pipelines-mypy`), scoped to `^pipelines/.*\.py$` and run inside its own venv (`cd pipelines && uv run --extra dev ...`) — the same separation as its lockfile.
 - Every PR: green CI per `docs/adr/0026` (lint, types, generated-client check, tests with the coverage gate, the three scans, integration against throwaway containers), small enough to review, description stating what and why.
 - Structural or cross-cutting decisions (new dependency, new bounded context, auth change, storage change, a new entry in `_EXTRA_ALLOWED`) get an ADR in `docs/adr/NNNN-title.md` — context, decision, consequences. Supersede ADRs, don't edit history.
 
