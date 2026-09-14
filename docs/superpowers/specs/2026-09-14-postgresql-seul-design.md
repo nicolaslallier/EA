@@ -183,7 +183,9 @@ Lancé par `uv run --with neo4j` ; `neo4j` quitte `pyproject.toml`.
    seul, pas par `Settings`).
 4. Conversion : retrait du préfixe `p_`, valeurs en `str`, dates Neo4j en
    `datetime` avec fuseau, ids conservés.
-5. Écriture dans **une transaction** (éléments puis relations).
+5. Écriture dans **une transaction** (éléments puis relations), par
+   `ea.graph_import.copy_graph` (lignes construites par `element_row` /
+   `relationship_row`).
 6. Vérification : comptes et ensembles d'ids égaux des deux côtés, sinon échec.
 7. `alembic upgrade head` (`0006`).
 
@@ -215,16 +217,22 @@ suppression dans le dépôt Infra.
 
 - Supprimés : `test_neo4j_driver.py`, `test_schema.py`, `test_cypher_tracing.py`.
 - Réécrits : `test_ipam_constraint_translation.py` (aiguillage sur
-  `constraint_name`), `test_architecture_delete.py` (devient un test
-  d'intégration de la cascade FK : relations, documents, boîtes),
+  `constraint_of`),
   `tests/integration/conftest.py` (`graph_service`/`graph_repository` sur
-  `postgres_engine`, `TRUNCATE elements CASCADE` entre tests),
+  `postgres_engine`, `alembic upgrade head` puis `downgrade base` à chaque
+  test (`engine_at_head`), comme les autres stores),
   `test_config.py`, `test_logging.py`, `test_deploy_stack.py`,
   `test_application_boot.py`, `throwaway.py` et `test_throwaway_guards.py`
   (garde Bolt retiré).
 - Nouveaux : tests d'intégration des révisions `0005`/`0006` (refus si
   `elements` vide avec attachements, purge des orphelins sinon) ; test
   d'intégration de la recherche littérale (`%`, `_`).
+- Stores relationnels : depuis `0006`, un document ou une boîte de diagramme
+  exige un élément existant ; `test_document_store.py`, `test_document_index.py`
+  et `test_diagram_store.py` créent l'élément d'abord (`ensure_elements`). Les
+  tests unitaires de cascade par le service (`test_document_service`,
+  `test_diagram_service`, `test_indexing`, `test_architecture_delete.py`) sont
+  remplacés par `tests/integration/test_element_cascade.py`.
 - `EA_ALLOW_DESTRUCTIVE_TESTS` disparaît ; le garde PostgreSQL (loopback, pas
   5432) reste.
 

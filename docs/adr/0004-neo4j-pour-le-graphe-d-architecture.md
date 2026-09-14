@@ -1,7 +1,7 @@
 # 4. Neo4j pour le graphe d'architecture, aux côtés de PostgreSQL
 
 Date : 2026-09-07
-Statut : Accepté
+Statut : Supersédé par [`0033`](0033-postgresql-seul-pour-le-graphe.md) — le graphe est dans PostgreSQL
 
 ## Contexte
 

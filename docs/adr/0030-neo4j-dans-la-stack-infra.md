@@ -1,7 +1,7 @@
 ---
 titre: Le graphe Neo4j vit dans la stack Infra
 date: 2026-09-13
-statut: Accepté
+statut: "Supersédé par : 0033"
 affects: Makefile, docker-compose.yml, deploy/, backend/src/ea/core/config.py, backend/tests/integration/throwaway.py
 ---
 
