@@ -280,3 +280,16 @@ async def test_the_lifespan_leaves_the_store_shut_while_it_is_disabled(
     async with app.router.lifespan_context(app):
         with pytest.raises(RuntimeError, match="postgres_enabled"):
             session_factory_of(app)
+
+
+@pytest.mark.asyncio
+async def test_the_lifespan_refuses_a_graph_with_the_store_shut() -> None:
+    """The graph lives in PostgreSQL (docs/adr/0033): no store and no double is a
+    misconfiguration, refused at boot rather than as a 500 on every request."""
+    app = create_app(
+        Settings(debug=True, postgres_enabled=False, embeddings_enabled=False, auth_enabled=False)
+    )
+
+    with pytest.raises(RuntimeError, match="EA_POSTGRES_ENABLED=true or inject"):
+        async with app.router.lifespan_context(app):
+            pass  # pragma: no cover - the lifespan must not get this far

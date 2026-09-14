@@ -113,6 +113,14 @@ def _lifespan(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if open_graph and not settings.postgres_enabled:
+            # Refused before anything opens: without the store there is no
+            # graph, and every catalogue request would otherwise be a 500.
+            msg = (
+                "the architecture graph lives in PostgreSQL (docs/adr/0033): "
+                "set EA_POSTGRES_ENABLED=true or inject architecture_service"
+            )
+            raise RuntimeError(msg)
         async with AsyncExitStack() as stack:
             # PostgreSQL first: the graph, the documents and the diagrams all
             # live there, so every service below is built on its sessions.
