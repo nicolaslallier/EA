@@ -571,6 +571,10 @@ MAX_DIAGRAM_NODES: Final = 500
 #: How far from the origin a box may sit, in canvas units, either way.
 MAX_COORDINATE: Final = 100_000
 Coordinate = Annotated[float, Field(ge=-MAX_COORDINATE, le=MAX_COORDINATE, allow_inf_nan=False)]
+#: How small and how large a box may be drawn, in canvas units, either side.
+MIN_BOX_SIZE: Final = 20
+MAX_BOX_SIZE: Final = 5_000
+BoxSize = Annotated[float, Field(ge=MIN_BOX_SIZE, le=MAX_BOX_SIZE, allow_inf_nan=False)]
 
 
 class DiagramCreate(_Input):
@@ -586,18 +590,26 @@ class DiagramUpdate(_Input):
 
 
 class DiagramNode(_Input):
-    """One box: an element, and the top-left corner of the box in canvas units."""
+    """One box: an element, the top-left corner of the box and its size, in canvas units."""
 
     element_id: UUID
     x: Coordinate
     y: Coordinate
+    # Required, not defaulted: a default would split this model into an input
+    # and an output schema, and rename the type the SPA imports.
+    width: BoxSize
+    height: BoxSize
 
     @classmethod
     def of(cls, node: PlacedNode) -> DiagramNode:
-        return cls(element_id=node.element_id, x=node.x, y=node.y)
+        return cls(
+            element_id=node.element_id, x=node.x, y=node.y, width=node.width, height=node.height
+        )
 
     def placed(self) -> PlacedNode:
-        return PlacedNode(element_id=self.element_id, x=self.x, y=self.y)
+        return PlacedNode(
+            element_id=self.element_id, x=self.x, y=self.y, width=self.width, height=self.height
+        )
 
 
 class DiagramLayout(_Input):

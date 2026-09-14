@@ -94,11 +94,13 @@ async def test_a_layout_is_replaced_whole_and_counted(diagrams: PostgresDiagramR
     await diagrams.replace_layout(diagram.id, [DiagramNode(first, 0, 0)], now=FIXED_NOW)
 
     replaced = await diagrams.replace_layout(
-        diagram.id, [DiagramNode(second, 1.25, -3.5)], now=LATER
+        diagram.id, [DiagramNode(second, 1.25, -3.5, width=240, height=90.5)], now=LATER
     )
 
     assert replaced is True
-    assert await diagrams.nodes_of(diagram.id) == (DiagramNode(second, 1.25, -3.5),)
+    assert await diagrams.nodes_of(diagram.id) == (
+        DiagramNode(second, 1.25, -3.5, width=240, height=90.5),
+    )
     read = await diagrams.get(diagram.id)
     assert read is not None
     assert (read.node_count, read.updated_at) == (1, LATER)

@@ -73,13 +73,22 @@ class PostgresDiagramRepository:
 
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]:
         statement = (
-            select(DiagramNodeRecord.element_id, DiagramNodeRecord.x, DiagramNodeRecord.y)
+            select(
+                DiagramNodeRecord.element_id,
+                DiagramNodeRecord.x,
+                DiagramNodeRecord.y,
+                DiagramNodeRecord.width,
+                DiagramNodeRecord.height,
+            )
             .where(DiagramNodeRecord.diagram_id == diagram_id)
             .order_by(DiagramNodeRecord.element_id)
         )
         async with self._sessions() as session:
             rows = await session.execute(statement)
-            return tuple(DiagramNode(element_id=row[0], x=row[1], y=row[2]) for row in rows)
+            return tuple(
+                DiagramNode(element_id=row[0], x=row[1], y=row[2], width=row[3], height=row[4])
+                for row in rows
+            )
 
     async def add(self, diagram: Diagram) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
@@ -139,7 +148,14 @@ class PostgresDiagramRepository:
                 delete(DiagramNodeRecord).where(DiagramNodeRecord.diagram_id == diagram_id)
             )
             session.add_all(
-                DiagramNodeRecord(diagram_id=diagram_id, element_id=n.element_id, x=n.x, y=n.y)
+                DiagramNodeRecord(
+                    diagram_id=diagram_id,
+                    element_id=n.element_id,
+                    x=n.x,
+                    y=n.y,
+                    width=n.width,
+                    height=n.height,
+                )
                 for n in nodes
             )
             row.updated_at = now

@@ -36,7 +36,7 @@ class DiagramRecord(Base):
 
 
 class DiagramNodeRecord(Base):
-    """One element placed on one diagram, at the top-left corner of its box."""
+    """One element placed on one diagram: the top-left corner of its box, and its size."""
 
     __tablename__ = "diagram_nodes"
 
@@ -50,3 +50,6 @@ class DiagramNodeRecord(Base):
     )
     x: Mapped[float] = mapped_column(Double, nullable=False)
     y: Mapped[float] = mapped_column(Double, nullable=False)
+    # A server default so the boxes stored before 0007 keep the size they were drawn at.
+    width: Mapped[float] = mapped_column(Double, nullable=False, server_default="132")
+    height: Mapped[float] = mapped_column(Double, nullable=False, server_default="46")

@@ -252,6 +252,7 @@ function onConnect(sourceId: string, targetId: string): void {
           :readonly="!canWrite"
           @place="onPlace"
           @move="editor.move"
+          @resize="editor.resize"
           @moved="editor.persist"
           @select="select"
           @remove="removeBox"

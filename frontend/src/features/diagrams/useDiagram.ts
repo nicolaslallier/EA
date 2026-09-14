@@ -9,7 +9,7 @@ import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { components } from '../../api/schema'
 import { api, messageOf, unwrap } from '../../lib/api'
 import { debounce } from '../../lib/debounce'
-import type { Point } from '../../lib/diagramGeometry'
+import { DEFAULT_BOX, type Point, type Size } from '../../lib/diagramGeometry'
 import { useLatestRequest } from '../../lib/latest'
 
 export type DiagramRead = components['schemas']['DiagramRead']
@@ -18,8 +18,8 @@ export type ElementRead = components['schemas']['ElementRead']
 export type RelationshipRead = components['schemas']['RelationshipRead']
 export type RelationshipCreate = components['schemas']['RelationshipCreate']
 
-/** A box on the canvas: an element, and its top-left in canvas units. */
-export type Box = { element: ElementRead; x: number; y: number }
+/** A box on the canvas: an element, its top-left and its size in canvas units. */
+export type Box = { element: ElementRead; x: number; y: number; width: number; height: number }
 
 /** The `dataTransfer` type a palette row carries: the element's id, nothing else. */
 export const ELEMENT_DRAG_TYPE = 'application/x-ea-element'
@@ -47,7 +47,7 @@ export function useDiagram() {
   const boxes = computed<Box[]>(() =>
     nodes.value.flatMap((node) => {
       const element = byId.value.get(node.element_id)
-      return element ? [{ element, x: node.x, y: node.y }] : []
+      return element ? [{ element, x: node.x, y: node.y, width: node.width, height: node.height }] : []
     }),
   )
 
@@ -137,7 +137,7 @@ export function useDiagram() {
     if (placed.value.has(element.id)) {
       return
     }
-    nodes.value.push({ element_id: element.id, x: at.x, y: at.y })
+    nodes.value.push({ element_id: element.id, x: at.x, y: at.y, ...DEFAULT_BOX })
     if (!byId.value.has(element.id)) {
       elements.value.push(element)
     }
@@ -150,6 +150,15 @@ export function useDiagram() {
     if (node) {
       node.x = to.x
       node.y = to.y
+    }
+  }
+
+  /** Resize a box on screen only; `persist` once the gesture is over. */
+  function resize(elementId: string, size: Size): void {
+    const node = nodes.value.find((candidate) => candidate.element_id === elementId)
+    if (node) {
+      node.width = size.width
+      node.height = size.height
     }
   }
 
@@ -189,6 +198,7 @@ export function useDiagram() {
     close,
     place,
     move,
+    resize,
     persist,
     remove,
     connect,

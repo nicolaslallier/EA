@@ -14,7 +14,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from ea.api.schemas import MAX_DIAGRAM_NODES, DiagramCreate, DiagramLayout
+from ea.api.schemas import (
+    MAX_BOX_SIZE,
+    MAX_DIAGRAM_NODES,
+    MIN_BOX_SIZE,
+    DiagramCreate,
+    DiagramLayout,
+)
 from ea.domain.archimate import ElementType
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.diagrams import DiagramNode
@@ -225,7 +231,7 @@ class TestTheBounds:
     """Declared once in `api/schemas.py`, and stopped before any service runs."""
 
     def test_a_layout_holds_at_most_the_declared_number_of_boxes(self) -> None:
-        node = {"element_id": str(uuid4()), "x": 0, "y": 0}
+        node = {"element_id": str(uuid4()), "x": 0, "y": 0, "width": 132, "height": 46}
 
         DiagramLayout.model_validate({"nodes": [node] * MAX_DIAGRAM_NODES})
         with pytest.raises(ValidationError):
@@ -234,7 +240,29 @@ class TestTheBounds:
     @pytest.mark.parametrize("x", [100_001, -100_001, "nan", "inf"])
     def test_a_coordinate_outside_the_canvas_is_refused(self, x: object) -> None:
         with pytest.raises(ValidationError):
-            DiagramLayout.model_validate({"nodes": [{"element_id": str(uuid4()), "x": x, "y": 0}]})
+            DiagramLayout.model_validate(
+                {
+                    "nodes": [
+                        {"element_id": str(uuid4()), "x": x, "y": 0, "width": 132, "height": 46}
+                    ]
+                }
+            )
+
+    @pytest.mark.parametrize("size", [MIN_BOX_SIZE - 1, MAX_BOX_SIZE + 1, "nan", "inf"])
+    def test_a_box_size_outside_the_bounds_is_refused(self, size: object) -> None:
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate(
+                {
+                    "nodes": [
+                        {"element_id": str(uuid4()), "x": 0, "y": 0, "width": size, "height": 46}
+                    ]
+                }
+            )
+
+    def test_a_box_states_its_size(self) -> None:
+        """Required rather than defaulted, so the read and write schemas stay one."""
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate({"nodes": [{"element_id": str(uuid4()), "x": 0, "y": 0}]})
 
     def test_an_unknown_field_is_refused(self) -> None:
         with pytest.raises(ValidationError):

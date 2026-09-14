@@ -52,7 +52,10 @@ async def a_diagram(client: httpx.AsyncClient, name: str = "Vente") -> dict[str,
 
 def layout(*element_ids: str) -> dict[str, Any]:
     return {
-        "nodes": [{"element_id": e, "x": 10.0 * i, "y": 20.0} for i, e in enumerate(element_ids)]
+        "nodes": [
+            {"element_id": e, "x": 10.0 * i, "y": 20.0, "width": 200.0, "height": 80.0}
+            for i, e in enumerate(element_ids)
+        ]
     }
 
 
@@ -157,7 +160,9 @@ class TestTheLayout:
 
         assert response.status_code == 204
         read = (await client.get(f"/diagrams/{diagram['id']}")).json()
-        assert read["nodes"] == [{"element_id": element, "x": 0.0, "y": 20.0}]
+        assert read["nodes"] == [
+            {"element_id": element, "x": 0.0, "y": 20.0, "width": 200.0, "height": 80.0}
+        ]
 
     async def test_a_layout_for_an_unknown_diagram_is_a_404(
         self, client: httpx.AsyncClient
@@ -195,7 +200,7 @@ class TestTheLayout:
 
         response = await client.put(
             f"/diagrams/{diagram['id']}/layout",
-            json={"nodes": [{"element_id": element, "x": 1e9, "y": 0}]},
+            json={"nodes": [{"element_id": element, "x": 1e9, "y": 0, "width": 132, "height": 46}]},
         )
 
         assert response.status_code == 422
