@@ -187,3 +187,36 @@ def test_a_diagram_name_is_unique_by_a_named_constraint() -> None:
     table = Base.metadata.tables["diagrams"]
 
     assert "uq_diagrams_name" in {constraint.name for constraint in table.constraints}
+
+
+def test_an_element_name_is_unique_within_its_type_by_a_named_constraint() -> None:
+    """The constraint `pipelines/` detects a duplicate by — docs/adr/0033."""
+    table = Base.metadata.tables["elements"]
+
+    assert "uq_elements_element_type_name" in {c.name for c in table.constraints}
+
+
+def test_an_address_and_a_prefix_are_unique_per_vrf_by_partial_indexes() -> None:
+    """Neo4j's composite constraints ignored a node missing a property; so does `WHERE`."""
+    indexes = {index.name: index for index in Base.metadata.tables["elements"].indexes}
+
+    for name in ("uq_elements_vrf_ip_address", "uq_elements_vrf_cidr"):
+        assert indexes[name].unique is True
+        assert indexes[name].dialect_options["postgresql"]["where"] is not None
+
+
+def test_a_relationship_follows_both_its_ends_by_the_foreign_key() -> None:
+    table = Base.metadata.tables["relationships"]
+
+    for column in ("source_id", "target_id"):
+        key = next(iter(table.c[column].foreign_keys))
+        assert key.column.table.name == "elements"
+        assert key.ondelete == "CASCADE"
+        assert table.c[column].index is True
+
+
+def test_user_defined_properties_are_one_jsonb_map() -> None:
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    assert isinstance(Base.metadata.tables["elements"].c.properties.type, JSONB)
+    assert isinstance(Base.metadata.tables["relationships"].c.properties.type, JSONB)

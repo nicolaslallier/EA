@@ -26,12 +26,14 @@ A refusal is a skip whose message names the host, not a failure: a bare
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from alembic import command
 from alembic.config import Config
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -142,3 +144,20 @@ def alembic_config(postgres_engine: AsyncEngine) -> Config:
     if refusal is not None:
         pytest.skip(refusal)
     return Config(Path(__file__).parents[2] / "alembic.ini")
+
+
+@pytest_asyncio.fixture
+async def engine_at_head(
+    postgres_engine: AsyncEngine, alembic_config: Config
+) -> AsyncIterator[AsyncEngine]:
+    """The throwaway database at `head`, migrated back to `base` on the way out.
+
+    The chain rather than `create_all`: what is under test includes the
+    revisions, and a schema built from the metadata would pass while the
+    revision that deploys it was wrong.
+    """
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+    try:
+        yield postgres_engine
+    finally:
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")

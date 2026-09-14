@@ -8,14 +8,10 @@ its nodes by the foreign key, and discarding an element touches no other.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -29,17 +25,6 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 FIXED_NOW = datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
 LATER = FIXED_NOW.replace(year=2027)
-
-
-@pytest_asyncio.fixture
-async def engine_at_head(
-    postgres_engine: AsyncEngine, alembic_config: Config
-) -> AsyncIterator[AsyncEngine]:
-    await asyncio.to_thread(command.upgrade, alembic_config, "head")
-    try:
-        yield postgres_engine
-    finally:
-        await asyncio.to_thread(command.downgrade, alembic_config, "base")
 
 
 @pytest.fixture
