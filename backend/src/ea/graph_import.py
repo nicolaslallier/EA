@@ -6,7 +6,9 @@ script reads the records and hands them over as plain mappings, so this module
 is typed, tested and covered like the rest of `ea`.
 
 The copy is one transaction and refuses a non-empty `elements`, so a failure
-leaves nothing behind and a second run cannot duplicate the first. Ids are
+leaves nothing behind and a second run cannot duplicate the first. The ids are
+checked inside that transaction, before the commit: a copy that does not match
+what was read is rolled back rather than left to block every retry. Ids are
 kept, which is what keeps every document and every diagram attached.
 """
 
@@ -84,7 +86,7 @@ async def copy_graph(
     elements: Sequence[Element],
     relationships: Sequence[Relationship],
 ) -> None:
-    """Write every element, then every relationship, in one transaction."""
+    """Write every element, then every relationship, and check the ids — one transaction."""
     async with sessions.begin() as session:
         already = (
             await session.execute(select(func.count()).select_from(ElementRecord))
@@ -97,17 +99,21 @@ async def copy_graph(
         session.add_all(
             RelationshipRecord(**relationship_row(relationship)) for relationship in relationships
         )
+        await session.flush()
+        await _verify_ids(session, elements, relationships)
 
 
-async def verify_copy(
-    sessions: async_sessionmaker[AsyncSession],
+async def _verify_ids(
+    session: AsyncSession,
     elements: Sequence[Element],
     relationships: Sequence[Relationship],
 ) -> None:
-    """Fail unless PostgreSQL holds exactly the ids that were read from Neo4j."""
-    async with sessions() as session:
-        stored_elements = set(await session.scalars(select(ElementRecord.id)))
-        stored_links = set(await session.scalars(select(RelationshipRecord.id)))
+    """Fail unless the transaction holds exactly the ids that were read from Neo4j.
+
+    Raising here, before the commit, is what rolls the copy back.
+    """
+    stored_elements = set(await session.scalars(select(ElementRecord.id)))
+    stored_links = set(await session.scalars(select(RelationshipRecord.id)))
     for kind, read, stored in (
         ("element", {e.id for e in elements}, stored_elements),
         ("relationship", {r.id for r in relationships}, stored_links),

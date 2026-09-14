@@ -406,10 +406,14 @@ pg-restore: | require-postgres-password ## Restaure un dump dans la base partag�
 	|| { printf "$(RED)Restauration échouée : la transaction est annulée, la base est inchangée.$(NC)\n"; \
 	     $(PG_UNREACHABLE_HINT) exit 1; }
 	@printf "$(GREEN)Base restaurée depuis %s.$(NC)\n" "$$FILE"
-	@printf "L'index des passages est revenu avec les documents. Si le dump précède head : make pg-migrate\n"
+	@printf "L'index des passages est revenu avec les documents.\n"
+	@printf "Hors retour arrière, si le dump précède head : make pg-migrate.\n"
+	@printf "$(RED)Retour arrière de la bascule du graphe (docs/adr/0033) : PAS de make pg-migrate.$(NC)\n"
+	@printf "Avant de relancer make graph-import : DROP TABLE relationships, elements (voir l'ADR).\n"
 
-# Ponctuel (docs/adr/0033) : copie le graphe Neo4j dans PostgreSQL, puis
-# applique la révision 0006. Vise la base PARTAGÉE de backend/.env : API arrêtée
+# Ponctuel (docs/adr/0033) : lit tout le graphe Neo4j avant d'écrire quoi que ce
+# soit, le copie dans PostgreSQL, puis applique la révision 0006. Un échec après
+# la révision 0005 affiche la commande de retour : alembic downgrade 0004. Vise la base PARTAGÉE de backend/.env : API arrêtée
 # (make app-down) et make pg-backup d'abord. Le pilote neo4j n'est chargé que
 # pour cette commande. EA_NEO4J_PASSWORD est lu dans backend/.env ou
 # l'environnement. Supprimée avec le script une fois la bascule confirmée.
@@ -417,7 +421,7 @@ graph-import: | $(VENV_STAMP) ## Importe une fois le graphe Neo4j dans PostgreSQ
 	@test "$(CONFIRM)" = "yes" || { \
 		printf "$(RED)Écrit dans la base PARTAGÉE. D'abord : make app-down, make pg-backup.$(NC)\n"; \
 		printf "Relance avec : make graph-import CONFIRM=yes\n"; exit 1; }
-	cd $(BACKEND) && uv run --with 'neo4j>=5.26' python scripts/import_neo4j.py
+	cd $(BACKEND) && uv run --with 'neo4j==6.3.0' python scripts/import_neo4j.py
 
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	$(COMPOSE_TEST) up -d --wait postgres
