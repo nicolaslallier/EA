@@ -176,28 +176,45 @@ même ensemble.
 
 Lancé par `uv run --with neo4j` ; `neo4j` quitte `pyproject.toml`.
 
-1. `alembic upgrade 0005`.
-2. Refuse si `elements` n'est pas vide.
-3. Lit tous les `:Element` et toutes les relations de Neo4j
+1. Lit tous les `:Element` et toutes les relations de Neo4j
    (`EA_NEO4J_URI`/`EA_NEO4J_PASSWORD` lus dans l'environnement par le script
-   seul, pas par `Settings`).
-4. Conversion : retrait du préfixe `p_`, valeurs en `str`, dates Neo4j en
-   `datetime` avec fuseau, ids conservés.
-5. Écriture dans **une transaction** (éléments puis relations), par
+   seul, pas par `Settings`) et les convertit — retrait du préfixe `p_`,
+   valeurs en `str`, dates Neo4j en `datetime` avec fuseau, ids conservés —
+   **avant toute écriture** : un mot de passe faux ou une valeur refusée
+   n'a rien modifié.
+2. Affiche la base PostgreSQL visée (`hôte:port/base`, jamais le mot de passe).
+3. `alembic upgrade 0005` (une transaction : un échec laisse la base en `0004`).
+4. Écriture dans **une transaction** (éléments puis relations), par
    `ea.graph_import.copy_graph` (lignes construites par `element_row` /
-   `relationship_row`).
-6. Vérification : comptes et ensembles d'ids égaux des deux côtés, sinon échec.
-7. `alembic upgrade head` (`0006`).
+   `relationship_row`), qui refuse si `elements` n'est pas vide.
+5. Vérification dans cette même transaction, avant le commit : ensembles d'ids
+   égaux des deux côtés, sinon échec et annulation de la copie.
+6. `alembic upgrade head` (`0006`).
+
+Tout échec après l'étape 3 affiche `cd backend && uv run alembic downgrade 0004`
+avant de relancer l'exception : l'image de `main` ne démarre pas sur `0005`.
 
 ### Runbook
 
-| # | Étape | Retour arrière |
-|---|---|---|
-| 1 | `make pg-backup` + dump Neo4j hors ligne (procédure de l'actuel `make db-backup-howto`, recopiée dans l'ADR 0033) | — |
-| 2 | `make app-down` | `make app-up` |
-| 3 | `make graph-import` depuis le Mac, sur la branche de la PR 1 | `make pg-restore FILE=… CONFIRM=yes` ; Neo4j intact |
-| 4 | fusion de la PR 1 sur `main`, `make app-up` | redéployer le commit précédent + restaurer le dump PG |
-| 5 | vérifier dans le SPA : catalogue, voisinage, impact, IPAM, un document, un diagramme | — |
+1. `make app-down` — plus aucune écriture ; Neo4j peut ensuite s'arrêter sans
+   faire échouer une requête.
+2. `make pg-backup` + dump Neo4j hors ligne (procédure de l'ancien
+   `make db-backup-howto`, recopiée dans l'ADR 0033).
+3. `make graph-import CONFIRM=yes` depuis le Mac, sur la branche de la PR 1.
+4. Fusion de la PR 1 sur `main`, `make app-up`.
+5. Vérifier dans le SPA : catalogue, voisinage, impact, IPAM, un document, un
+   diagramme.
+
+**Retour arrière** — toujours le schéma d'abord, le redéploiement ensuite :
+
+1. Par défaut : `cd backend && uv run alembic downgrade 0004`. Garde les
+   documents et diagrammes écrits depuis la bascule ; perd seulement les
+   modifications du graphe faites dans PostgreSQL (Neo4j est intact).
+2. Données abîmées : `make pg-restore FILE=… CONFIRM=yes` du dump de l'étape 2,
+   puis `DROP TABLE relationships, elements` avant toute relance —
+   `pg_restore --clean` ne supprime que les objets de l'archive. Pas de
+   `make pg-migrate` après cette restauration.
+3. Ensuite seulement : revert sur `main`, puis `make app-up` (Portainer déploie `main`).
 
 Le service `neo4j` de la stack Infra reste en place comme filet jusqu'à sa
 suppression dans le dépôt Infra.
