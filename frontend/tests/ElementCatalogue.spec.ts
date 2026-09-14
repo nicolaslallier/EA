@@ -210,6 +210,16 @@ describe('ElementCatalogue', () => {
     expect(calls.some((call) => call.url.pathname === `/elements/${element.id}`)).toBe(true)
   })
 
+  it('leaves the description to the detail, out of the table', async () => {
+    await renderCatalogue([
+      { path: '/elements', body: aPage([anElement({ name: 'Facturation', description: 'Émet les factures' })]) },
+    ])
+
+    await rowFor(/Facturation/)
+    expect(screen.queryByRole('columnheader', { name: 'Description' })).toBeNull()
+    expect(screen.queryByText('Émet les factures')).toBeNull()
+  })
+
   it('names the detailed element in the URL, so the view can be shared', async () => {
     const element = anElement({ name: 'Facturation' })
     const { router } = await renderCatalogue([
