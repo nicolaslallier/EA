@@ -39,10 +39,8 @@ updates:
     groups:
       javascript:
         update-types: [minor, patch]
-    # TypeScript 7 est le compilateur natif (Go) et n'exporte plus l'API JS
-    # dont vue-tsc et openapi-typescript dépendent : la montée 6 -> 7 a cassé
-    # typecheck-fe et openapi-check sur main (#33). Les majeures se font à la
-    # main, quand ces deux outils la supportent.
+    # TypeScript 7 casse vue-tsc et openapi-typescript (#33, annulée) : ce
+    # saut-là se fait à la main, quand les deux le prennent en charge.
     ignore:
       - dependency-name: typescript
         update-types: [version-update:semver-major]
@@ -58,6 +56,15 @@ updates:
       - /pipelines
     schedule:
       interval: weekly
+    # Le tag du serveur Prefect suit la version de `prefect` verrouillée dans
+    # pipelines/uv.lock (test_stack.py le vérifie) : il ne bouge qu'avec elle,
+    # à la main. Dependabot l'a monté seul vers 3.8.6.dev5, une préversion ;
+    # un motif `versions` ne l'aurait pas exclue sans exclure 3.8.6 aussi,
+    # puisque la comparaison ignore le `.devN`. Le digest du tag épinglé, lui,
+    # continue d'être rafraîchi.
+    ignore:
+      - dependency-name: prefecthq/prefect
+        update-types: [version-update:semver-patch, version-update:semver-minor, version-update:semver-major]
 
   # Les images de base des Dockerfile de frontend/ (construit par
   # deploy/ea.stack.yml) et de pipelines/, épinglées par tag et digest pour la
