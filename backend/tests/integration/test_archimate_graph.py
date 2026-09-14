@@ -8,6 +8,8 @@ round. None of it can be proved with a double.
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -15,6 +17,7 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.errors import DuplicateElementError
+from ea.domain.model import Relationship
 from ea.domain.ports import ElementFilter
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
@@ -230,6 +233,30 @@ class TestContainmentCycles:
         second = await graph_service.create_element(element_type=E.GROUPING, name="Payments")
 
         assert not await graph_repository.would_close_a_containment_cycle(first.id, second.id)
+
+    async def test_a_cycle_already_in_the_data_neither_hangs_nor_misleads(
+        self,
+        graph_repository: PostgresArchitectureRepository,
+        graph_service: ArchitectureService,
+    ) -> None:
+        """A composes B and B composes A, written past the service's own check.
+
+        The walk has no depth bound, so only `UNION` discarding a row it already
+        produced stops it; a regression must fail here rather than hang.
+        """
+        now = datetime.now(UTC)
+        a = await graph_service.create_element(element_type=E.GROUPING, name="A")
+        b = await graph_service.create_element(element_type=E.GROUPING, name="B")
+        c = await graph_service.create_element(element_type=E.GROUPING, name="C")
+        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, a, b, now=now))
+        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, b, a, now=now))
+
+        assert not await asyncio.wait_for(
+            graph_repository.would_close_a_containment_cycle(c.id, a.id), timeout=5
+        )
+        assert await asyncio.wait_for(
+            graph_repository.would_close_a_containment_cycle(a.id, b.id), timeout=5
+        )
 
 
 class TestRelationsOfOneElement:
