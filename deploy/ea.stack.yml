@@ -46,14 +46,10 @@ services:
       EA_AUTH_ISSUER: ${EA_AUTH_ISSUER:-https://keycloak.famillelallier.net/realms/ea}
       EA_AUTH_CA_CERT: /etc/ssl/certs/infra-ca.pem
 
-      # Le graphe n'est pas dans l'Infra : il reste sur le cluster, dont
-      # l'adresse a déjà changé deux fois — aucune valeur par défaut.
-      EA_NEO4J_URI: ${EA_NEO4J_URI:?EA_NEO4J_URI est obligatoire (bolt://hôte:7687)}
-      EA_NEO4J_PASSWORD: ${EA_NEO4J_PASSWORD:?EA_NEO4J_PASSWORD est obligatoire}
-
       # Le PostgreSQL de l'Infra, sur infra-net : base et rôle `ea`, créés par
       # `make provision-app app=ea` côté Infra. Les migrations s'appliquent au
-      # démarrage du conteneur (backend/Dockerfile).
+      # démarrage du conteneur (backend/Dockerfile). Il porte tout le modèle,
+      # graphe compris (docs/adr/0033).
       EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-postgres}
       EA_POSTGRES_PASSWORD: ${EA_POSTGRES_PASSWORD:?EA_POSTGRES_PASSWORD est obligatoire (EA_DB_PASSWORD de l'Infra)}
 

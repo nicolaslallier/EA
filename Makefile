@@ -45,36 +45,20 @@ FE_URL  ?= http://127.0.0.1:$(FE_PORT)
 # l'afficher : c'est l'origine à ajouter à EA_CORS_ORIGINS.
 LAN_IP ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 
-# Base de données graphe : le service neo4j de la stack Infra, publié par son
-# nginx sur 127.0.0.1 et nulle part ailleurs. Rien ne la démarre depuis ce
-# Makefile — voir docs/adr/0030.
-NEO4J_HOST      ?= 127.0.0.1
-NEO4J_BOLT_PORT ?= 7687
-NEO4J_URI       ?= bolt://$(NEO4J_HOST):$(NEO4J_BOLT_PORT)
-NEO4J_IMAGE     ?= neo4j:2026.07.1-community
-# cypher-shell tourne dans un conteneur, où 127.0.0.1 est le conteneur lui-même :
-# il rejoint le graphe par le réseau de l'Infra, sous son nom de service.
-NEO4J_NETWORK   ?= infra-net
-NEO4J_SHELL_URI ?= bolt://neo4j:7687
-NEO4J_CONTAINER ?= infra-neo4j-1
-
-# Les mots de passe n'ont pas de valeur par défaut : les deux instances sont
-# partagées. Ils viennent de l'environnement, ou à défaut de backend/.env.
+# Le mot de passe n'a pas de valeur par défaut : l'instance est partagée. Il
+# vient de l'environnement, ou à défaut de backend/.env.
 #
-# Ils ne passent JAMAIS par une variable make. Make développe les `$` d'une
+# Il ne passe JAMAIS par une variable make. Make développe les `$` d'une
 # valeur, et une valeur recollée entre apostrophes dans une recette casse sur
 # la première apostrophe : un mot de passe généré contient les deux. Le shell
-# de la recette les lit donc lui-même, et les exporte vers la commande — voir
-# NEO4J_ENV et POSTGRES_ENV, préfixes de recette.
+# de la recette le lit donc lui-même, et l'exporte vers la commande — voir
+# POSTGRES_ENV, préfixe de recette.
 #
 # DOTENV_GET_PY lit une clé de backend/.env comme pydantic-settings la lit :
 # `export ` toléré, guillemets retirés, commentaire de fin de ligne ignoré hors
 # guillemets, dernière définition gagnante. Une variable d'environnement non
 # vide passe avant le fichier, comme pour l'application. Il n'y a volontairement
 # aucun `$` dans ce script : make le développerait.
-#
-# `make db-ping NEO4J_PASSWORD=...` fonctionne toujours, mais make y développe
-# encore `$` : pour un tel mot de passe, NEO4J_PASSWORD='...' make db-ping.
 define DOTENV_GET_PY
 import os, re, sys
 path, names = sys.argv[1], sys.argv[2:]
@@ -100,12 +84,10 @@ sys.stdout.write(value)
 endef
 export DOTENV_GET_PY
 
-NEO4J_ENV = export NEO4J_PASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) NEO4J_PASSWORD EA_NEO4J_PASSWORD)";
-
-# Base relationnelle : tout ce qui n'est pas le graphe (auth, audit,
-# planification). Comme le graphe, une seule instance — mais pas sur le cluster :
-# la base `ea` vit dans la stack ~/OpenCode/Infra de ce Mac, derrière son NGINX.
-# Voir docs/adr/0015 et 0029.
+# La base du projet : le graphe (docs/adr/0033), les documents, les
+# diagrammes. Une seule instance — mais pas sur le cluster : la base `ea` vit
+# dans la stack ~/OpenCode/Infra de ce Mac, derrière son NGINX. Voir
+# docs/adr/0015 et 0029.
 POSTGRES_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 POSTGRES_USER ?= ea
@@ -146,10 +128,10 @@ PSQL_TTY = $(PSQL_BIN)
 PG_UNREACHABLE_HINT := printf "Le client est celui du Mac ($(PSQL_BIN)) : ni Docker ni le réseau des conteneurs n'entrent en jeu.\n  Vérifie l'hôte, le port, et EA_POSTGRES_PASSWORD dans $(BACKEND)/.env.\n";
 endif
 
-# Comme pour Neo4j : pas de valeur par défaut, l'instance est partagée. Le
-# shell de la recette la lit — POSTGRES_PASSWORD ou EA_POSTGRES_PASSWORD dans
-# l'environnement, sinon backend/.env — et l'exporte sous le nom que psql,
-# pg_dump et pg_restore lisent eux-mêmes.
+# Pas de valeur par défaut : l'instance est partagée. Le shell de la recette
+# la lit — POSTGRES_PASSWORD ou EA_POSTGRES_PASSWORD dans l'environnement,
+# sinon backend/.env — et l'exporte sous le nom que psql, pg_dump et
+# pg_restore lisent eux-mêmes.
 POSTGRES_ENV = export PGPASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) POSTGRES_PASSWORD EA_POSTGRES_PASSWORD)";
 
 # Sauvegardes de la base partagée (docs/adr/0025). Même règle que psql : les
@@ -181,24 +163,14 @@ endif
 POSTGRES_TEST_PASSWORD ?= developmentonly
 POSTGRES_TEST_PORT     ?= 5433
 
-# Le Neo4j jetable de docker-compose.yml, celui que les tests d'intégration
-# vident entre chaque cas — jamais le graphe du cluster (docs/adr/0024). Publié
-# sur 127.0.0.1 seulement, et sur un autre port que le 7687 du cluster. Le mot
-# de passe est jetable, comme celui du PostgreSQL de test.
-NEO4J_TEST_BOLT_PORT ?= 7688
-NEO4J_TEST_PASSWORD  ?= developmentonly
-NEO4J_TEST_URI       ?= bolt://127.0.0.1:$(NEO4J_TEST_BOLT_PORT)
-
 # docker compose lit ports et mots de passe dans son environnement : on les lui
 # passe explicitement, depuis les mêmes variables que les tests, pour que le
 # conteneur et la suite ne puissent pas viser deux ports différents.
 COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 	POSTGRES_TEST_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
-	NEO4J_TEST_BOLT_PORT=$(NEO4J_TEST_BOLT_PORT) \
-	NEO4J_TEST_PASSWORD='$(NEO4J_TEST_PASSWORD)' \
 	docker compose
 
-# Service d'embeddings : LM Studio sur le cluster, à côté du graphe,
+# Service d'embeddings : LM Studio sur le cluster,
 # servant un /v1/embeddings compatible OpenAI. Voir docs/adr/0019.
 EMBEDDINGS_URL   ?= http://192.168.2.10:1234/v1
 EMBEDDINGS_MODEL ?= text-embedding-mxbai-embed-large-v1
@@ -214,7 +186,6 @@ NC    := \033[0m
 
 .DEFAULT_GOAL := help
 .PHONY: help install install-be install-fe run run-be run-fe clean \
-        db-stack db-ping db-shell db-reset require-neo4j-password \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
         app-up app-down app-delete app-ps app-logs \
@@ -222,8 +193,7 @@ NC    := \033[0m
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
-        pg-backup pg-restore db-backup-howto graph-import \
-        db-test-up \
+        pg-backup pg-restore graph-import \
         pipelines-install pipelines-lint pipelines-lint-check pipelines-typecheck \
         pipelines-test pipelines-check pipelines-audit \
         require-pipelines-env pipelines-up pipelines-down pipelines-logs pipelines-run \
@@ -284,98 +254,19 @@ $(VENV_STAMP): $(BACKEND)/pyproject.toml $(BACKEND)/uv.lock
 
 # Pas de prérequis : la règle ne tourne que si le fichier manque, donc éditer
 # `.env.example` n'écrase jamais la configuration locale d'un développeur.
-#
-# L'exemple ne porte aucun mot de passe : le graphe est l'instance partagée du
-# cluster (docs/adr/0006). Le fichier semé suffit à démarrer en EA_DEBUG, mais
-# `db-ping`, `db-shell` et `db-reset` réclameront EA_NEO4J_PASSWORD.
 $(BE_ENV):
 	@printf "$(GREEN)Creating $(BE_ENV) from .env.example...$(NC)\n"
 	@cp $(BACKEND)/.env.example $@
-	@printf "$(RED)Renseigne EA_NEO4J_PASSWORD dans $@ — voir make db-stack.$(NC)\n"
+	@printf "$(RED)Renseigne EA_POSTGRES_PASSWORD dans $@ — voir make pg-stack.$(NC)\n"
 
 $(FRONTEND)/node_modules:
 	@printf "$(RED)Dépendances Node absentes ($(FRONTEND)/node_modules).$(NC)\n"
 	@printf "$(RED)Lance d'abord : make install$(NC)\n"
 	@exit 1
 
-## --- Base de données graphe -----------------------------------------------
-#
-# Le graphe tourne sur le cluster, pas ici : ces cibles s'y connectent, aucune
-# ne le démarre. Le client `cypher-shell` est pris dans l'image Neo4j plutôt
-# qu'installé sur le poste.
-#
-# Le mot de passe est passé par une variable d'environnement plutôt que par
-# `-p` : un argument de ligne de commande est visible dans `ps`.
-
-require-neo4j-password:
-	@$(NEO4J_ENV) test -n "$$NEO4J_PASSWORD" || { \
-		printf "$(RED)NEO4J_PASSWORD est vide.$(NC)\n"; \
-		printf "Renseigne EA_NEO4J_PASSWORD dans $(BACKEND)/.env, ou lance :\n"; \
-		printf "  NEO4J_PASSWORD='...' make $(MAKECMDGOALS)\n"; exit 1; }
-
-db-stack: ## Rappelle d'où se déploie le graphe : la stack Infra
-	@printf "$(GREEN)Le graphe est le service neo4j de la stack Infra (docs/adr/0030)$(NC)\n"
-	@printf "  1. Dans le dépôt Infra (github.com/nicolaslallier/Infra) : NEO4J_PASSWORD dans .env\n"
-	@printf "  2. make up — depuis sa copie principale, à jour de main\n"
-	@printf "  3. Puis, ici : make db-ping\n"
-
-db-ping: | require-neo4j-password ## Vérifie que le graphe partagé répond
-	@printf "$(GREEN)Interrogation de $(NEO4J_URI) ...$(NC)\n"
-	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm \
-		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_SHELL_URI) --format plain \
-		'MATCH (n:Element) RETURN count(n) AS elements' \
-	|| { printf "$(RED)Aucune réponse. Vérifie la stack : make db-stack$(NC)\n"; exit 1; }
-
-db-shell: | require-neo4j-password ## Ouvre un cypher-shell sur le graphe partagé
-	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm -it \
-		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_SHELL_URI)
-
-db-reset: | require-neo4j-password ## Vide le graphe partagé (CONFIRM=yes obligatoire)
-	@test "$(CONFIRM)" = "yes" || { \
-		printf "$(RED)Cette commande efface le graphe PARTAGÉ : $(NEO4J_URI)$(NC)\n"; \
-		printf "$(RED)Tout le monde le perd, il n'y a qu'une instance.$(NC)\n"; \
-		printf "Relance avec : make db-reset CONFIRM=yes\n"; exit 1; }
-	@$(NEO4J_ENV) NEO4J_USERNAME=neo4j docker run --rm \
-		--network $(NEO4J_NETWORK) -e NEO4J_USERNAME -e NEO4J_PASSWORD $(NEO4J_IMAGE) \
-		cypher-shell -a $(NEO4J_SHELL_URI) 'MATCH (n) DETACH DELETE n'
-	@printf "$(GREEN)Graphe vidé.$(NC)\n"
-
-# Neo4j Community n'a pas de sauvegarde à chaud : `neo4j-admin database dump`
-# exige le serveur arrêté, et se lance sur l'hôte, contre le volume. Rien ici ne
-# peut le faire depuis un poste, donc la cible *rappelle* la procédure, comme
-# `db-stack` rappelle le déploiement — et son nom le dit, pour que personne ne
-# la mette dans une crontab en croyant sauvegarder. Voir docs/adr/0025.
-db-backup-howto: ## Rappelle comment sauvegarder et restaurer le graphe (hors ligne, sur l'hôte)
-	@printf "$(GREEN)Sauvegarde du graphe : hors ligne, sur le Mac de la stack Infra — docs/adr/0025, 0030$(NC)\n"
-	@printf '%s\n' \
-		"Rien ne s'exécute tout seul. Sur le Mac de la stack Infra :" \
-		"" \
-		"  img=\$$(docker inspect -f '{{.Config.Image}}' $(NEO4J_CONTAINER))" \
-		"  dir=\$$HOME/Backups/ea-neo4j/\$$(date -u +%Y%m%dT%H%M%SZ)" \
-		"  mkdir -p \"\$$dir\"" \
-		"  docker stop $(NEO4J_CONTAINER)" \
-		"  docker run --rm --volumes-from $(NEO4J_CONTAINER) -v \"\$$dir\":/backups \"\$$img\" \\" \
-		"    neo4j-admin database dump neo4j --to-path=/backups" \
-		"  docker start $(NEO4J_CONTAINER)" \
-		"" \
-		"Puis, depuis un poste : make db-ping"
-	@printf "$(RED)Copie hors de l'hôte OBLIGATOIRE : un dump sur le disque du volume ne survit pas au disque.$(NC)\n"
-	@printf '%s\n' \
-		"  cp -R \"\$$dir\" <destination hors de ce Mac : NAS, stockage objet>" \
-		"" \
-		"Restauration — REMPLACE le graphe partagé :" \
-		"  docker stop $(NEO4J_CONTAINER)" \
-		"  docker run --rm --volumes-from $(NEO4J_CONTAINER) -v <dossier du dump>:/backups \"\$$img\" \\" \
-		"    neo4j-admin database load neo4j --from-path=/backups --overwrite-destination=true" \
-		"  docker start $(NEO4J_CONTAINER) && make db-ping" \
-		"" \
-		"Avec PostgreSQL : même fenêtre, sans écriture entre les deux, graphe d'abord (make pg-backup)."
-
 ## --- PostgreSQL -----------------------------------------------------------
 #
-# Comme le graphe, une instance unique et partagée ($(POSTGRES_HOST), docs/adr/0029) :
+# Une instance unique et partagée ($(POSTGRES_HOST), docs/adr/0029) :
 # `pg-ping`, `pg-shell` et `pg-migrate` s'y connectent, aucune ne la démarre.
 # Le client psql est pris dans l'image Postgres plutôt qu'installé sur le poste.
 #
@@ -385,9 +276,7 @@ db-backup-howto: ## Rappelle comment sauvegarder et restaurer le graphe (hors li
 # base que d'autres utilisent.
 #
 # La première table existe : `element_documents`, les fichiers markdown
-# attachés aux éléments (docs/adr/0017). Le graphe n'a pas de migrations (ses
-# contraintes sont réappliquées au démarrage) ; PostgreSQL, si — `pg-migrate`
-# est l'étape que le graphe n'a pas.
+# attachés aux éléments (docs/adr/0017).
 
 require-postgres-password:
 	@$(POSTGRES_ENV) test -n "$$PGPASSWORD" || { \
@@ -495,8 +384,7 @@ pg-backup: | require-postgres-password ## Sauvegarde la base partagée dans back
 	     printf "$(RED)L'archive écrite ne se relit pas : sauvegarde écartée.$(NC)\n"; exit 1; }; \
 	mv "$$file.partial" "$$file"; \
 	printf "$(GREEN)Sauvegarde écrite : %s (%s)$(NC)\n" "$$file" "$$(du -h "$$file" | cut -f1)"
-	@printf "Ce poste n'est pas un lieu de conservation : copie le fichier là où vont les dumps du graphe.\n"
-	@printf "Le graphe se sauvegarde à part, sur l'hôte : make db-backup-howto\n"
+	@printf "Ce poste n'est pas un lieu de conservation : copie le fichier ailleurs.\n"
 
 # Remplace le contenu de la base PARTAGÉE. Une seule transaction : une erreur au
 # milieu annule tout, la base est restaurée ou inchangée, jamais à moitié.
@@ -534,16 +422,10 @@ graph-import: | $(VENV_STAMP) ## Importe une fois le graphe Neo4j dans PostgreSQ
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	$(COMPOSE_TEST) up -d --wait postgres
 
-# Le pendant de `pg-up` pour le graphe : un Neo4j local, publié sur 127.0.0.1,
-# que les tests vident entre chaque cas. Ce n'est pas un graphe où modéliser —
-# celui-là reste sur le cluster (docs/adr/0006, 0024).
-db-test-up: ## Démarre le Neo4j jetable local (pour les tests d'intégration)
-	$(COMPOSE_TEST) up -d --wait neo4j
-
-pg-down: ## Arrête les bases jetables locales, PostgreSQL et Neo4j (seul PostgreSQL garde un volume)
+pg-down: ## Arrête le PostgreSQL jetable local (garde son volume)
 	docker compose down
 
-compose-up: ## Démarre les deux bases jetables locales et attend qu'elles soient saines
+compose-up: ## Démarre le PostgreSQL jetable local et attend qu'il soit sain
 	$(COMPOSE_TEST) up -d --wait
 
 compose-down: pg-down ## Arrête les bases jetables locales (alias de pg-down)
@@ -551,7 +433,7 @@ compose-down: pg-down ## Arrête les bases jetables locales (alias de pg-down)
 compose-ps: ## État des bases jetables locales
 	docker compose ps
 
-compose-logs: ## Suit les logs des bases jetables (s=postgres ou s=neo4j pour une seule)
+compose-logs: ## Suit les logs du PostgreSQL jetable
 	docker compose logs -f $(if $(s),"$(s)",)
 
 # Jetable veut dire jetable : le volume ne tient que ce que les tests écrivent.
@@ -561,7 +443,7 @@ compose-reset: ## Arrête les bases jetables et supprime le volume de PostgreSQL
 ## --- Embeddings -----------------------------------------------------------
 #
 # LM Studio tourne sur le cluster et sert un /v1/embeddings compatible OpenAI.
-# Rien ici ne le démarre : comme les deux bases, c'est une instance partagée.
+# Rien ici ne le démarre : comme la base, c'est une instance partagée.
 # La largeur des vecteurs (1024) est celle de la colonne, pas un réglage — voir
 # docs/adr/0019.
 
@@ -618,19 +500,15 @@ test-unit: | $(VENV_STAMP) ## Boucle rapide : uniquement les tests unitaires
 test-fe: | $(FRONTEND)/node_modules ## Tests Vitest du frontend (une passe, sans watch)
 	cd $(FRONTEND) && npm test -- --run
 
-# Contre les deux conteneurs jetables, jamais contre le cluster : ces tests
-# vident le graphe entre chaque cas et annulent la chaîne de migrations. Les
-# fixtures refusent de toute façon un hôte qui n'est pas local (docs/adr/0024) ;
-# pointer ici sur 127.0.0.1 est ce qui les fait tourner plutôt que sauter.
+# Contre le conteneur jetable, jamais contre la base partagée : ces tests
+# annulent la chaîne de migrations, graphe compris. Les fixtures refusent de
+# toute façon un hôte qui n'est pas local et le port 5432 (docs/adr/0024).
 # Les embeddings sont coupés : le démarrage de l'application irait sinon
 # interroger LM Studio sur le cluster, et la suite n'en dépend pas.
-test-integration: | $(VENV_STAMP) ## Tests contre un Neo4j et un PostgreSQL jetables locaux (les démarre au besoin)
-	$(COMPOSE_TEST) up -d --wait neo4j postgres
-	cd $(BACKEND) && EA_ALLOW_DESTRUCTIVE_TESTS=1 EA_DEBUG=true \
-		EA_NEO4J_URI=$(NEO4J_TEST_URI) \
-		EA_NEO4J_PASSWORD='$(NEO4J_TEST_PASSWORD)' \
-		EA_POSTGRES_ENABLED=true EA_POSTGRES_HOST=127.0.0.1 \
-		EA_POSTGRES_PORT=$(POSTGRES_TEST_PORT) \
+test-integration: | $(VENV_STAMP) ## Tests d'intégration contre le PostgreSQL jetable local (le démarre au besoin)
+	$(COMPOSE_TEST) up -d --wait postgres
+	cd $(BACKEND) && EA_DEBUG=true EA_POSTGRES_ENABLED=true \
+		EA_POSTGRES_HOST=127.0.0.1 EA_POSTGRES_PORT=$(POSTGRES_TEST_PORT) \
 		EA_POSTGRES_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
 		EA_EMBEDDINGS_ENABLED=false \
 		uv run pytest tests/integration -q
@@ -775,7 +653,7 @@ PREFIX ?= inbox/
 pipelines-run: ## Déclenche alimenter-catalogue/manuel dans le worker (PREFIX=... défaut inbox/)
 	$(PL_COMPOSE) exec worker prefect deployment run 'alimenter-catalogue/manuel' --param "prefix=$(PREFIX)" --watch
 
-# Imprime seulement, comme pg-stack et db-backup-howto : les rôles et les bases
+# Imprime seulement, comme pg-stack : les rôles et les bases
 # vivent dans le PostgreSQL de la stack ~/OpenCode/Infra (docs/adr/0029), où le
 # rôle `ea` ne crée pas de rôle — la provision passe par l'Infra, comme pour `ea`.
 # Cette cible ne réclame ni mot de passe ni pipelines/.env pour la rappeler.

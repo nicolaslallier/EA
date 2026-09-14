@@ -103,12 +103,12 @@ jobs:
       - run: make pipelines-install pipelines-lint-check pipelines-typecheck pipelines-test
 
   integration:
-    name: Intégration — Neo4j et PostgreSQL jetables
+    name: Intégration — PostgreSQL jetable
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    # Les mêmes images que le cluster (deploy/*.stack.yml) : un test qui passe
-    # ici doit passer là-bas, contraintes, Cypher et pgvector compris. Les mots
-    # de passe sont jetables, comme la machine : ce ne sont pas des secrets.
+    # La même image que la stack Infra : un test qui passe ici doit passer
+    # là-bas, contraintes et pgvector compris. Le mot de passe est jetable,
+    # comme la machine.
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -125,25 +125,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      neo4j:
-        image: neo4j:2026.07.1-community
-        env:
-          NEO4J_AUTH: neo4j/ci-disposable-password
-          NEO4J_server_memory_pagecache_size: 256M
-          NEO4J_server_memory_heap_max__size: 512M
-          NEO4J_server_memory_heap_initial__size: 512M
-        # 7688, le port du Neo4j de test en local (docker-compose.yml) : la
-        # même URI dans les deux mondes.
-        ports:
-          - 7688:7687
-        # cypher-shell lit NEO4J_USERNAME et NEO4J_PASSWORD dans son
-        # environnement, posés pour cette commande seulement.
-        options: >-
-          --health-cmd "NEO4J_USERNAME=neo4j NEO4J_PASSWORD=ci-disposable-password cypher-shell 'RETURN 1'"
-          --health-interval 5s
-          --health-timeout 10s
-          --health-retries 30
-          --health-start-period 20s
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
@@ -154,10 +135,7 @@ jobs:
       - name: pytest tests/integration
         working-directory: backend
         env:
-          EA_ALLOW_DESTRUCTIVE_TESTS: "1"
           EA_DEBUG: "true"
-          EA_NEO4J_URI: bolt://127.0.0.1:7688
-          EA_NEO4J_PASSWORD: ci-disposable-password
           EA_POSTGRES_ENABLED: "true"
           EA_POSTGRES_HOST: 127.0.0.1
           EA_POSTGRES_PORT: "5433"
