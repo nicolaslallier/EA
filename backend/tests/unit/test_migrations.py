@@ -1,7 +1,6 @@
 """The Alembic chain, checked without a database.
 
-The graph has no migrations — its constraints are declared and reapplied at
-boot (`db/schema.py`). PostgreSQL is the opposite: every change to a table is a
+The graph is in PostgreSQL too since docs/adr/0033: every change to a table is a
 versioned script, and the properties that make that chain safe are structural,
 so they are checked here rather than discovered on a deployment.
 """
@@ -101,25 +100,20 @@ def test_the_markdown_is_stored_as_text_and_not_as_bytes() -> None:
     assert content.nullable is False
 
 
-def test_the_element_a_document_names_carries_no_foreign_key() -> None:
-    """It cannot: the element is a `:Element` node in Neo4j, not a row here.
-
-    This is the assertion that explains the explicit cascade in
-    `ArchitectureService.delete_element` — see docs/adr/0017.
-    """
+def test_a_document_follows_its_element_by_the_foreign_key() -> None:
+    """The element is a row since docs/adr/0033, so the cascade is DDL."""
     element_id = Base.metadata.tables["element_documents"].c.element_id
+    key = next(iter(element_id.foreign_keys))
 
-    assert element_id.foreign_keys == set()
+    assert key.column.table.name == "elements"
+    assert key.ondelete == "CASCADE"
     assert element_id.index is True
 
 
 def test_the_passages_table_can_state_the_foreign_key_the_documents_could_not() -> None:
     """The difference docs/adr/0019 turns on: a document *is* a row here.
 
-    `element_documents.element_id` names a Neo4j node and can reference
-    nothing, which is why its cascade is written by hand in a service. A
-    passage names a document, so its cascade is one line of DDL — and this is
-    the assertion that says the database is doing it.
+    Both cascades are DDL now (docs/adr/0033); this one was the first.
     """
     document_id = Base.metadata.tables["document_chunks"].c.document_id
     key = next(iter(document_id.foreign_keys))
@@ -165,11 +159,12 @@ def test_the_vector_index_is_built_for_the_distance_the_repository_orders_by() -
     assert index.dialect_options["postgresql"]["ops"] == {"embedding": "vector_cosine_ops"}
 
 
-def test_a_diagram_node_names_its_element_without_a_foreign_key() -> None:
-    """The element is a Neo4j node; the cascade is `discard_for_element` — docs/adr/0031."""
+def test_a_diagram_node_follows_its_element_by_the_foreign_key() -> None:
     element_id = Base.metadata.tables["diagram_nodes"].c.element_id
+    key = next(iter(element_id.foreign_keys))
 
-    assert element_id.foreign_keys == set()
+    assert key.column.table.name == "elements"
+    assert key.ondelete == "CASCADE"
     assert element_id.index is True
 
 

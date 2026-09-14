@@ -144,11 +144,3 @@ class PostgresDiagramRepository:
             )
             row.updated_at = now
         return True
-
-    async def discard_for_element(self, element_id: UUID) -> int:
-        """The cascade PostgreSQL cannot declare, because the element is a node."""
-        async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(DiagramNodeRecord).where(DiagramNodeRecord.element_id == element_id)
-            )
-        return cast("CursorResult[Any]", deleted).rowcount

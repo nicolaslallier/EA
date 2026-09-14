@@ -1,9 +1,9 @@
 """The PostgreSQL implementation of `DocumentRepository`.
 
-It takes the *session factory* rather than a session, exactly as its Neo4j
-neighbour takes the driver rather than a session: both are built once for the
-process, and both open one unit of work per call. Every use case here is a
-single write, so a session per call is a transaction per use case — the rule
+It takes the *session factory* rather than a session, exactly as the
+architecture store does: both are built once for the process, and both open one
+unit of work per call. Every use case here is a single write, so a session per
+call is a transaction per use case — the rule
 `CLAUDE.md` states. A use case that ever spans two writes takes an
 `AsyncSession` argument instead, and `api.dependencies.get_session` becomes the
 seam it was built to be.
@@ -199,19 +199,6 @@ class PostgresDocumentRepository:
                 delete(ElementDocument).where(ElementDocument.id == document_id)
             )
         return bool(_rows_affected(deleted))
-
-    async def discard_for_element(self, element_id: UUID) -> int:
-        """The cascade PostgreSQL cannot declare, because the element is a node.
-
-        Called when an element is deleted from the graph — see
-        `ArchitectureService.delete_element` and docs/adr/0017. The passages of
-        those documents *are* declared, and follow by the foreign key.
-        """
-        async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(ElementDocument).where(ElementDocument.element_id == element_id)
-            )
-        return _rows_affected(deleted)
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every document in the store, oldest first — the reindex walks these."""

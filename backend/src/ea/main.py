@@ -48,7 +48,7 @@ from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
 from ea.repositories.keycloak import JwtVerifier, http_client_for
-from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.indexing import DocumentIndexer
@@ -171,14 +171,7 @@ def _lifespan(
                 stack.push_async_callback(driver.close)
                 await prepare_database(driver, database=settings.neo4j_database)
                 repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
-                # Documents and diagram nodes both name the element by id, so
-                # deleting it discards both — one cascade, fanned out.
-                app.state.architecture_service = ArchitectureService(
-                    repository,
-                    attachments=AllAttachments(
-                        *(store for store in (attachments, diagram_store) if store is not None)
-                    ),
-                )
+                app.state.architecture_service = ArchitectureService(repository)
                 # The IP addressing is a reading of that same graph and adds no
                 # store, so it is built from the very repository above — see
                 # `docs/adr/0020`.

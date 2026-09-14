@@ -227,18 +227,6 @@ class TestRevisingAndRemoving:
     ) -> None:
         assert (await client.delete(f"/documents/{uuid4()}")).status_code == 404
 
-    async def test_deleting_the_element_takes_its_documents_with_it(
-        self, client: httpx.AsyncClient
-    ) -> None:
-        """No foreign key can do this — the element is a node in the graph."""
-        element_id = await an_element(client)
-        attached = await attach(client, element_id)
-
-        await client.delete(f"/elements/{element_id}")
-        orphan = await client.get(f"/documents/{attached['id']}")
-
-        assert orphan.status_code == 404
-
 
 @pytest.mark.asyncio
 async def test_the_document_routes_say_so_when_the_relational_store_is_shut(

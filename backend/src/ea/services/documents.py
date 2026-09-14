@@ -1,15 +1,10 @@
 """Use cases over the markdown attached to architecture elements.
 
 The rule this layer owns is the one no single object can check: **an element
-must exist in the graph before a file can be attached to it**. The element is a
-node in Neo4j and the document a row in PostgreSQL (docs/adr/0017), so no
-foreign key states it — this service does, by asking the architecture service
-first. An adapter that skipped it would write documents onto elements nobody
-can reach.
-
-The other half of that missing foreign key is the cascade, and it lives where
-the deletion does: `ArchitectureService.delete_element` discards the documents
-through the narrow `ElementAttachments` port.
+must exist in the graph before a file can be attached to it**. A foreign key
+states it since docs/adr/0033, and takes the documents with a deleted element;
+this service still asks the architecture service first, so a missing element
+is a readable 404 rather than a foreign-key violation.
 
 Since docs/adr/0019 this layer owns a second rule of the same kind: **a stored
 document and the passages it is searchable by are written together**. The

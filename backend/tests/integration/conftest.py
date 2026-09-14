@@ -28,22 +28,31 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 from neo4j import AsyncDriver
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.core.config import Settings, get_settings
+from ea.db.models.architecture import ElementRecord
 from ea.db.neo4j import create_driver
 from ea.db.postgres import RelationalStoreUnavailableError, create_engine, create_session_factory
 from ea.db.postgres import check_connectivity as check_postgres
 from ea.db.schema import apply_schema
-from ea.repositories.architecture_store import PostgresArchitectureRepository
+from ea.domain.archimate import ElementType
+from ea.domain.documents import Document
+from ea.domain.model import Element
+from ea.domain.search import EmbeddedChunk
+from ea.repositories.architecture_store import PostgresArchitectureRepository, element_row
+from ea.repositories.document_store import PostgresDocumentRepository
 from ea.services.architecture import ArchitectureService
 from tests.integration.throwaway import (
     DESTRUCTIVE_OPT_IN,
@@ -159,3 +168,44 @@ async def engine_at_head(
         yield postgres_engine
     finally:
         await asyncio.to_thread(command.downgrade, alembic_config, "base")
+
+
+async def ensure_elements(engine: AsyncEngine, *element_ids: UUID) -> None:
+    """Rows in `elements` for ids a test made up.
+
+    Since revision 0006 a document and a diagram box name their element by a
+    foreign key, so a test about the document or diagram store must first give
+    that id an element — any element will do.
+    """
+    now = datetime.now(UTC)
+    rows = [
+        element_row(
+            Element.create(
+                element_type=ElementType.NODE,
+                name=f"node-{element_id}",
+                now=now,
+                element_id=element_id,
+            )
+        )
+        for element_id in element_ids
+    ]
+    if not rows:
+        return
+    async with create_session_factory(engine).begin() as session:
+        await session.execute(insert(ElementRecord).values(rows).on_conflict_do_nothing())
+
+
+class DocumentsOnStoredElements(PostgresDocumentRepository):
+    """The repository under test, giving each element id it is handed a row first.
+
+    Since revision 0006 a document names its element by a foreign key; what is
+    under test here is the document store, not where elements come from.
+    """
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        super().__init__(create_session_factory(engine))
+        self._engine = engine
+
+    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+        await ensure_elements(self._engine, document.element_id)
+        return await super().add(document, chunks)

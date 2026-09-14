@@ -37,7 +37,7 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
-from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -451,17 +451,6 @@ class InMemoryDocuments:
         self.chunks.pop(document_id, None)
         return self.documents.pop(document_id, None) is not None
 
-    async def discard_for_element(self, element_id: UUID) -> int:
-        doomed = [
-            document_id
-            for document_id, stored in self.documents.items()
-            if stored.element_id == element_id
-        ]
-        for document_id in doomed:
-            del self.documents[document_id]
-            self.chunks.pop(document_id, None)
-        return len(doomed)
-
     async def all_document_ids(self) -> tuple[UUID, ...]:
         return tuple(
             document.id
@@ -555,14 +544,6 @@ class InMemoryDiagrams:
         self.diagrams[diagram_id] = stored.touched(now)
         return True
 
-    async def discard_for_element(self, element_id: UUID) -> int:
-        discarded = 0
-        for diagram_id, nodes in self.nodes.items():
-            kept = tuple(node for node in nodes if node.element_id != element_id)
-            discarded += len(nodes) - len(kept)
-            self.nodes[diagram_id] = kept
-        return discarded
-
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     product = sum(a * b for a, b in zip(left, right, strict=True))
@@ -638,18 +619,9 @@ def diagrams() -> InMemoryDiagrams:
 
 
 @pytest.fixture
-def service(
-    repository: InMemoryRepository, documents: InMemoryDocuments, diagrams: InMemoryDiagrams
-) -> ArchitectureService:
-    """The service wired to the in-memory graph and to a clock that never moves.
-
-    It is handed the attachments too, because deleting an element has to take
-    its documents and its places on diagrams with it and no foreign key says
-    so — see docs/adr/0017 and 0031. Both, as `main.py` wires them.
-    """
-    return ArchitectureService(
-        repository, clock=lambda: FIXED_NOW, attachments=AllAttachments(documents, diagrams)
-    )
+def service(repository: InMemoryRepository) -> ArchitectureService:
+    """The service wired to the in-memory graph and to a clock that never moves."""
+    return ArchitectureService(repository, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

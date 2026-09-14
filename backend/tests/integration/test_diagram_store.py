@@ -2,14 +2,15 @@
 
 What only the server can prove: migration `0004` applies, the unique name is a
 constraint, a layout is replaced in one transaction, deleting a diagram takes
-its nodes by the foreign key, and discarding an element touches no other.
+its nodes by the foreign key, and a box names an element by the foreign key.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select
@@ -20,6 +21,7 @@ from ea.db.postgres import create_session_factory
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError
 from ea.repositories.diagram_store import PostgresDiagramRepository
+from tests.integration.conftest import ensure_elements
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -27,9 +29,23 @@ FIXED_NOW = datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
 LATER = FIXED_NOW.replace(year=2027)
 
 
+class DiagramsOnStoredElements(PostgresDiagramRepository):
+    """Each element a layout names gets a row first — foreign key since 0006."""
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        super().__init__(create_session_factory(engine))
+        self._engine = engine
+
+    async def replace_layout(
+        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+    ) -> bool:
+        await ensure_elements(self._engine, *(node.element_id for node in nodes))
+        return await super().replace_layout(diagram_id, nodes, now=now)
+
+
 @pytest.fixture
 def diagrams(engine_at_head: AsyncEngine) -> PostgresDiagramRepository:
-    return PostgresDiagramRepository(create_session_factory(engine_at_head))
+    return DiagramsOnStoredElements(engine_at_head)
 
 
 def a_diagram(name: str = "Vente") -> Diagram:
@@ -144,19 +160,3 @@ async def test_deleting_a_diagram_takes_its_nodes_by_the_foreign_key(
     async with engine_at_head.connect() as connection:
         left = await connection.scalar(select(func.count()).select_from(DiagramNodeRecord))
     assert left == 0
-
-
-async def test_discarding_an_element_removes_its_boxes_from_every_diagram_and_no_others(
-    diagrams: PostgresDiagramRepository,
-) -> None:
-    doomed, spared = uuid4(), uuid4()
-    first = await diagrams.add(a_diagram("A"))
-    second = await diagrams.add(a_diagram("B"))
-    for diagram in (first, second):
-        await diagrams.replace_layout(
-            diagram.id, [DiagramNode(doomed, 0, 0), DiagramNode(spared, 1, 1)], now=FIXED_NOW
-        )
-
-    assert await diagrams.discard_for_element(doomed) == 2
-    assert await diagrams.nodes_of(first.id) == (DiagramNode(spared, 1, 1),)
-    assert await diagrams.discard_for_element(uuid4()) == 0

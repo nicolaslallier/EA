@@ -53,8 +53,8 @@ class ElementFilter:
 class ArchitectureRepository(Protocol):
     """Persistence for the architecture graph.
 
-    Every method is async because the only implementation talks to Neo4j over
-    Bolt; a synchronous in-memory double satisfying this protocol would still
+    Every method is async because the only implementation talks to PostgreSQL over
+    asyncpg; a synchronous in-memory double satisfying this protocol would still
     have to declare `async def`.
     """
 
@@ -141,22 +141,7 @@ class ArchitectureRepository(Protocol):
         ...
 
 
-class ElementAttachments(Protocol):
-    """The only thing the architecture graph needs to know about attachments.
-
-    Deleting an element has to take its documents with it, and the two live in
-    different stores — one in Neo4j, one in PostgreSQL — so no foreign key can
-    do it. That cascade is the *whole* of the coupling, so it is the whole of
-    this port: `ArchitectureService` depends on this and never on the document
-    repository, which knows how to upload, list and read.
-    """
-
-    async def discard_for_element(self, element_id: UUID) -> int:
-        """Delete every row attached to an element, and say how many."""
-        ...
-
-
-class DocumentRepository(ElementAttachments, Protocol):
+class DocumentRepository(Protocol):
     """Persistence for the markdown attached to elements, and for its index.
 
     A `DocumentSummary` is what a listing returns and a `Document` what a read
@@ -212,13 +197,8 @@ class DocumentRepository(ElementAttachments, Protocol):
         ...
 
 
-class DiagramRepository(ElementAttachments, Protocol):
-    """Persistence for saved diagrams — see docs/adr/0031.
-
-    An `ElementAttachments` too: a box on a diagram names an element by id, and
-    deleting the element has to take the box with it, through the same
-    cascade the documents follow.
-    """
+class DiagramRepository(Protocol):
+    """Persistence for saved diagrams — see docs/adr/0031."""
 
     async def list_all(self) -> tuple[Diagram, ...]:
         """Every diagram, sorted by name, each with its node count."""
@@ -277,7 +257,7 @@ class IpamRepository(Protocol):
     filters on type, layer and name and never on an attribute.
 
     They are declared apart from `ArchitectureRepository` because they are a
-    different use case, and satisfied by the same Neo4j class, which implements
+    different use case, and satisfied by the same PostgreSQL class, which implements
     both — structural typing, so neither protocol has to know about the other.
     """
 
@@ -299,7 +279,7 @@ class IpamRepository(Protocol):
         """The one element answering on that address in that scope, if any.
 
         One and not many: `(p_vrf, p_ip_address)` is a uniqueness constraint in
-        Neo4j, which is the whole reason an element holds a single address
+        PostgreSQL, which is the whole reason an element holds a single address
         rather than a list — see `domain/ipam.py`.
         """
         ...

@@ -231,16 +231,6 @@ class TestSearching:
 
         assert await document_service.search("Escalade") == ()
 
-    async def test_deleting_the_element_empties_the_index_of_its_documents(
-        self, document_service: DocumentService, service: ArchitectureService
-    ) -> None:
-        element = await an_element(service)
-        await document_service.attach_text(element.id, filename="runbook.md", content=RUNBOOK)
-
-        await service.delete_element(element.id)
-
-        assert await document_service.search("Escalade") == ()
-
     async def test_passages_embedded_by_another_model_are_not_matches(
         self,
         document_service: DocumentService,

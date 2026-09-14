@@ -26,7 +26,6 @@ from ea.services.caller import require_caller, require_editor
 if TYPE_CHECKING:
     from ea.domain.ports import (
         ArchitectureRepository,
-        ElementAttachments,
         ElementFilter,
         GraphView,
     )
@@ -43,34 +42,6 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class AllAttachments:
-    """Several stores attached to an element, discarded as one `ElementAttachments`.
-
-    Documents (docs/adr/0017) and diagram nodes (docs/adr/0031) both name an
-    element they cannot reference by a foreign key. `delete_element` keeps one
-    cascade; this fans it out. Every store is asked even when one fails, and the
-    failure is raised afterwards, so `delete_element` still logs the orphans.
-    """
-
-    def __init__(self, *stores: ElementAttachments) -> None:
-        self._stores = stores
-
-    async def discard_for_element(self, element_id: UUID) -> int:
-        discarded = 0
-        failures: list[Exception] = []
-        for store in self._stores:
-            try:
-                discarded += await store.discard_for_element(element_id)
-            except Exception as error:  # re-raised below, once every store was asked
-                failures.append(error)
-        if len(failures) == 1:
-            raise failures[0]
-        if failures:
-            msg = "several attachment stores failed to discard"
-            raise ExceptionGroup(msg, failures)
-        return discarded
-
-
 class ArchitectureService:
     """The single entry point `api/` uses to read and change the graph."""
 
@@ -79,11 +50,9 @@ class ArchitectureService:
         repository: ArchitectureRepository,
         *,
         clock: Clock = _utc_now,
-        attachments: ElementAttachments | None = None,
     ) -> None:
         self._repository = repository
         self._now = clock
-        self._attachments = attachments
 
     # --- Elements ---------------------------------------------------------
 
@@ -191,43 +160,14 @@ class ArchitectureService:
     async def delete_element(self, element_id: UUID) -> None:
         """Remove an element together with everything attached to it.
 
-        "Everything" spans two stores. The graph takes its own relationships
-        with it, in one Cypher statement; the markdown attached to the element
-        is a row in PostgreSQL (docs/adr/0017) that no foreign key can cascade,
-        so it is deleted here, through the narrow `ElementAttachments` port.
-
-        The graph goes first. There is no transaction across the two stores, so
-        one order has to be chosen and its failure mode accepted: this way a
-        crash in between leaves rows nobody can reach — invisible, and never
-        inherited by another element, since ids are random. The other order
-        would leave an element whose documentation had silently vanished.
-
-        That failure is not only a crash: the discard can raise while the
-        process lives on, and it is then caught rather than propagated. By that
-        point the node is gone, irreversibly, and gone is what the caller asked
-        for — an error would tell them the element still exists, and their
-        retry would answer 404. What they cannot see, the log must: the orphans
-        are written at ERROR with the element's id in `extra=`, which is the
-        key a clean-up query joins on.
-
-        `attachments` is absent whenever the relational store is shut
-        (`EA_POSTGRES_ENABLED`), which is also the only case in which there is
-        nothing attached to discard.
+        Its relationships, its documents with their passages and its boxes on
+        diagrams follow by foreign keys, in the one transaction that deletes
+        it — see docs/adr/0033.
         """
         require_editor()
         if not await self._repository.delete_element(element_id):
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
-        if self._attachments is not None:
-            try:
-                await self._attachments.discard_for_element(element_id)
-            except Exception:
-                # Deliberately broad: whatever the relational store raised, the
-                # graph deletion has already happened and cannot be undone.
-                logger.exception(
-                    "element deleted, but what was attached to it was not: orphaned rows",
-                    extra={"action": "attachments_orphaned", "element_id": str(element_id)},
-                )
         logger.info(
             "element deleted, with everything attached to it",
             extra={"action": "deleted", "element_id": str(element_id)},

@@ -12,43 +12,25 @@ timestamp column that dropped its offset.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ea.db.postgres import create_session_factory
 from ea.domain.documents import Document
 from ea.domain.errors import DuplicateDocumentError
 from ea.repositories.document_store import PostgresDocumentRepository
+from tests.integration.conftest import DocumentsOnStoredElements
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 FIXED_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
 
 
-@pytest_asyncio.fixture
-async def documents(
-    postgres_engine: AsyncEngine, alembic_config: Config
-) -> AsyncIterator[PostgresDocumentRepository]:
-    """The repository over a database at `head`, emptied on the way out.
-
-    The chain is applied rather than `create_all`: what is under test includes
-    the migration, and a schema built from the metadata would pass while the
-    revision that deploys it was wrong.
-    """
-    await asyncio.to_thread(command.upgrade, alembic_config, "head")
-    repository = PostgresDocumentRepository(create_session_factory(postgres_engine))
-    try:
-        yield repository
-    finally:
-        await asyncio.to_thread(command.downgrade, alembic_config, "base")
+@pytest.fixture
+def documents(engine_at_head: AsyncEngine) -> PostgresDocumentRepository:
+    return DocumentsOnStoredElements(engine_at_head)
 
 
 def a_document(element_id: object = None, filename: str = "runbook.md", content: str = "# R\n"):
@@ -187,27 +169,3 @@ async def test_deleting_a_document_reports_whether_there_was_one(
     assert await documents.delete(stored.id) is True
     assert await documents.delete(stored.id) is False
     assert await documents.get(stored.id) is None
-
-
-async def test_discarding_an_element_removes_its_documents_and_no_others(
-    documents: PostgresDocumentRepository,
-) -> None:
-    """The cascade PostgreSQL cannot declare — the element is a node in Neo4j."""
-    doomed = uuid4()
-    spared = uuid4()
-    await documents.add(a_document(doomed, "a.md"))
-    await documents.add(a_document(doomed, "b.md"))
-    await documents.add(a_document(spared, "a.md"))
-
-    discarded = await documents.discard_for_element(doomed)
-
-    assert discarded == 2
-    assert await documents.list_for_element(doomed) == ()
-    assert len(await documents.list_for_element(spared)) == 1
-
-
-async def test_discarding_an_element_that_had_nothing_attached_is_not_an_error(
-    documents: PostgresDocumentRepository,
-) -> None:
-    """Every element deletion calls this, and most elements carry no file."""
-    assert await documents.discard_for_element(uuid4()) == 0

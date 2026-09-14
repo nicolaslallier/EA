@@ -57,8 +57,7 @@ async def reindex(settings: Settings) -> int:
         await embedder.probe()
         documents = PostgresDocumentRepository(create_session_factory(engine))
         architecture = ArchitectureService(
-            Neo4jArchitectureRepository(driver, database=settings.neo4j_database),
-            attachments=documents,
+            Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
         )
         service = DocumentService(documents, architecture, indexer=DocumentIndexer(embedder))
         # An operator's script has no request behind it, so it runs as SYSTEM.

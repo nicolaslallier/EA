@@ -1,9 +1,8 @@
 """The use cases over attached markdown, against an in-memory pair of stores.
 
-The rule this layer owns is the one no foreign key can state: the element is a
-node in Neo4j and the document a row in PostgreSQL, so "attach to an element
-that exists" and "delete the documents when the element goes" are both code —
-see docs/adr/0017. These are the tests of that code.
+The element and the document are both rows since docs/adr/0033, so "attach to
+an element that exists" is still checked here, for a readable 404 rather than a
+foreign-key violation. These are the tests of that code.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from ea.domain.errors import (
 from ea.domain.model import Element
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
-from tests.conftest import FIXED_NOW, InMemoryDocuments
+from tests.conftest import FIXED_NOW
 
 pytestmark = pytest.mark.asyncio
 
@@ -249,25 +248,6 @@ class TestDiscarding:
         with pytest.raises(DocumentNotFoundError):
             await document_service.discard(stored.id)
 
-    async def test_deleting_the_element_takes_its_documents_with_it(
-        self,
-        service: ArchitectureService,
-        document_service: DocumentService,
-        documents: InMemoryDocuments,
-    ) -> None:
-        """The cascade PostgreSQL cannot declare, because the element is a node.
-
-        Checked on the store rather than through the API, since after the
-        deletion there is no element left to list the documents of — which is
-        exactly how orphaned rows would stay invisible.
-        """
-        element = await an_element(service)
-        await document_service.attach(element.id, filename="runbook.md", raw=RUNBOOK)
-
-        await service.delete_element(element.id)
-
-        assert documents.documents == {}
-
     async def test_deleting_one_element_leaves_another_element_its_documents(
         self, service: ArchitectureService, document_service: DocumentService
     ) -> None:
@@ -279,15 +259,3 @@ class TestDiscarding:
         await service.delete_element(first.id)
 
         assert len(await document_service.list_for_element(second.id)) == 1
-
-    async def test_an_architecture_service_without_a_store_still_deletes_elements(
-        self, repository: object
-    ) -> None:
-        """The relational store shut is the one case with nothing to discard."""
-        alone = ArchitectureService(repository, clock=lambda: FIXED_NOW)  # type: ignore[arg-type]
-        element = await an_element(alone)
-
-        await alone.delete_element(element.id)
-
-        with pytest.raises(ElementNotFoundError):
-            await alone.get_element(element.id)

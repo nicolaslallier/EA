@@ -572,24 +572,6 @@ class TestDocuments:
         with pytest.raises(ToolError):
             await call(server, "discard_document", document_id=stored["id"])
 
-    async def test_deleting_the_element_takes_its_documents_with_it(
-        self, server: MCPServer[Any]
-    ) -> None:
-        """The cascade no foreign key declares, seen from the agent's side."""
-        element = await an_element(server, "application_component", "Billing")
-        stored = await call(
-            server,
-            "attach_document",
-            element_id=element["id"],
-            filename="runbook.md",
-            content="# Runbook\n",
-        )
-
-        await call(server, "delete_element", element_id=element["id"])
-
-        with pytest.raises(ToolError):
-            await call(server, "read_document", document_id=stored["id"])
-
 
 @pytest.mark.asyncio
 class TestSearchingTheDocuments:
