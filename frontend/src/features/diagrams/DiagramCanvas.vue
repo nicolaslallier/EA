@@ -406,6 +406,27 @@ function removeIfSelected(box: Box): void {
   border-radius: 8px;
   max-height: 40rem;
 }
+/*
+ * macOS draws overlay scroll bars that vanish until the area is scrolled, so a
+ * diagram larger than its frame looks cut off. A styled bar is always drawn.
+ * Setting `scrollbar-width`/`scrollbar-color` here would make Chrome ignore it.
+ */
+.canvas__area::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.canvas__area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.canvas__area::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 35%, transparent);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+.canvas__area::-webkit-scrollbar-corner {
+  background: transparent;
+}
 svg {
   display: block;
   /* A drag on the canvas moves a box, never the page. */
