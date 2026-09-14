@@ -15,7 +15,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ColumnElement, delete, func, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Integer,
+    and_,
+    case,
+    delete,
+    func,
+    literal_column,
+    not_,
+    or_,
+    select,
+)
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
@@ -30,14 +41,14 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
+from ea.domain.ports import ElementFilter, GraphView
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-    from ea.domain.ports import ElementFilter
+    from sqlalchemy.sql.selectable import CTE
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +206,94 @@ def _of_types(types: Sequence[RelationshipType]) -> list[ColumnElement[bool]]:
     return [RelationshipRecord.relationship_type.in_([t.value for t in types])]
 
 
+#: The relationships along which dependency runs source → target; every other
+#: type carries it target → source. Read from the metamodel, never restated.
+ALONG_THE_ARROW: Final = tuple(
+    relationship.value for relationship in RelationshipType if relationship.impact_follows_direction
+)
+
+#: Relationships that build the containment tree, and so must stay acyclic.
+_CONTAINMENT: Final = (RelationshipType.COMPOSITION.value, RelationshipType.AGGREGATION.value)
+
+
+def _clamp_depth(depth: int) -> int:
+    return max(1, min(depth, MAX_TRAVERSAL_DEPTH))
+
+
+def _seed(element_id: UUID) -> CTE:
+    """The start of a walk: the element itself at zero hops, or nothing if absent."""
+    return (
+        select(ElementRecord.id.label("id"), literal_column("0", Integer).label("hops"))
+        .where(ElementRecord.id == element_id)
+        .cte("reached", recursive=True)
+    )
+
+
+def _neighbourhood_walk(element_id: UUID, depth: int, types: Sequence[RelationshipType]) -> CTE:
+    """Every element within `depth` hops, whichever way each link points."""
+    reached = _seed(element_id)
+    link = RelationshipRecord
+    step = (
+        select(
+            case((link.source_id == reached.c.id, link.target_id), else_=link.source_id).label(
+                "id"
+            ),
+            (reached.c.hops + 1).label("hops"),
+        )
+        .select_from(reached)
+        .join(link, or_(link.source_id == reached.c.id, link.target_id == reached.c.id))
+        .where(reached.c.hops < depth, *_of_types(types))
+    )
+    return reached.union(step)
+
+
+def _impact_walk(element_id: UUID, depth: int, types: Sequence[RelationshipType]) -> CTE:
+    """Everything that depends on an element, each hop taken the way dependency runs.
+
+    A hop along a type of `ALONG_THE_ARROW` leaves from its source; any other
+    leaves from its target. That lets one walk mix both — forwards for
+    `serving`, backwards for `composition` — without answering a different
+    question halfway through.
+    """
+    reached = _seed(element_id)
+    link = RelationshipRecord
+    along = link.relationship_type.in_(ALONG_THE_ARROW)
+    step = (
+        select(
+            case((along, link.target_id), else_=link.source_id).label("id"),
+            (reached.c.hops + 1).label("hops"),
+        )
+        .select_from(reached)
+        .join(
+            link,
+            or_(
+                and_(along, link.source_id == reached.c.id),
+                and_(not_(along), link.target_id == reached.c.id),
+            ),
+        )
+        .where(reached.c.hops < depth, *_of_types(types))
+    )
+    return reached.union(step)
+
+
+async def _links_within(
+    session: AsyncSession, ids: Sequence[UUID], types: Sequence[RelationshipType]
+) -> tuple[Relationship, ...]:
+    """The relationships whose two ends are both among `ids`: a drawable sub-graph."""
+    if not ids:
+        return ()
+    statement = (
+        select(RelationshipRecord)
+        .where(
+            RelationshipRecord.source_id.in_(ids),
+            RelationshipRecord.target_id.in_(ids),
+            *_of_types(types),
+        )
+        .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+    )
+    return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+
 # --------------------------------------------------------------------------
 # Repository
 # --------------------------------------------------------------------------
@@ -306,3 +405,113 @@ class PostgresArchitectureRepository:
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )
         return bool(_rows_affected(deleted))
+
+    # --- Traversals -------------------------------------------------------
+
+    async def relations_of(
+        self,
+        element_id: UUID,
+        *,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        async with self._sessions() as session:
+            row = await session.get(ElementRecord, element_id)
+            if row is None:
+                return GraphView(elements=(), relationships=())
+            statement = (
+                select(RelationshipRecord)
+                .where(
+                    or_(
+                        RelationshipRecord.source_id == element_id,
+                        RelationshipRecord.target_id == element_id,
+                    ),
+                    *_of_types(relationship_types),
+                )
+                .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+            )
+            links = tuple(relationship_from_row(link) for link in await session.scalars(statement))
+            # A self-association names the element at both ends: it is listed once, first.
+            others = {end for link in links for end in (link.source_id, link.target_id)}
+            others.discard(element_id)
+            around: tuple[Element, ...] = ()
+            if others:
+                found = await session.scalars(
+                    select(ElementRecord)
+                    .where(ElementRecord.id.in_(list(others)))
+                    .order_by(ElementRecord.name, ElementRecord.id)
+                )
+                around = tuple(element_from_row(other) for other in found)
+        return GraphView(elements=(element_from_row(row), *around), relationships=links)
+
+    async def neighbourhood(
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 1,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        walk = _neighbourhood_walk(element_id, _clamp_depth(depth), relationship_types)
+        return await self._view_of_walk(walk, relationship_types)
+
+    async def impacted_by(
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 5,
+        relationship_types: Sequence[RelationshipType] = (),
+    ) -> GraphView:
+        walk = _impact_walk(element_id, _clamp_depth(depth), relationship_types)
+        return await self._view_of_walk(walk, relationship_types)
+
+    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+        if not element_ids:
+            return GraphView(elements=(), relationships=())
+        async with self._sessions() as session:
+            found = await session.scalars(
+                select(ElementRecord)
+                .where(ElementRecord.id.in_(list(element_ids)))
+                .order_by(ElementRecord.name, ElementRecord.id)
+            )
+            elements = tuple(element_from_row(row) for row in found)
+            links = await _links_within(session, [element.id for element in elements], ())
+        return GraphView(elements=elements, relationships=links)
+
+    async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
+        """Whether `source` is already contained, at any depth, under `target`.
+
+        The walk has no depth: it stops because `UNION` discards a row it has
+        already produced, so a cycle already in the data cannot loop it.
+        """
+        if source_id == target_id:
+            return True
+        below = (
+            select(ElementRecord.id.label("id"))
+            .where(ElementRecord.id == target_id)
+            .cte("below", recursive=True)
+        )
+        below = below.union(
+            select(RelationshipRecord.target_id.label("id"))
+            .select_from(below)
+            .join(RelationshipRecord, RelationshipRecord.source_id == below.c.id)
+            .where(RelationshipRecord.relationship_type.in_(_CONTAINMENT))
+        )
+        statement = select(func.count()).select_from(below).where(below.c.id == source_id)
+        async with self._sessions() as session:
+            return bool((await session.execute(statement)).scalar_one())
+
+    async def _view_of_walk(
+        self, walk: CTE, relationship_types: Sequence[RelationshipType]
+    ) -> GraphView:
+        """The elements a walk reached, nearest first, and the links between them."""
+        statement = (
+            select(ElementRecord)
+            .join(walk, walk.c.id == ElementRecord.id)
+            .group_by(ElementRecord.id)
+            .order_by(func.min(walk.c.hops), ElementRecord.name, ElementRecord.id)
+        )
+        async with self._sessions() as session:
+            elements = tuple(element_from_row(row) for row in await session.scalars(statement))
+            links = await _links_within(
+                session, [element.id for element in elements], relationship_types
+            )
+        return GraphView(elements=elements, relationships=links)

@@ -115,6 +115,17 @@ class TestElementPersistence:
 
         assert [element.name for element in found] == ["Billing"]
 
+    async def test_the_catalogue_search_treats_wildcards_as_characters(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """`%` and `_` are what the user typed, as under Cypher's `CONTAINS`."""
+        await graph_service.create_element(element_type=E.NODE, name="db_01")
+        await graph_service.create_element(element_type=E.NODE, name="dbx01")
+
+        found = await graph_service.list_elements(ElementFilter(search="db_"))
+
+        assert [element.name for element in found] == ["db_01"]
+
 
 class TestRelationshipPersistence:
     async def test_a_relationship_survives_a_round_trip(
