@@ -51,6 +51,15 @@ updates:
       - /pipelines
     schedule:
       interval: weekly
+    # Le tag du serveur Prefect suit la version de `prefect` verrouillée dans
+    # pipelines/uv.lock (test_stack.py le vérifie) : il ne bouge qu'avec elle,
+    # à la main. Dependabot l'a monté seul vers 3.8.6.dev5, une préversion ;
+    # un motif `versions` ne l'aurait pas exclue sans exclure 3.8.6 aussi,
+    # puisque la comparaison ignore le `.devN`. Le digest du tag épinglé, lui,
+    # continue d'être rafraîchi.
+    ignore:
+      - dependency-name: prefecthq/prefect
+        update-types: [version-update:semver-patch, version-update:semver-minor, version-update:semver-major]
 
   # Les images de base des Dockerfile de frontend/ (construit par
   # deploy/ea.stack.yml) et de pipelines/, épinglées par tag et digest pour la
