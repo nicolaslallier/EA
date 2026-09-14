@@ -57,8 +57,10 @@ services:
       EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-postgres}
       EA_POSTGRES_PASSWORD: ${EA_POSTGRES_PASSWORD:?EA_POSTGRES_PASSWORD est obligatoire (EA_DB_PASSWORD de l'Infra)}
 
-      # LM Studio sur le cluster Docker (192.168.2.10). Le démarrage sonde le
-      # modèle et refuse une largeur qui n'est pas celle de la colonne.
+      # LM Studio sur le cluster Docker (192.168.2.10), pas celui du Mac, qui
+      # n'a pas le modèle. Le démarrage sonde le modèle et refuse une largeur
+      # qui n'est pas celle de la colonne : un embedder injoignable empêche
+      # l'API de démarrer.
       EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:1234/v1}
     volumes:
       - ${INFRA_CA_CERT:?INFRA_CA_CERT est obligatoire, le chemin du CA de l'Infra sur le Mac}:/etc/ssl/certs/infra-ca.pem:ro
