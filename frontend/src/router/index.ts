@@ -23,7 +23,7 @@ export const routes: RouteRecordRaw[] = [
     path: section.path,
     name: section.name,
     component: section.view,
-    meta: { label: section.label, wide: section.wide === true },
+    meta: { label: section.label },
   })),
   {
     path: CALLBACK_PATH,
