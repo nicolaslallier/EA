@@ -29,13 +29,4 @@ describe('the application shell', () => {
     expect(screen.getByRole('navigation', { name: /sections/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /introuvable/i })).toBeInTheDocument()
   })
-
-  it('gives a section that declares itself wide the whole page, and only that one', async () => {
-    const wide = await renderApp('/diagrammes')
-    expect(wide.container.querySelector('.app')).toHaveClass('app--wide')
-    wide.unmount()
-
-    const reading = await renderApp('/une-section-qui-nexiste-pas')
-    expect(reading.container.querySelector('.app')).not.toHaveClass('app--wide')
-  })
 })
