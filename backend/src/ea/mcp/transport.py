@@ -11,8 +11,9 @@ the caller does not write, so that is what decides. See docs/adr/0023.
 
 Behind a reverse proxy the peer is the proxy: this then admits whatever the
 proxy admits, which is why remote callers are an explicit opt-in
-(`EA_MCP_ALLOW_REMOTE_CLIENTS`) rather than something inferred — and why the
-deployed stack, behind NGINX, serves no `/mcp` at all, token or not.
+(`EA_MCP_ALLOW_REMOTE_CLIENTS`) rather than something inferred. The deployed
+stack, behind NGINX, turns it on for LibreChat and leaves the token as the only
+barrier (docs/adr/0034).
 """
 
 from __future__ import annotations
