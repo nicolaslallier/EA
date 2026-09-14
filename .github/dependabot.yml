@@ -39,6 +39,13 @@ updates:
     groups:
       javascript:
         update-types: [minor, patch]
+    # TypeScript 7 est le compilateur natif (Go) et n'exporte plus l'API JS
+    # dont vue-tsc et openapi-typescript dépendent : la montée 6 -> 7 a cassé
+    # typecheck-fe et openapi-check sur main (#33). Les majeures se font à la
+    # main, quand ces deux outils la supportent.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   # Les images épinglées par digest : docker-compose.yml à la racine, les deux
   # stacks du cluster, et celui de pipelines/ (docs/adr/0028).
