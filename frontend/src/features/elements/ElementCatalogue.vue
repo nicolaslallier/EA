@@ -273,7 +273,6 @@ function day(iso: string): string {
           <th scope="col">Nom</th>
           <th scope="col">Type</th>
           <th scope="col">Couche</th>
-          <th scope="col">Description</th>
           <th scope="col">Modifié</th>
           <th scope="col">Actions</th>
         </tr>
@@ -287,7 +286,6 @@ function day(iso: string): string {
           </td>
           <td>{{ metamodel.labelOf(element.element_type) }}</td>
           <td>{{ LAYER_LABELS[element.layer] }}</td>
-          <td class="description">{{ element.description }}</td>
           <td>{{ day(element.updated_at) }}</td>
           <td class="row-actions">
             <button
@@ -420,9 +418,6 @@ td {
   padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
-}
-.description {
-  max-width: 28rem;
 }
 .row-actions {
   display: flex;
