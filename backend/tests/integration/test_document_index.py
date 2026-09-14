@@ -17,22 +17,19 @@ matter of opinion. See docs/adr/0019.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.postgres import create_session_factory
 from ea.domain.documents import Document
 from ea.domain.search import EMBEDDING_DIMENSIONS, EmbeddedChunk
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
+from tests.integration.conftest import DocumentsOnStoredElements
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -40,16 +37,9 @@ FIXED_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
 MODEL = "test-embed"
 
 
-@pytest_asyncio.fixture
-async def documents(
-    postgres_engine: AsyncEngine, alembic_config: Config
-) -> AsyncIterator[PostgresDocumentRepository]:
-    await asyncio.to_thread(command.upgrade, alembic_config, "head")
-    repository = PostgresDocumentRepository(create_session_factory(postgres_engine))
-    try:
-        yield repository
-    finally:
-        await asyncio.to_thread(command.downgrade, alembic_config, "base")
+@pytest.fixture
+def documents(engine_at_head: AsyncEngine) -> PostgresDocumentRepository:
+    return DocumentsOnStoredElements(engine_at_head)
 
 
 def axis(index: int) -> tuple[float, ...]:
@@ -209,13 +199,15 @@ class TestTheCascades:
         assert await documents.search(axis(0), model=MODEL) == ()
 
     async def test_deleting_an_element_deletes_the_passages_of_its_documents(
-        self, documents: PostgresDocumentRepository
+        self, documents: PostgresDocumentRepository, engine_at_head: AsyncEngine
     ) -> None:
-        """Two cascades in a row: the service deletes the rows, the key the rest."""
+        """Two foreign keys in a row: element → document → passage."""
         element = uuid4()
         await documents.add(a_document(element, "a.md"), passages((0, ("A",), "texte")))
 
-        await documents.discard_for_element(element)
+        await PostgresArchitectureRepository(create_session_factory(engine_at_head)).delete_element(
+            element
+        )
 
         assert await documents.search(axis(0), model=MODEL) == ()
 

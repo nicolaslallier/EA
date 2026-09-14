@@ -16,8 +16,8 @@ What lives here is the handful of rules an address cannot check alone:
   reserves by hand;
 * nothing else may already hold it.
 
-The last rule is checked here *and* enforced by a uniqueness constraint in
-Neo4j, which is what makes it true rather than likely: two agents allocating at
+The last rule is checked here *and* enforced by a unique index in
+PostgreSQL, which is what makes it true rather than likely: two agents allocating at
 the same moment both read a free address, and only the constraint stops them
 both writing it.
 """
@@ -102,8 +102,8 @@ class IpamService:
 
         The look-before-create below is what names the subnet already there. It
         is not what makes the rule hold: two declarations can both look and
-        both find nothing, and it is the `(p_vrf, p_cidr)` uniqueness
-        constraint (`db/schema.py`) that refuses the second — translated by the
+        both find nothing, and it is the `(vrf, cidr)` uniqueness
+        index (`db/models/architecture.py`) that refuses the second — translated by the
         repository into the same `DuplicateNetworkError`.
         """
         require_editor()

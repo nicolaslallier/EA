@@ -191,22 +191,6 @@ class TestTheLayout:
         with pytest.raises(DiagramNotFoundError):
             await diagram_service.replace_layout(uuid4(), [DiagramNode(element.id, 0, 0)])
 
-    async def test_deleting_an_element_removes_its_boxes_from_every_diagram(
-        self, service: ArchitectureService, diagram_service: DiagramService
-    ) -> None:
-        """The cascade no foreign key can state — the element is a Neo4j node."""
-        doomed = await an_element(service, "A")
-        spared = await an_element(service, "B")
-        diagram = await diagram_service.create(name="Vente")
-        await diagram_service.replace_layout(
-            diagram.id, [DiagramNode(doomed.id, 0, 0), DiagramNode(spared.id, 0, 0)]
-        )
-
-        await service.delete_element(doomed.id)
-
-        [listed] = await diagram_service.list_diagrams()
-        assert listed.node_count == 1
-
 
 @pytest.mark.asyncio
 class TestTheAuditTrail:

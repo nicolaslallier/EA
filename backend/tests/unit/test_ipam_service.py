@@ -2,7 +2,7 @@
 
 These are the rules that need more than one address to check: is this one
 already taken, does a declared subnet hold it, may this *kind* of element carry
-one at all. The arithmetic they rest on is `test_ipam.py`; the Cypher that
+one at all. The arithmetic they rest on is `test_ipam.py`; the SQL that
 finds an element by its address is `tests/integration/test_ipam_graph.py`.
 """
 
@@ -394,7 +394,7 @@ def _store(repository: InMemoryRepository, element: Element, properties: dict[st
     """Put properties into the graph behind the service, as another door would.
 
     `create_element` refuses these, which is the point: this is the row that
-    got there some other way — an import, a hand-run Cypher statement, a
+    got there some other way — an import, a hand-run SQL statement, a
     version of this code that did not check yet.
     """
     repository.elements[element.id] = replace(element, properties=properties)

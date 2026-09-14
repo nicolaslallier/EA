@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in Neo4j. `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with seven sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); and diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as twenty-eight tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element and the IP addressing — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with seven sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); and diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as twenty-eight tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element and the IP addressing — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-The relational half holds the documents in **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
+PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), and the documents in **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
 
-Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn and where, and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one Cypher query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` has no foreign key, like `element_documents.element_id`, and deleting an element discards its boxes through the same `ElementAttachments` cascade as its documents — `AllAttachments` fans it out, it is not a second mechanism (see `docs/adr/0031`). The SPA's *Diagrammes* section builds them; there is no MCP tool for diagrams.
+Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn and where, and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` is a foreign key to `elements`, like `element_documents.element_id`, so deleting an element takes its boxes and its documents in the same transaction (migration `0006`, see `docs/adr/0033`). The SPA's *Diagrammes* section builds them; there is no MCP tool for diagrams.
 
 A second Python project, `pipelines/`, sits beside `backend/` with its own
 lockfile: Prefect 3 and LiteLLM, self-hosted, running one flow,
@@ -30,10 +30,9 @@ shared cluster, so `docs/adr/0028` is still a *Proposition*.
 | Layer | Choice | Rationale |
 |---|---|---|
 | Backend | FastAPI + Pydantic v2 + SQLAlchemy 2 (async) + Alembic | Typed end to end; the OpenAPI schema is the front/back contract |
-| Architecture graph | Neo4j (`neo4j` async driver, Cypher) | The model *is* a graph; impact analysis is a variable-depth traversal — see `docs/adr/0004` |
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
-| IP addressing | Properties of the existing elements, no new node kind | A subnet is a `communication_network`, an address is an attribute of the machine — so it is in the catalogue, the neighbourhood and the impact analysis for free — see `docs/adr/0020` |
-| Everything not a graph | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | The markdown attached to elements and its passage index today (`docs/adr/0017`, `0019`); audit and scheduled work next — see `docs/adr/0015` for the scaffold |
+| IP addressing | Properties of the existing elements, no new table | A subnet is a `communication_network`, an address is an attribute of the machine — so it is in the catalogue, the neighbourhood and the impact analysis for free — see `docs/adr/0020` |
+| Storage | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | One database for the whole model: the graph as two tables walked by recursive CTEs, the documents and their index, the diagrams — see `docs/adr/0033` |
 | Document search | pgvector in that same PostgreSQL, `vector(1024)` + HNSW | The corpus is small and already there; a third store would be a third consistency to keep — see `docs/adr/0019` |
 | Embeddings | An OpenAI-shaped `/v1/embeddings` — LM Studio on the cluster, `text-embedding-mxbai-embed-large-v1` | Measured against the alternative on French prose; the API shape, not the supplier, is what we depend on — see `docs/adr/0019` |
 | Python tooling | `uv` (deps + venv), `ruff` (lint + format), `mypy --strict` | Single fast toolchain, one lockfile |
@@ -42,7 +41,7 @@ shared cluster, so `docs/adr/0028` is still a *Proposition*.
 | Frontend | Vue 3 (`<script setup>`) + TypeScript + Vite | SPA consuming the generated OpenAPI client — see `docs/adr/0002` |
 | Frontend routing | `vue-router` 5, `history` mode | Routes and menu are both derived from one section catalogue — see `docs/adr/0008` |
 | Frontend tests | Vitest + Testing Library, Playwright for E2E | Unit/component in-process, E2E against a real stack |
-| Containers | Docker + `docker compose` for the throwaway Neo4j and PostgreSQL the integration tests run against | Reproducible, and a destructive test never reaches a shared database — see `docs/adr/0024` |
+| Containers | Docker + `docker compose` for the throwaway PostgreSQL the integration tests run against | Reproducible, and a destructive test never reaches a shared database — see `docs/adr/0024` |
 | Pipeline orchestration | Prefect 3, `flow.serve(name="manuel", limit=1)` — no work pool, no `prefect.yaml` | One flow, triggered by hand while the process runs, is the whole need so far — see `docs/adr/0028` |
 | LLM gateway | LiteLLM, behind the aliases `smart`/`fast` only (`pipelines/litellm.yaml`) | The code never names a real model; the deployment decides which one answers each alias — see `docs/adr/0028` |
 | Pipeline object storage | MinIO of the `~/OpenCode/Infra` stack, read-only from `pipelines/` | The pipeline reads a source file, it is not that store's lifecycle manager — see `docs/adr/0028` |
@@ -53,7 +52,7 @@ Do not introduce a second HTTP client, ORM, state manager, or test runner alongs
 
 ```
 Makefile                 # single entry point for local dev and the quality gate — see docs/adr/0001, 0026
-docker-compose.yml       # throwaway Neo4j + PostgreSQL for the integration tests, on 127.0.0.1 only
+docker-compose.yml       # throwaway PostgreSQL for the integration tests, on 127.0.0.1 only
 deploy/ea.stack.yml      # the API and the SPA as a Portainer stack behind the Infra NGINX — see docs/adr/0027
 scripts/portainer-stack.sh  # `make app-up/down/delete`: that stack driven through Portainer's API
 {backend,frontend}/Dockerfile  # the two images that stack builds
@@ -75,15 +74,16 @@ backend/
       ipam.py      # what an IP address is, where it may live, what is free
       search.py    # what the passage index holds and answers with
     reindex.py     # `python -m ea.reindex` — rebuild the index over the whole corpus
+    graph_import.py # the one-off copy from Neo4j (docs/adr/0033), deleted after the cut-over
     services/      # use cases; orchestrate domain + repositories, own transactions
       caller.py    # current_caller, require_caller, require_editor, acting_as
-    repositories/  # implementations of the ports declared in domain: Cypher, SQL,
+    repositories/  # implementations of the ports declared in domain: SQL,
                  #   and the outbound HTTP clients (the embedding service,
                  #   keycloak.py — the realm's keys and the JWT check)
-    db/            # Neo4j driver lifecycle and schema (constraints + indexes);
-                   #   the PostgreSQL engine, session factory and declarative base
+    db/            # the PostgreSQL engine, session factory and declarative base
     db/models/     # every mapped table — the one module Alembic autogenerates from
-  migrations/      # Alembic revisions for PostgreSQL. The graph has none
+  migrations/      # Alembic revisions for PostgreSQL — the graph included since 0005
+  scripts/import_neo4j.py  # `make graph-import`, same lifetime
   tests/{unit,integration,e2e}/
 frontend/
   src/api/                             # GENERATED ONLY — never hand-write there
@@ -138,15 +138,15 @@ make test-fe                    # Vitest, one pass
 make check                      # lint-check lint-fe typecheck openapi-check test test-fe pipelines-check
 make audit                      # bandit, pip-audit --skip-editable, npm audit --audit-level=high (network)
 make hooks                      # opt-in: install the pre-commit hooks into .git
-make db-test-up                 # start the throwaway Neo4j (Bolt on 127.0.0.1:7688)
 make pg-up                      # start the throwaway PostgreSQL (127.0.0.1)
-make test-integration           # both throwaway containers, started if needed — never the cluster
+make test-integration           # the throwaway PostgreSQL, started if needed — never the shared one
 make test-postgres              # only the `postgres`-marked tests, against the throwaway PostgreSQL
-make pg-down                    # stop the throwaway containers (alias: compose-down)
-make compose-up                 # both throwaway containers, waiting until healthy
-make compose-ps                 # compose-logs s=neo4j, compose-reset drops the PostgreSQL volume
+make pg-down                    # stop the throwaway container (alias: compose-down)
+make compose-up                 # the throwaway container, waiting until healthy
+make compose-ps                 # compose-logs, compose-reset drops the PostgreSQL volume
 make app-up                     # create or redeploy the deployed stack through Portainer's API
 make app-ps                     # app-logs s=api, app-down, app-delete CONFIRM=yes
+make graph-import CONFIRM=yes   # once: copy the Neo4j graph into PostgreSQL, then migration 0006
 ```
 
 Pipelines (from the repo root; `pipelines-check` is folded into `make check`,
@@ -195,15 +195,15 @@ npm run lint && npm run typecheck         # ESLint (eslint.config.js), then vue-
 npm run generate:api                     # regenerate src/api/ — or `make openapi` from the root
 ```
 
-Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, logging in as the Keycloak client `ea-mcp` on `callbackPort` 33418 — the one redirect URI that client allows, so the two change together. That login runs inside Claude Code, a Node process that reads neither `EA_AUTH_CA_CERT` nor, by default, the macOS keychain: start Claude Code with `NODE_EXTRA_CA_CERTS=~/OpenCode/Infra/certs/infra-ca.crt` or its discovery of Keycloak fails TLS — and should the discovery itself fail, `.mcp.json`'s `oauth.authServerMetadataUrl` can name Keycloak's metadata outright (deliberately not set). `EA_MCP_ENABLED=false` turns it off; by default it answers only clients on this machine (`docs/adr/0023`), and only with a token (`docs/adr/0032`). The graph is a single instance: the `neo4j` service of the Infra stack (`github.com/nicolaslallier/Infra`, deployed by `make up` there), published by its nginx on `bolt://127.0.0.1:7687` and nowhere else — see `docs/adr/0030`. Nothing starts that graph locally — the Neo4j in `docker-compose.yml` is the throwaway one the tests empty (`docs/adr/0024`): `make db-ping` checks it answers, `make db-stack` recalls where it is deployed from, `make db-shell` opens a `cypher-shell` on it (in a container on `infra-net`, since `127.0.0.1` inside a container is the container), `make db-reset` empties it (`CONFIRM=yes`, and it is everyone's graph). No Neo4j browser is exposed. The password lives in `backend/.env` (and as `NEO4J_PASSWORD` in Infra's), never in a committed file; one holding `$` or quotes is passed through the environment, `NEO4J_PASSWORD='…' make db-ping`, because make expands `$` in a variable. PostgreSQL is a second shared instance in that same stack: since `docs/adr/0029` the `ea` database lives there, behind the same NGINX on `127.0.0.1:5432`, and `deploy/postgres.stack.yml` is deployed nowhere. `make pg-ping` checks it, `make pg-stack` recalls how to provision it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`. **Its image must carry pgvector** (`pgvector/pgvector:pgNN`), because the document index is a `vector` column; `make pg-vector-check` says so before a migration discovers it — and says it only after actually reaching the server, since a check that cannot connect knows nothing about the extension. **Every `psql` target uses the Mac's own client when there is one**, and falls back to one in a container: the container was the only path, and it adds two failures the database does not have — a stopped Docker daemon, and a container that does not reach the LAN the Mac reaches. Both used to be reported as the second one. The embedding service is what is left on the Docker cluster (192.168.2.10) — LM Studio, serving an OpenAI-shaped `/v1/embeddings` on port 1234; `make embed-ping` checks the model answers and at what width, `make embed-models` lists what it holds. Nothing here starts any of the three.
+Whole stack: `make run`. `make run-be` also serves the MCP tools at <http://127.0.0.1:8000/mcp>; the committed `.mcp.json` points Claude Code at it, logging in as the Keycloak client `ea-mcp` on `callbackPort` 33418 — the one redirect URI that client allows, so the two change together. That login runs inside Claude Code, a Node process that reads neither `EA_AUTH_CA_CERT` nor, by default, the macOS keychain: start Claude Code with `NODE_EXTRA_CA_CERTS=~/OpenCode/Infra/certs/infra-ca.crt` or its discovery of Keycloak fails TLS — and should the discovery itself fail, `.mcp.json`'s `oauth.authServerMetadataUrl` can name Keycloak's metadata outright (deliberately not set). `EA_MCP_ENABLED=false` turns it off; by default it answers only clients on this machine (`docs/adr/0023`), and only with a token (`docs/adr/0032`). PostgreSQL is the one shared instance, in the Infra stack: since `docs/adr/0029` the `ea` database lives there, behind the same NGINX on `127.0.0.1:5432`, and `deploy/postgres.stack.yml` is deployed nowhere. `make pg-ping` checks it, `make pg-stack` recalls how to provision it, `make pg-migrate` applies the Alembic chain to it, and `make pg-up` starts only the throwaway container the integration tests use — see `docs/adr/0015`. **Its image must carry pgvector** (`pgvector/pgvector:pgNN`), because the document index is a `vector` column; `make pg-vector-check` says so before a migration discovers it — and says it only after actually reaching the server, since a check that cannot connect knows nothing about the extension. **Every `psql` target uses the Mac's own client when there is one**, and falls back to one in a container: the container was the only path, and it adds two failures the database does not have — a stopped Docker daemon, and a container that does not reach the LAN the Mac reaches. Both used to be reported as the second one. The embedding service is what is left on the Docker cluster (192.168.2.10) — LM Studio, serving an OpenAI-shaped `/v1/embeddings` on port 1234; `make embed-ping` checks the model answers and at what width, `make embed-models` lists what it holds. Nothing here starts either.
 
-**Backups** are `docs/adr/0025`, still a *Proposition*: nothing has been run against the cluster yet, and a backup never restored is a hypothesis. `make pg-backup` writes a `pg_dump -Fc` into `backups/` (git-ignored), under its final name only once it has been read back; `make pg-restore FILE=… CONFIRM=yes` replaces the shared database in one transaction. Neo4j Community has no online backup, so `make db-backup-howto` only *prints* the offline `neo4j-admin database dump` procedure to run on the host — its name says it backs nothing up. A dump that has not left the host is not a backup.
+**Backups** are `docs/adr/0025`, still a *Proposition*: nothing has been run against the cluster yet, and a backup never restored is a hypothesis. `make pg-backup` writes a `pg_dump -Fc` into `backups/` (git-ignored), under its final name only once it has been read back; `make pg-restore FILE=… CONFIRM=yes` replaces the shared database in one transaction. Since `docs/adr/0033` that dump is the whole model. A dump that has not left the host is not a backup.
 
 **Both servers bind `0.0.0.0`** — the API since `docs/adr/0016`, the Vite dev server since `docs/adr/0022` — and **an address to listen on authorises nobody.** Four settings decide who is actually served, and none of them follows from a bind address: `EA_CORS_ORIGINS` for browsers; `EA_MCP_ALLOW_REMOTE_CLIENTS` (default `false`) for who may call `/mcp` — the request's TCP peer must be loopback or it gets a 403, checked by `mcp/transport.py` around the transport's route, because the peer is the one thing a caller does not write itself; `EA_MCP_ALLOWED_HOSTS`, which is *only* the DNS-rebinding defence, since any script sends whatever `Host` it likes; and Vite's own `server.allowedHosts`, left at its default. Behind a reverse proxy the peer is the proxy, so every client looks local — do not route `/mcp` through one: it requires a token since `docs/adr/0032`, but the loopback guard stays as defence in depth, and serving `/mcp` behind a proxy is a decision of its own, with its ADR. A remote agent takes an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 host`), or the opt-in *plus* its `Host` in the list — see `docs/adr/0023`. The MCP SDK enables DNS-rebinding protection by itself *only* on a loopback host, so passing it `EA_HOST` would switch that protection off precisely when the API stops being loopback — `main._transport_security` states it instead; setting Vite's `allowedHosts` to `true` would be the same mistake, which is why it is left alone.
 
 Three things follow for the SPA. A browser on another machine sends *that machine's* origin, so `EA_CORS_ORIGINS` needs an entry per host that serves the SPA — an origin is an exact string, and the validator refuses `*`. **With auth on, a plain-http LAN origin cannot log in at all**, whatever is added to Keycloak: `oidc-client-ts` builds PKCE with `crypto.subtle`, which a browser grants only to a secure context, so on `http://192.168.x.y:5173` the redirect throws before it starts — the SPA lands on `/auth/failed`, the reason in the console. Open it from a secure context instead: `http://localhost:5173` on the machine running Vite; from another machine through `ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 <host>` and then `http://localhost:5173` there — `localhost` is a secure context, already one of `ea-spa`'s redirect URIs and already in `EA_CORS_ORIGINS`, so no LAN entry is needed on either side; or through the https vhost (`docs/adr/0032`). `make run-fe` prints the tunnel. And the API's URL cannot be a constant: `src/lib/api.ts` defaults to **this page's own host** on port 8000 (`defaultApiBaseUrl`, a pure function so it is tested without a DOM), because `http://localhost:8000` read by a browser elsewhere names the viewer's machine. `VITE_API_BASE_URL` still wins, for a backend that is genuinely somewhere else.
 
-**Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts; the graph stays wherever `EA_NEO4J_URI` says. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. Inside `infra-net`, `keycloak.famillelallier.net` is an alias of the Infra's `nginx`, which presents the Infra certificate: the stack mounts `INFRA_CA_CERT` (mandatory) read-only as `EA_AUTH_CA_CERT`, or the API cannot read the realm's keys and does not boot; and the SPA image takes `VITE_AUTH_AUTHORITY` / `VITE_AUTH_CLIENT_ID` as build args, since Vite writes them into the bundle. **Writes to that stack go through Portainer's API, reads through `docker compose -p ea`**: `make app-up` creates or git-redeploys it (`scripts/portainer-stack.sh`, curl in a throwaway container on `infra-net`, so Portainer stays the stack's owner), `app-down` stops it, `app-delete CONFIRM=yes` removes it, `app-ps` / `app-logs` read the containers on this Docker. Portainer clones GitHub `main`, never this working copy — an unpushed commit is not deployed. The API key (root on the Docker daemon) lives in the git-ignored `.portainer.env` or `PORTAINER_ENV_FILE`, the stack variables in the git-ignored `deploy/ea.env` (from `deploy/ea.env.example`), and `app-up` refuses to leave while a `:?` variable of the stack file is empty there. `make app-stack` prints the steps.
+**Deployed, the app is one origin behind the Infra NGINX** (`docs/adr/0027`). `deploy/ea.stack.yml` is a Portainer *Git* stack on the Infra's Docker (the Mac running Docker Desktop): `api` and `web` join `infra-net` as `ea-api` / `ea-web`, publish no port, and the Infra repo's `nginx/conf.d/ea.conf` serves them at `https://ea.infra.famillelallier.net` — the SPA at `/`, the API under `/api/` with the prefix stripped, because the SPA's routes (`/elements`, `/ipam`) collide with the API's. So the image is built with `VITE_API_BASE_URL=/api`, uvicorn is told `UVICORN_ROOT_PATH=/api`, and **the stack sets `EA_MCP_ENABLED=false` while the vhost answers `/api/mcp` with a 404** — behind a proxy the peer is NGINX, the exact case the paragraph above forbids. PostgreSQL there is the Infra's (`postgres` on `infra-net`, database and role `ea` from `make provision-app app=ea`), and the container applies the Alembic chain before uvicorn starts. Do not add uvicorn's `--forwarded-allow-ips`: it would make the peer a header the caller writes. Inside `infra-net`, `keycloak.famillelallier.net` is an alias of the Infra's `nginx`, which presents the Infra certificate: the stack mounts `INFRA_CA_CERT` (mandatory) read-only as `EA_AUTH_CA_CERT`, or the API cannot read the realm's keys and does not boot; and the SPA image takes `VITE_AUTH_AUTHORITY` / `VITE_AUTH_CLIENT_ID` as build args, since Vite writes them into the bundle. **Writes to that stack go through Portainer's API, reads through `docker compose -p ea`**: `make app-up` creates or git-redeploys it (`scripts/portainer-stack.sh`, curl in a throwaway container on `infra-net`, so Portainer stays the stack's owner), `app-down` stops it, `app-delete CONFIRM=yes` removes it, `app-ps` / `app-logs` read the containers on this Docker. Portainer clones GitHub `main`, never this working copy — an unpushed commit is not deployed. The API key (root on the Docker daemon) lives in the git-ignored `.portainer.env` or `PORTAINER_ENV_FILE`, the stack variables in the git-ignored `deploy/ea.env` (from `deploy/ea.env.example`), and `app-up` refuses to leave while a `:?` variable of the stack file is empty there. `make app-stack` prints the steps.
 
 `make check` runs the non-fixing lint on both sides, types on both sides, the generated-client check, the DB-free suites with the coverage floor, and `pipelines-check` — the local half of what CI runs (`.github/workflows/ci.yml` adds `make audit`, `pipelines-audit` and the integration suite against throwaway containers).
 
@@ -363,24 +363,19 @@ as a driver error, in a log. The check is on the *file name* (`.md`,
 `.markdown`) and not on the `Content-Type`, which browsers report three
 different ways.
 
-**There is no foreign key, and there cannot be one:** the element is a node in
-Neo4j. Both halves of what a foreign key would have given are code —
-`DocumentService` reads the element before attaching, and
-`ArchitectureService.delete_element` discards the documents through the narrow
-`ElementAttachments` port. There is no transaction across the two stores; the
-graph is deleted first, and the accepted failure is unreachable rows. When
-discarding the documents fails after the graph deletion, the delete still
-succeeds — it cannot be undone — and the orphaning is logged at ERROR with
-`action=attachments_orphaned` and the `element_id` a clean-up joins on.
+**It follows its element by a foreign key.** `element_documents.element_id`
+references `elements` `ON DELETE CASCADE` since migration `0006`;
+`DocumentService` still reads the element before attaching, for a readable 404
+rather than a constraint violation (see `docs/adr/0033`).
 
 **Listing is not reading.** `DocumentSummaryRead` names the files;
 `DocumentRead` carries the text. A client that downloaded ten bodies to draw
 ten names is the mistake the two models prevent, and the size is computed by
 the server (`octet_length`) rather than stored, so it cannot drift.
 
-**The relational repository takes the session factory**, exactly as the Neo4j
-one takes the driver, and opens one unit of work per call — every use case here
-is a single write, so that *is* a transaction per use case. A use case spanning
+**The relational repository takes the session factory** and opens one unit of
+work per call — every use case here is a single write, so that *is* a
+transaction per use case. A use case spanning
 two writes takes an `AsyncSession` argument instead, and
 `api.dependencies.get_session` becomes the seam it was built to be.
 
@@ -412,10 +407,8 @@ it.** Cosine distance between vectors from two models is a number that means
 nothing, so a half-reindexed corpus returns *too little*, visibly, rather than
 something plausible and wrong.
 
-**This is the first table that can carry a foreign key**, because a passage
-names a document — a row next door — where `element_documents.element_id` names
-a Neo4j node and can reference nothing. So its cascade is DDL rather than a
-service, and a document and its passages are written in **one transaction**.
+**This was the first table to carry a foreign key**, because a passage
+names a document — a row next door. Its cascade is DDL, and a document and its passages are written in **one transaction**.
 The embedding call happens *before* that transaction opens: holding one across
 a call to another machine is how a slow embedder becomes a locked table.
 
@@ -429,23 +422,23 @@ attached while `EA_EMBEDDINGS_ENABLED` was off, and a change of model — and
 
 ## An IP address is an attribute of the machine, not a record beside it
 
-There is no `:IpAddress` node and no `:Subnet` node, and adding one needs an
+There is no IP address table and no subnet table, and adding one needs an
 ADR that supersedes `docs/adr/0020`. A **subnet is a `communication_network`
-element** carrying `p_cidr`, and an **address is `p_ip_address` on the element
-that answers on it**. Four things about that are decisions.
+element** carrying `cidr` in its properties, and an **address is `ip_address` in
+the properties of the element that answers on it**. Four things about that are decisions.
 
-**One address per element, and that is what makes uniqueness real.** A list in
-a property would have been easier to write and impossible to constrain: a
-composite Neo4j constraint only sees a scalar. With one address,
-`REQUIRE (e.p_vrf, e.p_ip_address) IS UNIQUE` is declarable, and it is the only
-thing that survives two agents reading "free" in the same instant. A
-multi-homed host is two `technology_interface` elements composed into a node —
-which is how ArchiMate says to model it anyway. A prefix gets the same
-treatment: `REQUIRE (e.p_vrf, e.p_cidr) IS UNIQUE` declares it once per VRF, in
-the database, because two callers can both look before creating. `p_vrf` is
-written *beside* every address and prefix, because a composite constraint does
-not apply to a node missing one of its properties; and both are stored in one
-canonical spelling, because the constraint compares strings.
+**One address per element, and that is what makes uniqueness real.** A list
+would have been easier to write and impossible to constrain: a unique index
+sees one value per row. With one address, the partial unique index
+`uq_elements_vrf_ip_address` on `(properties ->> 'vrf', properties ->> 'ip_address')`
+is declarable, and it is the only thing that survives two agents reading
+"free" in the same instant. A multi-homed host is two `technology_interface`
+elements composed into a node — which is how ArchiMate says to model it
+anyway. A prefix gets the same treatment: `uq_elements_vrf_cidr` declares it
+once per VRF, in the database, because two callers can both look before
+creating. `vrf` is written *beside* every address and prefix, because the
+index's `WHERE` leaves out an element missing either key; and both are stored
+in one canonical spelling, because the constraint compares strings.
 `validate_ipam_properties` returns the properties to store, and every write
 path stores what it returns.
 
@@ -470,12 +463,6 @@ must be addressable, a declared subnet must hold the address, nothing else may
 have it. An allocation that loses the race to the constraint tries the next
 free address, up to `ALLOCATION_ATTEMPTS` (3). The SPA restates none of them —
 it asks, exactly as it does for the metamodel.
-
-**The prefix constraint can stop an existing deployment from booting.** A graph
-written before it may hold one prefix twice in one VRF; `CREATE CONSTRAINT`
-then refuses and `apply_schema` raises at startup. Before rolling it onto such
-a graph, run the duplicate-finding Cypher in the comment above it in
-`db/schema.py`, and rename or merge what it returns.
 
 ## Drawing a graph in the SPA
 
@@ -510,11 +497,11 @@ subnet it has open and the address it was asked about (`?subnet=`, `?address=`,
 `?vrf=`, see `docs/adr/0020`); an unsaved form — the subnet declaration, say —
 is not that kind of state and stays in a `ref`.
 
-## The relational store holds the documents and their index
+## The relational store holds the whole model
 
-PostgreSQL is a second shared instance — in the `~/OpenCode/Infra` stack on the
+PostgreSQL is the one shared instance — in the `~/OpenCode/Infra` stack on the
 Mac (127.0.0.1:5432) since `docs/adr/0029`, not on the cluster — and its password is a real shared secret — `.env.example`
-leaves it blank, like Neo4j's. **Its image has to carry pgvector**: the document
+leaves it blank. **Its image has to carry pgvector**: the document
 index is a `vector` column and migration `0003` runs `CREATE EXTENSION vector`,
 which fails on an image that does not have it (`make pg-vector-check`). `db/postgres.py` owns the engine, the session
 factory and the boot-time check; `db/base.py` holds the declarative `Base` and
@@ -543,8 +530,8 @@ Three rules hold for every table, starting with `element_documents`:
    `URL.create` does (see `docs/adr/0028`).
 
 A third rule arrived with the second table: **a use case that writes two tables
-writes them in one transaction**, which is possible here and nowhere else in
-this repository, since the graph is in another server. `add`/`replace` take the
+writes them in one transaction**, which is possible for every use case now that
+the graph is here too. `add`/`replace` take the
 document and its passages together, and flush the document first — the two
 mappers are related by a foreign key and by no `relationship()`, so the unit of
 work is free to emit the chunk inserts first, and does.
@@ -557,12 +544,18 @@ host that is not loopback — see `docs/adr/0024`.
 Transactions belong to `services/`, not to the route: `get_session` opens a
 session per request and commits nothing.
 
-## The graph has no Alembic
+## The graph is two tables
 
-Neo4j has no schema to migrate; it has constraints and indexes — the opposite
-discipline from the PostgreSQL above, in the same repository. `backend/src/ea/db/schema.py` declares them with `IF NOT EXISTS` and the application applies the whole list at startup, so adding one is adding a line to `SCHEMA_STATEMENTS`. The whole list runs in one session that asks the server for nothing below a warning: `IF NOT EXISTS` makes every boot after the first a no-op, and an unfiltered session has Neo4j announce each no-op as an INFORMATION notification — one log line per statement, at every start, saying the schema is exactly as declared. The filter belongs to that session alone, so a notification about a *query* still surfaces. Renaming a stored value — an element type, say — is a *data* migration and needs a versioned Cypher script; that has not come up yet.
-
-Elements are `:Element` nodes with the ArchiMate type as an indexed property; relationships carry their ArchiMate type as the real Neo4j relationship type. User-defined attributes are stored flat under a `p_` prefix so they stay queryable. `db/schema.py` explains why.
+`elements` and `relationships` (migration `0005`, `db/models/architecture.py`)
+are read and written by `repositories/architecture_store.py` alone. User-defined
+attributes are one `jsonb` map, `properties`, with no prefix. The neighbourhood,
+the impact analysis and the containment-cycle check are recursive CTEs built
+with SQLAlchemy Core — the depth is a bound parameter, clamped to
+`MAX_TRAVERSAL_DEPTH` — and the impact walk takes each hop the way
+`impact_follows_direction` says, read from the metamodel. A uniqueness refusal
+is translated by the **name** of the constraint (`constraint_of`), never by its
+message. Renaming a stored value — an element type, say — is a data migration:
+an Alembic revision like any other. See `docs/adr/0033`.
 
 ## Who is calling is decided once, in `services/`
 
@@ -600,9 +593,8 @@ exposes that header so the SPA can print it too — a line in the browser consol
 and a line in the server log are then the same request.
 
 **Each noisy stream has its own name and its own switch.** `EA_LOG_LEVEL` is
-the level of *our* code; `EA_LOG_CYPHER` (`ea.cypher` plus the driver),
-`EA_LOG_SQL` (`sqlalchemy.engine`) and `EA_LOG_EMBEDDINGS` (`ea.embeddings`
-plus `httpx`) are three firehoses opened one at a time. `EA_LOG_LEVEL=DEBUG`
+the level of *our* code; `EA_LOG_SQL` (`sqlalchemy.engine`) and `EA_LOG_EMBEDDINGS` (`ea.embeddings`
+plus `httpx`) are two firehoses opened one at a time. `EA_LOG_LEVEL=DEBUG`
 deliberately opens none of them. The logger names are constants in
 `core/logging.py`, imported by whoever writes to them, so a switch cannot drift
 from the logger it is meant to open.
@@ -648,7 +640,7 @@ every template.
 Write the failing test first, watch it fail for the right reason, then make it pass. Concretely, per change:
 
 1. **Unit** (`tests/unit`, no I/O): domain rules, validation, pure functions. Milliseconds.
-2. **Integration** (`tests/integration`): repositories and services against a real Neo4j and a real PostgreSQL — the **throwaway local containers** of `docker-compose.yml`, never the cluster (see `docs/adr/0024`). No mocked driver, no faked records — these exist to prove the Cypher and the SQL. Neo4j Community serves one database, so isolation is "empty the graph between tests" rather than a rolled-back transaction, and the PostgreSQL tests reverse the whole migration chain. So the fixtures refuse any host that is not loopback — and, even on loopback, the ports the shared stores listen on there: Bolt's 7687, where the Infra stack publishes the shared graph (`docs/adr/0030`), and PostgreSQL's 5432 (`docs/adr/0029`); the throwaway containers publish 7688 and 5433 (`tests/integration/throwaway.py`) — and *skip* with a message naming it; the graph additionally needs `EA_ALLOW_DESTRUCTIVE_TESTS=1`. `make test-integration` starts both containers and points at them; a bare `uv run pytest` skips these tests.
+2. **Integration** (`tests/integration`): repositories and services against a real PostgreSQL — the **throwaway local container** of `docker-compose.yml`, never the shared database (see `docs/adr/0024`). No mocked driver, no faked records — these exist to prove the SQL. Each test migrates the chain up to `head` (`engine_at_head`) and back to `base`. So the fixtures refuse any host that is not loopback — and, even on loopback, PostgreSQL's 5432, where the shared database listens (`docs/adr/0029`); the throwaway container publishes 5433 (`tests/integration/throwaway.py`) — and *skip* with a message naming it. `make test-integration` starts the container and points at it; a bare `uv run pytest` skips these tests.
 3. **API** (`tests/e2e` backend-side): `httpx.AsyncClient` against the app, covering status codes and error envelopes, and auth: 401 without a token, 403 for a reader who writes, `GET /me`.
 
 **Every test has a caller.** The autouse `_an_editor_is_calling` fixture in `tests/conftest.py` acts as `an_editor()`, because a suite about what a use case *does* is not about who may run it; a refusal is tested with `nobody_calling` or `acting_as(a_reader())`. An API test builds `Settings(..., auth_enabled=False)` unless it tests auth, and then hands the app a `StaticVerifier` — tokens known in advance, no Keycloak.
@@ -661,9 +653,9 @@ Rules that matter here: every bug fix starts with a regression test reproducing 
 
 ## Security rules for this stack
 
-- Config comes from environment via `pydantic-settings` only. No literal secret, DSN, or key in code or tests — commit `.env.example`, never `.env`. `Settings` refuses to build without a Neo4j password unless `EA_DEBUG` is on.
+- Config comes from environment via `pydantic-settings` only. No literal secret, DSN, or key in code or tests — commit `.env.example`, never `.env`. `Settings` refuses to build without a PostgreSQL password while `postgres_enabled` is on, unless `EA_DEBUG` is on.
 - Auth: Keycloak, realm `ea` — EA stores no password. Every access token is verified by `repositories/keycloak.py`: RS256 only, never the algorithm the token names; `iss`, `aud=ea-api`, `exp`, `iat`, `sub` required; keys from the realm's JWKS, refetched on an unknown `kid` at most once per interval. Authorization is enforced in `services/` (`require_caller` / `require_editor`), failing closed, never only in the router, and never in the frontend — the SPA asks `GET /me` and hides UI, the API decides. `EA_AUTH_ENABLED=false` is refused outside `EA_DEBUG`. See `docs/adr/0032`.
-- All DB access goes through SQLAlchemy constructs; raw `text()` requires bound parameters and a comment justifying it. **Cypher follows the same rule**: every runtime value is a bound parameter. Cypher cannot parameterise a relationship type or the bound of a variable-length path — those three call sites build from a closed enum or a clamped integer and each says so in a comment. Adding a fourth needs the same justification.
+- All DB access goes through SQLAlchemy constructs; raw `text()` requires bound parameters and a comment justifying it.
 - Request bodies are Pydantic models with explicit constraints; response models are declared so internal fields cannot leak. `model_config = ConfigDict(extra="forbid")` on inputs.
 - CORS is an explicit allowlist from settings — never `allow_origins=["*"]` with credentials.
 - `settings.debug` is never handed to FastAPI, which would answer an unhandled exception with a traceback to whoever on the LAN caused it; that exception gets the typed `internal_error` 500 envelope instead.
@@ -684,4 +676,4 @@ Rules that matter here: every bug fix starts with a regression test reproducing 
 
 ## Definition of done
 
-A change is done when: tests written first and passing; `ruff`, `mypy --strict`, and the security scans clean; any new graph constraint added to `SCHEMA_STATEMENTS` and applied cleanly to a database that already had data; OpenAPI client regenerated if the schema moved; docs/ADR updated; and any behaviour visible to a user is exercised by an E2E test.
+A change is done when: tests written first and passing; `ruff`, `mypy --strict`, and the security scans clean; any new constraint shipped as an Alembic revision and applied cleanly to a database that already had data; OpenAPI client regenerated if the schema moved; docs/ADR updated; and any behaviour visible to a user is exercised by an E2E test.

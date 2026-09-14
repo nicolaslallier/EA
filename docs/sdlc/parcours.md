@@ -52,7 +52,7 @@ On part de `main`, qui reste reléasable à tout moment — on ne merge que du v
 |---|---|---|
 | `feat/` | Nouvelle fonctionnalité | `feat/edge-impact-traversal` |
 | `fix/` | Correction de bug (précédée d'un test de régression) | `fix/cors-allow-list` |
-| `chore/` | Outillage, config, dépendances | `chore/bump-neo4j-driver` |
+| `chore/` | Outillage, config, dépendances | `chore/bump-sqlalchemy` |
 | `docs/` | Documentation, ADR | `docs/sdlc` |
 
 Règles :
@@ -72,9 +72,9 @@ puis on l'amène au vert. Par couche, d'avant en arrière :
 1. **Unit** (`backend/tests/unit`, zéro I/O) : règles de domaine, validation,
    fonctions pures. En millisecondes.
 2. **Intégration** (`backend/tests/integration`) : repositories et services
-   *contre un vrai Neo4j et un vrai PostgreSQL* — les conteneurs jetables de
-   `docker-compose.yml`, jamais le cluster. Jamais de driver mocké, jamais
-   d'enregistrement factice — là, on prouve que le Cypher et le SQL marchent.
+   *contre un vrai PostgreSQL* — le conteneur jetable de `docker-compose.yml`,
+   jamais la base partagée. Jamais de driver mocké, jamais d'enregistrement
+   factice — là, on prouve que le SQL et la chaîne Alembic marchent.
 3. **API** (`backend/tests/e2e`) : `httpx.AsyncClient` contre l'application,
    couvrant les codes de statut et l'enveloppe d'erreur (et l'auth, quand elle
    existera).
@@ -92,17 +92,15 @@ make test                 # unit + API, toujours sans base
 make test-fe              # Vitest du frontend, une passe
 ```
 
-Les tests d'intégration vident le graphe entre chaque cas (Neo4j Community ne
-sert qu'une seule base, il n'y a ni schéma de test séparé ni transaction à
-annuler) et annulent la chaîne de migrations. Ils tournent donc sur un Neo4j et
-un PostgreSQL **jetables et locaux**, publiés sur 127.0.0.1 ; les fixtures
-refusent tout autre hôte et sautent le test en le nommant
-(`backend/tests/integration/throwaway.py`). Le graphe exige en plus
-`EA_ALLOW_DESTRUCTIVE_TESTS=1`. Voir
+Les tests d'intégration montent la chaîne de migrations jusqu'à `head` puis la
+redescendent à `base`, graphe compris. Ils tournent donc sur un PostgreSQL
+**jetable et local**, publié sur 127.0.0.1:5433 ; les fixtures refusent tout
+autre hôte, et le port 5432 de la base partagée, et sautent le test en le
+nommant (`backend/tests/integration/throwaway.py`). Voir
 [`ADR 0024`](../adr/0024-tests-d-integration-sur-des-bases-jetables.md).
 
 ```bash
-make test-integration     # démarre les deux conteneurs au besoin, et pointe dessus
+make test-integration     # démarre le conteneur jetable au besoin, et pointe dessus
 make test-postgres        # seulement les tests PostgreSQL
 ```
 
@@ -234,7 +232,7 @@ request) rejoue les cibles du Makefile en quatre jobs — voir
 | `backend` | `make lint-check`, `typecheck-be`, `openapi-check`, `test` (couverture ≥ 90 %) |
 | `frontend` | `make typecheck-fe`, `lint-fe`, `test-fe`, `npm run build` |
 | `audit` | `make audit` : `bandit`, `pip-audit --skip-editable`, `npm audit --audit-level=high` |
-| `integration` | `pytest tests/integration` contre des conteneurs de service Neo4j et PostgreSQL jetables |
+| `integration` | `pytest tests/integration` contre un conteneur de service PostgreSQL jetable (pgvector) |
 
 > **Encore à poser** : rien n'*impose* encore une CI verte avant la merge. C'est
 > une règle de protection de branche sur GitHub, à activer.
@@ -256,9 +254,9 @@ Un changement est **fait** quand *tout* tient :
 
 - Tests écrits d'abord, et en vert.
 - `ruff`, `mypy --strict` et les scans de sécurité propres.
-- Toute nouvelle contrainte de graphe ajoutée à `SCHEMA_STATEMENTS`
-  (`backend/src/ea/db/schema.py`) et appliquée proprement *sur une base qui en
-  avait déjà* — Neo4j n'a pas d'Alembic, une rename de valeur stockée est une
+- Toute modification de table, graphe compris, en révision Alembic versionnée
+  (`make pg-revision`), relue avant commit et appliquée proprement *sur une
+  base qui avait déjà des données* — une rename de valeur stockée est une
   migration *de données* en script versionné, pas une altération de schéma.
 - Client OpenAPI régénéré si le schéma a bougé.
 - Doc / ADR mis à jour.
@@ -286,7 +284,7 @@ toujours l'état du dépôt aujourd'hui :
 | ESLint (`make lint-fe`) | En place | `frontend/eslint.config.js` |
 | Pipeline CI | En place | `.github/workflows/ci.yml` |
 | Dependabot | En place | `.github/dependabot.yml` |
-| SQLAlchemy / Alembic | En place | `backend/migrations/`, `element_documents`, `document_chunks` |
+| SQLAlchemy / Alembic | En place | `backend/migrations/` : `elements`, `relationships`, `element_documents`, `document_chunks`, `diagrams` |
 | CI verte obligatoire avant merge | **À poser** | Protection de branche GitHub |
 | Tests E2E frontend (Playwright) | **À poser** | Non configuré |
 | Auth | **À poser** | — |
@@ -300,14 +298,13 @@ parce que c'est là qu'elles coûtent cher :
 
 - La config n'arrive que par l'environnement (`pydantic-settings`). **Aucun
   secret, DSN ou clé dans le code ou les tests.** On commite `.env.example`,
-  jamais `.env`. `Settings` refuse de s'instancier sans mot de passe Neo4j sauf
-  en `EA_DEBUG`.
+  jamais `.env`. `Settings` refuse de s'instancier sans mot de passe PostgreSQL
+  sauf en `EA_DEBUG`.
 - L'authorisation est décidée *dans `services/`*, jamais seulement dans le routeur
   ni dans le SPA (le SPA masque l'UI, l'API tranche).
-- Cypher et SQL suivent la même règle : toutes les valeurs runtime sont *liées*.
-  Seuls trois emplacements Cypher construisent une chaîne — les trois partagent
-  un type archi fermé (type de relation, bord d'un chemin variable) et chacun le
-  justifie dans un commentaire. Un quatrième emplacement doit justifier de même.
+- SQL : toutes les valeurs runtime sont *liées*, profondeur des parcours
+  comprise. Un `text()` exige des paramètres liés et un commentaire qui le
+  justifie.
 - Les retours d'erreur à l'utilisateur sont typés et génériques ; les traces en
   pile vont dans les logs structurés (le `logging` de la bibliothèque standard, par `core/logging.py`, avec un *request id*),
   jamais dans le corps de réponse.

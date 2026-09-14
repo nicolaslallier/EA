@@ -37,7 +37,7 @@ from ea.domain.ipam import (
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import GraphView
 from ea.domain.search import Passage
-from ea.repositories.archimate_graph import MAX_TRAVERSAL_DEPTH
+from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 
 #: Shared constraints, so every endpoint bounds a payload the same way — and so
 #: does every MCP tool, which imports these rather than restating them. The two
@@ -382,7 +382,7 @@ class PassageRead(BaseModel):
     helped.
 
     The element is named by id. Names live in the graph, and decorating a
-    relational query with a call to Neo4j would make every search pay for a
+    passage query with a read of the graph would make every search pay for a
     field the caller may not want — `get_element` is one call away when it
     does.
 

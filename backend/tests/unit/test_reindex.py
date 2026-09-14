@@ -4,8 +4,8 @@
 its store — a document attached while `EA_EMBEDDINGS_ENABLED` was off, and a
 corpus whose embedding model changed. What is worth proving without a database
 is the order it does things in and the fact that it lets go of what it opened:
-everything is checked *before* the first document is read, and the engine, the
-driver and the HTTP client are closed whether or not that check passed.
+everything is checked *before* the first document is read, and the engine and
+the HTTP client are closed whether or not that check passed.
 
 See docs/adr/0019. The reindexing itself is covered in `test_indexing.py`.
 """
@@ -55,7 +55,7 @@ class Recorder:
 def steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Replace every seam of the script with something that only records."""
     log: list[str] = []
-    engine, embedder, driver = (Recorder(log, name) for name in ("engine", "embedder", "driver"))
+    engine, embedder = (Recorder(log, name) for name in ("engine", "embedder"))
 
     async def check(_: object) -> None:
         log.append("engine.checked")
@@ -69,11 +69,10 @@ def steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(script, "create_engine", lambda _: engine)
     monkeypatch.setattr(script, "build_embedder", lambda _: embedder)
-    monkeypatch.setattr(script, "create_driver", lambda _: driver)
     monkeypatch.setattr(script, "check_connectivity", check)
     monkeypatch.setattr(script, "create_session_factory", lambda _: object())
     monkeypatch.setattr(script, "PostgresDocumentRepository", Documents)
-    monkeypatch.setattr(script, "Neo4jArchitectureRepository", lambda *a, **k: object())
+    monkeypatch.setattr(script, "PostgresArchitectureRepository", lambda *a, **k: object())
     return log
 
 
@@ -92,7 +91,7 @@ class TestTheRun:
     async def test_it_closes_what_it_opened(self, steps: list[str]) -> None:
         await script.reindex(Settings(debug=True))
 
-        assert {"engine.closed", "embedder.closed", "driver.closed"} <= set(steps)
+        assert {"engine.closed", "embedder.closed"} <= set(steps)
 
     async def test_it_closes_what_it_opened_even_when_the_model_is_wrong(
         self, steps: list[str], monkeypatch: pytest.MonkeyPatch
@@ -108,7 +107,7 @@ class TestTheRun:
         with pytest.raises(EmbeddingServiceError):
             await script.reindex(Settings(debug=True))
 
-        assert {"engine.closed", "embedder.closed", "driver.closed"} <= set(steps)
+        assert {"engine.closed", "embedder.closed"} <= set(steps)
 
 
 @pytest.mark.asyncio

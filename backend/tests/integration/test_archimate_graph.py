@@ -1,13 +1,15 @@
-"""The Cypher, against a real Neo4j.
+"""The architecture repository, against a real PostgreSQL.
 
 Everything here is a claim about the database rather than about Python: that a
-constraint actually rejects a duplicate, that a variable-length traversal
-returns what it should, that impact analysis walks each relationship the right
-way round. None of it can be proved with a double.
+constraint actually rejects a duplicate, that a recursive traversal returns
+what it should, that impact analysis walks each relationship the right way
+round. None of it can be proved with a double.
 """
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -15,11 +17,12 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.errors import DuplicateElementError
+from ea.domain.model import Relationship
 from ea.domain.ports import ElementFilter
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.asyncio]
 
 
 class TestElementPersistence:
@@ -63,7 +66,7 @@ class TestElementPersistence:
     async def test_an_update_removes_a_property_it_no_longer_carries(
         self, graph_service: ArchitectureService
     ) -> None:
-        """`SET e = $properties` replaces the map, so a dropped key really goes."""
+        """A save replaces the whole map, so a dropped key really goes."""
         element = await graph_service.create_element(
             element_type=E.NODE, name="db-01", properties={"rack": "A1", "owner": "ops"}
         )
@@ -76,13 +79,13 @@ class TestElementPersistence:
     async def test_deleting_an_element_takes_its_relationships_with_it(
         self,
         graph_service: ArchitectureService,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
     ) -> None:
         """Asked of the repository, which answers `None` for a missing link.
 
         The service would raise for it instead, which proves the link is gone
         just as well but says nothing about *how* — the repository's `None` is
-        the Cypher's own answer.
+        the query's own answer.
         """
         api = await graph_service.create_element(
             element_type=E.APPLICATION_SERVICE, name="Invoice API"
@@ -114,6 +117,17 @@ class TestElementPersistence:
         found = await graph_service.list_elements(ElementFilter(search="BILL"))
 
         assert [element.name for element in found] == ["Billing"]
+
+    async def test_the_catalogue_search_treats_wildcards_as_characters(
+        self, graph_service: ArchitectureService
+    ) -> None:
+        """`%` and `_` are what the user typed, never wildcards."""
+        await graph_service.create_element(element_type=E.NODE, name="db_01")
+        await graph_service.create_element(element_type=E.NODE, name="dbx01")
+
+        found = await graph_service.list_elements(ElementFilter(search="db_"))
+
+        assert [element.name for element in found] == ["db_01"]
 
 
 class TestRelationshipPersistence:
@@ -159,13 +173,13 @@ class TestRelationshipPersistence:
 class TestContainmentCycles:
     async def test_a_loop_is_detected_across_several_hops(
         self,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
         graph_service: ArchitectureService,
     ) -> None:
         """Platform contains Payments contains Ledger.
 
         Putting Platform *inside* Ledger would close the loop; the check is a
-        Cypher reachability query, not a Python graph walk.
+        SQL reachability query, not a Python graph walk.
         """
         outer = await graph_service.create_element(element_type=E.GROUPING, name="Platform")
         middle = await graph_service.create_element(element_type=E.GROUPING, name="Payments")
@@ -181,7 +195,7 @@ class TestContainmentCycles:
 
     async def test_a_shortcut_down_the_same_branch_is_not_a_loop(
         self,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
         graph_service: ArchitectureService,
     ) -> None:
         """Platform already contains Ledger through Payments.
@@ -203,7 +217,7 @@ class TestContainmentCycles:
 
     async def test_an_element_cannot_be_put_inside_itself(
         self,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
         graph_service: ArchitectureService,
     ) -> None:
         alone = await graph_service.create_element(element_type=E.GROUPING, name="Platform")
@@ -212,13 +226,37 @@ class TestContainmentCycles:
 
     async def test_two_unrelated_elements_close_nothing(
         self,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
         graph_service: ArchitectureService,
     ) -> None:
         first = await graph_service.create_element(element_type=E.GROUPING, name="Platform")
         second = await graph_service.create_element(element_type=E.GROUPING, name="Payments")
 
         assert not await graph_repository.would_close_a_containment_cycle(first.id, second.id)
+
+    async def test_a_cycle_already_in_the_data_neither_hangs_nor_misleads(
+        self,
+        graph_repository: PostgresArchitectureRepository,
+        graph_service: ArchitectureService,
+    ) -> None:
+        """A composes B and B composes A, written past the service's own check.
+
+        The walk has no depth bound, so only `UNION` discarding a row it already
+        produced stops it; a regression must fail here rather than hang.
+        """
+        now = datetime.now(UTC)
+        a = await graph_service.create_element(element_type=E.GROUPING, name="A")
+        b = await graph_service.create_element(element_type=E.GROUPING, name="B")
+        c = await graph_service.create_element(element_type=E.GROUPING, name="C")
+        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, a, b, now=now))
+        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, b, a, now=now))
+
+        assert not await asyncio.wait_for(
+            graph_repository.would_close_a_containment_cycle(c.id, a.id), timeout=5
+        )
+        assert await asyncio.wait_for(
+            graph_repository.would_close_a_containment_cycle(a.id, b.id), timeout=5
+        )
 
 
 class TestRelationsOfOneElement:
@@ -506,7 +544,7 @@ class TestImpactAnalysis:
 
 
 async def test_a_missing_element_is_absent_rather_than_empty(
-    graph_repository: Neo4jArchitectureRepository,
+    graph_repository: PostgresArchitectureRepository,
 ) -> None:
     assert await graph_repository.get_element(uuid4()) is None
 
@@ -517,7 +555,7 @@ class TestViewOfAChosenSetOfElements:
     async def test_only_the_links_with_both_ends_in_the_set_are_returned(
         self,
         graph_service: ArchitectureService,
-        graph_repository: Neo4jArchitectureRepository,
+        graph_repository: PostgresArchitectureRepository,
     ) -> None:
         api = await graph_service.create_element(
             element_type=E.APPLICATION_SERVICE, name="Invoice API"
@@ -541,7 +579,7 @@ class TestViewOfAChosenSetOfElements:
         assert [relationship.id for relationship in view.relationships] == [inside.id]
 
     async def test_an_empty_set_is_an_empty_view(
-        self, graph_repository: Neo4jArchitectureRepository
+        self, graph_repository: PostgresArchitectureRepository
     ) -> None:
         view = await graph_repository.view_of([])
 

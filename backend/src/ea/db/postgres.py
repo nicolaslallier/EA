@@ -2,11 +2,13 @@
 
 One engine per process. It owns a connection pool, is safe to share across
 requests, and must be disposed on shutdown or the event loop is left with open
-sockets — the same contract as the Neo4j driver next door.
+sockets.
 
-Nothing stores anything here yet (docs/adr/0015). What exists is the seam: a
-DSN built from settings without string surgery, an engine, a session factory,
-and a boot-time check that fails loudly instead of on a user's first request.
+Every store of the application lives behind this engine — the graph, the
+documents and their index, the diagrams (docs/adr/0015, 0033). What this module
+holds is the seam: a DSN built from settings without string surgery, an engine,
+a session factory, and a boot-time check that fails loudly instead of on a
+user's first request.
 """
 
 from __future__ import annotations

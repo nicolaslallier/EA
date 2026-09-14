@@ -2,8 +2,8 @@
 
 `IpamService.declare_network` looks for the prefix before creating it, which
 gives a good message and loses a race: two callers can both look, both find
-nothing, and both create. `(p_vrf, p_cidr)` is a uniqueness constraint for the
-same reason `(p_vrf, p_ip_address)` is one (`db/schema.py`), and these tests
+nothing, and both create. `(vrf, cidr)` is a uniqueness constraint for the
+same reason `(vrf, ip_address)` is one (`db/models/architecture.py`), and these tests
 prove the constraint rather than the check, so most of them write through the
 catalogue where no check stands in the way.
 """
@@ -14,35 +14,37 @@ import asyncio
 import re
 
 import pytest
-from neo4j import AsyncDriver
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ea.core.config import Settings
 from ea.domain.archimate import ElementType as E
 from ea.domain.errors import DuplicateNetworkError
 from ea.domain.ipam import PREFIX_PROPERTY, VRF_PROPERTY
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.ipam import IpamService
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.asyncio]
 
 
 @pytest.fixture
 def graph_ipam(
-    graph_service: ArchitectureService, graph_repository: Neo4jArchitectureRepository
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
 ) -> IpamService:
     return IpamService(graph_service, graph_repository)
 
 
 class TestTheSubnetConstraint:
-    async def test_it_is_declared_on_the_database(self, graph_driver: AsyncDriver) -> None:
-        records, _, _ = await graph_driver.execute_query(
-            "SHOW CONSTRAINTS YIELD name, properties "
-            "WHERE name = 'element_cidr_unique_per_vrf' RETURN properties",
-            database_=Settings(debug=True).neo4j_database,
-        )
+    async def test_it_is_declared_on_the_database(self, engine_at_head: AsyncEngine) -> None:
+        async with engine_at_head.connect() as connection:
+            definition = await connection.scalar(
+                # A catalogue read with no runtime value: nothing to bind.
+                text("SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_elements_vrf_cidr'")
+            )
 
-        assert [record["properties"] for record in records] == [["p_vrf", "p_cidr"]]
+        assert definition is not None
+        assert "UNIQUE" in definition
+        assert "'vrf'" in definition and "'cidr'" in definition
 
     async def test_the_database_refuses_a_second_network_on_one_prefix(
         self, graph_service: ArchitectureService

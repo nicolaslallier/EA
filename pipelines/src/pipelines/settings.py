@@ -3,8 +3,8 @@
 Every field is `PIPELINES_<NAME>` (case-insensitive), from the environment
 only — never from a literal in code, the same rule
 `backend/src/ea/core/config.py` follows. The four secrets have no default:
-building a `Settings` without them fails loudly, in the same place a missing
-`EA_NEO4J_PASSWORD` fails for the backend.
+building a `Settings` without them fails loudly, at start-up, rather than on
+the first call that needed one.
 
 No `env_file`: `pipelines/.env` feeds `docker compose`, which hands the worker
 only its own `PIPELINES_*` variables. That file also holds keys this class has

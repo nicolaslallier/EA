@@ -1,7 +1,6 @@
 """The Alembic chain, checked without a database.
 
-The graph has no migrations — its constraints are declared and reapplied at
-boot (`db/schema.py`). PostgreSQL is the opposite: every change to a table is a
+The graph is in PostgreSQL too since docs/adr/0033: every change to a table is a
 versioned script, and the properties that make that chain safe are structural,
 so they are checked here rather than discovered on a deployment.
 """
@@ -101,25 +100,20 @@ def test_the_markdown_is_stored_as_text_and_not_as_bytes() -> None:
     assert content.nullable is False
 
 
-def test_the_element_a_document_names_carries_no_foreign_key() -> None:
-    """It cannot: the element is a `:Element` node in Neo4j, not a row here.
-
-    This is the assertion that explains the explicit cascade in
-    `ArchitectureService.delete_element` — see docs/adr/0017.
-    """
+def test_a_document_follows_its_element_by_the_foreign_key() -> None:
+    """The element is a row since docs/adr/0033, so the cascade is DDL."""
     element_id = Base.metadata.tables["element_documents"].c.element_id
+    key = next(iter(element_id.foreign_keys))
 
-    assert element_id.foreign_keys == set()
+    assert key.column.table.name == "elements"
+    assert key.ondelete == "CASCADE"
     assert element_id.index is True
 
 
 def test_the_passages_table_can_state_the_foreign_key_the_documents_could_not() -> None:
     """The difference docs/adr/0019 turns on: a document *is* a row here.
 
-    `element_documents.element_id` names a Neo4j node and can reference
-    nothing, which is why its cascade is written by hand in a service. A
-    passage names a document, so its cascade is one line of DDL — and this is
-    the assertion that says the database is doing it.
+    Both cascades are DDL now (docs/adr/0033); this one was the first.
     """
     document_id = Base.metadata.tables["document_chunks"].c.document_id
     key = next(iter(document_id.foreign_keys))
@@ -165,11 +159,12 @@ def test_the_vector_index_is_built_for_the_distance_the_repository_orders_by() -
     assert index.dialect_options["postgresql"]["ops"] == {"embedding": "vector_cosine_ops"}
 
 
-def test_a_diagram_node_names_its_element_without_a_foreign_key() -> None:
-    """The element is a Neo4j node; the cascade is `discard_for_element` — docs/adr/0031."""
+def test_a_diagram_node_follows_its_element_by_the_foreign_key() -> None:
     element_id = Base.metadata.tables["diagram_nodes"].c.element_id
+    key = next(iter(element_id.foreign_keys))
 
-    assert element_id.foreign_keys == set()
+    assert key.column.table.name == "elements"
+    assert key.ondelete == "CASCADE"
     assert element_id.index is True
 
 
@@ -187,3 +182,36 @@ def test_a_diagram_name_is_unique_by_a_named_constraint() -> None:
     table = Base.metadata.tables["diagrams"]
 
     assert "uq_diagrams_name" in {constraint.name for constraint in table.constraints}
+
+
+def test_an_element_name_is_unique_within_its_type_by_a_named_constraint() -> None:
+    """`pipelines/` recognises a duplicate element by this constraint's refusal — docs/adr/0033."""
+    table = Base.metadata.tables["elements"]
+
+    assert "uq_elements_element_type_name" in {c.name for c in table.constraints}
+
+
+def test_an_address_and_a_prefix_are_unique_per_vrf_by_partial_indexes() -> None:
+    """The `WHERE` makes each index ignore an element missing either key."""
+    indexes = {index.name: index for index in Base.metadata.tables["elements"].indexes}
+
+    for name in ("uq_elements_vrf_ip_address", "uq_elements_vrf_cidr"):
+        assert indexes[name].unique is True
+        assert indexes[name].dialect_options["postgresql"]["where"] is not None
+
+
+def test_a_relationship_follows_both_its_ends_by_the_foreign_key() -> None:
+    table = Base.metadata.tables["relationships"]
+
+    for column in ("source_id", "target_id"):
+        key = next(iter(table.c[column].foreign_keys))
+        assert key.column.table.name == "elements"
+        assert key.ondelete == "CASCADE"
+        assert table.c[column].index is True
+
+
+def test_user_defined_properties_are_one_jsonb_map() -> None:
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    assert isinstance(Base.metadata.tables["elements"].c.properties.type, JSONB)
+    assert isinstance(Base.metadata.tables["relationships"].c.properties.type, JSONB)

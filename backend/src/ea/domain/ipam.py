@@ -7,13 +7,14 @@ no concept to a metamodel that is deliberately closed at 61 types: it adds a
 *convention* about four property names, and this module is that convention,
 written once.
 
-    communication_network "DMZ"        p_cidr = 10.0.1.0/24, p_vrf = dmz
-    node "srv-app-01"                  p_ip_address = 10.0.1.12, p_vrf = dmz
+    communication_network "DMZ"        cidr = 10.0.1.0/24, vrf = dmz
+    node "srv-app-01"                  ip_address = 10.0.1.12, vrf = dmz
 
 The whole point of holding one address per element rather than a list is that
-`p_vrf` and `p_ip_address` can then be a **uniqueness constraint** in Neo4j
-(`db/schema.py`): two elements cannot claim the same address, and that is
-enforced by the database rather than by a check that races. A host with two
+the property keys `vrf` and `ip_address` can then be a **uniqueness constraint**
+in PostgreSQL (the partial unique index `uq_elements_vrf_ip_address`,
+`db/models/architecture.py`): two elements cannot claim the same address, and
+that is enforced by the database rather than by a check that races. A host with two
 NICs is two `technology_interface` elements composed into one node — which is
 how ArchiMate says to model it anyway.
 
@@ -39,9 +40,9 @@ from ea.domain.ports import GraphView
 type IpAddress = IPv4Address | IPv6Address
 type IpPrefix = IPv4Network | IPv6Network
 
-#: The four property names the convention reserves. They are stored under the
-#: `p_` prefix like every user-defined attribute (`db/schema.py`), so they stay
-#: greppable in Cypher: `MATCH (e:Element) WHERE e.p_ip_address = '10.0.1.12'`.
+#: The four property names the convention reserves. They are keys of the
+#: `properties` map like every user-defined attribute (`db/models/architecture.py`),
+#: so they stay queryable: `WHERE properties ->> 'ip_address' = '10.0.1.12'`.
 ADDRESS_PROPERTY: Final = "ip_address"
 PREFIX_PROPERTY: Final = "cidr"
 VRF_PROPERTY: Final = "vrf"
@@ -53,8 +54,8 @@ IPAM_PROPERTIES: Final = frozenset(
 
 #: The routing scope an address is unique in. One flat network is still a VRF,
 #: so the field is never empty and the uniqueness constraint never sees a null —
-#: a composite constraint in Neo4j simply does not apply to a node missing one
-#: of its properties, which would have made the guarantee vanish exactly where
+#: a partial unique index simply does not apply to an element missing one
+#: of its keys, which would have made the guarantee vanish exactly where
 #: someone forgot to name a VRF.
 DEFAULT_VRF: Final = "default"
 
@@ -431,8 +432,8 @@ def validate_ipam_properties(
     What comes back is what must be stored: the same properties, with the
     address and the prefix in their one canonical spelling and the scope written
     out beside them. Both matter to the uniqueness constraints in
-    `db/schema.py`, which compare stored strings — `10.0.1.0/255.255.255.0` and
-    `10.0.1.0/24` are one network and two values — and which ignore a node
+    `db/models/architecture.py`, which compare stored strings — `10.0.1.0/255.255.255.0` and
+    `10.0.1.0/24` are one network and two values — and which ignore an element
     missing one of their properties, so an unstated VRF would put the row
     outside the only guarantee that it is unique.
     """

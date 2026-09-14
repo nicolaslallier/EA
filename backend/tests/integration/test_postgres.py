@@ -89,9 +89,8 @@ async def test_the_application_boots_with_the_relational_store_open(
 ) -> None:
     """The lifespan opens the pool, checks it, and hands out a session factory.
 
-    The graph is injected rather than opened: what is under test is the
-    relational half of the lifespan, and requiring Neo4j here would make this
-    skip on every machine that has PostgreSQL and no access to the cluster.
+    The graph is injected rather than built: what is under test is the
+    relational half of the lifespan alone.
     """
     app = create_app(
         Settings(debug=True, postgres_enabled=True, auth_enabled=False),

@@ -23,11 +23,10 @@ import sys
 
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
-from ea.db.neo4j import create_driver
 from ea.db.postgres import check_connectivity, create_engine, create_session_factory
 from ea.domain.auth import SYSTEM
 from ea.main import build_embedder
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
@@ -44,29 +43,24 @@ async def reindex(settings: Settings) -> int:
     and the model is the width of the column — so a misconfigured run stops at
     once instead of halfway through a corpus.
 
-    The Neo4j driver is opened because `DocumentService` is built with an
-    architecture service, which owns the rule that an element must exist before
-    a file hangs off it. Reindexing never asks it anything, and the driver
-    connects lazily, so this costs nothing beyond the object.
+    The architecture service is built because `DocumentService` owns the rule
+    that an element must exist before a file hangs off it. Reindexing never
+    asks it anything; it shares the relational store, so it costs nothing.
     """
     engine = create_engine(settings)
     embedder = build_embedder(settings)
-    driver = create_driver(settings)
     try:
         await check_connectivity(engine)
         await embedder.probe()
-        documents = PostgresDocumentRepository(create_session_factory(engine))
-        architecture = ArchitectureService(
-            Neo4jArchitectureRepository(driver, database=settings.neo4j_database),
-            attachments=documents,
-        )
+        sessions = create_session_factory(engine)
+        documents = PostgresDocumentRepository(sessions)
+        architecture = ArchitectureService(PostgresArchitectureRepository(sessions))
         service = DocumentService(documents, architecture, indexer=DocumentIndexer(embedder))
         # An operator's script has no request behind it, so it runs as SYSTEM.
         with acting_as(SYSTEM):
             return await service.reindex_all()
     finally:
         await embedder.aclose()
-        await driver.close()
         await engine.dispose()
 
 

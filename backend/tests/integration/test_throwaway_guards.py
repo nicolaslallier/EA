@@ -1,12 +1,11 @@
 """The guards that keep a destructive test off a database somebody uses.
 
 These run everywhere, with no database: they are about the *decision* to touch
-one. Both stores are wiped by the suite in this directory — the graph between
-every case, PostgreSQL by `alembic downgrade base` — and both have a shared
-instance on the cluster whose address is the default in `Settings`. A guard
-that trusted configuration alone would be one `backend/.env` away from
-emptying it, so the only address accepted is one that cannot be another
-machine. See docs/adr/0024.
+one. The database is wiped by the suite in this directory, by `alembic
+downgrade base`, and has a shared instance on this Mac since docs/adr/0029,
+whose address is the default in `Settings`. A guard that trusted configuration
+alone would be one `backend/.env` away from emptying it, so the only address
+accepted is one that cannot be another machine. See docs/adr/0024.
 """
 
 from __future__ import annotations
@@ -16,11 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.integration.throwaway import (
-    is_loopback,
-    refuse_a_shared_graph,
-    refuse_a_shared_postgres,
-)
+from tests.integration.throwaway import is_loopback, refuse_a_shared_postgres
 
 HERE = Path(__file__).parent
 
@@ -46,37 +41,6 @@ def test_a_loopback_host_is_recognised(host: str) -> None:
 def test_anything_else_is_not(host: str) -> None:
     """`0.0.0.0` is a bind address, not a place; `host.docker.internal` is the Mac."""
     assert not is_loopback(host)
-
-
-class TestTheGraph:
-    def test_it_is_refused_without_the_explicit_opt_in(self) -> None:
-        reason = refuse_a_shared_graph("bolt://127.0.0.1:7688", allow_destructive=None)
-
-        assert reason is not None
-        assert "EA_ALLOW_DESTRUCTIVE_TESTS" in reason
-
-    def test_the_cluster_is_refused_even_with_the_opt_in(self) -> None:
-        """The opt-in says "I mean it"; it does not say *where*."""
-        reason = refuse_a_shared_graph("bolt://192.168.2.10:7687", allow_destructive="1")
-
-        assert reason is not None
-        assert "192.168.2.10" in reason
-
-    @pytest.mark.parametrize(
-        "uri", ["bolt://127.0.0.1:7688", "neo4j://localhost:7688", "bolt://[::1]:7688"]
-    )
-    def test_a_local_instance_with_the_opt_in_is_accepted(self, uri: str) -> None:
-        assert refuse_a_shared_graph(uri, allow_destructive="1") is None
-
-    @pytest.mark.parametrize(
-        "uri", ["bolt://127.0.0.1:7687", "neo4j://localhost:7687", "bolt://localhost"]
-    )
-    def test_the_shared_graph_is_refused_even_on_loopback(self, uri: str) -> None:
-        """The Infra stack publishes the shared graph on 127.0.0.1:7687 (docs/adr/0030)."""
-        reason = refuse_a_shared_graph(uri, allow_destructive="1")
-
-        assert reason is not None
-        assert "7687" in reason
 
 
 class TestPostgres:

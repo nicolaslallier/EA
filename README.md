@@ -1,13 +1,13 @@
 # EA — Enterprise Architecture
 
 Référentiel d'architecture d'entreprise : un backend FastAPI qui stocke un
-modèle **ArchiMate 3.2** dans une base de données **graphe (Neo4j)**, et un
+modèle **ArchiMate 3.2** dans **PostgreSQL**, et un
 frontend Vue 3.
 
 Le modèle d'architecture est un graphe et les questions qu'on lui pose sont des
-parcours : « si ce serveur tombe, quels processus métier s'arrêtent ? ». C'est la
-raison du choix de Neo4j — voir
-[`docs/adr/0004`](docs/adr/0004-neo4j-pour-le-graphe-d-architecture.md).
+parcours : « si ce serveur tombe, quels processus métier s'arrêtent ? ». Le
+graphe est stocké en tables et parcouru par des requêtes récursives — voir
+[`docs/adr/0033`](docs/adr/0033-postgresql-seul-pour-le-graphe.md).
 
 ## Prérequis
 
@@ -17,27 +17,18 @@ Sur macOS :
 brew install make node uv
 ```
 
-`make` est déjà fourni par macOS (GNU Make 3.81) — c'est suffisant. Docker
-Desktop sert à ouvrir un `cypher-shell` sur le graphe ; le graphe lui-même
-tourne sur le cluster Docker, pas ici.
+`make` est déjà fourni par macOS (GNU Make 3.81) — c'est suffisant.
 
 ## Démarrage
 
 ```bash
 make install   # dépendances Python (uv), Node (npm), et backend/.env
-# puis renseigne EA_NEO4J_PASSWORD dans backend/.env
-make db-ping   # vérifie que le graphe partagé répond
+# Renseigne EA_POSTGRES_PASSWORD dans backend/.env
+make pg-ping   # vérifie que la base partagée répond
 make run       # backend + frontend en parallèle
 ```
 
-Le graphe n'est pas démarré par ces commandes : c'est une instance unique, le
-service `neo4j` de la stack [Infra](https://github.com/nicolaslallier/Infra),
-publiée par son nginx sur `bolt://127.0.0.1:7687` et nulle part ailleurs — voir
-[`docs/adr/0030`](docs/adr/0030-neo4j-dans-la-stack-infra.md). `make db-stack`
-rappelle d'où la (re)déployer ; le mot de passe est `NEO4J_PASSWORD` dans le
-`.env` d'Infra, et ne figure dans aucun fichier versionné.
-
-PostgreSQL non plus n'est pas démarré ici, mais il n'est pas sur le cluster : la
+PostgreSQL n'est pas démarré ici, mais il n'est pas sur le cluster : la
 base `ea` vit dans la stack `~/OpenCode/Infra` de ce Mac, sur 127.0.0.1:5432 —
 voir [`docs/adr/0029`](docs/adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) et `make pg-stack`.
 
@@ -50,7 +41,6 @@ indique « Backend: ok », les deux services communiquent.
 | <http://127.0.0.1:8000/health> | Endpoint de santé |
 | <http://127.0.0.1:8000/docs> | Documentation OpenAPI |
 | <http://127.0.0.1:8000/mcp> | Serveur MCP — le référentiel pour un agent |
-| `bolt://127.0.0.1:7687` | Graphe Neo4j, dans la stack Infra — `make db-shell` |
 | <https://ea.infra.famillelallier.net> | L'application déployée, derrière le NGINX de l'Infra — `make app-stack` |
 
 ## Commandes
@@ -63,15 +53,10 @@ indique « Backend: ok », les deux services communiquent.
 | `make run` | Lance les deux serveurs, logs entrelacés, `Ctrl-C` arrête tout |
 | `make run-be` | Backend seul |
 | `make run-fe` | Frontend seul |
-| `make db-ping` | Vérifie que le graphe du cluster répond |
-| `make db-stack` | Rappelle comment déployer la stack Neo4j sur le cluster |
-| `make db-shell` | Ouvre un `cypher-shell` sur le graphe |
-| `make db-reset` | Vide le graphe partagé — `CONFIRM=yes` obligatoire |
 | `make check` | Lint, types, client généré et tests sans base — ne modifie aucun fichier |
 | `make lint` | Corrige le formatage et le lint du backend (`check` ne corrige rien) |
 | `make audit` | `bandit`, `pip-audit`, `npm audit` |
 | `make pg-backup` | Sauvegarde la base PostgreSQL partagée dans `backups/` |
-| `make db-backup-howto` | Rappelle la sauvegarde du graphe, hors ligne sur l'hôte |
 | `make clean` | Supprime `.venv`, `node_modules`, caches et artefacts de build |
 
 En cas de conflit de port, les ports sont surchargeables :
@@ -85,14 +70,14 @@ make run-be BE_PORT=8001
 ```bash
 make check                # lint + types + client généré + tests sans base, plancher de couverture 90 %
 make audit                # bandit, pip-audit, npm audit (réseau requis)
-make test-integration     # contre un Neo4j et un PostgreSQL jetables locaux, démarrés au besoin
+make test-integration     # contre un PostgreSQL jetable local, démarré au besoin
 make test-postgres        # seulement les tests PostgreSQL, contre le conteneur jetable
 ```
 
-Les tests d'intégration détruisent ce qu'ils touchent : ils vident le graphe
-entre chaque cas et annulent la chaîne de migrations. Ils tournent donc sur les
-conteneurs jetables de [`docker-compose.yml`](docker-compose.yml), publiés sur
-127.0.0.1, **jamais sur les bases partagées** — les fixtures refusent tout hôte
+Les tests d'intégration détruisent ce qu'ils touchent : ils annulent la chaîne
+de migrations entre chaque cas. Ils tournent donc sur le
+conteneur jetable de [`docker-compose.yml`](docker-compose.yml), publié sur
+127.0.0.1, **jamais sur la base partagée** — les fixtures refusent tout hôte
 qui n'est pas local, et le port 5432 de la base partagée, et sautent le test en
 le disant. Docker est donc nécessaire pour
 eux. Voir [`docs/adr/0024`](docs/adr/0024-tests-d-integration-sur-des-bases-jetables.md).
@@ -101,8 +86,9 @@ eux. Voir [`docs/adr/0024`](docs/adr/0024-tests-d-integration-sur-des-bases-jeta
 (`.github/workflows/ci.yml`) rejoue les mêmes cibles — voir
 [`docs/adr/0026`](docs/adr/0026-la-barriere-qualite.md).
 
-Les sauvegardes des deux bases (`make pg-backup`, `make pg-restore`,
-`make db-backup-howto`) sont décrites dans
+Les sauvegardes (`make pg-backup`, `make pg-restore`) couvrent tout le modèle
+depuis [`docs/adr/0033`](docs/adr/0033-postgresql-seul-pour-le-graphe.md) ;
+elles sont décrites dans
 [`docs/adr/0025`](docs/adr/0025-sauvegardes-des-deux-bases.md), encore à l'état
 de proposition : aucune n'a été restaurée contre le cluster.
 

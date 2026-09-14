@@ -37,7 +37,7 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
-from ea.services.architecture import AllAttachments, ArchitectureService
+from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -130,7 +130,7 @@ def _no_network_beyond_this_machine(
 ) -> None:
     """Refuse, at once, any connection a test opens to another machine.
 
-    The settings defaults point Neo4j, PostgreSQL and the embedding service at
+    The settings defaults point PostgreSQL and the embedding service at
     the cluster — the useful default for a developer, and a trap for a test: a
     lifespan entered with them goes looking for the real stores. On the LAN
     that test quietly talks to the shared databases; off it, it waits for a
@@ -145,7 +145,7 @@ def _no_network_beyond_this_machine(
     emptying it.
 
     The patch sits on `socket.socket` itself, below every client in this
-    process: asyncio, and therefore asyncpg, the Neo4j driver and httpx, all
+    process: asyncio, and therefore asyncpg and httpx, all
     end in `sock.connect`. `getaddrinfo` is guarded too, because a lookup with
     no network can hang for the resolver's own timeout before any connect.
     In-process transports — `httpx.ASGITransport`, `httpx.MockTransport` —
@@ -197,16 +197,16 @@ def _no_network_beyond_this_machine(
 def _database_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the deployment that provides the database credentials.
 
-    `Settings` refuses an empty password outside debug — for Neo4j always, and
-    for PostgreSQL since `postgres_enabled` defaults to on (docs/adr/0017) — so
-    a suite that builds settings must look like a configured process. Tests
+    `Settings` refuses an empty PostgreSQL password outside debug since
+    `postgres_enabled` defaults to on (docs/adr/0017) — so a suite that builds
+    settings must look like a configured process. Tests
     that are *about* the credentials pass their own values, which take
     precedence over this.
 
     A password already in the environment wins: that is the integration run,
     which needs the credentials of the database it is about to talk to.
     """
-    for variable in ("EA_NEO4J_PASSWORD", "EA_POSTGRES_PASSWORD"):
+    for variable in ("EA_POSTGRES_PASSWORD",):
         if not os.environ.get(variable):
             monkeypatch.setenv(variable, "test-password")
 
@@ -239,7 +239,12 @@ def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
 
 
 class InMemoryRepository:
-    """A dictionary pretending to be a graph. Enough for the service's rules."""
+    """A dictionary pretending to be a graph. Enough for the service's rules.
+
+    Deleting an element here does not cascade to the document and diagram
+    doubles: in PostgreSQL the foreign keys of revision 0006 do that, so a unit
+    test must not rely on it — `tests/integration/test_element_cascade.py` does.
+    """
 
     def __init__(self) -> None:
         self.elements: dict[UUID, Element] = {}
@@ -267,7 +272,7 @@ class InMemoryRepository:
         return element
 
     def _refuse_a_taken_address(self, element: Element) -> None:
-        """Stand in for the `(p_vrf, p_ip_address)` uniqueness constraint.
+        """Stand in for the `(vrf, ip_address)` partial unique index.
 
         Reproduced rather than skipped, for the same reason the document double
         reproduces its own: it is the rule that survives two agents allocating
@@ -447,20 +452,9 @@ class InMemoryDocuments:
 
     async def delete(self, document_id: UUID) -> bool:
         """The passages go with the document — here by hand, in PostgreSQL by
-        the foreign key `element_documents` could never have."""
+        the foreign key from `document_chunks`."""
         self.chunks.pop(document_id, None)
         return self.documents.pop(document_id, None) is not None
-
-    async def discard_for_element(self, element_id: UUID) -> int:
-        doomed = [
-            document_id
-            for document_id, stored in self.documents.items()
-            if stored.element_id == element_id
-        ]
-        for document_id in doomed:
-            del self.documents[document_id]
-            self.chunks.pop(document_id, None)
-        return len(doomed)
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         return tuple(
@@ -555,14 +549,6 @@ class InMemoryDiagrams:
         self.diagrams[diagram_id] = stored.touched(now)
         return True
 
-    async def discard_for_element(self, element_id: UUID) -> int:
-        discarded = 0
-        for diagram_id, nodes in self.nodes.items():
-            kept = tuple(node for node in nodes if node.element_id != element_id)
-            discarded += len(nodes) - len(kept)
-            self.nodes[diagram_id] = kept
-        return discarded
-
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     product = sum(a * b for a, b in zip(left, right, strict=True))
@@ -638,18 +624,9 @@ def diagrams() -> InMemoryDiagrams:
 
 
 @pytest.fixture
-def service(
-    repository: InMemoryRepository, documents: InMemoryDocuments, diagrams: InMemoryDiagrams
-) -> ArchitectureService:
-    """The service wired to the in-memory graph and to a clock that never moves.
-
-    It is handed the attachments too, because deleting an element has to take
-    its documents and its places on diagrams with it and no foreign key says
-    so — see docs/adr/0017 and 0031. Both, as `main.py` wires them.
-    """
-    return ArchitectureService(
-        repository, clock=lambda: FIXED_NOW, attachments=AllAttachments(documents, diagrams)
-    )
+def service(repository: InMemoryRepository) -> ArchitectureService:
+    """The service wired to the in-memory graph and to a clock that never moves."""
+    return ArchitectureService(repository, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture
@@ -662,7 +639,7 @@ def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamSe
     """The IP use cases over the same graph double, which answers both ports.
 
     `InMemoryRepository` satisfies `IpamRepository` as well as
-    `ArchitectureRepository`, exactly as the Neo4j class does — an address is
+    `ArchitectureRepository`, exactly as the PostgreSQL class does — an address is
     an attribute of an element, not a second store (docs/adr/0020).
     """
     return IpamService(service, repository)

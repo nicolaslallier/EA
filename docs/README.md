@@ -33,7 +33,9 @@ questions d'**analyse d'impact** :
 - « qu'est-ce qui est contenu dans ce regroupement, à tous les niveaux ? ».
 
 Le modèle **est** un graphe, et les questions qu'on lui pose sont des parcours de
-longueur variable. C'est la raison du choix de Neo4j — voir
+longueur variable. Ils sont écrits en CTE `WITH RECURSIVE` sur des tables
+PostgreSQL — voir [`adr/0033`](adr/0033-postgresql-seul-pour-le-graphe.md), qui
+remplace le choix de Neo4j fait par
 [`adr/0004`](adr/0004-neo4j-pour-le-graphe-d-architecture.md).
 
 ### Le métamodèle : ArchiMate 3.2
@@ -81,53 +83,42 @@ backend/src/ea/
   domain/         Entités et valeurs — AUCUN framework
     archimate/    Le métamodele ArchiMate 3.2 : taxonomie, relations, règles
   services/       Cas d'usage ; orchestrent le domaine + les ports, possèdent les transactions
-  repositories/   Implémentations Cypher des ports déclarés dans domain/
-  db/             Cycle de vie du pilote Neo4j et schéma (contraintes + index)
+  repositories/   Implémentations SQL (SQLAlchemy) des ports déclarés dans domain/
+  db/             Moteur PostgreSQL, sessions, base déclarative ; db/models/ les tables
   core/           Config (pydantic-settings), logging, erreurs
 ```
 
 C'est un **port-adapter** : `domain/ports.py` déclare
 `ArchitectureRepository` (un `Protocol` structuré), et
-`repositories/archimate_graph.py` l'implémente sur Neo4j sans hériter d'une
+`repositories/architecture_store.py` l'implémente sur PostgreSQL sans hériter d'une
 classe de base. Remplacer le moteur reste un travail borné à un fichier.
 
-### Les deux bases
+### Une seule base : PostgreSQL
 
-Neo4j et PostgreSQL jouent des rôles distincts
-([`adr/0004`](adr/0004-neo4j-pour-le-graphe-d-architecture.md)) :
+Le graphe d'architecture, les documents markdown, leur index vectoriel
+(pgvector) et les diagrammes enregistrés vivent dans le même PostgreSQL
+([`adr/0015`](adr/0015-socle-postgresql-sqlalchemy-alembic.md),
+[`adr/0033`](adr/0033-postgresql-seul-pour-le-graphe.md)). Neo4j a porté le
+graphe jusqu'à 0033, qui l'a remplacé.
 
-| Donnée | Base |
-|---|---|
-| Éléments d'architecture, relations, parcours, analyses d'impact | **Neo4j** |
-| Authentification, utilisateurs, journal d'audit, traitements planifiés | **PostgreSQL** |
-
-**Postgres n'est référencé par aucun code aujourd'hui.** Il est déclaré dans
-`docker-compose.yml` sous le profil `full` pour que la cible
-`make db-up-all` soit visible, mais `make db-up` ne démarre que Neo4j. Les
-dépendances SQLAlchemy et Alembic seront ajoutées avec la première table, pas
-avant.
-
-**Il n'y a pas d'Alembic pour le graphe.** Neo4j n'a pas de schéma à migrer ; il
-a des contraintes et des index. `db/schema.py` les déclare avec
-`IF NOT EXISTS` et l'application applique toute la liste au démarrage, donc
-ajouter une contrainte, c'est ajouter une ligne à `SCHEMA_STATEMENTS`. Une
-migration de *données* — renommer un type d'élément — sera un script Cypher
-versionné ; ce cas ne s'est pas encore présenté.
+**Toute modification d'une table est une révision Alembic versionnée**
+(`backend/migrations/`, `make pg-revision m="..."`), graphe compris. L'image
+applique `alembic upgrade head` à chaque démarrage.
 
 ### Le stockage du graphe
 
 Trois choix portent de la performance et de la lisibilité
-(`db/schema.py`, [`adr/0004`](adr/0004-neo4j-pour-le-graphe-d-architecture.md)) :
+(`db/models/architecture.py`, [`adr/0033`](adr/0033-postgresql-seul-pour-le-graphe.md)) :
 
-- **Un seul label `:Element`** pour tous les nœuds ; le type ArchiMate est la
-  propriété indexée `element_type`, pas un label. Cela garde 61 labels — et le
-  Cypher dynamique nécessaire pour les écrire — hors du codebase.
-- **Chaque relation porte son type ArchiMate comme vrai type de relation
-  Neo4j**, car c'est sur cela qu'un patron de parcours fait correspondre. Il y en
-  a onze, en nombre fermé, donc elles sont listées littéralement.
-- **Les attributs utilisateur sont stockés à plat sous un préfixe `p_`**, pour
-  rester interrogeables (`MATCH (e:Element) WHERE e.p_owner = 'finance'`) sans
-  dépaqueter du JSON.
+- **Une table `elements`** pour tous les éléments ; le type ArchiMate est la
+  colonne indexée `element_type`, avec `UNIQUE (element_type, name)`.
+- **Une table `relationships`** dont `relationship_type` est une colonne, et
+  dont `source_id` / `target_id` sont des clés étrangères `ON DELETE CASCADE` :
+  supprimer un élément emporte ses liens, ses documents et ses boîtes de
+  diagramme dans la même transaction.
+- **Les attributs utilisateur sont une colonne `jsonb`, sans préfixe**,
+  interrogeable (`WHERE properties ->> 'owner' = 'finance'`). L'unicité d'une
+  adresse IP ou d'un préfixe par VRF est un index unique partiel sur ces clés.
 
 ## L'API
 
@@ -217,14 +208,17 @@ Le **TDD est le mode de travail par défaut** (`CLAUDE.md`). Par changement :
 1. **Unitaire** (`tests/unit`, sans I/O) : règles de domaine, validation,
    fonctions pures. Millisecondes.
 2. **Intégration** (`tests/integration`) : repositories et services contre un
-   vrai Neo4j. Pas de pilote mocké, pas de double factice — ces tests
-    *prouvent* le Cypher.
+   vrai PostgreSQL, le conteneur jetable de `docker-compose.yml`. Pas de pilote
+   mocké, pas de double factice — ces tests *prouvent* le SQL et la chaîne
+   Alembic.
 3. **API** (`tests/e2e`, côté backend) : `httpx.AsyncClient` contre l'app.
 
-L'isolation des tests d'intégration est « vider le graphe entre chaque cas » et
-non une transaction annulée, car Neo4j Community ne sert qu'une seule base. C'est
-destructeur, donc limité par `EA_ALLOW_DESTRUCTIVE_TESTS=1`, que
-seule `make test-integration` positionne. Un `uv run pytest` nu les saute.
+Chaque test d'intégration monte la chaîne Alembic jusqu'à `head` puis la
+redescend à `base`. C'est destructeur, donc les fixtures refusent tout hôte qui
+n'est pas loopback, et le port 5432 de la base partagée, et sautent le test en
+le nommant ([`adr/0024`](adr/0024-tests-d-integration-sur-des-bases-jetables.md)).
+`make test-integration` démarre le conteneur jetable (127.0.0.1:5433) et pointe
+dessus ; un `uv run pytest` nu les saute.
 
 Plancher de couverture : **90 %** sur `backend/src`.
 
@@ -233,31 +227,28 @@ Plancher de couverture : **90 %** sur `backend/src`.
 Récapitulatif — voir `CLAUDE.md` pour le détail :
 
 - Configuration par l'environnement via `pydantic-settings`, **jamais** de secret
-  en dur. `Settings` refuse de démarrer sans mot de passe Neo4j hors `EA_DEBUG`.
+  en dur. `Settings` refuse de démarrer sans mot de passe PostgreSQL hors
+  `EA_DEBUG`.
 - Autorisation appliquée dans `services/`, **jamais** seulement dans le router
   ni dans le frontend.
-- **Cypher : toute valeur runtime est un paramètre lié.** Trois choses ne peuvent
-  pas l'être — le type d'une relation, la borne d'un chemin variable, et un type
-  de relation dans `WHERE type(r)` ; les trois sont construites à partir d'une
-  énumération fermée ou d'un entier borné, et chaque site porte un commentaire
-  qui le dit.
+- **SQL : toute valeur runtime est un paramètre lié**, profondeur des parcours
+  comprise ; un `text()` exige des paramètres liés et un commentaire qui le
+  justifie.
 - CORS : liste explicite depuis les settings, **jamais** `*` avec credentials.
 - Erreurs renvoyées au client : typées et génériques ; traces et messages de base
   vont dans les logs structurés, pas dans le corps de réponse.
-- `bandit`, `pip-audit` et `npm audit` tournent en CI — **pas encore mis en
-  place.**
+- `bandit`, `pip-audit` et `npm audit` tournent en CI (`make audit`).
 
 ## État et chemin restant
 
-**Existe :** domaine ArchiMate complet, repository Neo4j, deux parcours
+**Existe :** domaine ArchiMate complet, repository PostgreSQL, deux parcours
 (neighbourhood + impact), l'API entière, et cinq écrans — catalogue, relations,
 voisinage, métamodèle, analyse d'impact.
 
 **Décidé mais pas encore écrit** (ne pas supposer que cela existe) :
 
-- `SQLAlchemy`, `Alembic`, la première table PostgreSQL. (L'authentification,
-  elle, est le realm Keycloak `ea` : [`adr/0032`](adr/0032-authentification-par-keycloak.md).)
-- `bandit`, `pip-audit`, `ESLint` (`npm run lint`), Playwright, `pre-commit`, CI.
+- Playwright. (L'authentification est le realm Keycloak `ea` :
+  [`adr/0032`](adr/0032-authentification-par-keycloak.md), encore *Proposition*.)
 - L'export vers le format d'échange ArchiMate (Open Exchange File) n'est pas
   implémenté, mais rien ne s'y oppose — la taxonomie est complète.
 
@@ -272,7 +263,7 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0001](adr/0001-orchestration-locale-via-makefile.md) | Orchestration du développement local via un Makefile | Accepté |
 | [0002](adr/0002-frontend-vue-3-plutot-que-react.md) | Frontend en Vue 3 plutôt qu'en React | Accepté |
 | [0003](adr/0003-uv-comme-chaine-outils-python.md) | `uv` comme chaîne d'outils Python | Accepté |
-| [0004](adr/0004-neo4j-pour-le-graphe-d-architecture.md) | Neo4j pour le graphe d'architecture | Accepté |
+| [0004](adr/0004-neo4j-pour-le-graphe-d-architecture.md) | Neo4j pour le graphe d'architecture | Supersédé par 0033 |
 | [0005](adr/0005-archimate-3-2-comme-metamodele.md) | ArchiMate 3.2 comme métamodèle du référentiel | Accepté |
 | [0006](adr/0006-neo4j-sur-le-cluster-docker.md) | Neo4j sur le cluster Docker | Supersédé par 0030 |
 | [0007](adr/0007-client-openapi-genere-pour-le-spa.md) | Client OpenAPI généré, et premier écran de CRUD | Accepté |
@@ -298,7 +289,8 @@ nouvel ADR est créé dans [`adr/`](adr/) — contexte, décision, conséquences
 | [0027](adr/0027-application-deployee-derriere-le-nginx-de-l-infra.md) | L'application déployée comme stack Portainer, derrière le NGINX de l'Infra | Proposition |
 | [0028](adr/0028-pipelines-python-dans-le-depot-ea.md) | Pipelines Python dans le dépôt EA — Prefect 3 et LiteLLM, auto-hébergés | Proposition |
 | [0029](adr/0029-nouvelle-adresse-du-cluster-et-postgresql-sur-le-mac.md) | Le cluster change d'adresse, et PostgreSQL le quitte pour la stack Infra du Mac | Accepté |
-| [0030](adr/0030-neo4j-dans-la-stack-infra.md) | Le graphe Neo4j vit dans la stack Infra | Accepté |
+| [0030](adr/0030-neo4j-dans-la-stack-infra.md) | Le graphe Neo4j vit dans la stack Infra | Supersédé par 0033 |
 | [0031](adr/0031-diagrammes-enregistres.md) | Les diagrammes enregistrés — des vues ArchiMate stockées dans PostgreSQL | Accepté |
 | [0032](adr/0032-authentification-par-keycloak.md) | Authentification par Keycloak | Proposition |
+| [0033](adr/0033-postgresql-seul-pour-le-graphe.md) | PostgreSQL seul — le graphe d'architecture en tables relationnelles | Proposition |
 | [TEMPLATE](adr/TEMPLATE.md) | Gabarit d'ADR à copier pour toute nouvelle décision | — |

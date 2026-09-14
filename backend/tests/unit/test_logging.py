@@ -17,7 +17,6 @@ import pytest
 
 from ea.core.config import Settings
 from ea.core.logging import (
-    CYPHER_LOGGER,
     EMBEDDINGS_LOGGER,
     NO_REQUEST,
     PLAIN_FORMAT,
@@ -67,7 +66,7 @@ class TestFormat:
         assert config["handlers"]["console"]["formatter"] == "plain"
 
     def test_a_deployment_prints_json(self) -> None:
-        config = logging_config(settings_of(debug=False, neo4j_password="x", postgres_password="x"))
+        config = logging_config(settings_of(debug=False, postgres_password="x"))
 
         assert config["handlers"]["console"]["formatter"] == "json"
 
@@ -80,15 +79,6 @@ class TestFormat:
 class TestTheNoisyStreams:
     """Each is off by default and has its own switch — see docs/adr/0021."""
 
-    def test_cypher_is_quiet_until_it_is_asked_for(self) -> None:
-        assert levels_of(logging_config(settings_of()))[CYPHER_LOGGER] == "WARNING"
-
-    def test_cypher_opens_the_driver_too(self) -> None:
-        levels = levels_of(logging_config(settings_of(log_cypher=True)))
-
-        assert levels[CYPHER_LOGGER] == "DEBUG"
-        assert levels["neo4j"] == "DEBUG"
-
     def test_sql_is_the_engine_logger_sqlalchemy_already_has(self) -> None:
         assert levels_of(logging_config(settings_of(log_sql=True)))[SQL_LOGGER] == "INFO"
         assert levels_of(logging_config(settings_of()))[SQL_LOGGER] == "WARNING"
@@ -100,10 +90,9 @@ class TestTheNoisyStreams:
         assert levels["httpx"] == "DEBUG"
 
     def test_a_global_debug_level_does_not_drag_them_open(self) -> None:
-        """`EA_LOG_LEVEL=DEBUG` is for our own code, not for three firehoses."""
+        """`EA_LOG_LEVEL=DEBUG` is for our own code, not for the firehoses."""
         levels = levels_of(logging_config(settings_of(log_level="DEBUG")))
 
-        assert levels[CYPHER_LOGGER] == "WARNING"
         assert levels[SQL_LOGGER] == "WARNING"
         assert levels[EMBEDDINGS_LOGGER] == "WARNING"
 
@@ -164,7 +153,7 @@ class TestRedaction:
         [
             "connecting to postgresql+asyncpg://ea:hunter2@192.168.1.252/ea",
             "headers: {'authorization': 'Bearer hunter2'}",
-            "EA_NEO4J_PASSWORD=hunter2",
+            "EA_POSTGRES_PASSWORD=hunter2",
             'body: {"api_key": "hunter2"}',
             "token=hunter2",
         ],

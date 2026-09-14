@@ -20,7 +20,7 @@ def test_every_element_type_is_classified() -> None:
 
 
 def test_element_type_values_are_stable_snake_case_identifiers() -> None:
-    """The value is persisted as a Neo4j label suffix, so it is part of the schema."""
+    """The value is persisted as a column value, so it is part of the schema."""
     for element_type in ElementType:
         assert element_type.value.islower()
         assert element_type.value.replace("_", "").isalnum()

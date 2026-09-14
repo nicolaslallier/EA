@@ -1,7 +1,7 @@
-"""The IP addressing against a real Neo4j.
+"""The IP addressing against a real PostgreSQL.
 
 Two claims here are about the database and cannot be made with a double: that
-`(p_vrf, p_ip_address)` really is a uniqueness constraint — the thing that
+`(vrf, ip_address)` really is a uniqueness constraint — the thing that
 makes "this address is mine" true rather than likely when two callers allocate
 at once — and that the three queries behind the inventory find what they say
 they find. Everything else about the addressing is unit-tested.
@@ -17,16 +17,16 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.errors import AddressAlreadyAssignedError
 from ea.domain.ipam import ADDRESS_PROPERTY, VRF_PROPERTY
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.ipam import IpamService
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.asyncio]
 
 
 @pytest.fixture
 def graph_ipam(
-    graph_service: ArchitectureService, graph_repository: Neo4jArchitectureRepository
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
 ) -> IpamService:
     """The IP use cases over the real graph — one class answers both ports."""
     return IpamService(graph_service, graph_repository)
@@ -34,7 +34,7 @@ def graph_ipam(
 
 class TestTheUniquenessConstraint:
     async def test_the_database_refuses_a_second_element_on_one_address(
-        self, graph_service: ArchitectureService, graph_repository: Neo4jArchitectureRepository
+        self, graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
     ) -> None:
         """Written straight through the repository, so no service check is in the way.
 

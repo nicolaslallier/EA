@@ -7,8 +7,8 @@ here decides anything: a tool binds its arguments, calls a service, and renders
 the answer with the very models the REST API renders, so an agent and the SPA
 are told the same thing about the same element.
 
-Two services, because the catalogue spans two stores: the graph in Neo4j and
-the markdown attached to its elements in PostgreSQL (docs/adr/0017). They are
+Two services, because the catalogue spans two concerns: the graph and the
+markdown attached to its elements (docs/adr/0017). They are
 kept apart here exactly as they are in `api/`, since the rule that binds them —
 an element must exist before a file hangs off it — is `DocumentService`'s, and
 an adapter holding a repository instead would be free to skip it.
