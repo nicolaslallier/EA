@@ -63,6 +63,8 @@ class ElementRecord(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     documentation: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    # Static DDL default, no runtime value: an empty jsonb object, spelled the
+    # way PostgreSQL requires so it is cast rather than sent as a string.
     properties: Mapped[dict[str, str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
@@ -88,7 +90,10 @@ class RelationshipRecord(Base):
     target_type: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     access_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Static DDL default, no runtime value: the SQL keyword `false`.
     directed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Static DDL default, no runtime value: an empty jsonb object, spelled the
+    # way PostgreSQL requires so it is cast rather than sent as a string.
     properties: Mapped[dict[str, str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

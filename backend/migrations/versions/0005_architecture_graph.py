@@ -34,6 +34,8 @@ def upgrade() -> None:
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), server_default="", nullable=False),
         sa.Column("documentation", sa.Text(), server_default="", nullable=False),
+        # DDL statique, aucune valeur d'exécution : un objet jsonb vide, orthographié
+        # comme PostgreSQL l'exige pour qu'il soit converti plutôt qu'envoyé comme texte.
         sa.Column(
             "properties",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -72,7 +74,10 @@ def upgrade() -> None:
         sa.Column("target_type", sa.Text(), nullable=False),
         sa.Column("name", sa.Text(), server_default="", nullable=False),
         sa.Column("access_type", sa.Text(), nullable=True),
+        # DDL statique, aucune valeur d'exécution : le mot-clé SQL `false`.
         sa.Column("directed", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        # DDL statique, aucune valeur d'exécution : un objet jsonb vide, orthographié
+        # comme PostgreSQL l'exige pour qu'il soit converti plutôt qu'envoyé comme texte.
         sa.Column(
             "properties",
             postgresql.JSONB(astext_type=sa.Text()),
