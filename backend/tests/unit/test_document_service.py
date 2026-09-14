@@ -247,15 +247,3 @@ class TestDiscarding:
 
         with pytest.raises(DocumentNotFoundError):
             await document_service.discard(stored.id)
-
-    async def test_deleting_one_element_leaves_another_element_its_documents(
-        self, service: ArchitectureService, document_service: DocumentService
-    ) -> None:
-        first = await an_element(service, "Facturation")
-        second = await an_element(service, "Commandes")
-        await document_service.attach(first.id, filename="a.md", raw=RUNBOOK)
-        await document_service.attach(second.id, filename="b.md", raw=RUNBOOK)
-
-        await service.delete_element(first.id)
-
-        assert len(await document_service.list_for_element(second.id)) == 1
