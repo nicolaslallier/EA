@@ -222,7 +222,7 @@ NC    := \033[0m
         embed-ping embed-models docs-reindex openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
-        pg-backup pg-restore db-backup-howto \
+        pg-backup pg-restore db-backup-howto graph-import \
         db-test-up \
         pipelines-install pipelines-lint pipelines-lint-check pipelines-typecheck \
         pipelines-test pipelines-check pipelines-audit \
@@ -519,6 +519,17 @@ pg-restore: | require-postgres-password ## Restaure un dump dans la base partag�
 	     $(PG_UNREACHABLE_HINT) exit 1; }
 	@printf "$(GREEN)Base restaurée depuis %s.$(NC)\n" "$$FILE"
 	@printf "L'index des passages est revenu avec les documents. Si le dump précède head : make pg-migrate\n"
+
+# Ponctuel (docs/adr/0033) : copie le graphe Neo4j dans PostgreSQL, puis
+# applique la révision 0006. Vise la base PARTAGÉE de backend/.env : API arrêtée
+# (make app-down) et make pg-backup d'abord. Le pilote neo4j n'est chargé que
+# pour cette commande. EA_NEO4J_PASSWORD est lu dans backend/.env ou
+# l'environnement. Supprimée avec le script une fois la bascule confirmée.
+graph-import: | $(VENV_STAMP) ## Importe une fois le graphe Neo4j dans PostgreSQL (CONFIRM=yes)
+	@test "$(CONFIRM)" = "yes" || { \
+		printf "$(RED)Écrit dans la base PARTAGÉE. D'abord : make app-down, make pg-backup.$(NC)\n"; \
+		printf "Relance avec : make graph-import CONFIRM=yes\n"; exit 1; }
+	cd $(BACKEND) && uv run --with 'neo4j>=5.26' python scripts/import_neo4j.py
 
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	$(COMPOSE_TEST) up -d --wait postgres
