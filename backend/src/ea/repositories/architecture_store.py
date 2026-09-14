@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from sqlalchemy import (
     ColumnElement,
     Integer,
+    Text,
     and_,
     case,
     delete,
@@ -39,7 +40,7 @@ from ea.domain.errors import (
     DuplicateNetworkError,
     ElementNotFoundError,
 )
-from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
 
@@ -204,6 +205,16 @@ def _of_types(types: Sequence[RelationshipType]) -> list[ColumnElement[bool]]:
     if not types:
         return []
     return [RelationshipRecord.relationship_type.in_([t.value for t in types])]
+
+
+def _has(key: str) -> ColumnElement[bool]:
+    """`properties ? key` — the predicate of the two partial unique indexes."""
+    return ElementRecord.properties.op("?", is_comparison=True)(key)
+
+
+def _text_of(key: str) -> ColumnElement[str]:
+    """`properties ->> key`, the expression the two unique indexes are built on."""
+    return ElementRecord.properties.op("->>", return_type=Text)(key)
 
 
 #: The relationships along which dependency runs source → target; every other
@@ -515,3 +526,34 @@ class PostgresArchitectureRepository:
                 session, [element.id for element in elements], relationship_types
             )
         return GraphView(elements=elements, relationships=links)
+
+    # --- IP address management (docs/adr/0020) ----------------------------
+    # Deliberately unbounded: an occupancy figure computed from a page of the
+    # inventory would be wrong, silently, and the inventory is bounded by how
+    # many machines are modelled rather than by how large the graph is.
+
+    async def networks(self) -> tuple[Element, ...]:
+        statement = (
+            select(ElementRecord)
+            .where(_has(PREFIX_PROPERTY))
+            .order_by(_text_of(PREFIX_PROPERTY), ElementRecord.name)
+        )
+        async with self._sessions() as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def addressed_elements(self) -> tuple[Element, ...]:
+        statement = select(ElementRecord).where(_has(ADDRESS_PROPERTY)).order_by(ElementRecord.name)
+        async with self._sessions() as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def element_at(self, address: str, *, vrf: str) -> Element | None:
+        """At most one row: `uq_elements_vrf_ip_address` says so, and answers it."""
+        statement = select(ElementRecord).where(
+            _has(VRF_PROPERTY),
+            _has(ADDRESS_PROPERTY),
+            _text_of(VRF_PROPERTY) == vrf,
+            _text_of(ADDRESS_PROPERTY) == address,
+        )
+        async with self._sessions() as session:
+            row = (await session.scalars(statement)).first()
+            return element_from_row(row) if row is not None else None
