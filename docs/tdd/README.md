@@ -22,7 +22,7 @@ avant le correctif — sinon on ne prouve pas qu'il a été corrigé.
 | Niveau | Dossier | Ce qui y vit | Coût |
 |---|---|---|---|
 | Unitaire | `backend/tests/unit/` | Règles de domaine, validation, fonctions pures. **Aucune I/O.** | Millisecondes |
-| Intégration | `backend/tests/integration/` | Repositories et services **contre un vrai Neo4j**. Pas de pilote mocké, pas de double factice — ces tests *prouvent* le Cypher. | Lente, destructive |
+| Intégration | `backend/tests/integration/` | Repositories et services **contre un vrai PostgreSQL** jetable. Pas de pilote mocké, pas de double factice — ces tests *prouvent* le SQL et la chaîne Alembic. | Lente, destructive |
 | API | `backend/tests/e2e/` | `httpx.AsyncClient` contre l'app : auth, codes HTTP, enveloppes d'erreur. | Intermédiaire |
 | Frontend | `frontend/tests/` | Vitest + Testing Library ; Playwright pour l'E2E (**pas encore configuré**). | — |
 
@@ -32,11 +32,12 @@ SQLAlchemy, ni `api/` ; les tests unitaires ne doivent pas non plus.
 
 ## Isolation des tests d'intégration
 
-Neo4j Community ne sert qu'une seule base, donc l'isolation est **« vider le
-graphe entre chaque cas »**, pas une transaction annulée. C'est destructeur, donc
-limité par la variable `EA_ALLOW_DESTRUCTIVE_TESTS=1`, que
-**seule** `make test-integration` positionne. Un `uv run pytest` nu **saute**
-ces tests — il ne faut pas compter sur eux dans le green CI local.
+Chaque test **monte la chaîne Alembic jusqu'à `head` puis la redescend à
+`base`** (`engine_at_head`), graphe compris. C'est destructeur, donc les
+fixtures refusent tout hôte qui n'est pas loopback, et le port 5432 de la base
+partagée, et **sautent** le test en le nommant. `make test-integration` démarre
+le PostgreSQL jetable (127.0.0.1:5433) et pointe dessus ; un `uv run pytest` nu
+**saute** ces tests — il ne faut pas compter sur eux dans le green CI local.
 
 ## Bonnes pratiques déjà énoncées
 
