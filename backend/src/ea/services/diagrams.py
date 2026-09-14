@@ -4,6 +4,11 @@ The rule this layer owns: **a layout may only place elements the graph
 holds**. A foreign key states it since docs/adr/0033, and takes the boxes of a
 deleted element; the service still asks the architecture service first, so a
 missing element is a readable refusal rather than a foreign-key violation.
+
+A reading still skips any box whose element is gone rather than showing a
+hole. With the foreign key that only guards a race — an element deleted between
+the read of the diagram's boxes and the read of its elements — but that race
+is real, and a hole is what it would draw.
 """
 
 from __future__ import annotations

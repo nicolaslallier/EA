@@ -1,11 +1,11 @@
 """The guards that keep a destructive test off a database somebody uses.
 
 These run everywhere, with no database: they are about the *decision* to touch
-one. The database is wiped by the suite in this directory, by `alembic downgrade
-base`, and has a shared instance on the cluster whose address is the default in `Settings`. A guard
-that trusted configuration alone would be one `backend/.env` away from
-emptying it, so the only address accepted is one that cannot be another
-machine. See docs/adr/0024.
+one. The database is wiped by the suite in this directory, by `alembic
+downgrade base`, and has a shared instance on this Mac since docs/adr/0029,
+whose address is the default in `Settings`. A guard that trusted configuration
+alone would be one `backend/.env` away from emptying it, so the only address
+accepted is one that cannot be another machine. See docs/adr/0024.
 """
 
 from __future__ import annotations

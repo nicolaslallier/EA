@@ -185,7 +185,7 @@ def test_a_diagram_name_is_unique_by_a_named_constraint() -> None:
 
 
 def test_an_element_name_is_unique_within_its_type_by_a_named_constraint() -> None:
-    """The constraint `pipelines/` detects a duplicate by — docs/adr/0033."""
+    """`pipelines/` recognises a duplicate element by this constraint's refusal — docs/adr/0033."""
     table = Base.metadata.tables["elements"]
 
     assert "uq_elements_element_type_name" in {c.name for c in table.constraints}

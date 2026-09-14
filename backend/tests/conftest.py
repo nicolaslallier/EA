@@ -239,7 +239,12 @@ def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
 
 
 class InMemoryRepository:
-    """A dictionary pretending to be a graph. Enough for the service's rules."""
+    """A dictionary pretending to be a graph. Enough for the service's rules.
+
+    Deleting an element here does not cascade to the document and diagram
+    doubles: in PostgreSQL the foreign keys of revision 0006 do that, so a unit
+    test must not rely on it — `tests/integration/test_element_cascade.py` does.
+    """
 
     def __init__(self) -> None:
         self.elements: dict[UUID, Element] = {}
@@ -267,7 +272,7 @@ class InMemoryRepository:
         return element
 
     def _refuse_a_taken_address(self, element: Element) -> None:
-        """Stand in for the `(p_vrf, p_ip_address)` uniqueness constraint.
+        """Stand in for the `(vrf, ip_address)` partial unique index.
 
         Reproduced rather than skipped, for the same reason the document double
         reproduces its own: it is the rule that survives two agents allocating

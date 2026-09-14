@@ -34,7 +34,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
 
 # La chaîne Alembic est appliquée à chaque démarrage : idempotente, et une base
-# neuve (celle de l'Infra) devient utilisable en démarrant le conteneur, comme
-# le graphe applique son schéma au démarrage. Une migration qui échoue arrête
-# le conteneur au lieu de servir une base à moitié migrée.
+# neuve (celle de l'Infra) devient utilisable en démarrant le conteneur. Une
+# migration qui échoue arrête le conteneur au lieu de servir une base à moitié
+# migrée.
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn ea.main:app --host 0.0.0.0 --port 8000"]

@@ -278,9 +278,10 @@ class IpamRepository(Protocol):
     async def element_at(self, address: str, *, vrf: str) -> Element | None:
         """The one element answering on that address in that scope, if any.
 
-        One and not many: `(p_vrf, p_ip_address)` is a uniqueness constraint in
-        PostgreSQL, which is the whole reason an element holds a single address
-        rather than a list — see `domain/ipam.py`.
+        One and not many: `(vrf, ip_address)` is unique in PostgreSQL — the
+        partial unique index `uq_elements_vrf_ip_address` — which is the whole
+        reason an element holds a single address rather than a list — see
+        `domain/ipam.py`.
         """
         ...
 

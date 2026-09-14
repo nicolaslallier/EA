@@ -4,9 +4,9 @@ Pure functions, so the decision is tested without a database
 (`test_throwaway_guards.py`) and the fixtures in `conftest.py` only act on it.
 
 The rule is an address, not a setting. The database has a shared instance on
-the cluster, and that address is the *default* in `Settings`: a guard that
-trusted a flag would be one `backend/.env` away from emptying the graph
-everyone models against. Loopback cannot be another machine, so it is the only
+this Mac since docs/adr/0029, and that address is the *default* in `Settings`: a
+guard that trusted a flag would be one `backend/.env` away from emptying the
+graph everyone models against. Loopback cannot be another machine, so it is the only
 thing accepted — the throwaway containers of `docker-compose.yml` publish
 there and nowhere else. See docs/adr/0024.
 

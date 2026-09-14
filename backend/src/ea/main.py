@@ -166,6 +166,12 @@ def _lifespan(
                 )
                 if open_graph:
                     repository = PostgresArchitectureRepository(app.state.db_sessions)
+                    logger.info(
+                        "architecture graph ready in PostgreSQL %s:%s/%s",
+                        settings.postgres_host,
+                        settings.postgres_port,
+                        settings.postgres_database,
+                    )
                     app.state.architecture_service = ArchitectureService(repository)
                     # The IP addressing is a reading of that same graph and adds
                     # no store, so it is built from the very repository above —
@@ -348,8 +354,7 @@ def create_app(
     the process environment. Passing `architecture_service` swaps the graph for
     a double, so an API test never needs a running database — and, conversely,
     an app built without one builds it on the relational store at startup.
-    `documents` does the
-    same for the relational store: given one, the document endpoints answer
+    `documents` does the same for the relational store: given one, the document endpoints answer
     without PostgreSQL; given none, the lifespan builds the real repository
     when `postgres_enabled` says the store is open.
 

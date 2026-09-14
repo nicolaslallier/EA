@@ -2,10 +2,10 @@
 
 The second table of the relational store, and the first one that can do what
 `element_documents` could not: **carry a foreign key**. A document is a row
-next door, so a passage can point at the document it came from
-and let PostgreSQL delete it when that document goes. The cascade
-`ArchitectureService` has to perform by hand for documents is, for passages,
-one line of DDL — see docs/adr/0019.
+next door, so a passage can point at the document it came from and let
+PostgreSQL delete it when that document goes — one line of DDL, see
+docs/adr/0019. Since revision 0006 a document follows its element the same way,
+by a foreign key to `elements` (docs/adr/0033).
 
 Three columns are decisions.
 
