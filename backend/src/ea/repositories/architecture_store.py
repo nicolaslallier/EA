@@ -172,10 +172,16 @@ async def _flush_refusing(session: AsyncSession, element: Element) -> None:
     try:
         await session.flush()
     except IntegrityError as error:
-        refusal = rejected(element, constraint_of(error))
+        constraint = constraint_of(error)
+        refusal = rejected(element, constraint)
         if refusal is None:
             raise
-        logger.info("element rejected by a uniqueness constraint", exc_info=error)
+        # No traceback: the refusal is anticipated and answered as a 409, and
+        # the constraint's name is the whole story.
+        logger.info(
+            "element rejected by a uniqueness constraint",
+            extra={"constraint": constraint, "element_type": element.element_type.value},
+        )
         raise refusal from error
 
 

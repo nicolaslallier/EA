@@ -8,8 +8,10 @@ name clash, and an agent told "already named" would rename and retry forever.
 
 from __future__ import annotations
 
+import logging
 import re
 
+import pytest
 from sqlalchemy.exc import IntegrityError
 
 from ea.domain.archimate import ElementType as E
@@ -23,6 +25,7 @@ from ea.repositories.architecture_store import (
     ADDRESS_TAKEN,
     NAME_TAKEN,
     PREFIX_TAKEN,
+    _flush_refusing,
     constraint_of,
     rejected,
 )
@@ -87,3 +90,25 @@ def test_the_constraint_name_is_read_from_the_driver_exception_under_the_adapter
 
 def test_an_exception_without_a_constraint_name_gives_none() -> None:
     assert constraint_of(IntegrityError("INSERT", {}, Exception("boom"))) is None
+
+
+@pytest.mark.asyncio
+async def test_an_anticipated_refusal_is_logged_as_one_line_without_a_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 409 is an answer, not an incident: its log line names the constraint, no stack."""
+    driver_error = Exception("duplicate key value violates unique constraint")
+    driver_error.constraint_name = NAME_TAKEN  # type: ignore[attr-defined]
+    adapter = Exception("duplicate key")
+    adapter.__cause__ = driver_error
+
+    class _RefusingSession:
+        async def flush(self) -> None:
+            raise IntegrityError("INSERT", {}, adapter)
+
+    with caplog.at_level(logging.INFO), pytest.raises(DuplicateElementError):
+        await _flush_refusing(_RefusingSession(), _network())  # type: ignore[arg-type]
+
+    (line,) = [r for r in caplog.records if r.name == "ea.repositories.architecture_store"]
+    assert line.exc_info is None
+    assert line.constraint == NAME_TAKEN  # type: ignore[attr-defined]
