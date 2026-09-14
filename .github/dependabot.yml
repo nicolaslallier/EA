@@ -39,6 +39,11 @@ updates:
     groups:
       javascript:
         update-types: [minor, patch]
+    # TypeScript 7 casse vue-tsc et openapi-typescript (#33, annulée) : ce
+    # saut-là se fait à la main, quand les deux le prennent en charge.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   # Les images épinglées par digest : docker-compose.yml à la racine, les deux
   # stacks du cluster, et celui de pipelines/ (docs/adr/0028).
