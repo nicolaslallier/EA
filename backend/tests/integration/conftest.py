@@ -40,10 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.core.config import Settings, get_settings
 from ea.db.neo4j import create_driver
-from ea.db.postgres import RelationalStoreUnavailableError, create_engine
+from ea.db.postgres import RelationalStoreUnavailableError, create_engine, create_session_factory
 from ea.db.postgres import check_connectivity as check_postgres
 from ea.db.schema import apply_schema
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
 from tests.integration.throwaway import (
     DESTRUCTIVE_OPT_IN,
@@ -85,14 +85,12 @@ async def graph_driver() -> AsyncIterator[AsyncDriver]:
 
 
 @pytest.fixture
-def graph_repository(graph_driver: AsyncDriver) -> Neo4jArchitectureRepository:
-    return Neo4jArchitectureRepository(graph_driver, database=Settings(debug=True).neo4j_database)
+def graph_repository(engine_at_head: AsyncEngine) -> PostgresArchitectureRepository:
+    return PostgresArchitectureRepository(create_session_factory(engine_at_head))
 
 
 @pytest.fixture
-def graph_service(
-    graph_repository: Neo4jArchitectureRepository,
-) -> ArchitectureService:
+def graph_service(graph_repository: PostgresArchitectureRepository) -> ArchitectureService:
     return ArchitectureService(graph_repository)
 
 
