@@ -149,7 +149,8 @@ class Settings(BaseSettings):
     #: — it checks a header the caller writes. The peer address is the one
     #: thing it does not.
     #: Behind a reverse proxy the peer is the proxy, so turning this on there
-    #: serves everyone the proxy serves. See docs/adr/0023.
+    #: serves everyone the proxy serves — which the deployed stack does, on
+    #: purpose, for LibreChat. See docs/adr/0023 and docs/adr/0034.
     mcp_allow_remote_clients: bool = False
 
     #: Which `Host` headers the MCP transport answers, as an explicit allowlist.

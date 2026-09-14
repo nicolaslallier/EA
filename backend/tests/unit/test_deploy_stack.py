@@ -106,6 +106,29 @@ def test_the_deployed_api_verifies_tokens_with_the_infra_ca_mounted_read_only() 
     assert enabled is None or enabled.group(1).strip("\"'") == "true", enabled
 
 
+def test_the_deployed_api_serves_mcp_under_the_vhost_it_is_reached_by() -> None:
+    """LibreChat calls `/api/mcp` through the Infra NGINX (docs/adr/0034).
+
+    Behind the proxy every peer is NGINX, so remote clients are allowed and the
+    token is the barrier — auth staying on is the test above. The `Host` NGINX
+    forwards and the resource the 401 advertises are both the vhost's name, the
+    one `EA_CORS_ORIGINS` already names: a drift between them is a 421, or a
+    login that discovers nothing.
+    """
+    api = _stack_service("api")
+
+    def setting(name: str) -> str:
+        found = re.search(rf"^\s+{name}:\s*(\S+)\s*$", api, re.M)
+        assert found, f"{name} is not set in {api}"
+        return found.group(1).strip("\"'")
+
+    hostname = setting("EA_CORS_ORIGINS").removeprefix("https://")
+    assert setting("EA_MCP_ENABLED") == "true"
+    assert setting("EA_MCP_ALLOW_REMOTE_CLIENTS") == "true"
+    assert setting("EA_MCP_ALLOWED_HOSTS") == hostname
+    assert setting("EA_MCP_RESOURCE_URL") == f"https://{hostname}/api/mcp"
+
+
 def test_the_spa_image_is_built_for_the_realm() -> None:
     web = _stack_service("web")
     args = re.search(

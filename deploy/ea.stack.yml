@@ -32,12 +32,16 @@ services:
       # Le vhost sert l'API sous /api et retire le préfixe : uvicorn doit le
       # savoir pour que /api/docs aille chercher /api/openapi.json.
       UVICORN_ROOT_PATH: /api
-      # Coupé, pas seulement filtré. Derrière un proxy, le pair TCP de /mcp est
-      # NGINX, jamais la boucle locale : la garde de docs/adr/0023 ne servirait
-      # personne. /mcp exige désormais un jeton (docs/adr/0032), mais le servir
-      # derrière NGINX reste une décision à part, avec son ADR. `make run-be`
-      # sert toujours /mcp.
-      EA_MCP_ENABLED: "false"
+      # /mcp servi derrière NGINX, pour LibreChat (docs/adr/0034). Le pair TCP
+      # y est toujours NGINX : la garde de boucle locale (docs/adr/0023) ne
+      # distinguerait personne, elle est donc levée, et le jeton du realm
+      # (docs/adr/0032) est la seule barrière — EA_AUTH_ENABLED ne se coupe
+      # jamais ici. Le `Host` que NGINX transmet et la ressource annoncée par
+      # le 401 sont le nom du vhost, le même que EA_CORS_ORIGINS.
+      EA_MCP_ENABLED: "true"
+      EA_MCP_ALLOW_REMOTE_CLIENTS: "true"
+      EA_MCP_ALLOWED_HOSTS: ${EA_HOSTNAME:-ea.infra.famillelallier.net}
+      EA_MCP_RESOURCE_URL: https://${EA_HOSTNAME:-ea.infra.famillelallier.net}/api/mcp
 
       # Chaque requête porte un jeton du realm Keycloak `ea` (docs/adr/0032).
       # Dans infra-net, keycloak.famillelallier.net est un alias de `nginx`,

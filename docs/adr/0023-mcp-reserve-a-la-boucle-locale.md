@@ -8,7 +8,7 @@ affects: backend/src/ea/mcp/transport.py, backend/src/ea/main.py, backend/src/ea
 # 23. Réserver `/mcp` à la boucle locale
 
 Date : 2026-09-13
-Statut : Accepté — amendé par [`0032`](0032-authentification-par-keycloak.md)
+Statut : Accepté — amendé par [`0032`](0032-authentification-par-keycloak.md) et [`0034`](0034-mcp-derriere-le-nginx-pour-librechat.md)
 
 Complète [`0014`](0014-serveur-mcp-pour-les-agents.md) et corrige ce que
 [`0016`](0016-ecoute-sur-toutes-les-interfaces.md) laissait croire de
