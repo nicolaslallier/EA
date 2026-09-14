@@ -82,7 +82,7 @@ class TestElementPersistence:
 
         The service would raise for it instead, which proves the link is gone
         just as well but says nothing about *how* — the repository's `None` is
-        the Cypher's own answer.
+        the query's own answer.
         """
         api = await graph_service.create_element(
             element_type=E.APPLICATION_SERVICE, name="Invoice API"
@@ -118,7 +118,7 @@ class TestElementPersistence:
     async def test_the_catalogue_search_treats_wildcards_as_characters(
         self, graph_service: ArchitectureService
     ) -> None:
-        """`%` and `_` are what the user typed, as under Cypher's `CONTAINS`."""
+        """`%` and `_` are what the user typed, never wildcards."""
         await graph_service.create_element(element_type=E.NODE, name="db_01")
         await graph_service.create_element(element_type=E.NODE, name="dbx01")
 
@@ -176,7 +176,7 @@ class TestContainmentCycles:
         """Platform contains Payments contains Ledger.
 
         Putting Platform *inside* Ledger would close the loop; the check is a
-        Cypher reachability query, not a Python graph walk.
+        SQL reachability query, not a Python graph walk.
         """
         outer = await graph_service.create_element(element_type=E.GROUPING, name="Platform")
         middle = await graph_service.create_element(element_type=E.GROUPING, name="Payments")

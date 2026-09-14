@@ -1,7 +1,7 @@
 """A saved diagram: an ArchiMate *view* over the architecture graph.
 
 A diagram owns no fact (docs/adr/0031). The elements and the relationships it
-shows stay in Neo4j; what it records is only *which* elements are drawn and
+shows stay in the architecture store; what it records is only *which* elements are drawn and
 *where*. That is why removing a box never deletes an element, and why a link
 drawn on a diagram is a real relationship written to the graph.
 

@@ -69,7 +69,7 @@ def test_a_taken_name_is_still_a_name_clash() -> None:
 
 
 def test_an_unknown_constraint_is_not_dressed_up_as_a_duplicate() -> None:
-    """Neo4j's fallback was "already named"; an unrecognised refusal now stays itself."""
+    """An unrecognised refusal stays itself rather than reading as "already named"."""
     assert rejected(_network(), "some_other_constraint") is None
     assert rejected(_network(), None) is None
 

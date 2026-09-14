@@ -2,8 +2,8 @@
 
 `IpamService.declare_network` looks for the prefix before creating it, which
 gives a good message and loses a race: two callers can both look, both find
-nothing, and both create. `(p_vrf, p_cidr)` is a uniqueness constraint for the
-same reason `(p_vrf, p_ip_address)` is one (`db/schema.py`), and these tests
+nothing, and both create. `(vrf, cidr)` is a uniqueness constraint for the
+same reason `(vrf, ip_address)` is one (`db/models/architecture.py`), and these tests
 prove the constraint rather than the check, so most of them write through the
 catalogue where no check stands in the way.
 """

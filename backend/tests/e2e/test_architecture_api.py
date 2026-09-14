@@ -1,7 +1,7 @@
 """The architecture API, exercised end to end against a doubled graph.
 
 These cover the contract — status codes, the error envelope, what a payload
-contains — without a database. The Cypher underneath is covered separately in
+contains — without a database. The SQL underneath is covered separately in
 `tests/integration`.
 """
 

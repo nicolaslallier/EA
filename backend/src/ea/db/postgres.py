@@ -2,7 +2,7 @@
 
 One engine per process. It owns a connection pool, is safe to share across
 requests, and must be disposed on shutdown or the event loop is left with open
-sockets — the same contract as the Neo4j driver next door.
+sockets.
 
 Nothing stores anything here yet (docs/adr/0015). What exists is the seam: a
 DSN built from settings without string surgery, an engine, a session factory,

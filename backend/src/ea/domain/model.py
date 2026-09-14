@@ -33,8 +33,8 @@ def _clean_name(name: str) -> str:
     return cleaned
 
 
-#: A user-defined attribute becomes a graph property, so its name has to be a
-#: plain identifier — see `db/schema.py`, "user-defined attributes".
+#: A user-defined attribute is a key of the element's `properties` map, so its
+#: name has to be a plain identifier — see `db/models/architecture.py`.
 _PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
 
 

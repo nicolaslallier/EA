@@ -2,7 +2,7 @@
 
 It is a repository in the sense this package means: an adapter implementing a
 port the domain declared (`Embedder`), with the protocol details kept out of
-everything above it. That it speaks HTTP rather than Bolt or SQL changes where
+everything above it. That it speaks HTTP rather than SQL changes where
 it sits not at all.
 
 **It speaks the OpenAI `/embeddings` shape**, and that is a decision rather
@@ -58,8 +58,8 @@ class HttpEmbedder:
     """An OpenAI-compatible embedding endpoint, held as one pooled client.
 
     The client is built once per process and closed by the application
-    lifespan, for the same reason the Neo4j driver and the SQLAlchemy engine
-    are: it owns a connection pool.
+    lifespan, for the same reason the SQLAlchemy engine
+    is: it owns a connection pool.
 
     `passage_prefix` and `query_prefix` exist because several model families —
     the e5 line most notably — are trained with a different instruction on a

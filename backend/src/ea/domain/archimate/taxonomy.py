@@ -1,6 +1,6 @@
 """The ArchiMate 3.2 element catalogue, as pure data.
 
-Nothing here imports FastAPI, SQLAlchemy or the Neo4j driver: the metamodel is
+Nothing here imports FastAPI or SQLAlchemy: the metamodel is
 the one part of this codebase that must outlive any storage decision.
 
 The members carry only their wire value. Their classification lives in

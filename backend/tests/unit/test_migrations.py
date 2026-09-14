@@ -192,7 +192,7 @@ def test_an_element_name_is_unique_within_its_type_by_a_named_constraint() -> No
 
 
 def test_an_address_and_a_prefix_are_unique_per_vrf_by_partial_indexes() -> None:
-    """Neo4j's composite constraints ignored a node missing a property; so does `WHERE`."""
+    """The `WHERE` makes each index ignore an element missing either key."""
     indexes = {index.name: index for index in Base.metadata.tables["elements"].indexes}
 
     for name in ("uq_elements_vrf_ip_address", "uq_elements_vrf_cidr"):

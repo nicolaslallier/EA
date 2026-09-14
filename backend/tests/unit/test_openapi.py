@@ -16,7 +16,7 @@ from ea.openapi import main, openapi_document
 
 
 def test_the_document_is_built_without_touching_the_database() -> None:
-    """No Neo4j password, no driver, no network: the schema is static data."""
+    """No database password, no pool, no network: the schema is static data."""
     document = openapi_document()
 
     assert str(document["openapi"]).startswith("3.")

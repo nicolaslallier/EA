@@ -8,7 +8,7 @@ keys to plain identifiers and their values to strings (`domain/model.py`).
 The IP addressing of docs/adr/0020 is still an attribute of the element. Its
 two uniqueness rules — an address, and a prefix, once per VRF — are partial
 unique indexes on expressions over that map, and the `WHERE` makes them ignore
-an element missing either key, exactly as Neo4j's composite constraints did.
+an element missing either key.
 """
 
 from __future__ import annotations

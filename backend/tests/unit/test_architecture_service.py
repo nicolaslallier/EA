@@ -1,7 +1,7 @@
 """Use-case rules, checked against an in-memory graph.
 
 The double below implements `ArchitectureRepository` structurally, so these stay
-unit tests: no container, no Bolt, milliseconds. The Cypher that backs the real
+unit tests: no container, no socket, milliseconds. The SQL that backs the real
 implementation is covered in `tests/integration`.
 """
 

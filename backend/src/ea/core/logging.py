@@ -14,9 +14,9 @@ line that applies it, called from the process entry point and not from
 the process running it.
 
 **Each noisy stream has its own name and its own switch.** `EA_LOG_LEVEL` is
-the level of *our* reasoning; the Cypher, the SQL and the embedding round trips
-are three firehoses opened one at a time, by name, so raising the first does not
-drown the reader in the other three.
+the level of *our* reasoning; the SQL and the embedding round trips
+are firehoses opened one at a time, by name, so raising one does not
+drown the reader in the other.
 
 **The request id is a `ContextVar`, injected by a filter.** A call site logs
 what it has to say; which request it was serving is not its business, and
@@ -53,8 +53,6 @@ NO_REQUEST: Final = "-"
 # setting that opens it is a switch that silently does nothing.
 #: One line per HTTP request, with its id and its duration.
 REQUESTS_LOGGER: Final = "ea.requests"
-#: Every Cypher statement and how long it took — `EA_LOG_CYPHER`.
-CYPHER_LOGGER: Final = "ea.cypher"
 #: Every call to the embedding service — `EA_LOG_EMBEDDINGS`.
 EMBEDDINGS_LOGGER: Final = "ea.embeddings"
 #: Every MCP tool an agent calls, its outcome and its duration.
@@ -67,8 +65,8 @@ MASK: Final = "***"
 
 #: The shapes a secret arrives in. Deliberately few and deliberately blunt: a
 #: pattern that misses costs a leaked password, a pattern that over-matches
-#: costs a masked word. The first is the URL userinfo SQLAlchemy, asyncpg and
-#: the Neo4j driver all print in their own error messages.
+#: costs a masked word. The first is the URL userinfo SQLAlchemy and asyncpg
+#: both print in their own error messages.
 _SECRETS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"(?P<keep>://[^:/@\s]+:)[^@\s]+(?P<tail>@)"),
     re.compile(r"(?P<keep>\b(?:bearer|basic)\s+)\S+", re.IGNORECASE),
@@ -215,9 +213,7 @@ def logging_config(settings: Settings) -> dict[str, Any]:
         "loggers": {
             "ea": {"level": settings.log_level, "handlers": ["console"], "propagate": False},
             REQUESTS_LOGGER: {"level": _level(opened=settings.log_requests, when_open="INFO")},
-            CYPHER_LOGGER: {"level": _level(opened=settings.log_cypher)},
             EMBEDDINGS_LOGGER: {"level": _level(opened=settings.log_embeddings)},
-            "neo4j": {"level": _level(opened=settings.log_cypher)},
             "httpx": {"level": _level(opened=settings.log_embeddings)},
             "httpcore": {"level": _level(opened=settings.log_embeddings)},
             SQL_LOGGER: {"level": _level(opened=settings.log_sql, when_open="INFO")},

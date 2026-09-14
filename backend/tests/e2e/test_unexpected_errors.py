@@ -23,7 +23,7 @@ from tests.conftest import InMemoryRepository
 
 #: What the exception says about the machine — the kind of detail a traceback
 #: page would print, and a client must never read.
-INTERNALS = "/Users/somebody/secret/repository.py: bolt://neo4j:hunter2@graph"
+INTERNALS = "/Users/somebody/secret/repository.py: postgresql://ea:hunter2@db/ea"
 
 
 @pytest_asyncio.fixture

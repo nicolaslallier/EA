@@ -29,7 +29,6 @@ from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
-from ea.db.neo4j import create_driver, prepare_database
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_engine, create_session_factory
 from ea.domain.auth import Caller
@@ -43,7 +42,7 @@ from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
-from ea.repositories.archimate_graph import Neo4jArchitectureRepository
+from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
@@ -96,36 +95,27 @@ def _lifespan(
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
-    Two things need a lifetime. The Neo4j driver owns a connection pool, so it
-    is built once and shared; applying the schema here means a fresh database
-    becomes usable by starting the app — the graph has no `alembic upgrade`
-    step, see `docs/adr/0004`. The MCP transport keeps its sessions in a
-    manager that has to be running before `/mcp` answers anything; it is picked
-    up off `app.state`, where `_mount_mcp` left it, because the manager only
-    exists once the app it is mounted on does.
+    PostgreSQL holds the whole model since docs/adr/0033 — the graph, the
+    documents and their passages, the diagrams — so its pool is opened and
+    checked first, and a process that cannot reach it does not start. Its
+    schema is Alembic's, applied before the process starts, never here.
 
-    PostgreSQL is a third: it holds the documents (docs/adr/0017) and the
-    passages they are searchable by (docs/adr/0019), so `postgres_enabled` is
-    on and a process that cannot reach it does not start.
+    The embedding service owns an HTTP connection pool, so it is built once
+    and closed here, and it is *probed* at boot: the model configured must
+    answer vectors of the width the column was created with. The MCP transport
+    keeps its sessions in a manager that has to be running before `/mcp`
+    answers anything; it is picked up off `app.state`, where `_mount_mcp` left
+    it, because the manager only exists once the app it is mounted on does.
 
-    The embedding service is a fourth, and the only one that is not a database.
-    It owns an HTTP connection pool, so it is built once and closed here, and
-    it is *probed* at boot for the same reason the two stores are — plus one
-    only it has: that the model configured answers vectors of the width the
-    column was created with.
-
-    An `AsyncExitStack` composes them, which is why this is one lifespan rather
-    than two: an app built with `architecture_service=` opens no driver but
-    must still start the session manager, and before this it had no lifespan at
-    all — `/mcp` would have accepted requests it could never answer.
+    An `AsyncExitStack` composes them: an app built with `architecture_service=`
+    opens no graph but must still start the session manager.
     """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
-            # PostgreSQL first: the markdown attached to an element lives here,
-            # and the architecture service built below has to be handed the
-            # repository that deletes it when the element goes.
+            # PostgreSQL first: the graph, the documents and the diagrams all
+            # live there, so every service below is built on its sessions.
             logger.info(
                 "starting %s",
                 settings.app_name,
@@ -149,15 +139,15 @@ def _lifespan(
                     "authentication is off: every caller is the local developer, "
                     "with the editor role"
                 )
-            attachments = documents
+            document_store = documents
             diagram_store = diagrams
             if settings.postgres_enabled:
                 engine = create_engine(settings)
                 stack.push_async_callback(engine.dispose)
                 await check_relational_store(engine)
                 app.state.db_sessions = create_session_factory(engine)
-                if attachments is None:
-                    attachments = PostgresDocumentRepository(app.state.db_sessions)
+                if document_store is None:
+                    document_store = PostgresDocumentRepository(app.state.db_sessions)
                 if diagram_store is None:
                     diagram_store = PostgresDiagramRepository(app.state.db_sessions)
                 logger.info(
@@ -166,22 +156,18 @@ def _lifespan(
                     settings.postgres_port,
                     settings.postgres_database,
                 )
-            if open_graph:
-                driver = create_driver(settings)
-                stack.push_async_callback(driver.close)
-                await prepare_database(driver, database=settings.neo4j_database)
-                repository = Neo4jArchitectureRepository(driver, database=settings.neo4j_database)
-                app.state.architecture_service = ArchitectureService(repository)
-                # The IP addressing is a reading of that same graph and adds no
-                # store, so it is built from the very repository above — see
-                # `docs/adr/0020`.
-                app.state.ipam_service = IpamService(app.state.architecture_service, repository)
-                logger.info("architecture graph ready at %s", settings.neo4j_uri)
+                if open_graph:
+                    repository = PostgresArchitectureRepository(app.state.db_sessions)
+                    app.state.architecture_service = ArchitectureService(repository)
+                    # The IP addressing is a reading of that same graph and adds
+                    # no store, so it is built from the very repository above —
+                    # see docs/adr/0020.
+                    app.state.ipam_service = IpamService(app.state.architecture_service, repository)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
             index = indexer
-            if index is None and settings.embeddings_enabled and attachments is not None:
+            if index is None and settings.embeddings_enabled and document_store is not None:
                 embedder = build_embedder(settings)
                 stack.push_async_callback(embedder.aclose)
                 await embedder.probe()
@@ -193,9 +179,9 @@ def _lifespan(
                 )
             elif index is None and settings.embeddings_enabled:
                 logger.warning("embeddings are on but there is no document store to index")
-            if attachments is not None:
+            if document_store is not None:
                 app.state.document_service = DocumentService(
-                    attachments, architecture_service_of(app), indexer=index
+                    document_store, architecture_service_of(app), indexer=index
                 )
             if diagram_store is not None:
                 app.state.diagram_service = DiagramService(
@@ -353,7 +339,8 @@ def create_app(
     Taking `settings` as an argument keeps the app testable without touching
     the process environment. Passing `architecture_service` swaps the graph for
     a double, so an API test never needs a running database — and, conversely,
-    an app built without one opens the driver on startup. `documents` does the
+    an app built without one builds it on the relational store at startup.
+    `documents` does the
     same for the relational store: given one, the document endpoints answer
     without PostgreSQL; given none, the lifespan builds the real repository
     when `postgres_enabled` says the store is open.

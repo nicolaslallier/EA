@@ -56,35 +56,19 @@ class Settings(BaseSettings):
     #: the duration nor the id.
     log_requests: bool = True
 
-    # The three noisy streams, each behind its own switch and each off. They
-    # are deliberately *not* opened by `log_level=DEBUG`: a developer wanting
-    # to see our own reasoning in detail is not asking for every Cypher
-    # statement, every SELECT and every HTTP round trip at once.
-    log_cypher: bool = False
+    # The noisy streams, each behind its own switch and each off. They are
+    # deliberately *not* opened by `log_level=DEBUG`: a developer wanting to see
+    # our own reasoning in detail is not asking for every SELECT and every HTTP
+    # round trip at once.
     log_sql: bool = False
     log_embeddings: bool = False
 
-    # --- Neo4j, the store of the architecture graph — see docs/adr/0004 ------
-    # There is one instance, the `neo4j` service of the Infra stack, and its
-    # nginx publishes Bolt on loopback and nowhere else (docs/adr/0030), so that
-    # address is the useful default.
-    # It is an address, not a credential — the password below has no default,
-    # and an empty one is only tolerated in debug.
-    neo4j_uri: str = "bolt://127.0.0.1:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: SecretStr = SecretStr("")
-    neo4j_database: str = "neo4j"
-
-    # Bolt keeps connections pooled; these bound a slow or wedged server.
-    neo4j_max_connection_pool_size: int = 25
-    neo4j_connection_timeout_seconds: float = 5.0
-
-    # --- PostgreSQL, the store for everything that is not the graph ---------
-    # Audit and scheduled work will live here rather than in Neo4j — see
-    # docs/adr/0004 for the split, docs/adr/0015 for this scaffold.
-    # Authentication does not: it is the Keycloak realm `ea`, docs/adr/0032.
+    # --- PostgreSQL ----------------------------------------------------------
+    # The one database: the architecture graph (docs/adr/0033), the documents
+    # and their index (docs/adr/0017, 0019), the diagrams (docs/adr/0031).
+    # Authentication is not here: it is the Keycloak realm `ea`, docs/adr/0032.
     #
-    # Like the graph, there is one instance, so its address is the useful
+    # There is one instance, so its address is the useful
     # default — but not on the cluster: since docs/adr/0029 the `ea` database
     # lives in the `~/OpenCode/Infra` stack on the developer's Mac, behind its
     # NGINX on loopback. A process on another machine needs its own `.env`.
@@ -94,7 +78,7 @@ class Settings(BaseSettings):
     # `postgres_enabled` is on since the first table landed: `element_documents`
     # holds the markdown attached to the elements of the graph (docs/adr/0017),
     # so a deployment without PostgreSQL is now a misconfiguration rather than
-    # the normal case — exactly as it already is for the graph. A process that
+    # the normal case — since it holds the whole model. A process that
     # cannot reach it fails at boot, loudly, instead of on the first
     # upload of the first user.
     postgres_enabled: bool = True
@@ -104,7 +88,7 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("")
     postgres_database: str = "ea"
 
-    # The pool bounds a slow or wedged server the same way the Neo4j one does.
+    # The pool bounds a slow or wedged server.
     postgres_pool_size: int = 5
     postgres_max_overflow: int = 5
     postgres_connection_timeout_seconds: float = 5.0
@@ -237,16 +221,10 @@ class Settings(BaseSettings):
         return (not self.debug) if self.log_json is None else self.log_json
 
     @model_validator(mode="after")
-    def _require_a_neo4j_password_outside_debug(self) -> "Settings":
-        """A deployed instance talking to an unauthenticated database is a breach."""
-        if not self.debug and not self.neo4j_password.get_secret_value():
-            msg = "neo4j_password is required when debug is off"
-            raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
     def _require_a_postgres_password_when_the_store_is_used(self) -> "Settings":
-        """Same rule as the graph, but owed only by a process that connects.
+        """A deployed instance talking to an unauthenticated database is a breach.
+
+        Owed only by a process that connects.
 
         The condition is `postgres_enabled` and not the mere presence of the
         settings: demanding a secret for a database this process never opens

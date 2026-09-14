@@ -340,7 +340,7 @@ class TestTraversals:
     async def test_a_depth_beyond_the_traversal_bound_is_refused(
         self, server: MCPServer[Any]
     ) -> None:
-        """The bound is the one the Cypher is written against, not a suggestion."""
+        """The bound is the one the query is written against, not a suggestion."""
         created = await an_element(server, "node", "db-01")
 
         with pytest.raises(ToolError):

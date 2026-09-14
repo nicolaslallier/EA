@@ -2,7 +2,7 @@
 
 The second table of the relational store, and the first one that can do what
 `element_documents` could not: **carry a foreign key**. A document is a row
-here, not a node in Neo4j, so a passage can point at the document it came from
+next door, so a passage can point at the document it came from
 and let PostgreSQL delete it when that document goes. The cascade
 `ArchitectureService` has to perform by hand for documents is, for passages,
 one line of DDL — see docs/adr/0019.

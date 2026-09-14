@@ -70,7 +70,7 @@ class Passage:
 
     The element is named by id and not by name. Names live in the graph, and
     reading the graph to decorate a relational query would make every search a
-    call to Neo4j for a field the caller may not want — `get_element` is one
+    second read for a field the caller may not want — `get_element` is one
     call away when it does.
     """
 

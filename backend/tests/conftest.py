@@ -130,7 +130,7 @@ def _no_network_beyond_this_machine(
 ) -> None:
     """Refuse, at once, any connection a test opens to another machine.
 
-    The settings defaults point Neo4j, PostgreSQL and the embedding service at
+    The settings defaults point PostgreSQL and the embedding service at
     the cluster — the useful default for a developer, and a trap for a test: a
     lifespan entered with them goes looking for the real stores. On the LAN
     that test quietly talks to the shared databases; off it, it waits for a
@@ -145,7 +145,7 @@ def _no_network_beyond_this_machine(
     emptying it.
 
     The patch sits on `socket.socket` itself, below every client in this
-    process: asyncio, and therefore asyncpg, the Neo4j driver and httpx, all
+    process: asyncio, and therefore asyncpg and httpx, all
     end in `sock.connect`. `getaddrinfo` is guarded too, because a lookup with
     no network can hang for the resolver's own timeout before any connect.
     In-process transports — `httpx.ASGITransport`, `httpx.MockTransport` —
@@ -197,16 +197,16 @@ def _no_network_beyond_this_machine(
 def _database_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the deployment that provides the database credentials.
 
-    `Settings` refuses an empty password outside debug — for Neo4j always, and
-    for PostgreSQL since `postgres_enabled` defaults to on (docs/adr/0017) — so
-    a suite that builds settings must look like a configured process. Tests
+    `Settings` refuses an empty PostgreSQL password outside debug since
+    `postgres_enabled` defaults to on (docs/adr/0017) — so a suite that builds
+    settings must look like a configured process. Tests
     that are *about* the credentials pass their own values, which take
     precedence over this.
 
     A password already in the environment wins: that is the integration run,
     which needs the credentials of the database it is about to talk to.
     """
-    for variable in ("EA_NEO4J_PASSWORD", "EA_POSTGRES_PASSWORD"):
+    for variable in ("EA_POSTGRES_PASSWORD",):
         if not os.environ.get(variable):
             monkeypatch.setenv(variable, "test-password")
 
@@ -447,7 +447,7 @@ class InMemoryDocuments:
 
     async def delete(self, document_id: UUID) -> bool:
         """The passages go with the document — here by hand, in PostgreSQL by
-        the foreign key `element_documents` could never have."""
+        the foreign key from `document_chunks`."""
         self.chunks.pop(document_id, None)
         return self.documents.pop(document_id, None) is not None
 
@@ -634,7 +634,7 @@ def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamSe
     """The IP use cases over the same graph double, which answers both ports.
 
     `InMemoryRepository` satisfies `IpamRepository` as well as
-    `ArchitectureRepository`, exactly as the Neo4j class does — an address is
+    `ArchitectureRepository`, exactly as the PostgreSQL class does — an address is
     an attribute of an element, not a second store (docs/adr/0020).
     """
     return IpamService(service, repository)

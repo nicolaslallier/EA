@@ -196,7 +196,7 @@ def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
         clauses.append(ElementRecord.layer.in_([layer.value for layer in criteria.layers]))
     if criteria.search:
         # `strpos` and not `ILIKE`: `%` and `_` typed in the search box stay
-        # characters, as they were under Cypher's `CONTAINS`.
+        # characters, never wildcards.
         clauses.append(func.strpos(func.lower(ElementRecord.name), func.lower(criteria.search)) > 0)
     return clauses
 

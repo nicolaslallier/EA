@@ -59,7 +59,7 @@ class RelationshipType(StrEnum):
 
     @property
     def label(self) -> str:
-        """The Neo4j relationship type, e.g. `SERVING`."""
+        """The upper-case form, e.g. `SERVING`."""
         return self.value.upper()
 
 

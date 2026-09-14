@@ -1,7 +1,7 @@
 """The document repository against a real PostgreSQL.
 
 Everything else about documents is proved without a server. This is the one
-place that proves the Cypher's counterpart: the DDL of docs/adr/0017 actually
+place that proves the DDL of docs/adr/0017 actually
 applies, the unique constraint really refuses the second `README.md`, an
 accented character survives the round trip as text, and `octet_length` answers
 without loading a body.
