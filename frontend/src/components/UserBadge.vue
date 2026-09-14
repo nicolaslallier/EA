@@ -1,15 +1,26 @@
 <script setup lang="ts">
 // Who is on screen, and the one control that ends the session (docs/adr/0032).
-import { onMounted } from 'vue'
+import { watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { signOut } from '../lib/auth'
 import { useMe } from '../lib/me'
 
 const me = useMe()
+const route = useRoute()
 
-onMounted(() => {
-  void me.load()
-})
+// Not on mount: the shell mounts on /auth/callback too, before the login has
+// stored a token, and a /me sent then is a 401 nothing retries. A resolved,
+// non-public route is one the router's gate let through with a token.
+watch(
+  () => route.matched.length > 0 && !route.meta.public,
+  (signedIn) => {
+    if (signedIn) {
+      void me.load()
+    }
+  },
+  { immediate: true },
+)
 
 function onSignOut(): void {
   void signOut()
