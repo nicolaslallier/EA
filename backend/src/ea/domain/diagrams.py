@@ -19,6 +19,9 @@ from uuid import UUID, uuid4
 from ea.domain.ports import GraphView
 
 MAX_DIAGRAM_NAME_LENGTH: Final = 200
+#: The size a box is drawn at until someone resizes it — the rings' own box.
+DEFAULT_BOX_WIDTH: Final = 132.0
+DEFAULT_BOX_HEIGHT: Final = 46.0
 
 
 def _clean_name(name: str) -> str:
@@ -34,11 +37,13 @@ def _clean_name(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DiagramNode:
-    """One box: an element, and the top-left corner it is drawn at."""
+    """One box: an element, the top-left corner it is drawn at, and its size."""
 
     element_id: UUID
     x: float
     y: float
+    width: float = DEFAULT_BOX_WIDTH
+    height: float = DEFAULT_BOX_HEIGHT
 
 
 @dataclass(frozen=True, slots=True)

@@ -650,7 +650,7 @@ export interface components {
         };
         /**
          * DiagramNode
-         * @description One box: an element, and the top-left corner of the box in canvas units.
+         * @description One box: an element, the top-left corner of the box and its size, in canvas units.
          */
         DiagramNode: {
             /**
@@ -658,6 +658,10 @@ export interface components {
              * Format: uuid
              */
             element_id: string;
+            /** Height */
+            height: number;
+            /** Width */
+            width: number;
             /** X */
             x: number;
             /** Y */

@@ -216,12 +216,24 @@
       },
       "DiagramNode": {
         "additionalProperties": false,
-        "description": "One box: an element, and the top-left corner of the box in canvas units.",
+        "description": "One box: an element, the top-left corner of the box and its size, in canvas units.",
         "properties": {
           "element_id": {
             "format": "uuid",
             "title": "Element Id",
             "type": "string"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
           },
           "x": {
             "maximum": 100000.0,
@@ -239,7 +251,9 @@
         "required": [
           "element_id",
           "x",
-          "y"
+          "y",
+          "width",
+          "height"
         ],
         "title": "DiagramNode",
         "type": "object"

@@ -36,7 +36,7 @@ const READ: Route = {
   path: `/diagrams/${DIAGRAM_ID}`,
   body: {
     ...SUMMARY,
-    nodes: [{ element_id: A.id, x: 10, y: 20 }],
+    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46 }],
     elements: [A],
     relationships: [],
   },

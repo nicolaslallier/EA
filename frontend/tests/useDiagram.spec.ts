@@ -39,8 +39,8 @@ function aDiagram(overrides: Record<string, unknown> = {}) {
     created_at: '2026-09-13T12:00:00Z',
     updated_at: '2026-09-13T12:00:00Z',
     nodes: [
-      { element_id: A.id, x: 10, y: 20 },
-      { element_id: GONE, x: 400, y: 400 },
+      { element_id: A.id, x: 10, y: 20, width: 132, height: 46 },
+      { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
     ],
     elements: [A],
     relationships: [],
@@ -72,7 +72,7 @@ describe('useDiagram', () => {
     const { calls, editor } = await opened()
 
     expect(calls[0].url.pathname).toBe(`/diagrams/${DIAGRAM_ID}`)
-    expect(editor.boxes.value).toEqual([{ element: A, x: 10, y: 20 }])
+    expect(editor.boxes.value).toEqual([{ element: A, x: 10, y: 20, width: 132, height: 46 }])
     expect(editor.status.value).toBe('ready')
   })
 
@@ -86,9 +86,9 @@ describe('useDiagram', () => {
     expect(saves(calls)).toHaveLength(1)
     expect(saves(calls)[0].body).toEqual({
       nodes: [
-        { element_id: A.id, x: 10, y: 20 },
-        { element_id: GONE, x: 400, y: 400 },
-        { element_id: B.id, x: 300, y: 100 },
+        { element_id: A.id, x: 10, y: 20, width: 132, height: 46 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
+        { element_id: B.id, x: 300, y: 100, width: 132, height: 46 },
       ],
     })
     expect(editor.placed.value.has(B.id)).toBe(true)
@@ -99,7 +99,7 @@ describe('useDiagram', () => {
 
     editor.place(A, { x: 500, y: 500 })
 
-    expect(editor.boxes.value).toEqual([{ element: A, x: 10, y: 20 }])
+    expect(editor.boxes.value).toEqual([{ element: A, x: 10, y: 20, width: 132, height: 46 }])
   })
 
   it('moves a box on screen at once, and saves only when the move is over', async () => {
@@ -115,8 +115,27 @@ describe('useDiagram', () => {
 
     expect(saves(calls)[0].body).toEqual({
       nodes: [
-        { element_id: A.id, x: 50, y: 60 },
-        { element_id: GONE, x: 400, y: 400 },
+        { element_id: A.id, x: 50, y: 60, width: 132, height: 46 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
+      ],
+    })
+  })
+
+  it('resizes a box on screen at once, and saves the size only when the gesture is over', async () => {
+    const { calls, editor } = await opened()
+
+    editor.resize(A.id, { width: 200, height: 80 })
+    expect(editor.boxes.value[0]).toMatchObject({ x: 10, y: 20, width: 200, height: 80 })
+    await pause()
+    expect(saves(calls)).toHaveLength(0)
+
+    editor.persist()
+    await pause()
+
+    expect(saves(calls)[0].body).toEqual({
+      nodes: [
+        { element_id: A.id, x: 10, y: 20, width: 200, height: 80 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
       ],
     })
   })
@@ -128,7 +147,7 @@ describe('useDiagram', () => {
     await pause()
 
     expect(editor.boxes.value).toEqual([])
-    expect(saves(calls)[0].body).toEqual({ nodes: [{ element_id: GONE, x: 400, y: 400 }] })
+    expect(saves(calls)[0].body).toEqual({ nodes: [{ element_id: GONE, x: 400, y: 400, width: 132, height: 46 }] })
   })
 
   it('keeps a refused save on screen', async () => {

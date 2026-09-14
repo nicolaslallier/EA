@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The drawing a user builds by hand: boxes where they were dropped, the links
-// between them, and the three gestures — drop, move, link.
+// between them, and the four gestures — drop, move, resize, link.
 //
 // It fetches nothing and decides nothing: it emits what the user did, in
 // canvas units, and the section turns that into a layout or a relationship.
@@ -15,10 +15,11 @@ import {
   centreOf,
   edgeSegment,
   placeCentredAt,
+  resizedTo,
   toCanvasPoint,
   type Point,
+  type Size,
 } from '../../lib/diagramGeometry'
-import { BOX_HEIGHT, BOX_WIDTH } from '../../lib/graphLayout'
 import { ELEMENT_DRAG_TYPE, type Box, type RelationshipRead } from './useDiagram'
 
 const props = defineProps<{
@@ -34,14 +35,16 @@ const props = defineProps<{
 const emit = defineEmits<{
   place: [elementId: string, at: Point]
   move: [elementId: string, to: Point]
-  /** A move gesture ended: the moment to save. */
+  resize: [elementId: string, size: Size]
+  /** A move or resize gesture ended: the moment to save. */
   moved: []
   select: [elementId: string]
   remove: [elementId: string]
   connect: [sourceId: string, targetId: string]
 }>()
 
-const NAME_LIMIT = 17
+/** Roughly how wide one character of a box's name is drawn. */
+const CHARACTER_WIDTH = 7.5
 const ZOOM_STEP = 0.25
 const ZOOM_RANGE = [0.4, 2] as const
 /** Room kept past the furthest box, so there is always somewhere to drop. */
@@ -52,6 +55,7 @@ const zoom = ref(1)
 
 type Gesture =
   | { kind: 'move'; elementId: string; offset: Point; moved: boolean }
+  | { kind: 'resize'; elementId: string; offset: Point; moved: boolean }
   | { kind: 'link'; sourceId: string; to: Point }
 const gesture = ref<Gesture | null>(null)
 
@@ -75,8 +79,10 @@ const summary = computed(() => {
   return `${boxes} élément${boxes > 1 ? 's' : ''}, ${links} relation${links > 1 ? 's' : ''}`
 })
 
-function shorten(name: string): string {
-  return name.length > NAME_LIMIT ? `${name.slice(0, NAME_LIMIT - 1)}…` : name
+/** As much of `name` as a box `width` wide holds: a wider box shows more of it. */
+function shorten(name: string, width: number): string {
+  const limit = Math.max(4, Math.floor(width / CHARACTER_WIDTH))
+  return name.length > limit ? `${name.slice(0, limit - 1)}…` : name
 }
 
 function step(by: number): void {
@@ -127,6 +133,22 @@ function grab(event: PointerEvent, box: Box): void {
   }
 }
 
+/** Grab the selected box's corner; `offset` keeps the box from jumping to the pointer. */
+function startResize(event: PointerEvent): void {
+  const box = selected.value
+  if (event.button !== 0 || !box || props.readonly) {
+    return
+  }
+  capture(event)
+  const pointer = at(event)
+  gesture.value = {
+    kind: 'resize',
+    elementId: box.element.id,
+    offset: { x: pointer.x - (box.x + box.width), y: pointer.y - (box.y + box.height) },
+    moved: false,
+  }
+}
+
 function startLink(event: PointerEvent): void {
   if (event.button !== 0 || !selected.value || props.readonly) {
     return
@@ -146,6 +168,14 @@ function drag(event: PointerEvent): void {
     return
   }
   current.moved = true
+  if (current.kind === 'resize') {
+    const box = byId.value.get(current.elementId)
+    if (box) {
+      const corner = { x: pointer.x - current.offset.x, y: pointer.y - current.offset.y }
+      emit('resize', current.elementId, resizedTo(box, corner))
+    }
+    return
+  }
   emit('move', current.elementId, {
     x: Math.max(0, pointer.x - current.offset.x),
     y: Math.max(0, pointer.y - current.offset.y),
@@ -155,13 +185,13 @@ function drag(event: PointerEvent): void {
 /**
  * The system took the pointer away mid-gesture — a touch cancelled, a window
  * losing focus. A move already on screen is still reported, so it is saved; a
- * link is never asked for, since nobody chose where it ends. After a normal
+ * link is never asked for, since nobody chose where it ends. A resize is a move. After a normal
  * `pointerup`, `release` has already cleared the gesture and this does nothing.
  */
 function interrupt(): void {
   const current = gesture.value
   gesture.value = null
-  if (current?.kind === 'move' && current.moved) {
+  if (current?.kind !== 'link' && current?.moved) {
     emit('moved')
   }
 }
@@ -169,7 +199,7 @@ function interrupt(): void {
 function release(event: PointerEvent): void {
   const current = gesture.value
   gesture.value = null
-  if (current?.kind === 'move') {
+  if (current && current.kind !== 'link') {
     if (current.moved) {
       emit('moved')
     }
@@ -181,9 +211,9 @@ function release(event: PointerEvent): void {
     const target = [...props.boxes].reverse().find(
       (box) =>
         pointer.x >= box.x &&
-        pointer.x <= box.x + BOX_WIDTH &&
+        pointer.x <= box.x + box.width &&
         pointer.y >= box.y &&
-        pointer.y <= box.y + BOX_HEIGHT,
+        pointer.y <= box.y + box.height,
     )
     if (target && target.element.id !== current.sourceId) {
       emit('connect', current.sourceId, target.element.id)
@@ -276,28 +306,28 @@ function removeIfSelected(box: Box): void {
           <rect
             :x="box.x"
             :y="box.y"
-            :width="BOX_WIDTH"
-            :height="BOX_HEIGHT"
+            :width="box.width"
+            :height="box.height"
             rx="6"
             :fill="LAYER_COLOURS[box.element.layer]"
           />
           <text
             class="canvas__name"
-            :x="box.x + BOX_WIDTH / 2"
-            :y="box.y + BOX_HEIGHT / 2 - 2"
+            :x="box.x + box.width / 2"
+            :y="box.y + box.height / 2 - 2"
             text-anchor="middle"
             :fill="BOX_TEXT"
           >
-            {{ shorten(box.element.name) }}
+            {{ shorten(box.element.name, box.width) }}
           </text>
           <text
             class="canvas__type"
-            :x="box.x + BOX_WIDTH / 2"
-            :y="box.y + BOX_HEIGHT / 2 + 13"
+            :x="box.x + box.width / 2"
+            :y="box.y + box.height / 2 + 13"
             text-anchor="middle"
             :fill="BOX_TEXT"
           >
-            {{ shorten(typeLabel(box.element.element_type)) }}
+            {{ shorten(typeLabel(box.element.element_type), box.width) }}
           </text>
         </g>
 
@@ -313,14 +343,27 @@ function removeIfSelected(box: Box): void {
         <circle
           v-if="selected && !readonly"
           class="canvas__handle"
-          :cx="selected.x + BOX_WIDTH"
-          :cy="selected.y + BOX_HEIGHT / 2"
+          :cx="selected.x + selected.width"
+          :cy="selected.y + selected.height / 2"
           r="7"
           :aria-label="`Relier « ${selected.element.name} » à un autre élément`"
           @pointerdown.stop="startLink"
         >
           <title>Glisse jusqu'à un autre élément pour les relier</title>
         </circle>
+
+        <rect
+          v-if="selected && !readonly"
+          class="canvas__resize"
+          :x="selected.x + selected.width - 5"
+          :y="selected.y + selected.height - 5"
+          width="10"
+          height="10"
+          :aria-label="`Redimensionner « ${selected.element.name} »`"
+          @pointerdown.stop="startResize"
+        >
+          <title>Glisse pour agrandir ou réduire la boîte</title>
+        </rect>
       </svg>
     </div>
   </figure>
@@ -418,6 +461,12 @@ svg {
   stroke: var(--text);
   stroke-width: 2;
   cursor: crosshair;
+}
+.canvas__resize {
+  fill: var(--bg);
+  stroke: var(--text);
+  stroke-width: 2;
+  cursor: nwse-resize;
 }
 .canvas__band {
   stroke: var(--text);

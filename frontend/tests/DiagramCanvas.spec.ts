@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import DiagramCanvas from '../src/features/diagrams/DiagramCanvas.vue'
 import { ELEMENT_DRAG_TYPE } from '../src/features/diagrams/useDiagram'
+import { MIN_BOX } from '../src/lib/diagramGeometry'
 import { anElement, aRelationship } from './support/api'
 
 const A = anElement({ id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'Facturation' })
@@ -14,8 +15,8 @@ const B = anElement({
 })
 
 const BOXES = [
-  { element: A, x: 0, y: 0 },
-  { element: B, x: 300, y: 0 },
+  { element: A, x: 0, y: 0, width: 132, height: 46 },
+  { element: B, x: 300, y: 0, width: 132, height: 46 },
 ]
 
 function draw(props: Record<string, unknown> = {}) {
@@ -115,6 +116,34 @@ describe('DiagramCanvas', () => {
     },
   )
 
+  it('draws each box at its own size', () => {
+    draw({ boxes: [{ element: A, x: 0, y: 0, width: 240, height: 90 }] })
+
+    const rect = document.querySelector('.canvas__node rect') as SVGRectElement
+    expect([rect.getAttribute('width'), rect.getAttribute('height')]).toEqual(['240', '90'])
+  })
+
+  it('resizes the selected box by dragging its corner, and says when it is over', async () => {
+    const rendered = draw({ selectedId: A.id })
+
+    await fireEvent(screen.getByLabelText(/redimensionner « Facturation »/i), pointer('pointerdown', 132, 46))
+    await fireEvent(svg(), pointer('pointermove', 232, 106))
+    await fireEvent(svg(), pointer('pointerup', 232, 106))
+
+    expect(rendered.emitted().resize).toEqual([[A.id, { width: 232, height: 106 }]])
+    expect(rendered.emitted().move).toBeUndefined()
+    expect(rendered.emitted().moved).toHaveLength(1)
+  })
+
+  it('never shrinks a box below the smallest size', async () => {
+    const rendered = draw({ selectedId: A.id })
+
+    await fireEvent(screen.getByLabelText(/redimensionner « Facturation »/i), pointer('pointerdown', 132, 46))
+    await fireEvent(svg(), pointer('pointermove', 5, 5))
+
+    expect(rendered.emitted().resize).toEqual([[A.id, MIN_BOX]])
+  })
+
   it('asks for no link when a link gesture is cut short', async () => {
     const rendered = draw({ selectedId: A.id })
 
@@ -132,6 +161,7 @@ describe('DiagramCanvas', () => {
     Object.defineProperty(drop, 'dataTransfer', { value: { getData: () => B.id } })
 
     expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
+    expect(screen.queryByLabelText(/redimensionner « Facturation »/i)).toBeNull()
     await fireEvent(svg(), drop)
     await fireEvent(box, pointer('pointerdown', 20, 10))
     await fireEvent(svg(), pointer('pointermove', 120, 70))
