@@ -18,6 +18,7 @@ from ea.domain.archimate import ElementType, RelationshipType
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.ipam import IpamService
 
 AUDIT = "ea.services"
@@ -152,3 +153,24 @@ class TestTheAddresses:
         line = only(caplog, "address_assigned")
         assert str(assignment.address) in line.getMessage()
         assert line.element_id == str(host.id)  # type: ignore[attr-defined]
+
+
+class TestTheFiles:
+    async def test_a_stored_file_is_named_by_its_key(
+        self, file_service: FileService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            await file_service.upload("inbox/a.md", b"x")
+
+        assert only(caplog, "file_stored").file_key == "inbox/a.md"  # type: ignore[attr-defined]
+
+    async def test_a_deleted_file_is_named_by_its_key(
+        self, file_service: FileService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await file_service.upload("inbox/a.md", b"x")
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            await file_service.delete("inbox/a.md")
+
+        assert only(caplog, "file_deleted").file_key == "inbox/a.md"  # type: ignore[attr-defined]
