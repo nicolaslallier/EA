@@ -78,6 +78,27 @@ describe('FilesSection', () => {
     await waitFor(() => expect(calls.filter((call) => call.method === 'POST')).toHaveLength(2))
   })
 
+  it('reloads the folder even after a refused upload, so a partial batch is not left invisible', async () => {
+    const { calls } = await open('', [
+      TOP,
+      {
+        method: 'POST',
+        path: '/files',
+        status: 422,
+        body: { error: 'file_too_large', detail: 'trop gros' },
+      },
+    ])
+
+    await pick(aFile('big.bin'))
+
+    expect(await screen.findByText(/trop gros/)).toBeTruthy()
+    await waitFor(() =>
+      expect(
+        calls.filter((call) => call.method === 'GET' && call.url.pathname === '/files'),
+      ).toHaveLength(2),
+    )
+  })
+
   it('offers no upload and no delete to a reader', async () => {
     vi.mocked(useMe).mockReturnValueOnce({
       me: ref({ username: 'reader', can_write: false }),

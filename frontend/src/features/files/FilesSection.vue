@@ -45,20 +45,24 @@ async function onPicked(event: Event): Promise<void> {
   const picked = [...(input.files ?? [])]
   busy.value = true
   failure.value = ''
+  // Built up as files succeed or come back "exists", so a later refusal
+  // (stopping the loop) still leaves the ones already found offered below.
+  const refused: File[] = []
   try {
-    const refused: File[] = []
     for (const file of picked) {
       if ((await files.upload(prefix.value, file)) === 'exists') {
         refused.push(file)
       }
     }
-    clashes.value = refused
-    await files.load(prefix.value)
   } catch (caught) {
     failure.value = messageOf(caught)
   } finally {
+    clashes.value = refused
     busy.value = false
     input.value = ''
+    // Whatever uploaded before a mid-batch refusal is stored server-side
+    // already; the listing must say so rather than stay one request stale.
+    await files.load(prefix.value)
   }
 }
 
@@ -69,11 +73,11 @@ async function replaceClashes(): Promise<void> {
       await files.upload(prefix.value, file, true)
     }
     clashes.value = []
-    await files.load(prefix.value)
   } catch (caught) {
     failure.value = messageOf(caught)
   } finally {
     busy.value = false
+    await files.load(prefix.value)
   }
 }
 
