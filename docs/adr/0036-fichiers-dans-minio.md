@@ -55,7 +55,11 @@ ne rend que du texte UTF-8, au plus 1 Mo : un PDF est refusé, une personne le
 télécharge depuis le SPA. `upload_file` accepte le texte tel quel
 (`encoding="text"`) ou du contenu binaire encodé en base64
 (`encoding="base64"`), parce qu'un agent MCP n'a pas de fichier à joindre à une
-requête — seulement du texte à passer en paramètre.
+requête — seulement du texte à passer en paramètre. Sa limite réelle n'est pas
+les 50 Mo du SPA : le SDK MCP plafonne le corps d'une requête à 4 Mio par
+défaut, et le NGINX de l'Infra déployé limite `/api/mcp` à 2 Mo — `upload_file`
+refuse donc tout ce qui dépasse 1 Mo une fois décodé (`MAX_MCP_UPLOAD_BYTES`),
+et le dit dans sa description ; un fichier plus gros se dépose depuis le SPA.
 
 ## Alternatives envisagées et écartées
 
@@ -97,9 +101,11 @@ requête — seulement du texte à passer en paramètre.
    lecture-écriture limitée à `arn:aws:s3:::ea-catalogue` et
    `arn:aws:s3:::ea-catalogue/*` (`s3:ListBucket`, `s3:GetObject`,
    `s3:PutObject`, `s3:DeleteObject`) — rien de plus large.
-2. Dans `~/OpenCode/Infra/nginx/conf.d/ea.conf`, `client_max_body_size 50m;`
-   sur la `location /api/` : sans elle NGINX applique sa limite par défaut
-   d'1 Mo et répond 413 avant que l'API ne voie la requête.
+2. Dans `~/OpenCode/Infra/nginx/conf.d/ea.conf`, la `location /api/` porte déjà
+   `client_max_body_size 2m;` (pour un document markdown) : la monter à
+   `51m`, pour l'enveloppe multipart d'un envoi de 50 Mo. `location = /api/mcp`
+   reste à `2m` — les outils MCP des fichiers ont leur propre plafond, bien
+   plus bas (voir `mcp/server.py`, `MAX_MCP_UPLOAD_BYTES`).
 3. Les deux clés dans `deploy/ea.env` : `make app-up` refuse de partir tant
    qu'une variable `:?` du fichier de stack est vide.
 
