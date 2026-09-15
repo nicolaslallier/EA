@@ -26,6 +26,7 @@ from ea.domain.archimate import (
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.files import MAX_KEY_BYTES, MAX_LISTED_ENTRIES, FileListing, StoredFile
 from ea.domain.ipam import (
     DEFAULT_VRF,
     RESERVED_PROPERTY,
@@ -88,6 +89,10 @@ Offset = Annotated[int, Field(ge=0)]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
 LinkName = Annotated[str, Field(max_length=200)]
+
+# --- Files in MinIO (docs/adr/0036) ---
+FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
+FilePrefix = Annotated[str, Field(max_length=MAX_KEY_BYTES)]
 
 
 class _Input(BaseModel):
@@ -370,6 +375,46 @@ class DocumentRead(BaseModel):
             created_at=document.created_at,
             updated_at=document.updated_at,
             content=document.content,
+        )
+
+
+class FileRead(BaseModel):
+    """One file of the bucket, as a listing or an upload describes it — never its bytes."""
+
+    key: str = Field(description="The full path in the bucket, folders included.")
+    name: str = Field(description="The last segment of the key.")
+    size: int = Field(description="Size of the stored file, in bytes.")
+    last_modified: datetime
+    content_type: str
+
+    @classmethod
+    def of(cls, stored: StoredFile) -> FileRead:
+        return cls(
+            key=stored.key,
+            name=stored.name,
+            size=stored.size,
+            last_modified=stored.last_modified,
+            content_type=stored.content_type,
+        )
+
+
+class FileListingRead(BaseModel):
+    """One folder: its sub-folders, then its files."""
+
+    prefix: str
+    folders: list[str] = Field(description="Each sub-folder as a full prefix ending in `/`.")
+    files: list[FileRead]
+    truncated: bool = Field(
+        description=f"True when only the first {MAX_LISTED_ENTRIES} entries are listed."
+    )
+
+    @classmethod
+    def of(cls, listing: FileListing) -> FileListingRead:
+        return cls(
+            prefix=listing.prefix,
+            folders=list(listing.folders),
+            files=[FileRead.of(stored) for stored in listing.files],
+            truncated=listing.truncated,
         )
 
 
