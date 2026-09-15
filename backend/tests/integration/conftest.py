@@ -27,8 +27,11 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
+import urllib3
 from alembic import command
 from alembic.config import Config
+from minio.error import S3Error
+from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -42,8 +45,9 @@ from ea.domain.model import Element
 from ea.domain.search import EmbeddedChunk
 from ea.repositories.architecture_store import PostgresArchitectureRepository, element_row
 from ea.repositories.document_store import PostgresDocumentRepository
+from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.services.architecture import ArchitectureService
-from tests.integration.throwaway import refuse_a_shared_postgres
+from tests.integration.throwaway import refuse_a_shared_minio, refuse_a_shared_postgres
 
 
 @pytest.fixture
@@ -162,3 +166,35 @@ class DocumentsOnStoredElements(PostgresDocumentRepository):
     async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
         await ensure_elements(self._engine, document.element_id)
         return await super().add(document, chunks)
+
+
+@pytest_asyncio.fixture
+async def minio_store() -> AsyncIterator[MinioObjectStore]:
+    """The bucket of the throwaway MinIO, emptied afterwards — or a skip.
+
+    Same rule as `postgres_engine`: the endpoint is checked before anything
+    connects, because the settings default to the Infra's MinIO, where the
+    pipeline reads real sources.
+    """
+    try:
+        settings = Settings(debug=True, s3_enabled=True)
+    except ValidationError:
+        pytest.skip("EA_S3_ACCESS_KEY/EA_S3_SECRET_KEY unset — `make test-integration` sets them")
+    refusal = refuse_a_shared_minio(settings.s3_endpoint)
+    if refusal is not None:
+        pytest.skip(refusal)
+    client = minio_client(settings)
+    bucket = settings.s3_bucket
+    try:
+        if not await asyncio.to_thread(client.bucket_exists, bucket):
+            await asyncio.to_thread(client.make_bucket, bucket)
+    except (S3Error, urllib3.exceptions.HTTPError) as error:
+        pytest.skip(f"the throwaway MinIO at {settings.s3_endpoint} does not answer: {error}")
+    yield MinioObjectStore(client, bucket)
+
+    def empty() -> None:
+        for found in client.list_objects(bucket, recursive=True):
+            if found.object_name is not None:
+                client.remove_object(bucket, found.object_name)
+
+    await asyncio.to_thread(empty)

@@ -61,3 +61,21 @@ def refuse_a_shared_postgres(host: str, port: int) -> str | None:
             f"EA_POSTGRES_PORT={THROWAWAY_POSTGRES_PORT} — `make test-postgres` does both"
         )
     return None
+
+
+#: Where `make minio-up` publishes the throwaway MinIO. Unlike PostgreSQL, the
+#: shared MinIO is reached by a name, not a port — so the rule is stricter:
+#: loopback *and* this exact port, nothing else is ever emptied.
+THROWAWAY_MINIO_PORT = 9100
+
+
+def refuse_a_shared_minio(endpoint: str) -> str | None:
+    """Why the MinIO at `endpoint` must not have its bucket emptied, or `None`."""
+    host, _, port = endpoint.rpartition(":")
+    if host and is_loopback(host) and port == str(THROWAWAY_MINIO_PORT):
+        return None
+    return (
+        f"refusing to empty a bucket on MinIO at {endpoint}: only the throwaway one on "
+        f"127.0.0.1:{THROWAWAY_MINIO_PORT} is. Start it with `make minio-up` — "
+        "`make test-integration` does it and sets EA_S3_*"
+    )

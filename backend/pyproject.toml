@@ -11,6 +11,8 @@ dependencies = [
     # call this process makes — see docs/adr/0019.
     "httpx>=0.27",
     "mcp>=1.9",
+    # Files in the Infra's MinIO — see docs/adr/0036. Same SDK as pipelines/.
+    "minio>=7.2.20",
     # The `vector` column type, and the distance operators SQLAlchemy compiles
     # `cosine_distance` into. The extension itself must be present in the
     # PostgreSQL image — see docs/adr/0019.

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from ea.core.config import Settings
 
@@ -209,3 +210,21 @@ def test_authentication_cannot_be_turned_off_outside_debug() -> None:
 
 def test_debug_may_turn_authentication_off() -> None:
     assert Settings(debug=True, auth_enabled=False).auth_enabled is False
+
+
+class TestFileStorage:
+    def test_it_is_off_by_default_so_nothing_needs_minio_to_boot(self) -> None:
+        assert Settings(debug=True).s3_enabled is False
+
+    def test_the_default_bucket_is_the_one_the_pipeline_reads(self) -> None:
+        assert Settings(debug=True).s3_bucket == "ea-catalogue"
+
+    def test_turning_it_on_without_a_key_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="EA_S3_ACCESS_KEY"):
+            Settings(debug=True, s3_enabled=True)
+
+    def test_turning_it_on_with_both_keys_is_accepted(self) -> None:
+        settings = Settings(
+            debug=True, s3_enabled=True, s3_access_key="ea-api", s3_secret_key="secret"
+        )
+        assert settings.s3_secret_key.get_secret_value() == "secret"
