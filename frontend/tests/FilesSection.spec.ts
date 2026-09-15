@@ -57,6 +57,20 @@ describe('FilesSection', () => {
     expect(calls[0]?.url.searchParams.get('prefix')).toBe('inbox/')
   })
 
+  it('cuts a folder name with the listing\'s own prefix, not the URL\'s', async () => {
+    // `?prefix=inbox` (no slash) still asks the backend for `inbox/`, and the
+    // backend's answer carries that trailing slash in `prefix` — slicing by
+    // the URL's four-character value would leave a leading `/` on the name.
+    await open('?prefix=inbox', [
+      {
+        path: '/files',
+        body: aListing({ prefix: 'inbox/', folders: ['inbox/sub/'], files: [] }),
+      },
+    ])
+
+    expect(await screen.findByRole('button', { name: 'sub/' })).toBeTruthy()
+  })
+
   it('opens a folder by writing it into the URL', async () => {
     const { router } = await open()
 
@@ -76,6 +90,22 @@ describe('FilesSection', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Remplacer' }))
 
     await waitFor(() => expect(calls.filter((call) => call.method === 'POST')).toHaveLength(2))
+  })
+
+  it('clears a stale failure banner once the clashes are replaced', async () => {
+    await open('', [
+      TOP,
+      { method: 'POST', path: '/files', status: 409, body: { error: 'duplicate', detail: 'exists' } },
+      { path: '/files/content', status: 500, body: { error: 'internal_error', detail: 'boom' } },
+    ])
+    await pick(aFile('readme.md'))
+    expect(await screen.findByText(/existe déjà/)).toBeTruthy()
+    await fireEvent.click(await screen.findByRole('button', { name: 'Télécharger readme.md' }))
+    expect(await screen.findByText('boom')).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remplacer' }))
+
+    await waitFor(() => expect(screen.queryByText('boom')).toBeNull())
   })
 
   it('reloads the folder even after a refused upload, so a partial batch is not left invisible', async () => {

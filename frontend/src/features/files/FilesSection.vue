@@ -68,6 +68,7 @@ async function onPicked(event: Event): Promise<void> {
 
 async function replaceClashes(): Promise<void> {
   busy.value = true
+  failure.value = ''
   try {
     for (const file of clashes.value) {
       await files.upload(prefix.value, file, true)
@@ -119,7 +120,8 @@ function weight(bytes: number): string {
     <h2>Fichiers</h2>
     <p class="hint">
       Tout type de fichier, au plus 50 Mo. Un fichier déposé dans <code>inbox/</code> est lu par le
-      pipeline qui alimente le catalogue.
+      pipeline qui alimente le catalogue — en texte seulement (markdown, texte brut) ; les autres
+      dossiers acceptent tout type de fichier.
     </p>
 
     <nav class="crumbs" aria-label="Dossier courant">
@@ -167,7 +169,7 @@ function weight(bytes: number): string {
           <tr v-for="folder in files.listing.value.folders" :key="folder">
             <td>
               <button type="button" class="link" @click="openFolder(folder)">
-                {{ folder.slice(prefix.length) }}
+                {{ folder.slice(files.listing.value.prefix.length) }}
               </button>
             </td>
             <td />

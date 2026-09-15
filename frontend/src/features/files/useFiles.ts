@@ -42,7 +42,10 @@ export function saveAs(blob: Blob, name: string): void {
   link.href = url
   link.download = name
   link.click()
-  URL.revokeObjectURL(url)
+  // Revoked on the next tick, after the click has been handled: revoking
+  // synchronously can invalidate the URL before the browser has actually
+  // started the download.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export function useFiles() {

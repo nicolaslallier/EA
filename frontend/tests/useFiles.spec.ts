@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { breadcrumbs, parentOf, uploadForm, useFiles } from '../src/features/files/useFiles'
+import { breadcrumbs, parentOf, saveAs, uploadForm, useFiles } from '../src/features/files/useFiles'
 import { MULTIPART, aFile, aListing, aStoredFile, stubApi } from './support/api'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 describe('the pure helpers', () => {
   it('sends the file, its folder and the overwrite flag under the names the backend reads', () => {
@@ -27,6 +30,21 @@ describe('the pure helpers', () => {
       { label: 'b', prefix: 'a/b/' },
     ])
     expect(breadcrumbs('')).toEqual([])
+  })
+
+  it('revokes the object URL only after the click has had a chance to fire', () => {
+    // Revoking synchronously would sometimes invalidate the URL before the
+    // browser has actually followed the download link — see docs/adr/0036.
+    vi.useFakeTimers()
+    const revokeObjectURL = vi.fn()
+    const createObjectURL = vi.fn(() => 'blob:x')
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }))
+
+    saveAs(new Blob(['x']), 'notes.md')
+
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    vi.runAllTimers()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:x')
   })
 })
 
