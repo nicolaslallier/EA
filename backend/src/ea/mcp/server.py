@@ -7,21 +7,25 @@ here decides anything: a tool binds its arguments, calls a service, and renders
 the answer with the very models the REST API renders, so an agent and the SPA
 are told the same thing about the same element.
 
-Two services, because the catalogue spans two concerns: the graph and the
-markdown attached to its elements (docs/adr/0017). They are
-kept apart here exactly as they are in `api/`, since the rule that binds them —
-an element must exist before a file hangs off it — is `DocumentService`'s, and
-an adapter holding a repository instead would be free to skip it.
+Four services, because the catalogue spans four concerns: the graph, the
+markdown attached to its elements (docs/adr/0017), the IP addressing
+(docs/adr/0020), and the files kept in a bucket beside it (docs/adr/0036). They
+are kept apart here exactly as they are in `api/`, since the rules that bind
+them — an element must exist before a file hangs off it — belong to the
+service and an adapter holding a repository instead would be free to skip
+them.
 
-Both are fetched through callables rather than held, because the application
-builds them during its lifespan and this module is assembled before that: see
-`main.create_app`.
+All four are fetched through callables rather than held, because the
+application builds them during its lifespan and this module is assembled
+before that: see `main.create_app`.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Callable
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
 from mcp.server.auth.provider import TokenVerifier
@@ -41,6 +45,10 @@ from ea.api.schemas import (
     DocumentSummaryRead,
     ElementPage,
     ElementRead,
+    FileKey,
+    FileListingRead,
+    FilePrefix,
+    FileRead,
     GraphRead,
     Limit,
     LinkName,
@@ -69,12 +77,14 @@ from ea.domain.archimate import (
     permitted_relationships as permitted_between,
 )
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
+from ea.domain.files import DEFAULT_CONTENT_TYPE, MAX_FILE_BYTES, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.ipam import IpamService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
@@ -125,13 +135,21 @@ itself, and one no declared subnet holds. An address must sit inside a subnet
 somebody declared, so `declare_ip_subnet` comes first.
 
 `locate_ip_address` is the question this is all for: it says which element
-answers on an address **and what that element is wired to**, in one call.\
+answers on an address **and what that element is wired to**, in one call.
+
+The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
+bucket organised in folders. `list_files` browses a folder, `read_file` reads a
+text file, `upload_file` stores one (base64 for anything that is not text) and
+`delete_file` removes one. A file put under `inbox/` is read by the pipeline
+that turns source documents into ArchiMate elements, so a source to be
+modelled goes there.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
 ServiceProvider = Callable[[], ArchitectureService]
 DocumentProvider = Callable[[], DocumentService]
 IpamProvider = Callable[[], IpamService]
+FileProvider = Callable[[], FileService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -197,6 +215,24 @@ ReservedAddresses = Annotated[
         ),
     ),
 ]
+FilePath = Annotated[
+    FileKey,
+    Field(
+        description="The full path of a file in the bucket, folders included, e.g. `inbox/crm.md`."
+    ),
+]
+Folder = Annotated[
+    FilePrefix, Field(description="A folder of the bucket, e.g. `inbox/`. Empty for the top.")
+]
+#: Base64 carries three bytes in four characters; the domain still decides on
+#: the decoded size, this only stops a runaway argument.
+FileContent = Annotated[
+    str,
+    Field(
+        max_length=MAX_FILE_BYTES * 4 // 3 + 4,
+        description="The file itself: plain text, or base64 when `encoding` is `base64`.",
+    ),
+]
 
 # --- What a tool does to the graph, said in the protocol's own terms --------
 # A client shows these to the person behind the agent, who decides from them
@@ -218,12 +254,13 @@ def build_mcp_server(
     get_service: ServiceProvider,
     get_documents: DocumentProvider,
     get_ipam: IpamProvider,
+    get_files: FileProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the architecture and document services.
+    """Assemble the tool set over the architecture, document, IPAM and file services.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -233,7 +270,8 @@ def build_mcp_server(
     an app assembled without a relational store or without a graph fails when
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
-    shorter tool list than the one this module documents.
+    shorter tool list than the one this module documents. `get_files` is
+    required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -706,6 +744,79 @@ def build_mcp_server(
         """
         await get_ipam().release_address(element_id)
         return f"element {element_id} no longer holds an IP address"
+
+    # --- Files (docs/adr/0036) ----------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_files(prefix: Folder = "") -> FileListingRead:
+        """List one folder of the file bucket: its sub-folders, then its files.
+
+        A folder is not a stored thing — it is the shared start of some paths —
+        so pass a sub-folder back as `prefix` to go one level down. `truncated`
+        means only the first 1000 entries came back.
+        """
+        return FileListingRead.of(await get_files().list_folder(prefix))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def read_file(key: FilePath) -> str:
+        """The content of one text file of the bucket.
+
+        Text only — UTF-8, at most 1 MB. A PDF or an image is refused: its bytes
+        mean nothing here, and a person downloads it from the web interface.
+        """
+        _, text = await get_files().read_text(key)
+        return text
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def upload_file(
+        key: FilePath,
+        content: FileContent,
+        encoding: Literal["text", "base64"] = "text",
+        overwrite: bool = False,
+    ) -> FileRead:
+        """Store a file in the bucket at `key`.
+
+        Text goes as it is (`encoding="text"`). Anything else — a PDF, an image,
+        a spreadsheet — goes base64-encoded with `encoding="base64"`. Either way
+        the file is at most 50 MB once decoded.
+
+        A file already at `key` is refused unless `overwrite` is true, and then
+        its previous content is gone. A file under `inbox/` is read by the
+        catalogue pipeline the next time it runs.
+        """
+        if encoding == "base64":
+            try:
+                raw = base64.b64decode(content, validate=True)
+            except binascii.Error:
+                msg = "`content` is not valid base64; send text with encoding='text'"
+                raise ValueError(msg) from None
+            fallback = DEFAULT_CONTENT_TYPE
+        else:
+            raw = content.encode()
+            fallback = "text/plain; charset=utf-8"
+        guessed = guess_content_type(key)
+        return FileRead.of(
+            await get_files().upload(
+                key,
+                raw,
+                content_type=fallback if guessed == DEFAULT_CONTENT_TYPE else guessed,
+                overwrite=overwrite,
+            )
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def delete_file(key: FilePath) -> str:
+        """Delete one file from the bucket.
+
+        There is no undo and no version history: the file is gone. Confirm with
+        the person you are working for before calling it.
+        """
+        await get_files().delete(key)
+        return f"file {key} was deleted"
 
     # --- Metamodel --------------------------------------------------------
 

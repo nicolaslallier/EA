@@ -16,6 +16,7 @@ from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
     document_service_of,
+    file_service_of,
     ipam_service_of,
 )
 from ea.api.diagrams import router as diagrams_router
@@ -298,7 +299,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     regenerating for it. And the sub-application's own lifespan is dropped,
     which is why its session manager is handed to `_lifespan` instead.
 
-    All three services are looked up per call, off `app.state`, for the same
+    All four services are looked up per call, off `app.state`, for the same
     reason: they are built by the lifespan and this runs while the app is still
     being assembled. A deployment with the relational store shut therefore serves the
     document tools and fails them one by one — the wiring fault the REST
@@ -333,6 +334,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: architecture_service_of(app),
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
+        lambda: file_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

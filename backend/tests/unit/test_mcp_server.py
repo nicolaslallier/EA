@@ -28,16 +28,24 @@ from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.services.architecture import ArchitectureService
+from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from tests.conftest import InMemoryObjectStore, a_reader
 
 
 @pytest.fixture
 def server(
-    service: ArchitectureService, document_service: DocumentService, ipam: IpamService
+    service: ArchitectureService,
+    document_service: DocumentService,
+    ipam: IpamService,
+    file_service: FileService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
-    return build_mcp_server(lambda: service, lambda: document_service, lambda: ipam)
+    return build_mcp_server(
+        lambda: service, lambda: document_service, lambda: ipam, lambda: file_service
+    )
 
 
 @pytest.fixture
@@ -45,10 +53,14 @@ def server_without_an_index(
     service: ArchitectureService,
     document_service_without_an_index: DocumentService,
     ipam: IpamService,
+    file_service: FileService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
-        lambda: service, lambda: document_service_without_an_index, lambda: ipam
+        lambda: service,
+        lambda: document_service_without_an_index,
+        lambda: ipam,
+        lambda: file_service,
     )
 
 
@@ -100,6 +112,10 @@ class TestTheToolset:
             "locate_ip_address",
             "list_ip_addresses",
             "release_ip_address",
+            "list_files",
+            "read_file",
+            "upload_file",
+            "delete_file",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -786,6 +802,82 @@ class TestTheIpAddressing:
             )
 
 
+@pytest.mark.asyncio
+class TestTheFileTools:
+    """The bucket of any-kind files, offered to an agent (docs/adr/0036).
+
+    Text arrives and leaves as text; anything else travels base64-encoded,
+    since MCP arguments and results are JSON. The rules that need more than
+    one call — no silent overwrite, no reading a binary as text — are
+    `FileService`'s, exactly as `TestDocuments` above proves for the markdown.
+    """
+
+    async def test_text_goes_in_as_text_and_comes_back(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        await call(server, "upload_file", key="inbox/notes.md", content="# Notes")
+
+        assert files_store.objects["inbox/notes.md"] == (b"# Notes", "text/markdown")
+        assert (await call(server, "read_file", key="inbox/notes.md"))["result"] == "# Notes"
+
+    async def test_a_binary_goes_in_as_base64(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        await call(server, "upload_file", key="a.png", content="iVBORw0K", encoding="base64")
+
+        assert files_store.objects["a.png"] == (b"\x89PNG\r\n", "image/png")
+
+    async def test_text_under_an_unknown_extension_is_plain_text(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        await call(server, "upload_file", key="notes.zzz-unknown", content="x")
+
+        assert files_store.objects["notes.zzz-unknown"][1] == "text/plain; charset=utf-8"
+
+    async def test_broken_base64_is_explained_not_crashed(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="base64"):
+            await call(server, "upload_file", key="a.png", content="not base64!", encoding="base64")
+
+    async def test_an_existing_file_is_not_replaced_unless_asked(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await call(server, "upload_file", key="a.md", content="one")
+
+        with pytest.raises(ToolError, match="overwrite"):
+            await call(server, "upload_file", key="a.md", content="two")
+
+        await call(server, "upload_file", key="a.md", content="two", overwrite=True)
+
+    async def test_a_binary_is_not_read_as_text(self, server: MCPServer[Any]) -> None:
+        await call(server, "upload_file", key="a.bin", content="//79", encoding="base64")
+
+        with pytest.raises(ToolError, match="UTF-8"):
+            await call(server, "read_file", key="a.bin")
+
+    async def test_a_folder_is_listed_one_level_deep(self, server: MCPServer[Any]) -> None:
+        await call(server, "upload_file", key="inbox/sub/b.md", content="b")
+
+        listing = await call(server, "list_files", prefix="inbox/")
+
+        assert listing["folders"] == ["inbox/sub/"]
+
+    async def test_delete_removes_and_is_announced_as_destructive(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        await call(server, "upload_file", key="a.md", content="x")
+
+        await call(server, "delete_file", key="a.md")
+
+        assert files_store.objects == {}
+        tool = next(t for t in await server.list_tools() if t.name == "delete_file")
+        assert tool.annotations is not None
+        assert tool.annotations.destructive_hint is True
+
+    async def test_a_reader_cannot_upload(self, server: MCPServer[Any]) -> None:
+        with acting_as(a_reader()), pytest.raises(ToolError):
+            await call(server, "upload_file", key="a.md", content="x")
+
+
 #: The JSON-schema keywords that *bound* a value. Descriptions are left out on
 #: purpose: the model reads a tool's, a developer reads an endpoint's, and they
 #: are allowed to say different things about the same field.
@@ -861,6 +953,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("neighbourhood", "depth", "/elements/{element_id}/neighbourhood", "depth"),
             ("impact_of", "depth", "/elements/{element_id}/impact", "depth"),
             ("list_ip_addresses", "search", "/ipam/addresses", "search"),
+            ("list_files", "prefix", "/files", "prefix"),
+            ("read_file", "key", "/files/content", "key"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
