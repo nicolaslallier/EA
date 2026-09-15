@@ -30,6 +30,7 @@ import pytest_asyncio
 import urllib3
 from alembic import command
 from alembic.config import Config
+from minio import Minio
 from minio.error import S3Error
 from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
@@ -168,9 +169,20 @@ class DocumentsOnStoredElements(PostgresDocumentRepository):
         return await super().add(document, chunks)
 
 
+def _empty_bucket(client: Minio, bucket: str) -> None:
+    """Remove every object of `bucket`, run before and after a test uses it.
+
+    A killed run leaves objects behind that a later test's exact-equality
+    asserts would then see — emptying only at teardown was not enough.
+    """
+    for found in client.list_objects(bucket, recursive=True):
+        if found.object_name is not None:
+            client.remove_object(bucket, found.object_name)
+
+
 @pytest_asyncio.fixture
 async def minio_store() -> AsyncIterator[MinioObjectStore]:
-    """The bucket of the throwaway MinIO, emptied afterwards — or a skip.
+    """The bucket of the throwaway MinIO, emptied before and after — or a skip.
 
     Same rule as `postgres_engine`: the endpoint is checked before anything
     connects, because the settings default to the Infra's MinIO, where the
@@ -188,13 +200,9 @@ async def minio_store() -> AsyncIterator[MinioObjectStore]:
     try:
         if not await asyncio.to_thread(client.bucket_exists, bucket):
             await asyncio.to_thread(client.make_bucket, bucket)
+        await asyncio.to_thread(_empty_bucket, client, bucket)
     except (S3Error, urllib3.exceptions.HTTPError) as error:
         pytest.skip(f"the throwaway MinIO at {settings.s3_endpoint} does not answer: {error}")
     yield MinioObjectStore(client, bucket)
 
-    def empty() -> None:
-        for found in client.list_objects(bucket, recursive=True):
-            if found.object_name is not None:
-                client.remove_object(bucket, found.object_name)
-
-    await asyncio.to_thread(empty)
+    await asyncio.to_thread(_empty_bucket, client, bucket)

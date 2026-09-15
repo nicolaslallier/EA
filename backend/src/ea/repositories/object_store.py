@@ -51,6 +51,12 @@ def minio_client(settings: Settings) -> Minio:
         secret_key=settings.s3_secret_key.get_secret_value(),
         secure=settings.s3_secure,
         http_client=http_client,
+        # The Infra MinIO sets no `MINIO_REGION`, and without one minio-py
+        # issues a `GetBucketLocation` call before the first bucket call —
+        # including the boot `probe()` — which the documented policy (ADR
+        # 0036) does not grant, so boot would fail with `AccessDenied`. Fixing
+        # it also saves that round trip on every call.
+        region="us-east-1",
     )
 
 
@@ -75,6 +81,10 @@ class MinioObjectStore:
             if len(folders) + len(files) == limit:
                 return FileListing(prefix, tuple(folders), tuple(files), truncated=True)
             name = found.object_name or ""
+            if name == prefix:
+                # The folder marker itself, e.g. `inbox/` written as an object
+                # by `mc`/the MinIO console — not a nameless sub-folder.
+                continue
             if found.is_dir:
                 folders.append(name)
             else:

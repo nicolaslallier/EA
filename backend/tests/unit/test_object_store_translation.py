@@ -140,6 +140,22 @@ async def test_is_dir_entries_become_folders_and_the_rest_become_files() -> None
 
 
 @pytest.mark.asyncio
+async def test_an_entry_equal_to_the_prefix_is_not_a_nameless_folder() -> None:
+    """`mc`/the MinIO console can write the folder marker itself as an object
+    whose key is the prefix (`inbox/`) — that must not surface as a folder with
+    no name (Minor 8 of the final review)."""
+    store, client = _store()
+    client.listing = [
+        MinioObject("ea-test", "inbox/"),
+        MinioObject("ea-test", "inbox/sub/"),
+    ]
+
+    listing = await store.list_folder("inbox/", limit=1000)
+
+    assert listing.folders == ("inbox/sub/",)
+
+
+@pytest.mark.asyncio
 async def test_a_listing_beyond_the_limit_is_marked_truncated() -> None:
     store, client = _store()
     client.listing = [
@@ -227,6 +243,20 @@ def test_minio_client_builds_without_a_ca_cert() -> None:
     settings = Settings(debug=True, s3_enabled=True, s3_access_key="ea-api", s3_secret_key="secret")
 
     assert minio_client(settings) is not None
+
+
+def test_minio_client_is_built_with_a_fixed_region() -> None:
+    """Without a region, minio-py issues `GetBucketLocation` before the first
+    bucket call — including the boot `probe()` — and the Infra MinIO's policy
+    (Important 2 of the final review) does not grant it, so boot would fail
+    with `AccessDenied`. `region` is a private attribute of `Minio`'s
+    `_base_url` (see `minio.api.Minio._get_region`); there is no public one to
+    assert on instead."""
+    settings = Settings(debug=True, s3_enabled=True, s3_access_key="ea-api", s3_secret_key="secret")
+
+    client = minio_client(settings)
+
+    assert client._base_url.region == "us-east-1"
 
 
 def test_minio_client_trusts_the_ca_cert_when_there_is_one() -> None:
