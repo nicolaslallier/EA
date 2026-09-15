@@ -9,6 +9,7 @@ tries it. The HTTP side is covered in `tests/e2e/test_mcp_endpoint.py`.
 
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any
 from uuid import uuid4
@@ -876,6 +877,42 @@ class TestTheFileTools:
     async def test_a_reader_cannot_upload(self, server: MCPServer[Any]) -> None:
         with acting_as(a_reader()), pytest.raises(ToolError):
             await call(server, "upload_file", key="a.md", content="x")
+
+    async def test_a_decoded_payload_over_the_mcp_ceiling_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        """The SDK's request body and the deployed NGINX both cap far under 50 MB
+        (Important 1 of the final review): the tool states its own, real limit
+        rather than promise one the transport cannot carry."""
+        from ea.mcp.server import MAX_MCP_UPLOAD_BYTES
+
+        content = base64.b64encode(b"x" * (MAX_MCP_UPLOAD_BYTES + 1)).decode()
+
+        with pytest.raises(ToolError, match="web interface"):
+            await call(server, "upload_file", key="big.bin", content=content, encoding="base64")
+
+    async def test_exactly_the_mcp_ceiling_is_accepted(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        from ea.mcp.server import MAX_MCP_UPLOAD_BYTES
+
+        content = base64.b64encode(b"x" * MAX_MCP_UPLOAD_BYTES).decode()
+
+        await call(server, "upload_file", key="max.bin", content=content, encoding="base64")
+
+        assert len(files_store.objects["max.bin"][0]) == MAX_MCP_UPLOAD_BYTES
+
+    async def test_line_wrapped_base64_round_trips(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        """What the `base64` CLI emits: wrapped every 76 characters."""
+        raw = b"A" * 200
+        encoded = base64.b64encode(raw).decode()
+        wrapped = "\n".join(encoded[index : index + 76] for index in range(0, len(encoded), 76))
+
+        await call(server, "upload_file", key="wrapped.bin", content=wrapped, encoding="base64")
+
+        assert files_store.objects["wrapped.bin"][0] == raw
 
 
 #: The JSON-schema keywords that *bound* a value. Descriptions are left out on

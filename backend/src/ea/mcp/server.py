@@ -77,7 +77,7 @@ from ea.domain.archimate import (
     permitted_relationships as permitted_between,
 )
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
-from ea.domain.files import DEFAULT_CONTENT_TYPE, MAX_FILE_BYTES, guess_content_type
+from ea.domain.files import DEFAULT_CONTENT_TYPE, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
@@ -90,6 +90,15 @@ from ea.services.ipam import IpamService
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
 MCP_PATH: Final = "/mcp"
+
+#: `upload_file`'s real ceiling, not the domain's 50 MB. The SDK's own request
+#: body defaults to 4 MiB, and the deployed Infra NGINX caps `location =
+#: /api/mcp` at `client_max_body_size 2m` (see CLAUDE.md) — a peer neither of
+#: them names, since both are set once, upstream of this module. Base64
+#: inflates the payload by a third and JSON-RPC adds its own envelope on top,
+#: so 1 MiB decoded is what actually clears both ceilings; a bigger file goes
+#: through the web interface instead, which carries the domain's real 50 MB.
+MAX_MCP_UPLOAD_BYTES: Final = 1024 * 1024
 
 #: Told to the client once, at initialisation. It is the only place an agent
 #: learns the two rules that would otherwise cost it a failed call each: that
@@ -139,10 +148,12 @@ answers on an address **and what that element is wired to**, in one call.
 
 The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
 bucket organised in folders. `list_files` browses a folder, `read_file` reads a
-text file, `upload_file` stores one (base64 for anything that is not text) and
-`delete_file` removes one. A file put under `inbox/` is read by the pipeline
-that turns source documents into ArchiMate elements, so a source to be
-modelled goes there.\
+text file, `upload_file` stores one (base64 for anything that is not text, at
+most 1 MB once decoded — a bigger file is uploaded from the web interface
+instead) and `delete_file` removes one. A file put under `inbox/` is read by
+the pipeline that turns source documents into ArchiMate elements, and that
+pipeline only reads text: a source to be modelled there must be markdown or
+plain text. Any file type is fine in every other folder.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -224,12 +235,13 @@ FilePath = Annotated[
 Folder = Annotated[
     FilePrefix, Field(description="A folder of the bucket, e.g. `inbox/`. Empty for the top.")
 ]
-#: Base64 carries three bytes in four characters; the domain still decides on
-#: the decoded size, this only stops a runaway argument.
+#: Base64 carries three bytes in four characters; `upload_file` still decides
+#: on the decoded size against `MAX_MCP_UPLOAD_BYTES`, this only stops a
+#: runaway argument before it is built into a request.
 FileContent = Annotated[
     str,
     Field(
-        max_length=MAX_FILE_BYTES * 4 // 3 + 4,
+        max_length=MAX_MCP_UPLOAD_BYTES * 4 // 3 + 4,
         description="The file itself: plain text, or base64 when `encoding` is `base64`.",
     ),
 ]
@@ -780,16 +792,20 @@ def build_mcp_server(
         """Store a file in the bucket at `key`.
 
         Text goes as it is (`encoding="text"`). Anything else — a PDF, an image,
-        a spreadsheet — goes base64-encoded with `encoding="base64"`. Either way
-        the file is at most 50 MB once decoded.
+        a spreadsheet — goes base64-encoded with `encoding="base64"` (plain or
+        line-wrapped, both are accepted). Either way the file is at most 1 MB
+        once decoded; a larger file is uploaded from the web interface, which
+        takes up to 50 MB.
 
         A file already at `key` is refused unless `overwrite` is true, and then
         its previous content is gone. A file under `inbox/` is read by the
-        catalogue pipeline the next time it runs.
+        catalogue pipeline the next time it runs, and that pipeline only reads
+        text — markdown or plain text — so a source meant for it must be one;
+        any file type is fine elsewhere.
         """
         if encoding == "base64":
             try:
-                raw = base64.b64decode(content, validate=True)
+                raw = base64.b64decode("".join(content.split()), validate=True)
             except binascii.Error:
                 msg = "`content` is not valid base64; send text with encoding='text'"
                 raise ValueError(msg) from None
@@ -797,6 +813,12 @@ def build_mcp_server(
         else:
             raw = content.encode()
             fallback = "text/plain; charset=utf-8"
+        if len(raw) > MAX_MCP_UPLOAD_BYTES:
+            msg = (
+                f"a file is at most {MAX_MCP_UPLOAD_BYTES} bytes once decoded over MCP; "
+                "upload a larger file from the web interface instead"
+            )
+            raise ValueError(msg)
         guessed = guess_content_type(key)
         return FileRead.of(
             await get_files().upload(
