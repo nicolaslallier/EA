@@ -103,7 +103,7 @@ jobs:
       - run: make pipelines-install pipelines-lint-check pipelines-typecheck pipelines-test
 
   integration:
-    name: Intégration — PostgreSQL jetable
+    name: Intégration — PostgreSQL et MinIO jetables
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     # La même image que la stack Infra : un test qui passe ici doit passer
@@ -132,6 +132,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: make install-be
+      - name: MinIO jetable
+        run: docker compose up -d --wait minio
       - name: pytest tests/integration
         working-directory: backend
         env:
@@ -143,4 +145,9 @@ jobs:
           # Aucun service d'embeddings ici, et la suite n'en dépend pas : le
           # démarrage de l'application irait sinon interroger LM Studio.
           EA_EMBEDDINGS_ENABLED: "false"
+          EA_S3_ENDPOINT: 127.0.0.1:9100
+          EA_S3_SECURE: "false"
+          EA_S3_ACCESS_KEY: ea-test
+          EA_S3_SECRET_KEY: developmentonly
+          EA_S3_BUCKET: ea-test
         run: uv run pytest tests/integration -q

@@ -21,6 +21,7 @@ from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from tests.conftest import a_reader
 
@@ -34,6 +35,7 @@ WRITES = {
     },
     DiagramService: {"create", "update", "delete", "replace_layout"},
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
+    FileService: {"upload", "delete"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},
 }
 

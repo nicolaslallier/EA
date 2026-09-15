@@ -16,11 +16,13 @@ from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
     document_service_of,
+    file_service_of,
     ipam_service_of,
 )
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import register_error_handlers
+from ea.api.files import router as files_router
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
 from ea.api.me import router as me_router
@@ -37,6 +39,7 @@ from ea.domain.ports import (
     DiagramRepository,
     DocumentRepository,
     IpamRepository,
+    ObjectStore,
 )
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
@@ -47,9 +50,11 @@ from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
 from ea.repositories.keycloak import JwtVerifier, http_client_for
+from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 
@@ -83,6 +88,11 @@ def build_verifier(settings: Settings) -> JwtVerifier:
         audience=settings.auth_audience,
         http=http_client_for(settings.auth_ca_cert, settings.auth_timeout_seconds),
     )
+
+
+def build_object_store(settings: Settings) -> MinioObjectStore:
+    """The bucket of `s3_bucket` on `s3_endpoint` — see docs/adr/0036."""
+    return MinioObjectStore(minio_client(settings), settings.s3_bucket)
 
 
 def _lifespan(
@@ -134,6 +144,7 @@ def _lifespan(
                     "mcp": settings.mcp_enabled,
                     "auth": settings.auth_enabled,
                     "log_level": settings.log_level,
+                    "s3": settings.s3_enabled,
                 },
             )
             if settings.auth_enabled and getattr(app.state, "token_verifier", None) is None:
@@ -201,6 +212,21 @@ def _lifespan(
                 app.state.diagram_service = DiagramService(
                     diagram_store, architecture_service_of(app)
                 )
+            # Files live in MinIO, beside every other store (docs/adr/0036). The
+            # service is attached either way, so a deployment without it answers
+            # 503 on every file route and tool instead of 500.
+            if getattr(app.state, "file_service", None) is None:
+                store: ObjectStore | None = None
+                if settings.s3_enabled:
+                    minio = build_object_store(settings)
+                    await minio.probe()
+                    store = minio
+                    logger.info(
+                        "file storage ready: bucket %s at %s",
+                        settings.s3_bucket,
+                        settings.s3_endpoint,
+                    )
+                app.state.file_service = FileService(store)
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
@@ -273,7 +299,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
     regenerating for it. And the sub-application's own lifespan is dropped,
     which is why its session manager is handed to `_lifespan` instead.
 
-    All three services are looked up per call, off `app.state`, for the same
+    All four services are looked up per call, off `app.state`, for the same
     reason: they are built by the lifespan and this runs while the app is still
     being assembled. A deployment with the relational store shut therefore serves the
     document tools and fails them one by one — the wiring fault the REST
@@ -308,6 +334,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: architecture_service_of(app),
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
+        lambda: file_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -346,6 +373,7 @@ def create_app(
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
     diagrams: DiagramRepository | None = None,
+    files: ObjectStore | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -363,6 +391,7 @@ def create_app(
     builds and probes the real client when `embeddings_enabled` says so.
 
     `diagrams` does the same for the saved diagrams (docs/adr/0031).
+    `files` does the same for the bucket (docs/adr/0036).
     `verifier` does the same for authentication: given one — `StaticVerifier`
     in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
     without reaching Keycloak; given none, the lifespan builds and probes the
@@ -403,6 +432,8 @@ def create_app(
             app.state.ipam_service = IpamService(architecture_service, ipam)
         if diagrams is not None:
             app.state.diagram_service = DiagramService(diagrams, architecture_service)
+    if files is not None:
+        app.state.file_service = FileService(files)
 
     app.add_middleware(
         CORSMiddleware,
@@ -425,6 +456,7 @@ def create_app(
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)

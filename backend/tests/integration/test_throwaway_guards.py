@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.integration.throwaway import is_loopback, refuse_a_shared_postgres
+from tests.integration.throwaway import is_loopback, refuse_a_shared_minio, refuse_a_shared_postgres
 
 HERE = Path(__file__).parent
 
@@ -92,3 +92,22 @@ def test_the_alembic_config_fixture_stands_behind_the_guarded_engine() -> None:
     ]
 
     assert "postgres_engine" in [argument.arg for argument in fixture.args.args]
+
+
+class TestTheMinioGuard:
+    @pytest.mark.parametrize("endpoint", ["127.0.0.1:9100", "localhost:9100", "[::1]:9100"])
+    def test_the_throwaway_one_is_accepted(self, endpoint: str) -> None:
+        assert refuse_a_shared_minio(endpoint) is None
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "minio.famillelallier.net",
+            "minio:9000",
+            "127.0.0.1:9000",
+            "127.0.0.1",
+            "192.168.2.10:9100",
+        ],
+    )
+    def test_anything_else_may_be_a_bucket_somebody_uses(self, endpoint: str) -> None:
+        assert "9100" in (refuse_a_shared_minio(endpoint) or "")

@@ -8,7 +8,7 @@ import math
 import os
 import re
 import socket
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -27,7 +27,9 @@ from ea.domain.errors import (
     DuplicateDocumentError,
     ElementNotFoundError,
     NotAuthenticatedError,
+    StoredFileNotFoundError,
 )
+from ea.domain.files import FileListing, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
@@ -41,6 +43,7 @@ from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 
@@ -556,6 +559,56 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return product / norms if norms else 0.0
 
 
+class InMemoryObjectStore:
+    """The `ObjectStore` port over a dict — folders computed from keys, like S3."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, tuple[bytes, str]] = {}
+
+    def _stored(self, key: str) -> StoredFile:
+        data, content_type = self.objects[key]
+        return StoredFile(
+            key=key, size=len(data), last_modified=FIXED_NOW, content_type=content_type
+        )
+
+    async def list_folder(self, prefix: str, *, limit: int) -> FileListing:
+        folders: dict[str, None] = {}
+        files: list[StoredFile] = []
+        for key in sorted(self.objects):
+            if not key.startswith(prefix):
+                continue
+            rest = key[len(prefix) :]
+            if "/" in rest:
+                folders[f"{prefix}{rest.split('/', 1)[0]}/"] = None
+            else:
+                files.append(self._stored(key))
+        kept_folders = tuple(folders)[:limit]
+        kept_files = tuple(files)[: limit - len(kept_folders)]
+        truncated = len(folders) + len(files) > limit
+        return FileListing(prefix, kept_folders, kept_files, truncated)
+
+    async def stat(self, key: str) -> StoredFile | None:
+        return self._stored(key) if key in self.objects else None
+
+    async def put(self, key: str, data: bytes, *, content_type: str) -> StoredFile:
+        self.objects[key] = (data, content_type)
+        return self._stored(key)
+
+    async def open(self, key: str) -> tuple[StoredFile, AsyncIterator[bytes]]:
+        if key not in self.objects:
+            msg = f"no file at {key!r}"
+            raise StoredFileNotFoundError(msg)
+        data = self.objects[key][0]
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield data
+
+        return self._stored(key), chunks()
+
+    async def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
+
 class FakeEmbedder:
     """An embedding service that never leaves the process.
 
@@ -669,3 +722,13 @@ def document_service_without_an_index(
 ) -> DocumentService:
     """The deployment with `EA_EMBEDDINGS_ENABLED` off: it stores, it cannot find."""
     return DocumentService(documents, service, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def files_store() -> InMemoryObjectStore:
+    return InMemoryObjectStore()
+
+
+@pytest.fixture
+def file_service(files_store: InMemoryObjectStore) -> FileService:
+    return FileService(files_store)

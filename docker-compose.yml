@@ -1,18 +1,22 @@
-# Base jetable, pour les tests — et pour rien d'autre.
+# Deux stores jetables, pour les tests — et pour rien d'autre.
 #
-# La base du projet ne tourne pas ici : le PostgreSQL applicatif, qui porte le
-# graphe depuis docs/adr/0033, vit dans la stack Infra, sur 127.0.0.1:5432
-# (docs/adr/0029). Personne ne modélise contre ce fichier.
+# Ni l'un ni l'autre ne tourne ici pour de vrai : le PostgreSQL applicatif, qui
+# porte le graphe depuis docs/adr/0033, vit dans la stack Infra, sur
+# 127.0.0.1:5432 (docs/adr/0029) ; le MinIO applicatif est sur
+# minio.famillelallier.net (docs/adr/0036). Personne ne modélise contre ce
+# fichier.
 #
-# Ce conteneur existe pour une seule raison : les tests d'intégration
-# appliquent puis annulent la chaîne de migrations (`alembic downgrade base`) —
-# ce qu'on ne fait pas sur une base que d'autres utilisent. Voir docs/adr/0024.
+# Ces conteneurs existent pour une seule raison : les tests d'intégration
+# écrivent puis vident ce qu'ils y déposent — le PostgreSQL en annulant la
+# chaîne de migrations (`alembic downgrade base`), le MinIO en vidant son
+# bucket — ce qu'on ne fait pas sur un store que d'autres utilisent. Voir
+# docs/adr/0024.
 #
-# `make test-integration` le démarre et pointe dessus. `make pg-ping`,
+# `make test-integration` les démarre et pointe dessus. `make pg-ping`,
 # `pg-shell` et `pg-migrate` visent l'instance partagée, pas ce conteneur.
 #
-# Il ne publie que sur 127.0.0.1, et sur un autre port que 5432 : les fixtures
-# refusent toute adresse qui n'est pas locale, et le port de la base partagée.
+# Ils ne publient que sur 127.0.0.1, et sur un autre port que celui du store
+# partagé : les fixtures refusent toute autre adresse.
 
 services:
   postgres:
@@ -38,5 +42,27 @@ services:
       timeout: 5s
       retries: 20
 
+  minio:
+    # L'image de la stack Infra (~/OpenCode/Infra/docker-compose.yml) : un test
+    # qui passe ici parle le même S3 que la production. MinIO ne publie plus
+    # d'images, d'où quay.io et une release figée.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: ea-minio
+    command: ["server", "/data"]
+    # 9100 : les fixtures refusent tout autre MinIO (tests/integration/throwaway.py).
+    ports:
+      - "127.0.0.1:${MINIO_TEST_PORT:-9100}:9000"
+    environment:
+      MINIO_ROOT_USER: ea-test
+      MINIO_ROOT_PASSWORD: "${MINIO_TEST_PASSWORD:-developmentonly}"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres-data:
+  minio-data:

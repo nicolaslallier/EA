@@ -185,6 +185,19 @@ class Settings(BaseSettings):
     #: published resource no longer matches the URL Claude Code was given.
     mcp_resource_url: str = "http://127.0.0.1:8000/mcp"
 
+    # --- Files, in the Infra's MinIO — see docs/adr/0036 --------------------
+    # Off by default: a machine without the keys still boots, and the file
+    # endpoints answer 503 instead of the whole API refusing to start.
+    s3_enabled: bool = False
+    s3_endpoint: str = "minio.famillelallier.net"
+    s3_secure: bool = True
+    s3_access_key: SecretStr = SecretStr("")
+    s3_secret_key: SecretStr = SecretStr("")
+    #: The bucket `pipelines/` reads: a file put under `inbox/` feeds it.
+    s3_bucket: str = "ea-catalogue"
+    #: The Infra CA, when the endpoint is reached through the Infra NGINX.
+    s3_ca_cert: str | None = None
+
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
@@ -245,6 +258,16 @@ class Settings(BaseSettings):
         """Turning auth off hands every write to whoever reaches the port."""
         if not self.auth_enabled and not self.debug:
             msg = "auth_enabled may only be false when debug is on"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _require_s3_keys_when_the_store_is_used(self) -> "Settings":
+        """Anonymous access to a bucket is never what is meant."""
+        if self.s3_enabled and not (
+            self.s3_access_key.get_secret_value() and self.s3_secret_key.get_secret_value()
+        ):
+            msg = "EA_S3_ACCESS_KEY and EA_S3_SECRET_KEY are required while EA_S3_ENABLED is on"
             raise ValueError(msg)
         return self
 

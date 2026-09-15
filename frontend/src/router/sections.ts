@@ -30,6 +30,7 @@ export type Section = {
 export const GROUPS: readonly SectionGroup[] = [
   { id: 'model', label: 'Modèle' },
   { id: 'analysis', label: 'Analyse' },
+  { id: 'storage', label: 'Stockage' },
 ]
 
 export const SECTIONS: readonly Section[] = [
@@ -88,6 +89,14 @@ export const SECTIONS: readonly Section[] = [
     summary: "Ce qui dépend d'un élément, de proche en proche.",
     group: 'analysis',
     view: () => import('../features/impact/ImpactSection.vue'),
+  },
+  {
+    path: '/fichiers',
+    name: 'files',
+    label: 'Fichiers',
+    summary: 'Déposer, parcourir, télécharger et supprimer des fichiers dans MinIO.',
+    group: 'storage',
+    view: () => import('../features/files/FilesSection.vue'),
   },
 ]
 

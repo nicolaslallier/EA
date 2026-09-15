@@ -163,11 +163,18 @@ endif
 POSTGRES_TEST_PASSWORD ?= developmentonly
 POSTGRES_TEST_PORT     ?= 5433
 
+# Même logique pour le MinIO jetable : 9100, pas le nom de l'instance
+# partagée — les fixtures refusent tout le reste (tests/integration/throwaway.py).
+MINIO_TEST_PORT     ?= 9100
+MINIO_TEST_PASSWORD ?= developmentonly
+
 # docker compose lit ports et mots de passe dans son environnement : on les lui
-# passe explicitement, depuis les mêmes variables que les tests, pour que le
-# conteneur et la suite ne puissent pas viser deux ports différents.
+# passe explicitement, depuis les mêmes variables que les tests, pour que les
+# conteneurs et la suite ne puissent pas viser des ports différents.
 COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 	POSTGRES_TEST_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
+	MINIO_TEST_PORT=$(MINIO_TEST_PORT) \
+	MINIO_TEST_PASSWORD='$(MINIO_TEST_PASSWORD)' \
 	docker compose
 
 # Service d'embeddings : LM Studio sur le cluster,
@@ -426,6 +433,9 @@ graph-import: | $(VENV_STAMP) ## Importe une fois le graphe Neo4j dans PostgreSQ
 pg-up: ## Démarre le PostgreSQL jetable local (pour les tests)
 	$(COMPOSE_TEST) up -d --wait postgres
 
+minio-up: ## Démarre le MinIO jetable local (pour les tests)
+	$(COMPOSE_TEST) up -d --wait minio
+
 pg-down: ## Arrête le PostgreSQL jetable local (garde son volume)
 	docker compose down
 
@@ -504,17 +514,21 @@ test-unit: | $(VENV_STAMP) ## Boucle rapide : uniquement les tests unitaires
 test-fe: | $(FRONTEND)/node_modules ## Tests Vitest du frontend (une passe, sans watch)
 	cd $(FRONTEND) && npm test -- --run
 
-# Contre le conteneur jetable, jamais contre la base partagée : ces tests
-# annulent la chaîne de migrations, graphe compris. Les fixtures refusent de
-# toute façon un hôte qui n'est pas local et le port 5432 (docs/adr/0024).
-# Les embeddings sont coupés : le démarrage de l'application irait sinon
-# interroger LM Studio sur le cluster, et la suite n'en dépend pas.
-test-integration: | $(VENV_STAMP) ## Tests d'intégration contre le PostgreSQL jetable local (le démarre au besoin)
-	$(COMPOSE_TEST) up -d --wait postgres
+# Contre les conteneurs jetables, jamais contre les stores partagés : ces
+# tests annulent la chaîne de migrations, graphe compris, et vident un bucket.
+# Les fixtures refusent de toute façon un hôte qui n'est pas local et le port
+# du store partagé (docs/adr/0024). Les embeddings sont coupés : le démarrage
+# de l'application irait sinon interroger LM Studio sur le cluster, et la
+# suite n'en dépend pas. EA_S3_ENABLED n'est volontairement pas mis : le boot
+# de l'application doit rester possible sans bucket (test_application_boot).
+test-integration: | $(VENV_STAMP) ## Tests d'intégration contre PostgreSQL et MinIO jetables locaux (les démarre au besoin)
+	$(COMPOSE_TEST) up -d --wait postgres minio
 	cd $(BACKEND) && EA_DEBUG=true EA_POSTGRES_ENABLED=true \
 		EA_POSTGRES_HOST=127.0.0.1 EA_POSTGRES_PORT=$(POSTGRES_TEST_PORT) \
 		EA_POSTGRES_PASSWORD='$(POSTGRES_TEST_PASSWORD)' \
 		EA_EMBEDDINGS_ENABLED=false \
+		EA_S3_ENDPOINT=127.0.0.1:$(MINIO_TEST_PORT) EA_S3_SECURE=false \
+		EA_S3_ACCESS_KEY=ea-test EA_S3_SECRET_KEY='$(MINIO_TEST_PASSWORD)' EA_S3_BUCKET=ea-test \
 		uv run pytest tests/integration -q
 
 # Explicitement contre le conteneur jetable, jamais contre le cluster : ces

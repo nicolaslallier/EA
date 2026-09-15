@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.files import FileService
 from ea.services.ipam import IpamService
 
 
@@ -101,6 +102,27 @@ def get_ipam_service(request: Request) -> IpamService:
 
 
 Ipam = Annotated[IpamService, Depends(get_ipam_service)]
+
+
+def file_service_of(app: FastAPI) -> FileService:
+    """The file use cases the lifespan attached, or a clear failure.
+
+    Always attached once the app has started — with no store behind it when
+    `EA_S3_ENABLED` is off, in which case every use case answers 503. Absent
+    means the app was never started nor handed `files=`: a wiring fault.
+    """
+    service: FileService | None = getattr(app.state, "file_service", None)
+    if service is None:
+        msg = "no file service on the application — was it started, or given files=?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_file_service(request: Request) -> FileService:
+    return file_service_of(request.app)
+
+
+Files = Annotated[FileService, Depends(get_file_service)]
 
 
 def session_factory_of(app: FastAPI) -> async_sessionmaker[AsyncSession]:
