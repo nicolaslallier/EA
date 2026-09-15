@@ -10,6 +10,8 @@ type SubnetRead = components['schemas']['SubnetRead']
 type SubnetDetailRead = components['schemas']['SubnetDetailRead']
 type AddressRead = components['schemas']['AddressRead']
 type AddressLocationRead = components['schemas']['AddressLocationRead']
+type FileRead = components['schemas']['FileRead']
+type FileListingRead = components['schemas']['FileListingRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -295,4 +297,21 @@ export function anAddressLocation(
   relationships: RelationshipRead[] = [],
 ): AddressLocationRead {
   return { address, graph: { elements, relationships } }
+}
+
+/** One file of the bucket, as a listing or an upload describes it. */
+export function aStoredFile(overrides: Partial<FileRead> = {}): FileRead {
+  return {
+    key: 'inbox/notes.md',
+    name: 'notes.md',
+    size: 2048,
+    last_modified: '2026-09-15T12:00:00Z',
+    content_type: 'text/markdown',
+    ...overrides,
+  }
+}
+
+/** One folder of the bucket, as `GET /files` returns it. */
+export function aListing(overrides: Partial<FileListingRead> = {}): FileListingRead {
+  return { prefix: '', folders: [], files: [], truncated: false, ...overrides }
 }
