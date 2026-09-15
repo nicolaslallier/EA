@@ -163,7 +163,7 @@ class TestTheFiles:
         with caplog.at_level(logging.INFO):
             await file_service.upload("inbox/a.md", b"x")
 
-        assert only(caplog, "file_stored").file_key == "inbox/a.md"  # type: ignore[attr-defined]
+        assert only(caplog, "file_stored").key == "inbox/a.md"  # type: ignore[attr-defined]
 
     async def test_a_deleted_file_is_named_by_its_key(
         self, file_service: FileService, caplog: pytest.LogCaptureFixture
@@ -173,4 +173,4 @@ class TestTheFiles:
         with caplog.at_level(logging.INFO):
             await file_service.delete("inbox/a.md")
 
-        assert only(caplog, "file_deleted").file_key == "inbox/a.md"  # type: ignore[attr-defined]
+        assert only(caplog, "file_deleted").key == "inbox/a.md"  # type: ignore[attr-defined]

@@ -106,7 +106,7 @@ class FileService:
             "file %r stored (%d bytes)",
             stored.key,
             stored.size,
-            extra={"action": "file_stored", "file_key": stored.key},
+            extra={"action": "file_stored", "key": stored.key},
         )
         return stored
 
@@ -118,4 +118,4 @@ class FileService:
             msg = f"no file at {path!r}"
             raise StoredFileNotFoundError(msg)
         await store.delete(path)
-        logger.info("file %r deleted", path, extra={"action": "file_deleted", "file_key": path})
+        logger.info("file %r deleted", path, extra={"action": "file_deleted", "key": path})
