@@ -47,6 +47,18 @@ def _stack_service(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def api_environment() -> dict[str, str]:
+    """The `api` service's `environment:` block, one key to its raw value.
+
+    Surrounding quotes are stripped, like the inline `setting()` below; a
+    `${VAR:-default}` or `${VAR:?message}` expression has none to strip.
+    """
+    api = _stack_service("api")
+    return {
+        key: value.strip("\"'") for key, value in re.findall(r"^\s+(EA_\S+):\s*(.+)$", api, re.M)
+    }
+
+
 def _compose_declarations() -> str:
     """The compose file without its comments, which are expected to explain."""
     return "\n".join(
@@ -138,3 +150,19 @@ def test_the_spa_image_is_built_for_the_realm() -> None:
     assert args, web
     assert re.search(r"^\s+VITE_AUTH_AUTHORITY: \S", args.group(1), re.M), args.group(1)
     assert re.search(r"^\s+VITE_AUTH_CLIENT_ID: \S", args.group(1), re.M), args.group(1)
+
+
+def test_the_deployed_api_keeps_its_files_in_the_infra_minio_on_infra_net() -> None:
+    """Inside `infra-net` MinIO is the service `minio`, in plain HTTP like `postgres`.
+
+    `minio.famillelallier.net` has no alias there (only Keycloak's name does),
+    so the public name would not resolve from the container. See docs/adr/0036.
+    """
+    env = api_environment()
+
+    assert env["EA_S3_ENABLED"] == "true"
+    assert env["EA_S3_ENDPOINT"] == "${EA_S3_ENDPOINT:-minio:9000}"
+    assert env["EA_S3_SECURE"] == "false"
+    assert env["EA_S3_BUCKET"] == "${EA_S3_BUCKET:-ea-catalogue}"
+    assert env["EA_S3_ACCESS_KEY"].startswith("${EA_S3_ACCESS_KEY:?")
+    assert env["EA_S3_SECRET_KEY"].startswith("${EA_S3_SECRET_KEY:?")
