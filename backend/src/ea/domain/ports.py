@@ -6,7 +6,7 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
@@ -15,6 +15,7 @@ from uuid import UUID
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.files import FileListing, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
@@ -292,3 +293,22 @@ class AccessTokenVerifier(Protocol):
     async def verify(self, token: str) -> Caller:
         """The caller the token proves, or `NotAuthenticatedError`."""
         ...
+
+
+class ObjectStore(Protocol):
+    """Where files are kept — MinIO in a deployment, a dict in the unit tests.
+
+    `stat` answers `None` for a missing key rather than raising, because
+    "is something already there?" is a question, not a failure. `open`
+    raises `StoredFileNotFoundError`, because there it is one. See docs/adr/0036.
+    """
+
+    async def list_folder(self, prefix: str, *, limit: int) -> FileListing: ...
+
+    async def stat(self, key: str) -> StoredFile | None: ...
+
+    async def put(self, key: str, data: bytes, *, content_type: str) -> StoredFile: ...
+
+    async def open(self, key: str) -> tuple[StoredFile, AsyncIterator[bytes]]: ...
+
+    async def delete(self, key: str) -> None: ...

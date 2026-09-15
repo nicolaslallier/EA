@@ -27,13 +27,19 @@ from ea.domain.errors import (
     DuplicateElementError,
     DuplicateNetworkError,
     ElementNotFoundError,
+    FileNotTextError,
+    FileStorageUnavailableError,
+    FileTooLargeError,
     IllegalRelationshipError,
+    InvalidFileKeyError,
     NetworkExhaustedError,
     NotAddressableError,
     NotASubnetError,
     NotAuthenticatedError,
     NotAuthorisedError,
     SearchUnavailableError,
+    StoredFileExistsError,
+    StoredFileNotFoundError,
     UnknownLayoutElementError,
 )
 
@@ -73,6 +79,13 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "address_outside_any_network",
     ),
+    # --- Files in MinIO (docs/adr/0036) ---
+    StoredFileNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    StoredFileExistsError: (status.HTTP_409_CONFLICT, "duplicate"),
+    InvalidFileKeyError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_file_path"),
+    FileTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "file_too_large"),
+    FileNotTextError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_text"),
+    FileStorageUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "storage_unavailable"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

@@ -106,3 +106,35 @@ class NotAuthenticatedError(DomainError):
 
 class NotAuthorisedError(DomainError):
     """A known caller asking for something its roles do not allow. Mapped to 403."""
+
+
+class InvalidFileKeyError(DomainError):
+    """A file path S3 would accept but that could mean another file: `..`, `//`, a NUL.
+
+    Refused rather than normalised — a path quietly rewritten is a file stored
+    somewhere its author did not look for it. See docs/adr/0036.
+    """
+
+
+class FileTooLargeError(DomainError):
+    """A file beyond what the adapter may hold in memory, or read back as text."""
+
+
+class FileNotTextError(DomainError):
+    """A file asked for as text that is not UTF-8 — a PDF, an image."""
+
+
+class StoredFileNotFoundError(DomainError):
+    """No file at that path in the bucket."""
+
+
+class StoredFileExistsError(DomainError):
+    """A file is already stored at that path, and overwriting it was not asked for."""
+
+
+class FileStorageUnavailableError(DomainError):
+    """File storage was asked for on a deployment that has none (`EA_S3_ENABLED` off).
+
+    A configuration, not a bug — like `SearchUnavailableError` — so the caller is
+    told what is missing instead of receiving a 500.
+    """
