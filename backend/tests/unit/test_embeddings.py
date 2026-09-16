@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -165,6 +166,35 @@ class TestWhatItRefuses:
 
         with pytest.raises(EmbeddingServiceError, match="2"):
             await embedder(httpx.MockTransport(handle), batch_size=8).embed_passages(["a", "b"])
+
+    async def test_a_refusal_names_the_endpoint_that_refused(self) -> None:
+        """Which machine answered is the diagnosis; its prose is only a hint.
+
+        A deployment aimed at the wrong service answered 400 « No models
+        loaded [...] use the `lms load` command » — LM Studio, months after
+        docs/adr/0038 made Ollama the default. The status and that body were
+        in the log; the host was not, so the vendor had to be guessed from the
+        wording of its error. The unreachable branch next door has named the
+        URL all along.
+        """
+        _, transport = responder(status=400)
+
+        endpoint = re.escape("http://embeddings.invalid/v1/embeddings")
+        with pytest.raises(EmbeddingServiceError, match=endpoint):
+            await embedder(transport).embed_passages(["a"])
+
+    async def test_a_refusal_puts_the_endpoint_and_the_body_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _, transport = responder(status=400, body={"error": "No models loaded."})
+
+        with caplog.at_level(logging.ERROR), pytest.raises(EmbeddingServiceError):
+            await embedder(transport).embed_passages(["a"])
+
+        (line,) = [record for record in caplog.records if record.levelno == logging.ERROR]
+        assert line.url == "http://embeddings.invalid/v1/embeddings"
+        assert line.status == 400
+        assert "No models loaded." in line.body
 
     async def test_an_unreachable_service_is_reported_as_one(self) -> None:
         def handle(request: httpx.Request) -> httpx.Response:
