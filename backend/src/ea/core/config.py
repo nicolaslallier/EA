@@ -94,10 +94,11 @@ class Settings(BaseSettings):
     postgres_connection_timeout_seconds: float = 5.0
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
-    # LM Studio on the cluster, beside the graph, serving an
-    # OpenAI-compatible `/v1/embeddings`. The base URL is all that ties us to
-    # it: Ollama, text-embeddings-inference and the hosted providers answer the
-    # same shape, so changing supplier is this line and a model name.
+    # Ollama on the cluster, beside the graph, serving an OpenAI-compatible
+    # `/v1/embeddings` on 11435. The base URL is all that ties us to it: LM
+    # Studio, text-embeddings-inference and the hosted providers answer the
+    # same shape, so changing supplier is this line and a model name — which
+    # is exactly what docs/adr/0038 was.
     #
     # On by default, like the two stores, and for the same reason: a search
     # that silently returns nothing is worse than an API that refuses to start.
@@ -108,15 +109,17 @@ class Settings(BaseSettings):
     # the column, `EMBEDDING_DIMENSIONS`, and changing it is a migration plus a
     # full reindex, never an environment variable.
     embeddings_enabled: bool = True
-    embeddings_base_url: str = "http://192.168.2.10:1234/v1"
+    embeddings_base_url: str = "http://192.168.2.10:11435/v1"
 
-    #: Measured against the other model LM Studio holds, on French runbook
-    #: prose with its heading trail: 4 of 5 questions answered at rank 1,
-    #: against 2 of 5 for `nomic-embed-text-v1.5`. It is also 1024-wide, which
-    #: is what the column is.
-    embeddings_model: str = "text-embedding-mxbai-embed-large-v1"
+    #: The same model docs/adr/0019 measured — 4 of 5 questions answered at
+    #: rank 1 on French runbook prose with its heading trail, against 2 of 5
+    #: for `nomic-embed-text-v1.5` — under the name Ollama pulls it by. It is
+    #: 1024-wide, which is what the column is. This string is stored beside
+    #: every vector and filtered on at search time, so changing it is a full
+    #: `make docs-reindex` — see docs/adr/0038.
+    embeddings_model: str = "mxbai-embed-large"
 
-    #: Empty for a local LM Studio, which authenticates nothing. It is a
+    #: Empty for a self-hosted Ollama, which authenticates nothing. It is a
     #: `SecretStr` all the same so that pointing this at a hosted provider is a
     #: variable rather than a patch.
     embeddings_api_key: SecretStr = SecretStr("")

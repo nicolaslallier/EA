@@ -152,7 +152,7 @@ def test_remote_mcp_clients_can_be_let_in_from_the_environment(
 class TestTheEmbeddingService:
     """The settings behind the document search — see docs/adr/0019."""
 
-    def test_it_points_at_the_lm_studio_of_the_cluster_by_default(self) -> None:
+    def test_it_points_at_the_ollama_of_the_cluster_by_default(self) -> None:
         """The same machine as the graph, and the same reasoning.
 
         A developer who never writes a `.env` reaches the service that is
@@ -160,14 +160,13 @@ class TestTheEmbeddingService:
         """
         settings = Settings(debug=True)
 
-        assert settings.embeddings_base_url.startswith("http://192.168.2.10:")
-        assert settings.embeddings_base_url.endswith("/v1")
+        assert settings.embeddings_base_url == "http://192.168.2.10:11435/v1"
 
     def test_the_default_model_is_the_width_the_column_stores(self) -> None:
         """Otherwise boot refuses it, which is the intended behaviour but a poor default."""
         from ea.domain.search import EMBEDDING_DIMENSIONS
 
-        assert Settings(debug=True).embeddings_model == "text-embedding-mxbai-embed-large-v1"
+        assert Settings(debug=True).embeddings_model == "mxbai-embed-large"
         assert EMBEDDING_DIMENSIONS == 1024
 
     def test_there_is_no_setting_for_the_width_of_a_vector(self) -> None:
@@ -185,7 +184,7 @@ class TestTheEmbeddingService:
         assert settings.embeddings_passage_prefix == ""
         assert "searching relevant passages" in settings.embeddings_query_prefix
 
-    def test_the_api_key_is_a_secret_even_though_lm_studio_wants_none(self) -> None:
+    def test_the_api_key_is_a_secret_even_though_ollama_wants_none(self) -> None:
         """Pointing this at a hosted provider must stay a variable, not a patch."""
         settings = Settings(debug=True, embeddings_api_key="s3cret")
 

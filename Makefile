@@ -177,10 +177,10 @@ COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 	MINIO_TEST_PASSWORD='$(MINIO_TEST_PASSWORD)' \
 	docker compose
 
-# Service d'embeddings : LM Studio sur le cluster,
-# servant un /v1/embeddings compatible OpenAI. Voir docs/adr/0019.
-EMBEDDINGS_URL   ?= http://192.168.2.10:1234/v1
-EMBEDDINGS_MODEL ?= text-embedding-mxbai-embed-large-v1
+# Service d'embeddings : Ollama sur le cluster, servant un /v1/embeddings
+# compatible OpenAI sur 11435. Voir docs/adr/0019 et docs/adr/0038.
+EMBEDDINGS_URL   ?= http://192.168.2.10:11435/v1
+EMBEDDINGS_MODEL ?= mxbai-embed-large
 
 # Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
 OPENAPI_SCHEMA_NAME := openapi.json
@@ -456,12 +456,13 @@ compose-reset: ## Arrête les bases jetables et supprime le volume de PostgreSQL
 
 ## --- Embeddings -----------------------------------------------------------
 #
-# LM Studio tourne sur le cluster et sert un /v1/embeddings compatible OpenAI.
-# Rien ici ne le démarre : comme la base, c'est une instance partagée.
+# Ollama tourne sur le cluster et sert un /v1/embeddings compatible OpenAI.
+# Rien ici ne le démarre ni ne tire un modèle : comme la base, c'est une
+# instance partagée.
 # La largeur des vecteurs (1024) est celle de la colonne, pas un réglage — voir
 # docs/adr/0019.
 
-embed-models: ## Liste les modèles que LM Studio expose
+embed-models: ## Liste les modèles qu'Ollama expose
 	@curl -sf --max-time 10 $(EMBEDDINGS_URL)/models \
 		| python3 -c 'import json,sys; [print(m["id"]) for m in json.load(sys.stdin)["data"]]' \
 	|| { printf "$(RED)Aucune réponse de $(EMBEDDINGS_URL).$(NC)\n"; exit 1; }
@@ -472,7 +473,7 @@ embed-ping: ## Vérifie que le modèle d'embedding répond, et à quelle largeur
 		-H 'Content-Type: application/json' \
 		-d '{"model":"$(EMBEDDINGS_MODEL)","input":["ping"]}' \
 		| python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]), "dimensions")' \
-	|| { printf "$(RED)Pas de réponse. Le modèle est-il chargé dans LM Studio ?$(NC)\n"; exit 1; }
+	|| { printf "$(RED)Pas de réponse. Le modèle est-il tiré (ollama pull $(EMBEDDINGS_MODEL)) ?$(NC)\n"; exit 1; }
 
 docs-reindex: | $(VENV_STAMP) ## Reconstruit l'index sémantique de tous les documents
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
@@ -518,7 +519,7 @@ test-fe: | $(FRONTEND)/node_modules ## Tests Vitest du frontend (une passe, sans
 # tests annulent la chaîne de migrations, graphe compris, et vident un bucket.
 # Les fixtures refusent de toute façon un hôte qui n'est pas local et le port
 # du store partagé (docs/adr/0024). Les embeddings sont coupés : le démarrage
-# de l'application irait sinon interroger LM Studio sur le cluster, et la
+# de l'application irait sinon interroger l'Ollama du cluster, et la
 # suite n'en dépend pas. EA_S3_ENABLED n'est volontairement pas mis : le boot
 # de l'application doit rester possible sans bucket (test_application_boot).
 test-integration: | $(VENV_STAMP) ## Tests d'intégration contre PostgreSQL et MinIO jetables locaux (les démarre au besoin)
@@ -535,7 +536,7 @@ test-integration: | $(VENV_STAMP) ## Tests d'intégration contre PostgreSQL et M
 # tests appliquent puis annulent la chaîne de migrations. Le port est celui que
 # `COMPOSE_TEST` publie, pas une seconde valeur écrite en dur. Les embeddings
 # sont coupés comme pour `test-integration` : le démarrage de l'application
-# irait sinon interroger LM Studio, et aucun test ne sort de la machine.
+# irait sinon interroger Ollama, et aucun test ne sort de la machine.
 test-postgres: | $(VENV_STAMP) ## Tests contre le PostgreSQL jetable local (le démarre au besoin)
 	$(COMPOSE_TEST) up -d --wait postgres
 	cd $(BACKEND) && EA_DEBUG=true EA_POSTGRES_ENABLED=true \

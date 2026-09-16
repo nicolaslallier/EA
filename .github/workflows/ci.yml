@@ -143,7 +143,7 @@ jobs:
           EA_POSTGRES_PORT: "5433"
           EA_POSTGRES_PASSWORD: ci-disposable-password
           # Aucun service d'embeddings ici, et la suite n'en dépend pas : le
-          # démarrage de l'application irait sinon interroger LM Studio.
+          # démarrage de l'application irait sinon interroger Ollama.
           EA_EMBEDDINGS_ENABLED: "false"
           EA_S3_ENDPOINT: 127.0.0.1:9100
           EA_S3_SECURE: "false"
