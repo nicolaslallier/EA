@@ -54,44 +54,36 @@ LAN_IP ?= $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2
 # de la recette le lit donc lui-même, et l'exporte vers la commande — voir
 # POSTGRES_ENV, préfixe de recette.
 #
-# DOTENV_GET_PY lit une clé de backend/.env comme pydantic-settings la lit :
-# `export ` toléré, guillemets retirés, commentaire de fin de ligne ignoré hors
-# guillemets, dernière définition gagnante. Une variable d'environnement non
-# vide passe avant le fichier, comme pour l'application. Il n'y a volontairement
-# aucun `$` dans ce script : make le développerait.
-define DOTENV_GET_PY
-import os, re, sys
-path, names = sys.argv[1], sys.argv[2:]
-found = [os.environ[name] for name in names if os.environ.get(name)]
-value = found[0] if found else ""
-try:
-    lines = [] if found else open(path, encoding="utf-8").read().splitlines()
-except OSError:
-    lines = []
-for line in lines:
-    match = re.match(r"\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*)", line)
-    if not match or match.group(1) not in names:
-        continue
-    raw = match.group(2).strip()
-    quoted = re.match(r"""(['"])(.*?)\1\s*(?:#.*)?\Z""", raw)
-    if quoted and quoted.group(1) == "'":
-        value = quoted.group(2)
-    elif quoted:
-        value = quoted.group(2).replace('\\"', '"').replace("\\\\", "\\")
-    else:
-        value = re.split(r"\s+#", raw, maxsplit=1)[0]
-sys.stdout.write(value)
-endef
-export DOTENV_GET_PY
+# backend/scripts/dotenv_get.py lit une clé de backend/.env comme
+# pydantic-settings la lit, l'environnement d'abord. Il vit dans un fichier et
+# non dans un `define` recollé en `python3 -c` : make 4.3 n'exporte pas une
+# variable vers `$(shell ...)`, donc le script n'y arrivait pas et toute valeur
+# lue à l'analyse était vide — sans le dire.
+#
+# `dotenv` est cette lecture à l'analyse du Makefile, réservée à ce qui n'est
+# pas un secret. Si python3 manque, la valeur est vide et le défaut s'applique.
+dotenv = $(shell python3 $(BACKEND)/scripts/dotenv_get.py $(BE_ENV) $(1))
 
 # La base du projet : le graphe (docs/adr/0033), les documents, les
 # diagrammes. Une seule instance — mais pas sur le cluster : la base `ea` vit
 # dans la stack ~/OpenCode/Infra de ce Mac, derrière son NGINX. Voir
 # docs/adr/0015 et 0029.
-POSTGRES_HOST ?= 127.0.0.1
-POSTGRES_PORT ?= 5432
-POSTGRES_USER ?= ea
-POSTGRES_DB   ?= ea
+#
+# Ses coordonnées viennent de backend/.env, pas d'une constante ici. Elles
+# étaient écrites aux deux endroits, et rien ne les tenait ensemble : sur un
+# poste qui n'héberge pas la base, `make docs-reindex` annonçait « Cible :
+# 127.0.0.1/ea, la base PARTAGÉE » puis lançait un `ea.reindex` qui lisait
+# EA_POSTGRES_HOST et se connectait ailleurs. Une bannière rouge qui nomme la
+# base partagée n'a de valeur que si c'est celle que la commande va ouvrir —
+# et `pg-backup`, `pg-restore` et `pg-ping`, qui passent vraiment ces
+# coordonnées à psql, visaient la boucle locale quoi que dise la configuration.
+#
+# L'environnement l'emporte sur le fichier (dotenv_get.py le vérifie
+# lui-même), et `make pg-ping POSTGRES_HOST=...` l'emporte sur les deux.
+POSTGRES_HOST := $(or $(call dotenv,POSTGRES_HOST EA_POSTGRES_HOST),127.0.0.1)
+POSTGRES_PORT := $(or $(call dotenv,POSTGRES_PORT EA_POSTGRES_PORT),5432)
+POSTGRES_USER := $(or $(call dotenv,POSTGRES_USER EA_POSTGRES_USER),ea)
+POSTGRES_DB   := $(or $(call dotenv,POSTGRES_DB EA_POSTGRES_DATABASE),ea)
 # L'image porte pgvector : l'extension `vector` doit exister *dans l'image*,
 # pas seulement être activée dans la base — la migration 0003 fait
 # `CREATE EXTENSION vector`. Le conteneur jetable de docker-compose.yml part de
@@ -132,7 +124,7 @@ endif
 # la lit — POSTGRES_PASSWORD ou EA_POSTGRES_PASSWORD dans l'environnement,
 # sinon backend/.env — et l'exporte sous le nom que psql, pg_dump et
 # pg_restore lisent eux-mêmes.
-POSTGRES_ENV = export PGPASSWORD="$$(python3 -c "$$DOTENV_GET_PY" $(BE_ENV) POSTGRES_PASSWORD EA_POSTGRES_PASSWORD)";
+POSTGRES_ENV = export PGPASSWORD="$$(python3 $(BACKEND)/scripts/dotenv_get.py $(BE_ENV) POSTGRES_PASSWORD EA_POSTGRES_PASSWORD)";
 
 # Sauvegardes de la base partagée (docs/adr/0025). Même règle que psql : les
 # clients du Mac s'il y en a, sinon ceux de l'image. Un dump se restaure avec un
@@ -179,8 +171,10 @@ COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 
 # Service d'embeddings : Ollama sur le cluster, servant un /v1/embeddings
 # compatible OpenAI sur 11435. Voir docs/adr/0019 et docs/adr/0038.
-EMBEDDINGS_URL   ?= http://192.168.2.10:11435/v1
-EMBEDDINGS_MODEL ?= mxbai-embed-large
+# Même règle que la base : `embed-ping` doit interroger le service que
+# l'application interroge, sinon il répond pour un autre.
+EMBEDDINGS_URL   := $(or $(call dotenv,EMBEDDINGS_URL EA_EMBEDDINGS_BASE_URL),http://192.168.2.10:11435/v1)
+EMBEDDINGS_MODEL := $(or $(call dotenv,EMBEDDINGS_MODEL EA_EMBEDDINGS_MODEL),mxbai-embed-large)
 
 # Contrat front/back : le schéma est versionné, le client TypeScript en dérive.
 OPENAPI_SCHEMA_NAME := openapi.json
