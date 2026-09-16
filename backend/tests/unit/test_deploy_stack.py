@@ -20,7 +20,11 @@ when broken:
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -166,3 +170,38 @@ def test_the_deployed_api_keeps_its_files_in_the_infra_minio_on_infra_net() -> N
     assert env["EA_S3_BUCKET"] == "${EA_S3_BUCKET:-ea-catalogue}"
     assert env["EA_S3_ACCESS_KEY"].startswith("${EA_S3_ACCESS_KEY:?")
     assert env["EA_S3_SECRET_KEY"].startswith("${EA_S3_SECRET_KEY:?")
+
+
+def test_the_deployed_api_embeds_with_the_ollama_of_the_cluster() -> None:
+    """The stack's own default is Ollama on 192.168.2.10:11435 (docs/adr/0038).
+
+    A wrong default is what made `deploy/ea.env` — not versioned, one per
+    machine — the only place the real address was written, and then the only
+    place it could drift.
+    """
+    env = api_environment()
+
+    assert (
+        env["EA_EMBEDDINGS_BASE_URL"] == "${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11435/v1}"
+    )
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None, reason="bash ou jq absent"
+)
+def test_the_portainer_script_passes_its_own_selftest() -> None:
+    """`scripts/portainer-stack.sh selftest` reads no file of this machine.
+
+    It covers the two pure functions the deployment leans on: the env file it
+    turns into stack variables, and the overrides it names before deploying —
+    a default corrected in the repo is worth nothing while a line of
+    `deploy/ea.env` quietly covers it (docs/adr/0038).
+    """
+    done = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "portainer-stack.sh"), "selftest"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr or done.stdout

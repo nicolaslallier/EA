@@ -2,7 +2,7 @@
 titre: Ollama plutôt que LM Studio pour les embeddings
 date: 2026-09-16
 statut: Proposition
-affects: backend/src/ea/core/config.py, backend/.env.example, deploy/ea.stack.yml, deploy/ea.env.example, Makefile, .github/workflows/ci.yml, CLAUDE.md
+affects: backend/src/ea/core/config.py, backend/.env.example, deploy/ea.stack.yml, deploy/ea.env.example, scripts/portainer-stack.sh, Makefile, .github/workflows/ci.yml, CLAUDE.md
 ---
 
 # 38. Ollama plutôt que LM Studio pour les embeddings
@@ -75,6 +75,14 @@ ferait mentir la colonne sur ce qui a produit le vecteur.
   inutile : tant que le repo décrivait la mauvaise machine, chaque déploiement
   devait porter un `EA_EMBEDDINGS_BASE_URL` de plus, et c'est comme cela que
   celui du Mac a pu dériver sans que rien ne le contredise.
+- Une valeur par défaut juste ne suffit pourtant pas tant qu'une ligne de
+  `deploy/ea.env` la recouvre en silence : le déploiement suivant a continué de
+  sonder `192.168.2.35:1234` et d'y récolter un `400 No models loaded`, le repo
+  étant déjà corrigé. **`make app-up` nomme donc désormais, avant de partir,
+  chaque variable du fichier qui contredit un défaut de la stack**, avec la
+  valeur remplacée en regard (`overrides` dans `scripts/portainer-stack.sh`,
+  couverte par son `selftest`). Seules les `:-` y figurent : une `:?` n'a pas
+  de défaut à contredire, et ce sont les secrets.
 - `pipelines/` n'est pas concerné : son `LM_STUDIO_API_BASE` sert l'alias de
   *chat* `fast` de `litellm.yaml`, pas les embeddings. Si ce modèle-là a bougé
   lui aussi, c'est une autre décision, dans `docs/adr/0028`.
