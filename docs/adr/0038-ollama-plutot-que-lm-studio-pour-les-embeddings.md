@@ -66,7 +66,13 @@ ferait mentir la colonne sur ce qui a produit le vecteur.
 ## Conséquences
 
 - `make embed-ping` et `make embed-models` interrogent Ollama ; leur message
-  d'échec parle de `ollama pull`, pas d'un modèle chargé dans une fenêtre.
+  d'échec parle de `ollama pull`, pas d'un modèle chargé dans une fenêtre. Il
+  **nomme aussi `backend/.env`**, pour la même raison que `deploy/ea.env`
+  ci-dessous : ce fichier gagne sur le défaut du `Makefile`, donc un poste qui
+  y garde l'ancienne adresse continue de sonder LM Studio alors que le dépôt
+  est corrigé. Et la trace de `json.load` que `curl | python3` remontait sur un
+  service muet est éteinte : sous vingt lignes de `JSONDecodeError`, la phrase
+  qui nomme la cause ne se lisait pas.
 - Le déploiement demande, dans l'ordre : corriger `EA_EMBEDDINGS_BASE_URL` dans
   `deploy/ea.env` (ou l'y supprimer, la stack ayant désormais la bonne valeur
   par défaut), `make app-up` — rien ne re-sonde, `docs/adr/0037` —, puis

@@ -172,7 +172,9 @@ COMPOSE_TEST := POSTGRES_TEST_PORT=$(POSTGRES_TEST_PORT) \
 # Service d'embeddings : Ollama sur le cluster, servant un /v1/embeddings
 # compatible OpenAI sur 11435. Voir docs/adr/0019 et docs/adr/0038.
 # Même règle que la base : `embed-ping` doit interroger le service que
-# l'application interroge, sinon il répond pour un autre.
+# l'application interroge, sinon il répond pour un autre. Ce qui veut dire
+# aussi qu'un `backend/.env` gardant l'adresse d'avant docs/adr/0038 gagne sur
+# ces défauts — `embed-ping` le dit alors en nommant le fichier.
 EMBEDDINGS_URL   := $(or $(call dotenv,EMBEDDINGS_URL EA_EMBEDDINGS_BASE_URL),http://192.168.2.10:11435/v1)
 EMBEDDINGS_MODEL := $(or $(call dotenv,EMBEDDINGS_MODEL EA_EMBEDDINGS_MODEL),mxbai-embed-large)
 
@@ -458,7 +460,7 @@ compose-reset: ## Arrête les bases jetables et supprime le volume de PostgreSQL
 
 embed-models: ## Liste les modèles qu'Ollama expose
 	@curl -sf --max-time 10 $(EMBEDDINGS_URL)/models \
-		| python3 -c 'import json,sys; [print(m["id"]) for m in json.load(sys.stdin)["data"]]' \
+		| python3 -c 'import json,sys; [print(m["id"]) for m in json.load(sys.stdin)["data"]]' 2>/dev/null \
 	|| { printf "$(RED)Aucune réponse de $(EMBEDDINGS_URL).$(NC)\n"; exit 1; }
 
 embed-ping: ## Vérifie que le modèle d'embedding répond, et à quelle largeur
@@ -466,8 +468,11 @@ embed-ping: ## Vérifie que le modèle d'embedding répond, et à quelle largeur
 	@curl -sf --max-time 120 $(EMBEDDINGS_URL)/embeddings \
 		-H 'Content-Type: application/json' \
 		-d '{"model":"$(EMBEDDINGS_MODEL)","input":["ping"]}' \
-		| python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]), "dimensions")' \
-	|| { printf "$(RED)Pas de réponse. Le modèle est-il tiré (ollama pull $(EMBEDDINGS_MODEL)) ?$(NC)\n"; exit 1; }
+		| python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"][0]["embedding"]), "dimensions")' 2>/dev/null \
+	|| { printf "$(RED)Pas de réponse de $(EMBEDDINGS_URL).$(NC)\n"; \
+	     printf "$(RED)Ollama tourne-t-il là, et le modèle est-il tiré (ollama pull $(EMBEDDINGS_MODEL)) ?$(NC)\n"; \
+	     printf "$(RED)Ces deux valeurs viennent de $(BE_ENV) s'il les nomme, sinon du Makefile (docs/adr/0038).$(NC)\n"; \
+	     exit 1; }
 
 docs-reindex: | $(VENV_STAMP) ## Reconstruit l'index sémantique de tous les documents
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
