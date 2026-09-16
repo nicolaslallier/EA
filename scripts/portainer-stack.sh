@@ -37,6 +37,23 @@ env_json() { # <fichier>
      | select(.name | startswith("PORTAINER_") | not)]' <"$1"
 }
 
+# Une variable que la stack a déjà par défaut et que le fichier d'environnement
+# redéclare passe quand même, et gagne, sans que rien ne le dise : c'est ainsi
+# que `deploy/ea.env` a pu pointer un embedder — un Mac, LM Studio — que le repo
+# ne nommait plus nulle part, et le rester d'un déploiement à l'autre
+# (docs/adr/0038). On les nomme donc à chaque `up`, avec la valeur remplacée en
+# regard. Seules les `:-` y figurent : une `:?` n'a pas de défaut à contredire,
+# et ce sont les secrets.
+overrides() { # <env-json> <fichier-compose>
+  grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*:-[^}]*\}' "$2" \
+    | sed -E 's/^\$\{([^:]+):-(.*)\}$/\1 \2/' | sort -u \
+    | while read -r n d; do
+        v="$(jq -r --arg n "$n" \
+          'first(.[] | select(.name == $n and .value != "")) | .value' <<<"$1")"
+        [ -z "$v" ] || [ "$v" = "$d" ] || printf '  %s=%s (la stack a %s)\n' "$n" "$v" "$d"
+      done
+}
+
 selftest() {
   local tmp got want
   tmp="$(mktemp -d)"
@@ -46,6 +63,21 @@ selftest() {
   rm -rf "$tmp"
   want='[{"name":"A","value":"1"},{"name":"B","value":"x y"},{"name":"C","value":"p$w#d"},{"name":"EMPTY","value":""}]'
   [ "$got" = "$want" ] || die "selftest : env_json\n  obtenu : $got\n  attendu : $want"
+
+  # overrides : ne nomme que ce qui contredit un défaut de la stack — pas une
+  # variable absente, pas une variable qui répète le défaut, pas une `:?`.
+  tmp="$(mktemp -d)"
+  printf '%s\n' '    EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11435/v1}' \
+    '    EA_S3_BUCKET: ${EA_S3_BUCKET:-ea-catalogue}' \
+    '    EA_S3_ENDPOINT: ${EA_S3_ENDPOINT:-minio:9000}' \
+    '    EA_S3_ACCESS_KEY: ${EA_S3_ACCESS_KEY:?obligatoire}' >"$tmp/stack.yml"
+  got="$(overrides '[{"name":"EA_EMBEDDINGS_BASE_URL","value":"http://192.168.2.35:1234/v1"},
+                     {"name":"EA_S3_BUCKET","value":"ea-catalogue"},
+                     {"name":"EA_S3_ACCESS_KEY","value":"ea-api"}]' "$tmp/stack.yml")"
+  rm -rf "$tmp"
+  want='  EA_EMBEDDINGS_BASE_URL=http://192.168.2.35:1234/v1 (la stack a http://192.168.2.10:11435/v1)'
+  [ "$got" = "$want" ] || die "selftest : overrides\n  obtenu : $got\n  attendu : $want"
+
   echo "portainer-stack.sh : selftest ok"
 }
 
@@ -83,6 +115,12 @@ if [ "$cmd" = up ]; then
       jq -e --arg n "$n" 'any(.[]; .name == $n and .value != "")' <<<"$env" >/dev/null || printf '%s ' "$n"
     done)"
   [ -z "$missing" ] || die "à renseigner dans $STACK_ENV : $missing"
+
+  # Ce que ce fichier impose par-dessus la stack, en clair : un défaut corrigé
+  # dans le repo ne sert à rien tant qu'une ligne d'ici le recouvre.
+  redefined="$(overrides "$env" "$COMPOSE_FILE")"
+  [ -z "$redefined" ] || printf 'portainer-stack.sh : %s redéfinit des valeurs par défaut de la stack :\n%s' \
+    "$STACK_ENV" "$redefined"
 fi
 
 # La clé vient de l'environnement, ou à défaut de .portainer.env (ignoré par
