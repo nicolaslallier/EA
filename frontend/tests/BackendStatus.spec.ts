@@ -21,6 +21,35 @@ describe('BackendStatus', () => {
     await waitFor(() => expect(screen.getByText(/backend: ok/i)).toBeInTheDocument())
   })
 
+  it('names the sections a degraded backend will refuse', async () => {
+    // docs/adr/0037: the API boots without a store that serves one section, so
+    // "up" and "whole" stopped being the same answer.
+    stubFetch(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ status: 'degraded', degraded: ['files', 'search'] }), {
+          status: 200,
+        }),
+      ),
+    )
+
+    render(BackendStatus)
+
+    await waitFor(() => expect(screen.getByText(/fichiers/i)).toBeInTheDocument())
+    expect(screen.getByText(/recherche documentaire/i)).toBeInTheDocument()
+  })
+
+  it('names a section it has no label for rather than hiding it', async () => {
+    stubFetch(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ status: 'degraded', degraded: ['nouveau'] }), { status: 200 }),
+      ),
+    )
+
+    render(BackendStatus)
+
+    await waitFor(() => expect(screen.getByText(/nouveau/i)).toBeInTheDocument())
+  })
+
   it('reports an unreachable backend instead of staying blank', async () => {
     stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
 

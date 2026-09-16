@@ -1076,8 +1076,17 @@ export interface components {
          * @description Declared so no internal field can leak into the response.
          */
         HealthResponse: {
-            /** Status */
-            status: string;
+            /**
+             * Degraded
+             * @description The sections that will refuse, e.g. `files`, `search`. Empty when `ok`.
+             */
+            degraded?: string[];
+            /**
+             * Status
+             * @description `degraded` when a store that serves one section failed its boot probe.
+             * @enum {string}
+             */
+            status: "ok" | "degraded";
         };
         /**
          * Layer

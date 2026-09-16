@@ -940,7 +940,20 @@
       "HealthResponse": {
         "description": "Declared so no internal field can leak into the response.",
         "properties": {
+          "degraded": {
+            "description": "The sections that will refuse, e.g. `files`, `search`. Empty when `ok`.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded",
+            "type": "array"
+          },
           "status": {
+            "description": "`degraded` when a store that serves one section failed its boot probe.",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
             "title": "Status",
             "type": "string"
           }

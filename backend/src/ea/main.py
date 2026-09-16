@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from typing import Final
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,6 +61,48 @@ from ea.services.ipam import IpamService
 
 logger = logging.getLogger(__name__)
 
+#: The two stores that serve one section each, named as `/health` reports them
+#: when their boot probe failed — see docs/adr/0037.
+#:
+#: `SEARCH` is the embedding service behind `search_documents`; without it a
+#: document is still stored, and `make docs-reindex` catches the index up.
+#: `FILES` is the MinIO bucket behind the *Fichiers* section; without it the
+#: `/files` routes and the four MCP file tools answer 503, exactly as they do
+#: where `EA_S3_ENABLED` is off.
+SEARCH: Final = "search"
+FILES: Final = "files"
+
+
+async def _reachable(name: str, probe: Callable[[], Awaitable[None]], degraded: list[str]) -> bool:
+    """Run a peripheral store's boot probe; record it rather than refuse to boot.
+
+    PostgreSQL and Keycloak are not routed through here, and that is the whole
+    distinction: they are owed by every route, so a process that cannot reach
+    them has nothing to serve and stops. These two are owed by one section
+    each, and the services above them are already built to do without — a
+    `FileService` with no store, a `DocumentService` with no indexer. Letting
+    their probe end the process turned a file browser's missing bucket into a
+    `502 Bad Gateway` on `/health`, `/me`, `/elements` and `/metamodel` alike.
+
+    The `except` is blind for the same reason it is in `check_connectivity`:
+    there is no failure of a probe that means anything other than "this store
+    is not usable", and the original belongs in the log, where the host, the
+    bucket and the model may be named. What reaches a caller is the name above
+    and nothing else.
+    """
+    try:
+        await probe()
+    except Exception as error:
+        logger.error(
+            "%s is degraded: its boot probe failed, so the section it serves will refuse",
+            name,
+            exc_info=error,
+            extra={"action": "subsystem_degraded", "subsystem": name},
+        )
+        degraded.append(name)
+        return False
+    return True
+
 
 def build_embedder(settings: Settings) -> HttpEmbedder:
     """The embedding client this process talks to, built from settings alone.
@@ -112,10 +155,15 @@ def _lifespan(
 
     The embedding service owns an HTTP connection pool, so it is built once
     and closed here, and it is *probed* at boot: the model configured must
-    answer vectors of the width the column was created with. The MCP transport
-    keeps its sessions in a manager that has to be running before `/mcp`
-    answers anything; it is picked up off `app.state`, where `_mount_mcp` left
-    it, because the manager only exists once the app it is mounted on does.
+    answer vectors of the width the column was created with. That probe, and
+    the bucket's, go through `_reachable`: they serve one section each, so an
+    unreachable one is recorded on `app.state.degraded` and the API boots
+    without it, rather than the whole deployment answering 502 — docs/adr/0037.
+
+    The MCP transport keeps its sessions in a manager that has to be running
+    before `/mcp` answers anything; it is picked up off `app.state`, where
+    `_mount_mcp` left it, because the manager only exists once the app it is
+    mounted on does.
 
     An `AsyncExitStack` composes them: an app built with `architecture_service=`
     opens no graph but must still start the session manager.
@@ -131,6 +179,7 @@ def _lifespan(
                 "set EA_POSTGRES_ENABLED=true or inject architecture_service"
             )
             raise RuntimeError(msg)
+        degraded: list[str] = []
         async with AsyncExitStack() as stack:
             # PostgreSQL first: the graph, the documents and the diagrams all
             # live there, so every service below is built on its sessions.
@@ -194,14 +243,16 @@ def _lifespan(
             index = indexer
             if index is None and settings.embeddings_enabled and document_store is not None:
                 embedder = build_embedder(settings)
+                # Pushed before the probe, so a boot that goes on without the
+                # service still closes the pool it opened.
                 stack.push_async_callback(embedder.aclose)
-                await embedder.probe()
-                index = DocumentIndexer(embedder)
-                logger.info(
-                    "embedding service ready: %s at %s",
-                    settings.embeddings_model,
-                    settings.embeddings_base_url,
-                )
+                if await _reachable(SEARCH, embedder.probe, degraded):
+                    index = DocumentIndexer(embedder)
+                    logger.info(
+                        "embedding service ready: %s at %s",
+                        settings.embeddings_model,
+                        settings.embeddings_base_url,
+                    )
             elif index is None and settings.embeddings_enabled:
                 logger.warning("embeddings are on but there is no document store to index")
             if document_store is not None:
@@ -219,14 +270,18 @@ def _lifespan(
                 store: ObjectStore | None = None
                 if settings.s3_enabled:
                     minio = build_object_store(settings)
-                    await minio.probe()
-                    store = minio
-                    logger.info(
-                        "file storage ready: bucket %s at %s",
-                        settings.s3_bucket,
-                        settings.s3_endpoint,
-                    )
+                    if await _reachable(FILES, minio.probe, degraded):
+                        store = minio
+                        logger.info(
+                            "file storage ready: bucket %s at %s",
+                            settings.s3_bucket,
+                            settings.s3_endpoint,
+                        )
                 app.state.file_service = FileService(store)
+            # Published once every probe has run: `/health` reads it, and it is
+            # the only place an operator is told which store is missing without
+            # opening the logs — see docs/adr/0037.
+            app.state.degraded = tuple(degraded)
             sessions = getattr(app.state, "mcp_sessions", None)
             if sessions is not None:
                 await stack.enter_async_context(sessions.run())
@@ -248,7 +303,11 @@ def _lifespan(
                             "(debug only)"
                         )
             logger.info(
-                "%s is up and answering on %s:%s", settings.app_name, settings.host, settings.port
+                "%s is up and answering on %s:%s",
+                settings.app_name,
+                settings.host,
+                settings.port,
+                extra={"degraded": ",".join(degraded)},
             )
             yield
             logger.info("shutting down")
