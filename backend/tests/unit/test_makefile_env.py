@@ -110,6 +110,28 @@ class TestTheEmbedderToo:
         assert "http://192.168.2.10:11435/v1/embeddings" in recipe
         assert "un-autre-modele" in recipe
 
+    def test_a_service_that_does_not_answer_is_said_in_one_line(self, an_env_file: Path) -> None:
+        """Le message rouge est ce qu'on lit, pas une trace de `json.load`.
+
+        `curl | python3` : curl qui échoue laisse python lire du vide et
+        remonter un `JSONDecodeError` de vingt lignes, sous lequel la phrase
+        qui nomme la cause disparaît.
+        """
+        recipe = _dry_run("embed-ping", an_env_file)
+
+        assert "2>/dev/null" in recipe
+
+    def test_it_names_the_file_its_coordinates_came_from(self, an_env_file: Path) -> None:
+        """Un `.env` d'avant docs/adr/0038 gagne sur le défaut du Makefile.
+
+        C'est la même dérive que `deploy/ea.env` : le dépôt est corrigé, le
+        poste garde l'ancienne adresse, et rien ne dit laquelle des deux a
+        parlé. L'échec nomme donc le fichier.
+        """
+        recipe = _dry_run("embed-ping", an_env_file)
+
+        assert str(an_env_file) in recipe
+
 
 class TestThePasswordStillComesFromTheSameFile:
     """`require-postgres-password` est la seule cible qui lit un secret.
