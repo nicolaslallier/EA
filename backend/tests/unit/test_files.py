@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
 
-from ea.domain.errors import InvalidFileKeyError
+from ea.domain.errors import InvalidFileKeyError, InvalidFileMetadataError
 from ea.domain.files import (
     DEFAULT_CONTENT_TYPE,
+    MAX_FILE_DESCRIPTION_LENGTH,
+    MAX_FILE_TAGS,
+    MAX_FILE_TITLE_LENGTH,
     MAX_KEY_BYTES,
+    MAX_TAG_LENGTH,
+    CatalogedFile,
+    FileDetails,
     StoredFile,
+    clean_details,
     clean_key,
     clean_prefix,
     guess_content_type,
     join_key,
+    sha256_of,
 )
 
 
@@ -93,3 +102,53 @@ def test_the_content_type_is_guessed_from_the_extension(key: str, expected: str)
 
 def test_an_unknown_extension_is_plain_bytes() -> None:
     assert guess_content_type("dump.zzz-unknown") == DEFAULT_CONTENT_TYPE
+
+
+class TestWhatAPersonSaysAboutAFile:
+    def test_nothing_said_is_the_empty_description(self) -> None:
+        assert clean_details() == FileDetails()
+
+    def test_a_title_and_a_description_are_trimmed(self) -> None:
+        details = clean_details(title="  Rapport 2026 ", description=" Le bilan.\n")
+        assert (details.title, details.description) == ("Rapport 2026", "Le bilan.")
+
+    def test_tags_are_lowercased_trimmed_and_deduplicated_in_order(self) -> None:
+        details = clean_details(tags=("Réseau", " budget ", "réseau", ""))
+        assert details.tags == ("réseau", "budget")
+
+    def test_a_title_longer_than_the_bound_is_refused(self) -> None:
+        with pytest.raises(InvalidFileMetadataError):
+            clean_details(title="a" * (MAX_FILE_TITLE_LENGTH + 1))
+
+    def test_a_description_longer_than_the_bound_is_refused(self) -> None:
+        with pytest.raises(InvalidFileMetadataError):
+            clean_details(description="a" * (MAX_FILE_DESCRIPTION_LENGTH + 1))
+
+    def test_more_tags_than_the_bound_are_refused(self) -> None:
+        with pytest.raises(InvalidFileMetadataError):
+            clean_details(tags=tuple(f"t{n}" for n in range(MAX_FILE_TAGS + 1)))
+
+    def test_a_tag_longer_than_the_bound_is_refused(self) -> None:
+        with pytest.raises(InvalidFileMetadataError):
+            clean_details(tags=("a" * (MAX_TAG_LENGTH + 1),))
+
+    @pytest.mark.parametrize("tag", ["a\nb", "a\x00b"])
+    def test_a_tag_holding_a_control_character_is_refused(self, tag: str) -> None:
+        with pytest.raises(InvalidFileMetadataError):
+            clean_details(tags=(tag,))
+
+
+def test_the_digest_is_the_sha256_of_the_bytes() -> None:
+    assert sha256_of(b"# A") == hashlib.sha256(b"# A").hexdigest()
+
+
+def test_a_listing_pairs_each_file_with_the_row_that_describes_it() -> None:
+    stored = StoredFile(
+        key="inbox/a.md",
+        size=3,
+        last_modified=datetime(2026, 9, 15, tzinfo=UTC),
+        content_type="text/markdown",
+    )
+    cataloged = CatalogedFile(stored=stored, metadata=None)
+
+    assert (cataloged.key, cataloged.name, cataloged.size) == ("inbox/a.md", "a.md", 3)

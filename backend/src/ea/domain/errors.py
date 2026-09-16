@@ -116,6 +116,14 @@ class InvalidFileKeyError(DomainError):
     """
 
 
+class InvalidFileMetadataError(DomainError):
+    """A title, description or tag outside the bounds of docs/adr/0039.
+
+    A refusal and not a truncation: a description silently cut in half is worse
+    than one the person is asked to shorten.
+    """
+
+
 class FileTooLargeError(DomainError):
     """A file beyond what the adapter may hold in memory, or read back as text."""
 

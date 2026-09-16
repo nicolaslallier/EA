@@ -45,10 +45,13 @@ from ea.api.schemas import (
     DocumentSummaryRead,
     ElementPage,
     ElementRead,
+    FileDescription,
     FileKey,
     FileListingRead,
     FilePrefix,
     FileRead,
+    FileTags,
+    FileTitle,
     GraphRead,
     Limit,
     LinkName,
@@ -77,7 +80,7 @@ from ea.domain.archimate import (
     permitted_relationships as permitted_between,
 )
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
-from ea.domain.files import DEFAULT_CONTENT_TYPE, guess_content_type
+from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
@@ -153,7 +156,16 @@ most 1 MB once decoded — a bigger file is uploaded from the web interface
 instead) and `delete_file` removes one. A file put under `inbox/` is read by
 the pipeline that turns source documents into ArchiMate elements, and that
 pipeline only reads text: a source to be modelled there must be markdown or
-plain text. Any file type is fine in every other folder.\
+plain text. Any file type is fine in every other folder.
+
+Every file also carries a record of its own: who uploaded it, when, and what a
+person wrote about it — a title, a description, tags. `describe_file` reads
+that record, and `set_file_details` writes the title, the description and the
+tags, replacing all three at once. Write one when you upload a binary a reader
+cannot open to find out what it is: `rapport-q3.pdf` says almost nothing, and a
+sentence beside it says everything. A file the bucket holds but this catalogue
+has never seen — one dropped in by the pipeline or by hand — comes back with no
+record at all; describing it is what gives it one.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -234,6 +246,23 @@ FilePath = Annotated[
 ]
 Folder = Annotated[
     FilePrefix, Field(description="A folder of the bucket, e.g. `inbox/`. Empty for the top.")
+]
+FileTitleArgument = Annotated[
+    FileTitle,
+    Field(description="A short human name for the file, e.g. `Rapport financier 2026`."),
+]
+FileDescriptionArgument = Annotated[
+    FileDescription,
+    Field(description="A sentence or two saying what the file holds and why it is here."),
+]
+FileTagsArgument = Annotated[
+    FileTags,
+    Field(
+        description=(
+            "Labels to find the file by later, e.g. `['budget', 'réseau']`. "
+            "Lowercased and de-duplicated when stored."
+        )
+    ),
 ]
 #: Base64 carries three bytes in four characters; `upload_file` still decides
 #: on the decoded size against `MAX_MCP_UPLOAD_BYTES`, this only stops a
@@ -781,6 +810,40 @@ def build_mcp_server(
         _, text = await get_files().read_text(key)
         return text
 
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def describe_file(key: FilePath) -> FileRead:
+        """What is known about one file: its size and type, and its record.
+
+        The record says who uploaded it, when, and what a person wrote about it
+        — a title, a description, tags. `metadata` is null for a file the bucket
+        holds and this catalogue has never seen; `set_file_details` gives it a
+        record. Call this before `read_file` on a file you do not recognise: the
+        description usually answers what the content would take a megabyte to.
+        """
+        return FileRead.of(await get_files().describe(key))
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def set_file_details(
+        key: FilePath,
+        title: FileTitleArgument = "",
+        description: FileDescriptionArgument = "",
+        tags: FileTagsArgument = [],  # noqa: B006 - read as a schema default, never mutated
+    ) -> FileRead:
+        """Write the title, the description and the tags of a file in the bucket.
+
+        All three are replaced together: what you send is what the file carries
+        afterwards, so leaving `tags` out clears the tags. Read the current
+        record with `describe_file` first if you mean to change only one of
+        them. The file itself is untouched — this writes about it, not over it.
+        """
+        return FileRead.of(
+            await get_files().set_details(
+                key, FileDetails(title=title, description=description, tags=tuple(tags))
+            )
+        )
+
     @server.tool(annotations=EDITS)
     @speaking_plainly
     async def upload_file(
@@ -788,6 +851,9 @@ def build_mcp_server(
         content: FileContent,
         encoding: Literal["text", "base64"] = "text",
         overwrite: bool = False,
+        title: FileTitleArgument = "",
+        description: FileDescriptionArgument = "",
+        tags: FileTagsArgument = [],  # noqa: B006 - read as a schema default, never mutated
     ) -> FileRead:
         """Store a file in the bucket at `key`.
 
@@ -796,6 +862,11 @@ def build_mcp_server(
         line-wrapped, both are accepted). Either way the file is at most 1 MB
         once decoded; a larger file is uploaded from the web interface, which
         takes up to 50 MB.
+
+        `title`, `description` and `tags` are recorded beside the file. Write
+        them, especially for a binary: the path is all a later reader gets
+        otherwise. Leaving all three out of an overwrite keeps whatever was
+        already written about the file.
 
         A file already at `key` is refused unless `overwrite` is true, and then
         its previous content is gone. A file under `inbox/` is read by the
@@ -826,6 +897,7 @@ def build_mcp_server(
                 raw,
                 content_type=fallback if guessed == DEFAULT_CONTENT_TYPE else guessed,
                 overwrite=overwrite,
+                details=FileDetails(title=title, description=description, tags=tuple(tags)),
             )
         )
 

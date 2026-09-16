@@ -35,12 +35,20 @@ WRITES = {
     },
     DiagramService: {"create", "update", "delete", "replace_layout"},
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
-    FileService: {"upload", "delete"},
+    FileService: {"upload", "delete", "set_details", "reconcile"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},
 }
 
 
 def first_call(method: object) -> str | None:
+    """The name called by the first statement, whether or not it is kept.
+
+    `require_editor()` and `caller = require_editor()` are the same check; the
+    second is what a use case writes when it needs the caller it just proved —
+    `FileService.upload` records who uploaded a file. Refusing the assignment
+    would push that lookup somewhere else and make the rule weaker, not
+    stricter: what matters is that nothing runs before the check.
+    """
     tree = ast.parse(textwrap.dedent(inspect.getsource(method)))  # type: ignore[arg-type]
     body = tree.body[0].body  # type: ignore[attr-defined]
     statements = [
@@ -49,8 +57,9 @@ def first_call(method: object) -> str | None:
     if not statements:
         return None
     first = statements[0]
-    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Call):
-        func = first.value.func
+    called = first.value if isinstance(first, ast.Expr | ast.Assign | ast.AnnAssign) else None
+    if isinstance(called, ast.Call):
+        func = called.func
         return func.id if isinstance(func, ast.Name) else None
     return None
 

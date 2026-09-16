@@ -58,6 +58,8 @@ class StubMinioClient:
         self.listing: list[MinioObject] = []
         self.bucket_exists_result = True
         self.removed: list[str] = []
+        self.listed_recursively: list[bool] = []
+        self.listed_prefixes: list[str | None] = []
 
     def bucket_exists(self, bucket_name: str) -> bool:
         return self.bucket_exists_result
@@ -96,6 +98,8 @@ class StubMinioClient:
     def list_objects(
         self, bucket_name: str, prefix: str | None = None, recursive: bool = False
     ) -> Iterator[MinioObject]:
+        self.listed_recursively.append(recursive)
+        self.listed_prefixes.append(prefix)
         return iter(self.listing)
 
 
@@ -167,6 +171,51 @@ async def test_a_listing_beyond_the_limit_is_marked_truncated() -> None:
 
     assert len(listing.files) == 2
     assert listing.truncated is True
+
+
+@pytest.mark.asyncio
+async def test_a_walk_goes_all_the_way_down_and_is_not_capped() -> None:
+    """What a reconcile reads (docs/adr/0039): the whole bucket, however deep.
+
+    A cap here would silently make the catch-up skip the end of the bucket,
+    which is why `walk` is not `list_folder(recursive=True)`.
+    """
+    store, client = _store()
+    client.listing = [
+        MinioObject("ea-test", "top.txt", size=3, last_modified=_A_MOMENT, etag="e1"),
+        MinioObject("ea-test", "a/b/deep.txt", size=4, last_modified=_A_MOMENT, etag="e2"),
+    ]
+
+    walked = [found async for found in store.walk()]
+
+    assert [(found.key, found.etag) for found in walked] == [
+        ("top.txt", "e1"),
+        ("a/b/deep.txt", "e2"),
+    ]
+    assert client.listed_recursively == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_walk_under_a_prefix_asks_the_store_for_that_prefix() -> None:
+    """The top of the bucket is `None` and not `""`, which minio-py reads as a filter."""
+    store, client = _store()
+
+    assert [found async for found in store.walk("inbox/")] == []
+    assert [found async for found in store.walk()] == []
+    assert client.listed_prefixes == ["inbox/", None]
+
+
+@pytest.mark.asyncio
+async def test_the_etag_is_carried_off_a_stat_so_a_reconcile_can_read_it() -> None:
+    store, client = _store()
+    client.objects["a.txt"] = b"abc"
+
+    stored = await store.stat("a.txt")
+
+    assert stored is not None
+    # `MinioObject` reports no etag here; an absent one is empty, never `None`,
+    # because `note_seen` compares it as a string.
+    assert stored.etag == ""
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,18 @@ from ea.domain.archimate import (
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
-from ea.domain.files import MAX_KEY_BYTES, MAX_LISTED_ENTRIES, FileListing, StoredFile
+from ea.domain.files import (
+    MAX_FILE_DESCRIPTION_LENGTH,
+    MAX_FILE_TAGS,
+    MAX_FILE_TITLE_LENGTH,
+    MAX_KEY_BYTES,
+    MAX_LISTED_ENTRIES,
+    MAX_TAG_LENGTH,
+    CatalogedFile,
+    CatalogedListing,
+    FileDetails,
+    FileMetadata,
+)
 from ea.domain.ipam import (
     DEFAULT_VRF,
     RESERVED_PROPERTY,
@@ -90,9 +101,13 @@ Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
 LinkName = Annotated[str, Field(max_length=200)]
 
-# --- Files in MinIO (docs/adr/0036) ---
+# --- Files in MinIO (docs/adr/0036), and what is known about them (docs/adr/0039) ---
 FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
 FilePrefix = Annotated[str, Field(max_length=MAX_KEY_BYTES)]
+FileTitle = Annotated[str, Field(max_length=MAX_FILE_TITLE_LENGTH)]
+FileDescription = Annotated[str, Field(max_length=MAX_FILE_DESCRIPTION_LENGTH)]
+FileTag = Annotated[str, Field(max_length=MAX_TAG_LENGTH)]
+FileTags = Annotated[list[FileTag], Field(max_length=MAX_FILE_TAGS)]
 
 
 class _Input(BaseModel):
@@ -378,23 +393,85 @@ class DocumentRead(BaseModel):
         )
 
 
+class FileDetailsWrite(_Input):
+    """What a person writes about a file — replaced whole, never merged.
+
+    Every field has a default, so a body naming only `tags` clears the title:
+    the whole description is what is sent, which is the only shape a client can
+    implement without reading the current values first.
+    """
+
+    title: FileTitle = ""
+    description: FileDescription = ""
+    tags: FileTags = Field(default_factory=list)
+
+    def details(self) -> FileDetails:
+        return FileDetails(title=self.title, description=self.description, tags=tuple(self.tags))
+
+
+class FileMetadataRead(BaseModel):
+    """What PostgreSQL knows about one file of the bucket — see docs/adr/0039.
+
+    `etag` is deliberately absent: it is how a reconcile tells a replaced object
+    from an untouched one, and means nothing to a client. `sha256` is here
+    because "the same file under another name" is a question a person asks; it
+    is `null` for a file this API never received, which is an honest unknown
+    rather than a digest nobody computed.
+    """
+
+    title: str
+    description: str
+    tags: list[str]
+    uploaded_by: str = Field(
+        description="The username of whoever uploaded it, empty for a file "
+        "written straight into the bucket."
+    )
+    sha256: str | None = Field(
+        description="Hex digest of the file's bytes, null when this API never received them."
+    )
+    created_at: datetime = Field(description="When this catalogue first saw the file.")
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, metadata: FileMetadata) -> FileMetadataRead:
+        return cls(
+            title=metadata.details.title,
+            description=metadata.details.description,
+            tags=list(metadata.details.tags),
+            uploaded_by=metadata.uploaded_by,
+            sha256=metadata.sha256,
+            created_at=metadata.created_at,
+            updated_at=metadata.updated_at,
+        )
+
+
 class FileRead(BaseModel):
-    """One file of the bucket, as a listing or an upload describes it — never its bytes."""
+    """One file of the bucket, as a listing or an upload describes it — never its bytes.
+
+    `metadata` is `null` for a file the bucket holds and the catalogue has not
+    heard of — one the pipeline or the MinIO console wrote. That is a file with
+    no description, never a missing file: the bytes are what exist.
+    """
 
     key: str = Field(description="The full path in the bucket, folders included.")
     name: str = Field(description="The last segment of the key.")
     size: int = Field(description="Size of the stored file, in bytes.")
     last_modified: datetime
     content_type: str
+    metadata: FileMetadataRead | None = None
 
     @classmethod
-    def of(cls, stored: StoredFile) -> FileRead:
+    def of(cls, cataloged: CatalogedFile) -> FileRead:
+        stored = cataloged.stored
         return cls(
             key=stored.key,
             name=stored.name,
             size=stored.size,
             last_modified=stored.last_modified,
             content_type=stored.content_type,
+            metadata=(
+                None if cataloged.metadata is None else FileMetadataRead.of(cataloged.metadata)
+            ),
         )
 
 
@@ -409,13 +486,20 @@ class FileListingRead(BaseModel):
     )
 
     @classmethod
-    def of(cls, listing: FileListing) -> FileListingRead:
+    def of(cls, listing: CatalogedListing) -> FileListingRead:
         return cls(
             prefix=listing.prefix,
             folders=list(listing.folders),
-            files=[FileRead.of(stored) for stored in listing.files],
+            files=[FileRead.of(found) for found in listing.files],
             truncated=listing.truncated,
         )
+
+
+class ReconcileRead(BaseModel):
+    """What one pass of the file catch-up changed — see docs/adr/0039."""
+
+    recorded: int = Field(description="Files the catalogue had never heard of.")
+    forgotten: int = Field(description="Rows whose file is no longer in the bucket.")
 
 
 class PassageRead(BaseModel):

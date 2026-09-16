@@ -26,6 +26,7 @@ import pytest
 
 from ea.core.config import Settings
 from ea.domain.errors import FileStorageUnavailableError, SearchUnavailableError
+from ea.domain.files import FileListing
 from ea.main import FILES, SEARCH, create_app
 from ea.services.architecture import ArchitectureService
 from tests.conftest import InMemoryDocuments
@@ -187,8 +188,8 @@ class _WorkingStore:
     async def probe(self) -> None:
         return None
 
-    async def list_folder(self, prefix: str, *, limit: int) -> object:
-        return object()
+    async def list_folder(self, prefix: str, *, limit: int) -> FileListing:
+        return FileListing(prefix, (), (), truncated=False)
 
 
 class _RefusingEmbedder:

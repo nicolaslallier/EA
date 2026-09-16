@@ -13,6 +13,7 @@ from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
+from ea.db.models.file import FileMetadataRecord
 
 __all__ = [
     "Base",
@@ -21,5 +22,6 @@ __all__ = [
     "DocumentChunk",
     "ElementDocument",
     "ElementRecord",
+    "FileMetadataRecord",
     "RelationshipRecord",
 ]

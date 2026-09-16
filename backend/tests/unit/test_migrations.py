@@ -215,3 +215,43 @@ def test_user_defined_properties_are_one_jsonb_map() -> None:
 
     assert isinstance(Base.metadata.tables["elements"].c.properties.type, JSONB)
     assert isinstance(Base.metadata.tables["relationships"].c.properties.type, JSONB)
+
+
+def test_a_file_is_identified_by_its_place_in_the_bucket() -> None:
+    """The one name MinIO and PostgreSQL share — see docs/adr/0039.
+
+    Unique, because a second row for the same object is a second answer to
+    "who uploaded this?", and nobody could tell which one is current.
+    """
+    table = Base.metadata.tables["file_metadata"]
+
+    assert "uq_file_metadata_object_key" in {c.name for c in table.constraints}
+    assert table.c.object_key.nullable is False
+
+
+def test_file_metadata_references_no_table_because_the_other_side_is_a_bucket() -> None:
+    """There is nothing in PostgreSQL to point a foreign key at.
+
+    A row whose object was deleted outside the API is therefore possible, and
+    the reconcile of `ea.files_reindex` is what removes it — not a cascade.
+    """
+    table = Base.metadata.tables["file_metadata"]
+
+    assert all(not column.foreign_keys for column in table.c)
+
+
+def test_the_digest_is_nullable_because_a_file_can_arrive_by_another_door() -> None:
+    """`NULL` says "not computed"; `''` would be the digest of no bytes."""
+    sha256 = Base.metadata.tables["file_metadata"].c.sha256
+
+    assert sha256.nullable is True
+    assert sha256.index is True
+
+
+def test_tags_are_an_array_of_values_and_not_a_joined_string() -> None:
+    from sqlalchemy import ARRAY
+
+    tags = Base.metadata.tables["file_metadata"].c.tags
+
+    assert isinstance(tags.type, ARRAY)
+    assert tags.nullable is False

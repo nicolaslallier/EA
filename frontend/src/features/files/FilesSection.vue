@@ -9,7 +9,16 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
-import { breadcrumbs, saveAs, useFiles, type StoredFile } from './useFiles'
+import {
+  breadcrumbs,
+  detailsOf,
+  noDetails,
+  saveAs,
+  tagsOf,
+  useFiles,
+  type FileDetails,
+  type StoredFile,
+} from './useFiles'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,6 +31,13 @@ const busy = ref(false)
 const confirming = ref<string | null>(null)
 /** Les fichiers que l'API a refusés parce qu'ils existent déjà. */
 const clashes = ref<File[]>([])
+/** La clé dont la fiche est ouverte en édition, et ce qui y est écrit. */
+const describing = ref<string | null>(null)
+const written = ref<FileDetails>(noDetails())
+/** Les tags se saisissent séparés par des virgules ; le serveur normalise. */
+const writtenTags = ref('')
+/** Ce que le dernier rapprochement a changé, une fois qu'il a tourné. */
+const reconciled = ref<{ recorded: number; forgotten: number } | null>(null)
 
 const prefix = computed(() => (typeof route.query.prefix === 'string' ? route.query.prefix : ''))
 const crumbs = computed(() => breadcrumbs(prefix.value))
@@ -31,6 +47,8 @@ watch(
   (value) => {
     confirming.value = null
     clashes.value = []
+    describing.value = null
+    reconciled.value = null
     void files.load(value)
   },
   { immediate: true },
@@ -108,6 +126,44 @@ async function confirmRemove(): Promise<void> {
   }
 }
 
+function openDetails(file: StoredFile): void {
+  confirming.value = null
+  describing.value = file.key
+  written.value = detailsOf(file)
+  writtenTags.value = (written.value.tags ?? []).join(', ')
+}
+
+async function saveDetails(): Promise<void> {
+  const key = describing.value
+  if (!key) {
+    return
+  }
+  busy.value = true
+  failure.value = ''
+  try {
+    await files.describe(key, { ...written.value, tags: tagsOf(writtenTags.value) })
+    describing.value = null
+    await files.load(prefix.value)
+  } catch (caught) {
+    failure.value = messageOf(caught)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function onReconcile(): Promise<void> {
+  busy.value = true
+  failure.value = ''
+  try {
+    reconciled.value = await files.reconcile()
+    await files.load(prefix.value)
+  } catch (caught) {
+    failure.value = messageOf(caught)
+  } finally {
+    busy.value = false
+  }
+}
+
 function weight(bytes: number): string {
   if (bytes < 1024) return `${bytes} o`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} ko`
@@ -135,6 +191,14 @@ function weight(bytes: number): string {
     <p v-if="canWrite" class="upload">
       <label for="files-input">Déposer des fichiers</label>
       <input id="files-input" type="file" multiple :disabled="busy" @change="onPicked" />
+      <button type="button" class="secondary" :disabled="busy" @click="onReconcile">
+        Rapprocher le catalogue
+      </button>
+    </p>
+
+    <p v-if="reconciled" class="banner" role="status">
+      {{ reconciled.recorded }} fichier(s) ajouté(s) au catalogue,
+      {{ reconciled.forgotten }} fiche(s) retirée(s).
     </p>
 
     <div v-if="clashes.length > 0" class="banner" role="alert">
@@ -160,6 +224,7 @@ function weight(bytes: number): string {
         <thead>
           <tr>
             <th scope="col">Nom</th>
+            <th scope="col">Description</th>
             <th scope="col">Taille</th>
             <th scope="col">Modifié</th>
             <th scope="col">Actions</th>
@@ -175,32 +240,89 @@ function weight(bytes: number): string {
             <td />
             <td />
             <td />
+            <td />
           </tr>
-          <tr v-for="file in files.listing.value.files" :key="file.key">
-            <td>{{ file.name }}</td>
-            <td>{{ weight(file.size) }}</td>
-            <td>{{ file.last_modified.slice(0, 10) }}</td>
-            <td>
-              <button type="button" class="secondary" :aria-label="`Télécharger ${file.name}`" @click="onDownload(file)">
-                Télécharger
-              </button>
-              <template v-if="canWrite">
-                <template v-if="confirming === file.key">
-                  <button type="button" :disabled="busy" @click="confirmRemove">Confirmer la suppression</button>
-                  <button type="button" class="secondary" @click="confirming = null">Annuler</button>
-                </template>
-                <button
-                  v-else
-                  type="button"
-                  class="secondary"
-                  :aria-label="`Supprimer ${file.name}`"
-                  @click="confirming = file.key"
-                >
-                  Supprimer
+          <template v-for="file in files.listing.value.files" :key="file.key">
+            <tr>
+              <td>
+                <span class="name">{{ file.metadata?.title || file.name }}</span>
+                <span v-if="file.metadata?.title" class="hint">{{ file.name }}</span>
+              </td>
+              <td>
+                <span v-if="file.metadata?.description">{{ file.metadata.description }}</span>
+                <!-- Pas de fiche : le fichier existe, on n'en sait rien. Le
+                     bucket a une autre porte que cette API — docs/adr/0039. -->
+                <span v-else-if="!file.metadata" class="hint">Aucune fiche</span>
+                <ul v-if="file.metadata?.tags.length" class="tags">
+                  <li v-for="tag in file.metadata.tags" :key="tag">{{ tag }}</li>
+                </ul>
+                <span v-if="file.metadata?.uploaded_by" class="hint">
+                  Déposé par {{ file.metadata.uploaded_by }}
+                </span>
+              </td>
+              <td>{{ weight(file.size) }}</td>
+              <td>{{ file.last_modified.slice(0, 10) }}</td>
+              <td>
+                <button type="button" class="secondary" :aria-label="`Télécharger ${file.name}`" @click="onDownload(file)">
+                  Télécharger
                 </button>
-              </template>
-            </td>
-          </tr>
+                <template v-if="canWrite">
+                  <button
+                    type="button"
+                    class="secondary"
+                    :aria-label="`Décrire ${file.name}`"
+                    @click="openDetails(file)"
+                  >
+                    Décrire
+                  </button>
+                  <template v-if="confirming === file.key">
+                    <button type="button" :disabled="busy" @click="confirmRemove">Confirmer la suppression</button>
+                    <button type="button" class="secondary" @click="confirming = null">Annuler</button>
+                  </template>
+                  <button
+                    v-else
+                    type="button"
+                    class="secondary"
+                    :aria-label="`Supprimer ${file.name}`"
+                    @click="confirming = file.key"
+                  >
+                    Supprimer
+                  </button>
+                </template>
+              </td>
+            </tr>
+            <tr v-if="describing === file.key">
+              <td colspan="5">
+                <form class="details" @submit.prevent="saveDetails">
+                  <p>
+                    <label :for="`title-${file.key}`">Titre</label>
+                    <input :id="`title-${file.key}`" v-model="written.title" maxlength="200" />
+                  </p>
+                  <p>
+                    <label :for="`description-${file.key}`">Description</label>
+                    <textarea
+                      :id="`description-${file.key}`"
+                      v-model="written.description"
+                      maxlength="4000"
+                      rows="3"
+                    />
+                  </p>
+                  <p>
+                    <label :for="`tags-${file.key}`">Étiquettes</label>
+                    <input :id="`tags-${file.key}`" v-model="writtenTags" placeholder="réseau, budget" />
+                  </p>
+                  <p class="hint">
+                    Les trois sont remplacés ensemble : ce qui est enregistré est ce qui est
+                    affiché ici.
+                  </p>
+                  <p>
+                    <button type="submit" :disabled="busy">Enregistrer</button>
+                    <button type="button" class="secondary" @click="describing = null">Annuler</button>
+                  </p>
+                </form>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
       <p v-if="files.listing.value.truncated" class="hint">
@@ -266,6 +388,47 @@ button:disabled {
 .hint {
   margin: 0;
   opacity: 0.75;
+}
+.name {
+  display: block;
+  font-weight: 600;
+}
+td .hint {
+  display: block;
+  font-size: 0.85em;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.3rem 0;
+  padding: 0;
+  list-style: none;
+}
+.tags li {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.85em;
+}
+.details {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 40rem;
+}
+.details p {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+}
+.details input,
+.details textarea {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
 }
 .banner {
   margin: 0;

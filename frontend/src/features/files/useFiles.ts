@@ -12,13 +12,54 @@ import { useLatestRequest } from '../../lib/latest'
 
 export type StoredFile = components['schemas']['FileRead']
 export type FileListing = components['schemas']['FileListingRead']
+export type FileMetadata = components['schemas']['FileMetadataRead']
+export type FileDetails = components['schemas']['FileDetailsWrite']
+
+/** Nothing written about a file yet — the shape the form starts from. */
+export function noDetails(): FileDetails {
+  return { title: '', description: '', tags: [] }
+}
+
+/** What a file already carries, as the form edits it. */
+export function detailsOf(file: StoredFile): FileDetails {
+  const known = file.metadata
+  return known
+    ? { title: known.title, description: known.description, tags: [...known.tags] }
+    : noDetails()
+}
+
+/**
+ * `réseau, budget` → `['réseau', 'budget']`.
+ *
+ * Splitting is the screen's job and lowercasing is the server's: the API
+ * normalises and de-duplicates (docs/adr/0039), and a second implementation
+ * here would be a second answer to what a tag is.
+ */
+export function tagsOf(written: string): string[] {
+  return written
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+}
 
 /** The multipart body of `POST /files` — the one hand-written payload here. */
-export function uploadForm(file: File, prefix: string, overwrite: boolean): FormData {
+export function uploadForm(
+  file: File,
+  prefix: string,
+  overwrite: boolean,
+  details: FileDetails = noDetails(),
+): FormData {
   const form = new FormData()
   form.append('file', file)
   form.append('prefix', prefix)
   form.append('overwrite', String(overwrite))
+  form.append('title', details.title ?? '')
+  form.append('description', details.description ?? '')
+  // A multipart body has no arrays: one `tags` field per tag, which is what
+  // FastAPI reads back into a list.
+  for (const tag of details.tags ?? []) {
+    form.append('tags', tag)
+  }
   return form
 }
 
@@ -63,14 +104,19 @@ export function useFiles() {
   }
 
   /** `'exists'` rather than a throw on a 409: replacing a file is a question for the user. */
-  async function upload(prefix: string, file: File, overwrite = false): Promise<'stored' | 'exists'> {
+  async function upload(
+    prefix: string,
+    file: File,
+    overwrite = false,
+    details: FileDetails = noDetails(),
+  ): Promise<'stored' | 'exists'> {
     try {
       unwrap(
         await api.POST('/files', {
           // The generated type says `string` for a binary part; the value sent is
           // the `File`, serialised by `uploadForm` — see `useElementDocuments`.
           body: { file: file as unknown as string, prefix, overwrite },
-          bodySerializer: () => uploadForm(file, prefix, overwrite),
+          bodySerializer: () => uploadForm(file, prefix, overwrite, details),
         }),
       )
     } catch (failure) {
@@ -82,6 +128,24 @@ export function useFiles() {
     return 'stored'
   }
 
+  /**
+   * Replace what is written about a file: its title, its description, its tags.
+   *
+   * All three together, because the endpoint replaces them together — sending
+   * one of them is what clears the other two, and a screen that merged them
+   * here would be deciding something the API already decided.
+   */
+  async function describe(key: string, details: FileDetails): Promise<StoredFile> {
+    return unwrap(
+      await api.PUT('/files/metadata', { params: { query: { key } }, body: details }),
+    )
+  }
+
+  /** Make the catalogue agree with the bucket, for files written by another door. */
+  async function reconcile(): Promise<{ recorded: number; forgotten: number }> {
+    return unwrap(await api.POST('/files/reconcile', {}))
+  }
+
   async function download(key: string): Promise<Blob> {
     return unwrap(await api.GET('/files/content', { params: { query: { key } }, parseAs: 'blob' }))
   }
@@ -90,5 +154,5 @@ export function useFiles() {
     unwrap(await api.DELETE('/files', { params: { query: { key } } }))
   }
 
-  return { listing, status, error, load, upload, download, remove }
+  return { listing, status, error, load, upload, describe, reconcile, download, remove }
 }

@@ -39,6 +39,7 @@ from ea.domain.ports import (
     AccessTokenVerifier,
     DiagramRepository,
     DocumentRepository,
+    FileMetadataRepository,
     IpamRepository,
     ObjectStore,
 )
@@ -50,6 +51,7 @@ from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
+from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.services.architecture import ArchitectureService
@@ -145,6 +147,7 @@ def _lifespan(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     diagrams: DiagramRepository | None = None,
+    file_metadata: FileMetadataRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -209,6 +212,7 @@ def _lifespan(
                 )
             document_store = documents
             diagram_store = diagrams
+            metadata_store = file_metadata
             if settings.postgres_enabled:
                 engine = create_engine(settings)
                 stack.push_async_callback(engine.dispose)
@@ -218,6 +222,8 @@ def _lifespan(
                     document_store = PostgresDocumentRepository(app.state.db_sessions)
                 if diagram_store is None:
                     diagram_store = PostgresDiagramRepository(app.state.db_sessions)
+                if metadata_store is None:
+                    metadata_store = PostgresFileMetadataRepository(app.state.db_sessions)
                 logger.info(
                     "relational store ready at %s:%s/%s",
                     settings.postgres_host,
@@ -277,7 +283,11 @@ def _lifespan(
                             settings.s3_bucket,
                             settings.s3_endpoint,
                         )
-                app.state.file_service = FileService(store)
+                # The catalogue beside the bucket (docs/adr/0039). It is a table
+                # of the relational store, which is fatal at boot, so it is
+                # there whenever the store is — and `None` only on the test
+                # seam that builds an app without PostgreSQL at all.
+                app.state.file_service = FileService(store, metadata=metadata_store)
             # Published once every probe has run: `/health` reads it, and it is
             # the only place an operator is told which store is missing without
             # opening the logs — see docs/adr/0037.
@@ -433,6 +443,7 @@ def create_app(
     ipam: IpamRepository | None = None,
     diagrams: DiagramRepository | None = None,
     files: ObjectStore | None = None,
+    file_metadata: FileMetadataRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -450,7 +461,8 @@ def create_app(
     builds and probes the real client when `embeddings_enabled` says so.
 
     `diagrams` does the same for the saved diagrams (docs/adr/0031).
-    `files` does the same for the bucket (docs/adr/0036).
+    `files` does the same for the bucket (docs/adr/0036), and `file_metadata`
+    for the catalogue kept beside it (docs/adr/0039).
     `verifier` does the same for authentication: given one — `StaticVerifier`
     in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
     without reaching Keycloak; given none, the lifespan builds and probes the
@@ -476,6 +488,7 @@ def create_app(
             documents=documents,
             indexer=indexer,
             diagrams=diagrams,
+            file_metadata=file_metadata,
         ),
     )
     app.state.settings = settings
@@ -492,7 +505,7 @@ def create_app(
         if diagrams is not None:
             app.state.diagram_service = DiagramService(diagrams, architecture_service)
     if files is not None:
-        app.state.file_service = FileService(files)
+        app.state.file_service = FileService(files, metadata=file_metadata)
 
     app.add_middleware(
         CORSMiddleware,

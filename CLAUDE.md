@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with eight sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as thirty-two tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing and the files of the bucket — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with eight sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`), showing beside each one what PostgreSQL records about it — who deposited it, when, and the title, description and tags a person wrote (see `docs/adr/0039`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as thirty-four tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing and the files of the bucket — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), and the documents in **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots — which is true of Keycloak too, and of nothing else: an unreachable embedder or bucket degrades its own section and `/health` names it (see `docs/adr/0037`).
+PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), the documents in **two tables**, and what is known about the files of the bucket in a third, `file_metadata` (migration `0008`, see `docs/adr/0039`). `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots — which is true of Keycloak too, and of nothing else: an unreachable embedder or bucket degrades its own section and `/health` names it (see `docs/adr/0037`).
 
 Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn, where, and at what size (`width`/`height`, migration `0007`, see `docs/adr/0035`), and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` is a foreign key to `elements`, like `element_documents.element_id`, so deleting an element takes its boxes and its documents in the same transaction (migration `0006`, see `docs/adr/0033`). The SPA's *Diagrammes* section builds them; there is no MCP tool for diagrams.
 
@@ -33,6 +33,7 @@ shared cluster, so `docs/adr/0028` is still a *Proposition*.
 | Metamodel | ArchiMate 3.2, complete | 61 element types, 11 relationship types, rules-based validation — see `docs/adr/0005` |
 | IP addressing | Properties of the existing elements, no new table | A subnet is a `communication_network`, an address is an attribute of the machine — so it is in the catalogue, the neighbourhood and the impact analysis for free — see `docs/adr/0020` |
 | File storage | MinIO of the Infra, one bucket (`ea-catalogue`), through the API — never presigned | One door for the SPA and an agent, authorisation in `services/` — see `docs/adr/0036` |
+| File metadata | A `file_metadata` row per object, beside the bucket — never `x-amz-meta-*` | MinIO knows no uploader and no description, and S3 metadata is frozen at write, unsearchable and unfilterable — see `docs/adr/0039` |
 | Storage | PostgreSQL + SQLAlchemy 2 (async, `asyncpg`) + Alembic | One database for the whole model: the graph as two tables walked by recursive CTEs, the documents and their index, the diagrams — see `docs/adr/0033` |
 | Document search | pgvector in that same PostgreSQL, `vector(1024)` + HNSW | The corpus is small and already there; a third store would be a third consistency to keep — see `docs/adr/0019` |
 | Embeddings | An OpenAI-shaped `/v1/embeddings` — Ollama on the cluster (`192.168.2.10:11435`), `mxbai-embed-large` | Measured against the alternative on French prose; the API shape, not the supplier, is what we depend on — which is why changing supplier was a base URL and a model name — see `docs/adr/0019`, `docs/adr/0038` |
@@ -73,17 +74,22 @@ backend/
       chunking.py  # where a markdown document is cut, and what is embedded
       diagrams.py  # a saved view: which elements are drawn, and where — no fact of its own
       ipam.py      # what an IP address is, where it may live, what is free
-      files.py     # what a stored file is, which paths are allowed — see docs/adr/0036
+      files.py     # what a stored file is, which paths are allowed, and what is
+                 #   known about it — see docs/adr/0036 and docs/adr/0039
       search.py    # what the passage index holds and answers with
     reindex.py     # `python -m ea.reindex` — rebuild the index over the whole corpus
+    files_reconcile.py # `python -m ea.files_reconcile` — make the file catalogue
+                 #   agree with the bucket (docs/adr/0039)
     graph_import.py # the one-off copy from Neo4j (docs/adr/0033), deleted after the cut-over
     services/      # use cases; orchestrate domain + repositories, own transactions
       caller.py    # current_caller, require_caller, require_editor, acting_as
       files.py     # FileService: list/open/read for a reader, upload/delete for an editor
     repositories/  # implementations of the ports declared in domain: SQL,
-                 #   and the outbound HTTP clients (the embedding service,
-                 #   keycloak.py — the realm's keys and the JWT check,
-                 #   object_store.py — the MinIO bucket, docs/adr/0036)
+                 #   file_metadata_store.py — what is known about the files
+                 #   of that bucket (docs/adr/0039), and the outbound HTTP
+                 #   clients (the embedding service, keycloak.py — the realm's
+                 #   keys and the JWT check, object_store.py — the MinIO
+                 #   bucket, docs/adr/0036)
     db/            # the PostgreSQL engine, session factory and declarative base
     db/models/     # every mapped table — the one module Alembic autogenerates from
   migrations/      # Alembic revisions for PostgreSQL — the graph included since 0005
@@ -182,6 +188,7 @@ uv run pytest                   # everything; integration tests skip unless poin
 uv run pytest tests/unit -q     # fast loop, no DB
 uv run pytest tests/unit/test_ipam.py -x  # one file — without --cov, which would fail the floor
 make docs-reindex               # rebuild the passage index over every stored document
+make files-reconcile            # make the file catalogue agree with the bucket
 uv run alembic upgrade head     # or `make pg-migrate` — targets the SHARED database
 uv run ruff format . && uv run ruff check --fix .
 uv run mypy src migrations
@@ -241,8 +248,12 @@ step and nothing else. `get_documents` is required rather than optional: the
 tool list belongs to the adapter, not to the deployment, so a shut relational
 store means the document tools are offered and fail — exactly as `/documents`
 stays routed and answers a 500. See `docs/adr/0018`. `get_ipam` is required for
-the same reason, and so is `get_files` (`docs/adr/0036`): the four file tools
-stay listed and fail 503 when `EA_S3_ENABLED` is off. An agent has no file to
+the same reason, and so is `get_files` (`docs/adr/0036`): the six file tools
+stay listed and fail 503 when `EA_S3_ENABLED` is off. Two of those six —
+`describe_file` and `set_file_details` — are the record PostgreSQL keeps beside
+each object (`docs/adr/0039`), and the `INSTRUCTIONS` tell a model to write one
+when it uploads a binary: `rapport-q3.pdf` says nothing, a sentence beside it
+says everything. An agent has no file to
 attach here either, so `upload_file` takes the content as text
 (`encoding="text"`) or, for anything that is not text, base64
 (`encoding="base64"`) — the same choice the document tools made, generalised
@@ -480,6 +491,52 @@ must be addressable, a declared subnet must hold the address, nothing else may
 have it. An allocation that loses the race to the constraint tries the next
 free address, up to `ALLOCATION_ATTEMPTS` (3). The SPA restates none of them —
 it asks, exactly as it does for the metamodel.
+
+## MinIO says what exists, PostgreSQL says what is known about it
+
+`file_metadata` is the record kept beside each object of the bucket
+(`docs/adr/0039`). Five things about it are decisions, not details.
+
+**The bucket stays the source of truth for what exists.** Listing, downloading
+and deleting go to MinIO; an object it holds is a file whether or not
+PostgreSQL has heard of it, and a file with no row is listed *undescribed*
+(`metadata: null`), never absent. That is the only split that leaves the
+`alimenter-catalogue` pipeline's own door open: it drops sources into `inbox/`
+knowing nothing about this table, and what it drops stays visible.
+
+**A read never writes.** Listing a folder does not create rows for what it
+finds. The catch-up is explicit — `POST /files/reconcile`, or
+`make files-reconcile` — and it is what gives a row to a file that arrived by
+another door and drops a row whose object is gone. There is no foreign key that
+could do either: the other side of this relation is an object store, and this
+is the one table in the repository in that position.
+
+**The object is written first, the row second.** A crash between them leaves a
+file in the bucket with nothing recorded about it — exactly the state a file
+written by any other door is in, and exactly what a reconcile repairs. The
+reverse order would leave a row describing a file that was never stored, which
+nothing repairs.
+
+**Replacing a file never unwrites what a person said about it.** Both upload
+paths are `INSERT ... ON CONFLICT DO UPDATE`, and their `SET` list holds
+neither `title`, nor `description`, nor `tags`, nor `created_at`. Supplying
+details on an upload is a second, deliberate statement; supplying none keeps
+what was there. `describe` is the only thing that changes them, and it replaces
+all three together — sending one is what clears the other two, because merging
+them in a client would be a second answer to what a record is. For the same
+reason `record` and `note_seen` are two methods and not one flag: an upload read
+the bytes and has a digest and a caller, a reconcile has a listing and has
+neither, and folding them together would mean a reconcile blanking the uploader
+of every file the API stored.
+
+**`sha256` is nullable, and `NULL` means "not computed".** It is known for a
+file this API received and unknown for one a reconcile picked up from a
+listing — computing it there would mean downloading the object, and a catch-up
+that reads every byte of a bucket is not a catch-up. An empty string would say
+"computed, and empty", which is the digest of no bytes and a different fact. A
+reconcile *drops* a digest the `etag` says is stale: a silently wrong digest
+answers the only question it exists for — "the same file under another name?" —
+wrongly.
 
 ## Drawing a graph in the SPA
 

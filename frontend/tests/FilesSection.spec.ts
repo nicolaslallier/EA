@@ -6,7 +6,7 @@ import { createMemoryHistory } from 'vue-router'
 import FilesSection from '../src/features/files/FilesSection.vue'
 import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
-import { aFile, aListing, aStoredFile, stubApi, type Route } from './support/api'
+import { aFile, aFileRecord, aListing, aStoredFile, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -141,6 +141,10 @@ describe('FilesSection', () => {
     await screen.findByText('readme.md')
     expect(screen.queryByLabelText('Déposer des fichiers')).toBeNull()
     expect(screen.queryByRole('button', { name: /Supprimer/ })).toBeNull()
+    // Writing about a file and reconciling the catalogue are writes too
+    // (docs/adr/0039); the API refuses them, and the screen does not offer them.
+    expect(screen.queryByRole('button', { name: /^Décrire/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rapprocher le catalogue' })).toBeNull()
   })
 
   it('downloads through the client, never through a bare link', async () => {
@@ -152,5 +156,88 @@ describe('FilesSection', () => {
 
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
     expect(calls.at(-1)?.url.searchParams.get('key')).toBe('readme.md')
+  })
+})
+
+describe('what the catalogue says about each file', () => {
+  it('shows the title, the tags and who deposited it', async () => {
+    await open('', [
+      {
+        path: '/files',
+        body: aListing({
+          files: [
+            aStoredFile({
+              key: 'rapport.pdf',
+              name: 'rapport.pdf',
+              metadata: aFileRecord({
+                title: 'Rapport 2026',
+                description: 'Le bilan de l’année.',
+                tags: ['budget'],
+                uploaded_by: 'nicolas',
+              }),
+            }),
+          ],
+        }),
+      },
+    ])
+
+    expect(await screen.findByText('Rapport 2026')).toBeTruthy()
+    expect(screen.getByText('Le bilan de l’année.')).toBeTruthy()
+    expect(screen.getByText('budget')).toBeTruthy()
+    expect(screen.getByText(/Déposé par nicolas/)).toBeTruthy()
+    // The path is still shown: the title names the file, it does not replace it.
+    expect(screen.getByText('rapport.pdf')).toBeTruthy()
+  })
+
+  it('says so when a file has no record rather than pretending it has none to give', async () => {
+    // The bucket has another door than this API — docs/adr/0039.
+    await open('', [
+      {
+        path: '/files',
+        body: aListing({
+          files: [aStoredFile({ key: 'dropped.csv', name: 'dropped.csv', metadata: null })],
+        }),
+      },
+    ])
+
+    expect(await screen.findByText('Aucune fiche')).toBeTruthy()
+  })
+
+  it('replaces the three fields together and reloads the folder', async () => {
+    const { calls } = await open('', [
+      {
+        path: '/files',
+        body: aListing({
+          files: [aStoredFile({ key: 'a.md', name: 'a.md', metadata: aFileRecord({ title: 'A' }) })],
+        }),
+      },
+      { method: 'PUT', path: '/files/metadata', body: aStoredFile() },
+    ])
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Décrire a.md' }))
+    await fireEvent.update(screen.getByLabelText('Titre'), 'B')
+    await fireEvent.update(screen.getByLabelText('Étiquettes'), 'réseau, budget')
+    await fireEvent.click(screen.getByRole('button', { name: 'Enregistrer' }))
+
+    await waitFor(() => {
+      const written = calls.find((call) => call.method === 'PUT')
+      expect(written?.body).toEqual({ title: 'B', description: '', tags: ['réseau', 'budget'] })
+    })
+    // The listing is re-read, so what is on screen is what was stored.
+    await waitFor(() =>
+      expect(calls.filter((call) => call.url.pathname === '/files').length).toBeGreaterThan(1),
+    )
+  })
+
+  it('reconciles the catalogue with the bucket and says what changed', async () => {
+    const { calls } = await open('', [
+      TOP,
+      { method: 'POST', path: '/files/reconcile', body: { recorded: 2, forgotten: 1 } },
+    ])
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Rapprocher le catalogue' }))
+
+    expect(await screen.findByText(/2 fichier\(s\) ajouté\(s\) au catalogue/)).toBeTruthy()
+    expect(calls.some((call) => call.url.pathname === '/files/reconcile')).toBe(true)
   })
 })

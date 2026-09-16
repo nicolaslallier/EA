@@ -15,7 +15,7 @@ from uuid import UUID
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
-from ea.domain.files import FileListing, StoredFile
+from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
@@ -295,6 +295,67 @@ class AccessTokenVerifier(Protocol):
         ...
 
 
+class FileMetadataRepository(Protocol):
+    """What PostgreSQL knows about the objects of the bucket — see docs/adr/0039.
+
+    It is a catalogue *of* a store and not the store: the bytes are in MinIO,
+    which stays the source of truth for what exists. Every method is keyed by
+    `object_key`, because that is the one name both sides share.
+
+    The write side is two methods and not one, because an upload and a
+    reconcile know different things. `record` is what an upload learned — it
+    read the bytes, so it has a digest and a caller. `note_seen` is what a
+    listing learned — a size and a modification time, and nothing about who
+    wrote the object or what is in it. Folding them into one call would mean a
+    reconcile blanking the uploader of every file the API had stored.
+
+    Neither touches the title, the description or the tags: what a person wrote
+    about a file survives that file being replaced. `describe` is the only way
+    those change, and it is the only thing an editor can change here.
+    """
+
+    async def record(self, metadata: FileMetadata) -> FileMetadata:
+        """Store what an upload learned about an object, keeping any description."""
+        ...
+
+    async def note_seen(self, stored: StoredFile, *, now: datetime) -> FileMetadata:
+        """Store what a listing learned, keeping the description, the uploader and the digest.
+
+        A stored digest is dropped when the object's `etag` says it was replaced
+        since: it described bytes that are no longer there, and a digest that is
+        quietly wrong is worse than none.
+        """
+        ...
+
+    async def get(self, key: str) -> FileMetadata | None: ...
+
+    async def for_keys(self, keys: Sequence[str]) -> dict[str, FileMetadata]:
+        """What is known about each of these objects, keyed by path.
+
+        A batch and not a call per row: a folder of a thousand files is one
+        query, which is the reason this table mirrors the bucket's own facts.
+        """
+        ...
+
+    async def describe(
+        self, key: str, details: FileDetails, *, now: datetime
+    ) -> FileMetadata | None:
+        """Replace what a person wrote about a file; `None` when no row holds it."""
+        ...
+
+    async def forget(self, key: str) -> bool:
+        """Drop the row for an object that is no longer in the bucket."""
+        ...
+
+    async def all_keys(self) -> tuple[str, ...]:
+        """Every object this catalogue holds a row for — the reconcile walks these."""
+        ...
+
+    async def with_digest(self, sha256: str) -> tuple[FileMetadata, ...]:
+        """Every file whose content is these exact bytes — the same file under two names."""
+        ...
+
+
 class ObjectStore(Protocol):
     """Where files are kept — MinIO in a deployment, a dict in the unit tests.
 
@@ -310,5 +371,16 @@ class ObjectStore(Protocol):
     async def put(self, key: str, data: bytes, *, content_type: str) -> StoredFile: ...
 
     async def open(self, key: str) -> tuple[StoredFile, AsyncIterator[bytes]]: ...
+
+    def walk(self, prefix: str = "") -> AsyncIterator[StoredFile]:
+        """Every object under `prefix`, however deep and however many.
+
+        An iterator and not a `FileListing`: this is what a reconcile walks
+        (docs/adr/0039), and it is the one read here with no cap on it — a cap
+        would silently make the catch-up skip the rest of the bucket. It is
+        also why it is not `list_folder(recursive=True)`: a listing is a folder
+        a person is looking at, bounded on purpose.
+        """
+        ...
 
     async def delete(self, key: str) -> None: ...
