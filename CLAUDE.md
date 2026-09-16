@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with eight sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as thirty-two tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing and the files of the bucket — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
-PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), and the documents in **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots.
+PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), and the documents in **two tables**. `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots — which is true of Keycloak too, and of nothing else: an unreachable embedder or bucket degrades its own section and `/health` names it (see `docs/adr/0037`).
 
 Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn, where, and at what size (`width`/`height`, migration `0007`, see `docs/adr/0035`), and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` is a foreign key to `elements`, like `element_documents.element_id`, so deleting an element takes its boxes and its documents in the same transaction (migration `0006`, see `docs/adr/0033`). The SPA's *Diagrammes* section builds them; there is no MCP tool for diagrams.
 
@@ -590,6 +590,38 @@ case means choosing which. `NotAuthenticatedError` is a 401 with
 Saved diagrams follow the same rule: any caller lists and opens them, only
 `ea-editor` creates, renames, lays out or deletes one, and the SPA hides the
 palette, the link handle and every such control from a reader.
+
+## What is fatal at boot, and what only degrades
+
+**A dependency every route needs is fatal; one that serves a single section
+degrades.** PostgreSQL holds the whole model and Keycloak verifies every call,
+so a process that cannot reach either has nothing to serve and stops. The
+embedding service and the MinIO bucket serve one section each, so an
+unreachable one is recorded and the API boots without it — `search_documents`
+and `/files` then answer 503, exactly as they do where their setting is off.
+Both go through `_reachable()` in `main.py`; PostgreSQL and Keycloak
+deliberately do not. See `docs/adr/0037`.
+
+This is not a preference. Every probe used to be fatal, so an unreachable
+MinIO — `docs/adr/0036` ships `EA_S3_ENABLED=true` in the stack while its own
+"à faire hors de ce repo" still owes the `ea-api` MinIO user — took the whole
+deployment down: `502 Bad Gateway` on `/health`, `/me`, `/elements` and
+`/metamodel` alike, because a file browser could not reach its bucket.
+
+**`/health` is what says so**, and it is the only place that does without
+opening the container's logs: `status` is `ok` or `degraded`, and `degraded`
+names the sections that will refuse. It stays a **200** either way — it is the
+`Dockerfile`'s `HEALTHCHECK` and the SPA's first call, and liveness is not
+readiness — and it names **sections, never reasons**: it carries no
+`Authenticated`, so which host, bucket or model is at fault stays in the log,
+under `action=subsystem_degraded`. A third peripheral store adds a constant
+beside `SEARCH` and `FILES`; a dependency every route needs adds none.
+
+**Nothing re-probes.** A section degraded at boot stays degraded until the
+container restarts, so fixing the store means `make app-up` (or restarting
+`api`) as well. And a document attached while the embedder was down is not
+indexed — the same state `EA_EMBEDDINGS_ENABLED=false` produces, with
+`make docs-reindex` as the same catch-up.
 
 ## Nothing is logged until something configures logging
 
