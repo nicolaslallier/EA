@@ -22,6 +22,7 @@ from ea.api.schemas import (
     AddressAssign,
     ElementCreate,
     ElementUpdate,
+    FileDetailsWrite,
     RelationshipCreate,
     SubnetCreate,
 )
@@ -115,6 +116,8 @@ class TestTheToolset:
             "release_ip_address",
             "list_files",
             "read_file",
+            "describe_file",
+            "set_file_details",
             "upload_file",
             "delete_file",
         }
@@ -918,7 +921,9 @@ class TestTheFileTools:
 #: The JSON-schema keywords that *bound* a value. Descriptions are left out on
 #: purpose: the model reads a tool's, a developer reads an endpoint's, and they
 #: are allowed to say different things about the same field.
-BOUNDS = ("minLength", "maxLength", "minimum", "maximum", "pattern")
+#: `maxItems` is here because a list argument carries its bound there and
+#: nowhere else — `FileTags` caps how many tags a file may have.
+BOUNDS = ("minLength", "maxLength", "minimum", "maximum", "pattern", "maxItems")
 
 
 def bounds_of(schema: dict[str, Any]) -> dict[str, Any]:
@@ -932,6 +937,54 @@ def bounds_of(schema: dict[str, Any]) -> dict[str, Any]:
 def query_parameter(openapi: dict[str, Any], path: str, name: str) -> dict[str, Any]:
     operation = openapi["paths"][path]["get"]
     return next(p["schema"] for p in operation["parameters"] if p["name"] == name)
+
+
+@pytest.mark.asyncio
+class TestTheRecordBesideAFile:
+    """What an agent reads and writes about a file — see docs/adr/0039."""
+
+    async def test_an_upload_records_a_title_a_description_and_tags(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await call(
+            server,
+            "upload_file",
+            key="inbox/notes.md",
+            content="# Notes",
+            title="Les notes",
+            description="Ce qui a été dit.",
+            tags=["Réunion"],
+        )
+
+        described = await call(server, "describe_file", key="inbox/notes.md")
+
+        recorded = described["metadata"]
+        assert (recorded["title"], recorded["description"]) == ("Les notes", "Ce qui a été dit.")
+        assert recorded["tags"] == ["réunion"]
+
+    async def test_the_record_is_replaced_whole(self, server: MCPServer[Any]) -> None:
+        """Which is why the tool says to read it first if only one field changes."""
+        await call(server, "upload_file", key="a.md", content="x", title="A", tags=["budget"])
+
+        await call(server, "set_file_details", key="a.md", title="B")
+
+        recorded = (await call(server, "describe_file", key="a.md"))["metadata"]
+        assert (recorded["title"], recorded["tags"]) == ("B", [])
+
+    async def test_a_file_the_catalogue_never_saw_has_no_record(
+        self, server: MCPServer[Any], files_store: InMemoryObjectStore
+    ) -> None:
+        files_store.objects["inbox/dropped.csv"] = (b"a,b\n", "text/csv")
+
+        described = await call(server, "describe_file", key="inbox/dropped.csv")
+
+        assert described["metadata"] is None
+
+    async def test_describing_a_file_that_is_not_there_says_so(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "describe_file", key="nothing.md")
 
 
 @pytest.mark.asyncio
@@ -962,6 +1015,12 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("assign_ip_address", "address", AddressAssign, "address"),
             ("assign_ip_address", "vrf", AddressAssign, "vrf"),
             ("locate_ip_address", "address", AddressAssign, "address"),
+            ("set_file_details", "title", FileDetailsWrite, "title"),
+            ("set_file_details", "description", FileDetailsWrite, "description"),
+            ("set_file_details", "tags", FileDetailsWrite, "tags"),
+            ("upload_file", "title", FileDetailsWrite, "title"),
+            ("upload_file", "description", FileDetailsWrite, "description"),
+            ("upload_file", "tags", FileDetailsWrite, "tags"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
@@ -992,6 +1051,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("list_ip_addresses", "search", "/ipam/addresses", "search"),
             ("list_files", "prefix", "/files", "prefix"),
             ("read_file", "key", "/files/content", "key"),
+            ("describe_file", "key", "/files/metadata", "key"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(

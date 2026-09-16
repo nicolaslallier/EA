@@ -11,6 +11,7 @@ type SubnetDetailRead = components['schemas']['SubnetDetailRead']
 type AddressRead = components['schemas']['AddressRead']
 type AddressLocationRead = components['schemas']['AddressLocationRead']
 type FileRead = components['schemas']['FileRead']
+type FileMetadataRead = components['schemas']['FileMetadataRead']
 type FileListingRead = components['schemas']['FileListingRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
@@ -299,7 +300,26 @@ export function anAddressLocation(
   return { address, graph: { elements, relationships } }
 }
 
-/** One file of the bucket, as a listing or an upload describes it. */
+/** What the catalogue knows about one file — see docs/adr/0039. */
+export function aFileRecord(overrides: Partial<FileMetadataRead> = {}): FileMetadataRead {
+  return {
+    title: '',
+    description: '',
+    tags: [],
+    uploaded_by: 'nicolas',
+    sha256: 'a'.repeat(64),
+    created_at: '2026-09-15T12:00:00Z',
+    updated_at: '2026-09-15T12:00:00Z',
+    ...overrides,
+  }
+}
+
+/**
+ * One file of the bucket, as a listing or an upload describes it.
+ *
+ * `metadata` defaults to a record, because every file this API stored has one;
+ * pass `{ metadata: null }` for a file written straight into the bucket.
+ */
 export function aStoredFile(overrides: Partial<FileRead> = {}): FileRead {
   return {
     key: 'inbox/notes.md',
@@ -307,6 +327,7 @@ export function aStoredFile(overrides: Partial<FileRead> = {}): FileRead {
     size: 2048,
     last_modified: '2026-09-15T12:00:00Z',
     content_type: 'text/markdown',
+    metadata: aFileRecord(),
     ...overrides,
   }
 }

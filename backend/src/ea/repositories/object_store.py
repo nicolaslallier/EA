@@ -94,9 +94,35 @@ class MinioObjectStore:
                         size=found.size or 0,
                         last_modified=found.last_modified or _EPOCH,
                         content_type=guess_content_type(name),
+                        etag=found.etag or "",
                     )
                 )
         return FileListing(prefix, tuple(folders), tuple(files), truncated=False)
+
+    async def walk(self, prefix: str = "") -> AsyncIterator[StoredFile]:
+        """Every object under `prefix`, page by page — what a reconcile walks.
+
+        `list_objects` is a lazy generator over paginated calls, and advancing
+        it is a blocking HTTP request, so each step is taken in a worker thread
+        exactly as every other call here is. Yielding page by page rather than
+        collecting first is what keeps a bucket of a hundred thousand objects
+        from being a hundred thousand rows held in this process at once.
+        """
+        found = await asyncio.to_thread(
+            self.client.list_objects, self.bucket, prefix=prefix or None, recursive=True
+        )
+        iterator = iter(found)
+        while (entry := await asyncio.to_thread(next, iterator, None)) is not None:
+            if entry.is_dir:  # pragma: no cover - `recursive=True` returns none
+                continue
+            name = entry.object_name or ""
+            yield StoredFile(
+                key=name,
+                size=entry.size or 0,
+                last_modified=entry.last_modified or _EPOCH,
+                content_type=guess_content_type(name),
+                etag=entry.etag or "",
+            )
 
     async def stat(self, key: str) -> StoredFile | None:
         try:
@@ -110,6 +136,7 @@ class MinioObjectStore:
             size=found.size or 0,
             last_modified=found.last_modified or _EPOCH,
             content_type=found.content_type or guess_content_type(key),
+            etag=found.etag or "",
         )
 
     async def put(self, key: str, data: bytes, *, content_type: str) -> StoredFile:

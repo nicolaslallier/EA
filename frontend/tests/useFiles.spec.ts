@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { breadcrumbs, parentOf, saveAs, uploadForm, useFiles } from '../src/features/files/useFiles'
-import { MULTIPART, aFile, aListing, aStoredFile, stubApi } from './support/api'
+import {
+  breadcrumbs,
+  detailsOf,
+  noDetails,
+  parentOf,
+  saveAs,
+  tagsOf,
+  uploadForm,
+  useFiles,
+} from '../src/features/files/useFiles'
+import { MULTIPART, aFile, aFileRecord, aListing, aStoredFile, stubApi } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -95,5 +104,61 @@ describe('useFiles', () => {
     await useFiles().remove('inbox/notes.md')
 
     expect(calls[0]?.url.searchParams.get('key')).toBe('inbox/notes.md')
+  })
+})
+
+describe('what a person writes about a file', () => {
+  it('sends the title, the description and one form field per tag', () => {
+    const form = uploadForm(aFile('rapport.pdf'), 'inbox/', false, {
+      title: 'Rapport 2026',
+      description: 'Le bilan.',
+      tags: ['budget', 'réseau'],
+    })
+
+    expect(form.get('title')).toBe('Rapport 2026')
+    expect(form.get('description')).toBe('Le bilan.')
+    // A multipart body has no arrays — one field per tag, which is what
+    // FastAPI reads back into a list.
+    expect(form.getAll('tags')).toEqual(['budget', 'réseau'])
+  })
+
+  it('cuts a comma-separated line into tags, leaving the case to the server', () => {
+    // The API lowercases and de-duplicates (docs/adr/0039); doing it here too
+    // would be a second answer to what a tag is.
+    expect(tagsOf(' Réseau , budget ,, ')).toEqual(['Réseau', 'budget'])
+    expect(tagsOf('')).toEqual([])
+  })
+
+  it('starts the form from what the file already carries', () => {
+    const file = aStoredFile({ metadata: aFileRecord({ title: 'A', tags: ['budget'] }) })
+
+    expect(detailsOf(file)).toEqual({ title: 'A', description: '', tags: ['budget'] })
+  })
+
+  it('starts the form empty for a file the catalogue has never seen', () => {
+    expect(detailsOf(aStoredFile({ metadata: null }))).toEqual(noDetails())
+  })
+
+  it('replaces the three fields together, which is what the endpoint does', async () => {
+    const calls = stubApi([
+      { method: 'PUT', path: '/files/metadata', body: aStoredFile() },
+    ])
+
+    await useFiles().describe('inbox/notes.md', {
+      title: 'B',
+      description: '',
+      tags: ['réseau'],
+    })
+
+    expect(calls[0]?.url.searchParams.get('key')).toBe('inbox/notes.md')
+    expect(calls[0]?.body).toEqual({ title: 'B', description: '', tags: ['réseau'] })
+  })
+
+  it('asks the server to make the catalogue agree with the bucket', async () => {
+    stubApi([
+      { method: 'POST', path: '/files/reconcile', body: { recorded: 2, forgotten: 1 } },
+    ])
+
+    expect(await useFiles().reconcile()).toEqual({ recorded: 2, forgotten: 1 })
   })
 })

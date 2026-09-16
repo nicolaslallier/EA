@@ -270,7 +270,12 @@ export interface paths {
          * Upload File
          * @description Store a file in the folder `prefix`, under its own name.
          *
-         *     A file already there is a 409 unless `overwrite` is true.
+         *     A file already there is a 409 unless `overwrite` is true. `title`,
+         *     `description` and `tags` are recorded beside it (docs/adr/0039); leaving
+         *     them out on an overwrite keeps whatever was already written about the file.
+         *
+         *     `tags` is a form field repeated once per tag, because a multipart body has
+         *     no arrays — `tags=budget&tags=réseau`.
          */
         post: operations["upload_file_files_post"];
         /** Delete File */
@@ -294,6 +299,56 @@ export interface paths {
         get: operations["download_file_files_content_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read File Metadata
+         * @description One file of the bucket, and what the catalogue knows about it.
+         */
+        get: operations["read_file_metadata_files_metadata_get"];
+        /**
+         * Describe File
+         * @description Replace what is written about a file: its title, description and tags.
+         *
+         *     A `PUT` and not a `PATCH`, because the body replaces the whole description
+         *     rather than merging into it — see `FileDetailsWrite`.
+         */
+        put: operations["describe_file_files_metadata_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconcile Files
+         * @description Make the catalogue agree with the bucket, and say what changed.
+         *
+         *     The catch-up for a file written or removed by a door that is not this API.
+         *     Harmless to run twice, and it never touches what a person wrote.
+         */
+        post: operations["reconcile_files_files_reconcile_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -680,6 +735,11 @@ export interface components {
         /** Body_upload_file_files_post */
         Body_upload_file_files_post: {
             /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /**
              * File
              * @description Any file, at most 50 MB.
              */
@@ -694,6 +754,16 @@ export interface components {
              * @default
              */
             prefix?: string;
+            /**
+             * Tags
+             * @default []
+             */
+            tags?: string[];
+            /**
+             * Title
+             * @default
+             */
+            title?: string;
         };
         /** DiagramCreate */
         DiagramCreate: {
@@ -1009,6 +1079,28 @@ export interface components {
             error: string;
         };
         /**
+         * FileDetailsWrite
+         * @description What a person writes about a file — replaced whole, never merged.
+         *
+         *     Every field has a default, so a body naming only `tags` clears the title:
+         *     the whole description is what is sent, which is the only shape a client can
+         *     implement without reading the current values first.
+         */
+        FileDetailsWrite: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Title
+             * @default
+             */
+            title?: string;
+        };
+        /**
          * FileListingRead
          * @description One folder: its sub-folders, then its files.
          */
@@ -1029,8 +1121,51 @@ export interface components {
             truncated: boolean;
         };
         /**
+         * FileMetadataRead
+         * @description What PostgreSQL knows about one file of the bucket — see docs/adr/0039.
+         *
+         *     `etag` is deliberately absent: it is how a reconcile tells a replaced object
+         *     from an untouched one, and means nothing to a client. `sha256` is here
+         *     because "the same file under another name" is a question a person asks; it
+         *     is `null` for a file this API never received, which is an honest unknown
+         *     rather than a digest nobody computed.
+         */
+        FileMetadataRead: {
+            /**
+             * Created At
+             * Format: date-time
+             * @description When this catalogue first saw the file.
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Sha256
+             * @description Hex digest of the file's bytes, null when this API never received them.
+             */
+            sha256: string | null;
+            /** Tags */
+            tags: string[];
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Uploaded By
+             * @description The username of whoever uploaded it, empty for a file written straight into the bucket.
+             */
+            uploaded_by: string;
+        };
+        /**
          * FileRead
          * @description One file of the bucket, as a listing or an upload describes it — never its bytes.
+         *
+         *     `metadata` is `null` for a file the bucket holds and the catalogue has not
+         *     heard of — one the pipeline or the MinIO console wrote. That is a file with
+         *     no description, never a missing file: the bytes are what exist.
          */
         FileRead: {
             /** Content Type */
@@ -1045,6 +1180,7 @@ export interface components {
              * Format: date-time
              */
             last_modified: string;
+            metadata?: components["schemas"]["FileMetadataRead"] | null;
             /**
              * Name
              * @description The last segment of the key.
@@ -1115,6 +1251,22 @@ export interface components {
             layers: components["schemas"]["Layer"][];
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
+        };
+        /**
+         * ReconcileRead
+         * @description What one pass of the file catch-up changed — see docs/adr/0039.
+         */
+        ReconcileRead: {
+            /**
+             * Forgotten
+             * @description Rows whose file is no longer in the bucket.
+             */
+            forgotten: number;
+            /**
+             * Recorded
+             * @description Files the catalogue had never heard of.
+             */
+            recorded: number;
         };
         /**
          * RelationshipCategory
@@ -2748,6 +2900,209 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_file_metadata_files_metadata_get: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    describe_file_files_metadata_put: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileDetailsWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reconcile_files_files_reconcile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Service Unavailable */

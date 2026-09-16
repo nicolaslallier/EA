@@ -63,6 +63,30 @@ async def test_a_listing_beyond_the_limit_says_it_is_truncated(
     assert (len(listing.files), listing.truncated) == (2, True)
 
 
+async def test_a_walk_goes_all_the_way_down_and_carries_the_etag(
+    minio_store: MinioObjectStore,
+) -> None:
+    """What a reconcile reads (docs/adr/0039). The `etag` is what tells it a
+    stored digest still describes the bytes that are there, so a real MinIO
+    reporting one is part of the behaviour, not a detail of the SDK."""
+    for key in ("top.txt", "inbox/a.md", "inbox/sub/b.md"):
+        await minio_store.put(key, b"x", content_type="text/plain")
+
+    walked = {found.key: found async for found in minio_store.walk()}
+
+    assert set(walked) == {"top.txt", "inbox/a.md", "inbox/sub/b.md"}
+    assert all(found.etag for found in walked.values())
+
+
+async def test_a_walk_under_a_prefix_stays_under_it(minio_store: MinioObjectStore) -> None:
+    for key in ("top.txt", "inbox/a.md", "inbox/sub/b.md"):
+        await minio_store.put(key, b"x", content_type="text/plain")
+
+    walked = [found.key async for found in minio_store.walk("inbox/")]
+
+    assert sorted(walked) == ["inbox/a.md", "inbox/sub/b.md"]
+
+
 async def test_a_deleted_file_cannot_be_opened(minio_store: MinioObjectStore) -> None:
     await minio_store.put("gone.txt", b"x", content_type="text/plain")
 

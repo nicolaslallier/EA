@@ -193,7 +193,7 @@ NC    := \033[0m
         pg-vector-check pg-stack app-stack require-postgres-password \
         app-up app-down app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
-        embed-ping embed-models docs-reindex openapi openapi-check \
+        embed-ping embed-models docs-reindex files-reconcile openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
         pg-backup pg-restore graph-import \
@@ -477,6 +477,15 @@ embed-ping: ## Vérifie que le modèle d'embedding répond, et à quelle largeur
 docs-reindex: | $(VENV_STAMP) ## Reconstruit l'index sémantique de tous les documents
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
 	cd $(BACKEND) && uv run python -m ea.reindex
+
+# Le rattrapage de docs/adr/0039 : le bucket a une autre porte que cette API
+# (le pipeline, `mc`, la console MinIO), et aucune clé étrangère ne peut tenir
+# `file_metadata` et MinIO ensemble — l'autre bout de la relation est un
+# magasin d'objets. Relancer la commande deux fois est sans effet, et elle ne
+# touche jamais à ce qu'une personne a écrit sur un fichier.
+files-reconcile: | $(VENV_STAMP) ## Rapproche le catalogue des fichiers du contenu du bucket
+	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
+	cd $(BACKEND) && uv run python -m ea.files_reconcile
 
 ## --- Contrat front/back ---------------------------------------------------
 #

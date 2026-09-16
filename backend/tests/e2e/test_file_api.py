@@ -13,17 +13,28 @@ from ea.domain.files import MAX_FILE_BYTES
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
 from ea.services.files import FileService
-from tests.conftest import InMemoryObjectStore, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    InMemoryFileMetadata,
+    InMemoryObjectStore,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+)
 
 pytestmark = pytest.mark.asyncio
 
 
 @pytest_asyncio.fixture
 async def client(
-    service: ArchitectureService, files_store: InMemoryObjectStore
+    service: ArchitectureService,
+    files_store: InMemoryObjectStore,
+    files_metadata: InMemoryFileMetadata,
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
-        Settings(debug=True, auth_enabled=False), architecture_service=service, files=files_store
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        files=files_store,
+        file_metadata=files_metadata,
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -44,13 +55,17 @@ class TestUploading:
         response = await upload(client, prefix="inbox")
 
         assert response.status_code == 201, response.text
-        assert response.json() | {"last_modified": None} == {
+        body = response.json()
+        assert body | {"last_modified": None, "metadata": None} == {
             "key": "inbox/notes.md",
             "name": "notes.md",
             "size": 7,
             "content_type": "text/markdown",
             "last_modified": None,
+            "metadata": None,
         }
+        # The catalogue beside the bucket answers in the same payload (ADR 0039).
+        assert body["metadata"]["uploaded_by"] == "local-developer"
 
     async def test_the_same_name_twice_is_a_conflict(self, client: httpx.AsyncClient) -> None:
         await upload(client)
@@ -118,15 +133,114 @@ class TestDeleting:
         assert (await client.delete("/files", params={"key": "notes.md"})).status_code == 404
 
 
+class TestTheRecordBesideTheFile:
+    """What PostgreSQL keeps about a file, over HTTP — see docs/adr/0039."""
+
+    async def test_an_upload_carries_a_title_a_description_and_tags(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/files",
+            files={"file": ("rapport.pdf", b"%PDF", "application/pdf")},
+            # A multipart body has no arrays: `tags` is one field per tag,
+            # which httpx writes from a list.
+            data={"title": "Rapport 2026", "description": "Le bilan.", "tags": ["Budget"]},
+        )
+
+        assert response.status_code == 201, response.text
+        recorded = response.json()["metadata"]
+        assert (recorded["title"], recorded["description"]) == ("Rapport 2026", "Le bilan.")
+        assert recorded["tags"] == ["budget"]
+        assert recorded["sha256"] is not None
+
+    async def test_one_file_is_read_with_its_record(self, client: httpx.AsyncClient) -> None:
+        await upload(client, prefix="inbox")
+
+        response = await client.get("/files/metadata", params={"key": "inbox/notes.md"})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["metadata"]["uploaded_by"] == "local-developer"
+
+    async def test_a_listing_carries_the_record_of_each_file(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await client.post(
+            "/files",
+            files={"file": ("a.md", b"x", "text/markdown")},
+            data={"title": "Le contrat"},
+        )
+
+        listed = (await client.get("/files")).json()["files"]
+
+        assert [found["metadata"]["title"] for found in listed] == ["Le contrat"]
+
+    async def test_the_record_is_replaced_whole(self, client: httpx.AsyncClient) -> None:
+        await client.post(
+            "/files",
+            files={"file": ("a.md", b"x", "text/markdown")},
+            data={"title": "A", "tags": ["budget"]},
+        )
+
+        response = await client.put(
+            "/files/metadata", params={"key": "a.md"}, json={"title": "B", "tags": ["réseau"]}
+        )
+
+        assert response.status_code == 200, response.text
+        recorded = response.json()["metadata"]
+        assert (recorded["title"], recorded["tags"]) == ("B", ["réseau"])
+
+    async def test_a_description_past_the_bound_is_refused(self, client: httpx.AsyncClient) -> None:
+        await upload(client)
+
+        response = await client.put(
+            "/files/metadata", params={"key": "notes.md"}, json={"title": "a" * 500}
+        )
+
+        assert response.status_code == 422
+
+    async def test_describing_a_file_that_is_not_in_the_bucket_is_not_found(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.put(
+            "/files/metadata", params={"key": "nothing.md"}, json={"title": "B"}
+        )
+        assert response.status_code == 404
+
+    async def test_a_file_dropped_straight_into_the_bucket_is_listed_undescribed(
+        self, client: httpx.AsyncClient, files_store: InMemoryObjectStore
+    ) -> None:
+        """The pipeline's own door: the bytes are what exist."""
+        files_store.objects["inbox/dropped.csv"] = (b"a,b\n", "text/csv")
+
+        listed = (await client.get("/files", params={"prefix": "inbox"})).json()["files"]
+
+        assert [(f["key"], f["metadata"]) for f in listed] == [("inbox/dropped.csv", None)]
+
+    async def test_the_reconcile_gives_it_one(
+        self, client: httpx.AsyncClient, files_store: InMemoryObjectStore
+    ) -> None:
+        files_store.objects["inbox/dropped.csv"] = (b"a,b\n", "text/csv")
+
+        response = await client.post("/files/reconcile")
+
+        assert response.json() == {"recorded": 1, "forgotten": 0}
+        listed = (await client.get("/files", params={"prefix": "inbox"})).json()["files"]
+        assert listed[0]["metadata"]["uploaded_by"] == ""
+
+
 class TestWhoMay:
     @pytest_asyncio.fixture
     async def guarded(
-        self, service: ArchitectureService, files_store: InMemoryObjectStore
+        self,
+        service: ArchitectureService,
+        files_store: InMemoryObjectStore,
+        files_metadata: InMemoryFileMetadata,
     ) -> AsyncIterator[httpx.AsyncClient]:
         app = create_app(
             Settings(debug=True),
             architecture_service=service,
             files=files_store,
+            file_metadata=files_metadata,
             verifier=StaticVerifier({"reader": a_reader(), "editor": an_editor()}),
         )
         async with httpx.AsyncClient(
@@ -145,10 +259,20 @@ class TestWhoMay:
         )
         assert response.status_code == 403
 
+    async def test_a_reader_does_not_describe_or_reconcile(
+        self, guarded: httpx.AsyncClient
+    ) -> None:
+        reader = {"Authorization": "Bearer reader"}
+        described = await guarded.put(
+            "/files/metadata", headers=reader, params={"key": "a.md"}, json={"title": "B"}
+        )
+        assert described.status_code == 403
+        assert (await guarded.post("/files/reconcile", headers=reader)).status_code == 403
+
 
 async def test_without_storage_the_routes_answer_503(service: ArchitectureService) -> None:
     app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
-    app.state.file_service = FileService(None)
+    app.state.file_service = FileService(None, metadata=None)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:

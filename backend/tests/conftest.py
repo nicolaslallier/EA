@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import logging
 import math
@@ -9,9 +10,10 @@ import os
 import re
 import socket
 from collections.abc import AsyncIterator, Iterator, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -29,7 +31,7 @@ from ea.domain.errors import (
     NotAuthenticatedError,
     StoredFileNotFoundError,
 )
-from ea.domain.files import FileListing, StoredFile
+from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
@@ -214,27 +216,39 @@ def _database_credentials_in_the_environment(monkeypatch: pytest.MonkeyPatch) ->
             monkeypatch.setenv(variable, "test-password")
 
 
-@pytest.fixture(autouse=True)
-def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
-    """No test may leave the logging of the process reconfigured.
-
-    Two of them apply a real `dictConfig`: the one that checks the
-    configuration is accepted, and the one that drives `python -m ea.reindex`
-    through its entry point. `dictConfig` sets a level on `ea` and on nine
-    other loggers and takes `propagate` off two of them — and a `propagate`
-    left off is a `caplog` in another module that silently captures nothing.
-    """
-    loggers = [logging.getLogger()] + [
+def _live_loggers() -> list[logging.Logger]:
+    return [logging.getLogger()] + [
         logger
         for logger in logging.root.manager.loggerDict.values()
         if isinstance(logger, logging.Logger)
     ]
-    before = [
-        (logger, logger.level, list(logger.handlers), logger.propagate, list(logger.filters))
-        for logger in loggers
-    ]
+
+
+@pytest.fixture(autouse=True)
+def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
+    """No test may leave the logging of the process reconfigured.
+
+    Three of them apply a real `dictConfig`: the one that checks the
+    configuration is accepted, and the two that drive `python -m ea.reindex`
+    and `python -m ea.files_reconcile` through their entry points.
+    `dictConfig` sets a level on `ea` and on nine other loggers and takes
+    `propagate` off two of them — and a `propagate` left off is a `caplog` in
+    another module that silently captures nothing.
+
+    **A logger the test created is reset, not just the ones that already
+    existed.** `dictConfig` *creates* `ea.requests` the first time it runs, so
+    it was in no snapshot and nothing put it back: the first module to call an
+    entry point left `ea.requests` pinned at INFO for the rest of the session,
+    and `test_request_logging.py` — which asserts `/health` logs one line at
+    DEBUG — then captured nothing, in whichever order put it second.
+    """
+    before = {
+        logger: (logger.level, list(logger.handlers), logger.propagate, list(logger.filters))
+        for logger in _live_loggers()
+    }
     yield
-    for logger, level, handlers, propagate, filters in before:
+    for logger in _live_loggers():
+        level, handlers, propagate, filters = before.get(logger, (logging.NOTSET, [], True, []))
         logger.setLevel(level)
         logger.handlers[:] = handlers
         logger.propagate = propagate
@@ -568,7 +582,15 @@ class InMemoryObjectStore:
     def _stored(self, key: str) -> StoredFile:
         data, content_type = self.objects[key]
         return StoredFile(
-            key=key, size=len(data), last_modified=FIXED_NOW, content_type=content_type
+            key=key,
+            size=len(data),
+            last_modified=FIXED_NOW,
+            content_type=content_type,
+            # Hashed rather than counted, so that replacing a file changes the
+            # etag exactly when its bytes changed — which is what the real store
+            # reports and what `note_seen` reads. MinIO's own etag is an MD5;
+            # what matters to the double is that it moves with the bytes.
+            etag=hashlib.sha256(data).hexdigest()[:32],
         )
 
     async def list_folder(self, prefix: str, *, limit: int) -> FileListing:
@@ -605,8 +627,93 @@ class InMemoryObjectStore:
 
         return self._stored(key), chunks()
 
+    async def walk(self, prefix: str = "") -> AsyncIterator[StoredFile]:
+        for key in sorted(self.objects):
+            if key.startswith(prefix):
+                yield self._stored(key)
+
     async def delete(self, key: str) -> None:
         self.objects.pop(key, None)
+
+
+class InMemoryFileMetadata:
+    """The `FileMetadataRepository` port over a dict, keyed by path like the table.
+
+    It copies the two upserts of `repositories/file_metadata_store.py` — what
+    each one keeps is the behaviour under test, so a double that kept more
+    would prove the service right about a repository that does not exist.
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[str, FileMetadata] = {}
+
+    async def record(self, metadata: FileMetadata) -> FileMetadata:
+        existing = self.rows.get(metadata.key)
+        stored = (
+            metadata
+            if existing is None
+            else replace(
+                metadata,
+                id=existing.id,
+                details=existing.details,
+                created_at=existing.created_at,
+            )
+        )
+        self.rows[metadata.key] = stored
+        return stored
+
+    async def note_seen(self, stored: StoredFile, *, now: datetime) -> FileMetadata:
+        existing = self.rows.get(stored.key)
+        if existing is None:
+            seen = FileMetadata(
+                id=uuid4(),
+                key=stored.key,
+                size=stored.size,
+                content_type=stored.content_type,
+                etag=stored.etag,
+                sha256=None,
+                last_modified=stored.last_modified,
+                created_at=now,
+                updated_at=now,
+            )
+        else:
+            unchanged = bool(existing.etag) and existing.etag == stored.etag
+            seen = replace(
+                existing,
+                size=stored.size,
+                content_type=stored.content_type,
+                etag=stored.etag,
+                sha256=existing.sha256 if unchanged else None,
+                last_modified=stored.last_modified,
+                updated_at=now,
+            )
+        self.rows[stored.key] = seen
+        return seen
+
+    async def get(self, key: str) -> FileMetadata | None:
+        return self.rows.get(key)
+
+    async def for_keys(self, keys: Sequence[str]) -> dict[str, FileMetadata]:
+        return {key: self.rows[key] for key in keys if key in self.rows}
+
+    async def describe(
+        self, key: str, details: FileDetails, *, now: datetime
+    ) -> FileMetadata | None:
+        existing = self.rows.get(key)
+        if existing is None:
+            return None
+        described = replace(existing, details=details, updated_at=now)
+        self.rows[key] = described
+        return described
+
+    async def forget(self, key: str) -> bool:
+        return self.rows.pop(key, None) is not None
+
+    async def all_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(self.rows))
+
+    async def with_digest(self, sha256: str) -> tuple[FileMetadata, ...]:
+        return tuple(self.rows[key] for key in sorted(self.rows) if self.rows[key].sha256 == sha256)
 
 
 class FakeEmbedder:
@@ -730,5 +837,13 @@ def files_store() -> InMemoryObjectStore:
 
 
 @pytest.fixture
-def file_service(files_store: InMemoryObjectStore) -> FileService:
-    return FileService(files_store)
+def files_metadata() -> InMemoryFileMetadata:
+    return InMemoryFileMetadata()
+
+
+@pytest.fixture
+def file_service(
+    files_store: InMemoryObjectStore, files_metadata: InMemoryFileMetadata
+) -> FileService:
+    """The bucket and the catalogue beside it, on one frozen clock."""
+    return FileService(files_store, metadata=files_metadata, clock=lambda: FIXED_NOW)
