@@ -10,6 +10,10 @@ affects: backend/src/ea/domain/chunking.py, backend/src/ea/domain/search.py, bac
 Date : 2026-09-08
 Statut : Accepté
 
+Amendé par [`0038`](0038-ollama-plutot-que-lm-studio-pour-les-embeddings.md) —
+le fournisseur des vecteurs, désormais Ollama sur `192.168.2.10:11435` et le
+modèle `mxbai-embed-large` ; tout le reste de cette décision tient.
+
 Prolonge [`0017`](0017-documents-markdown-attaches-aux-elements.md), qui a
 attaché des fichiers markdown aux éléments, et
 [`0018`](0018-documents-exposes-aux-agents-via-mcp.md), qui les a offerts aux

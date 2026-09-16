@@ -111,7 +111,7 @@ class TestTheBucket:
 
 
 class TestTheEmbeddingService:
-    """LM Studio on the cluster, which is a desktop application — docs/adr/0019."""
+    """Ollama on the cluster, a machine nobody watches — docs/adr/0019, docs/adr/0038."""
 
     @pytest.mark.asyncio
     async def test_an_unreachable_embedder_does_not_stop_the_api_from_booting(
@@ -198,7 +198,7 @@ class _RefusingEmbedder:
         self.closed = False
 
     async def probe(self) -> None:
-        msg = "the embedding service at http://192.168.2.10:1234/v1 is unreachable"
+        msg = "the embedding service at http://192.168.2.10:11435/v1 is unreachable"
         raise RuntimeError(msg)
 
     async def aclose(self) -> None:
