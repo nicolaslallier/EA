@@ -143,13 +143,20 @@ class HttpEmbedder:
             msg = f"the embedding service at {self._url} is unreachable"
             raise EmbeddingServiceError(msg) from error
         if response.status_code >= httpx.codes.BAD_REQUEST:
-            # The body may carry the model name and the host; the caller gets
-            # the status, the log gets the rest.
+            # Which machine answered is the diagnosis, and the body's prose is
+            # only a hint at it: a deployment left pointing at LM Studio was
+            # told apart from the configured Ollama by the wording of a 400,
+            # because the status and the body were logged and the URL was not.
+            # The unreachable branch above has named it all along.
             logger.error(
                 "the embedding service refused the request",
-                extra={"status": response.status_code, "body": response.text[:500]},
+                extra={
+                    "url": self._url,
+                    "status": response.status_code,
+                    "body": response.text[:500],
+                },
             )
-            msg = f"the embedding service answered {response.status_code}"
+            msg = f"the embedding service at {self._url} answered {response.status_code}"
             raise EmbeddingServiceError(msg)
         vectors = self._vectors_of(response, expected=len(inputs))
         traffic.debug(
