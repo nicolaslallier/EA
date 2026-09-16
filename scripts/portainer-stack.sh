@@ -27,15 +27,18 @@ die() { printf 'portainer-stack.sh : %b\n' "$*" >&2; exit 1; }
 # passe généré contient les deux. Tolérés : `export `, et une paire de
 # guillemets autour de la valeur. Les PORTAINER_* ne partent jamais vers un
 # conteneur : la clé est un jeton root sur le démon Docker.
-env_json() { # <fichier>
+env_parse() { # <fichier> — toutes les variables, PORTAINER_* comprises
   jq -Rn '
     [inputs
      | sub("^export +"; "")
      | select(test("^[A-Za-z_][A-Za-z0-9_]*="))
      | capture("^(?<name>[^=]+)=(?<value>.*)$")
-     | .value |= (if test("^\".*\"$") or test("^'"'"'.*'"'"'$") then .[1:-1] else . end)
-     | select(.name | startswith("PORTAINER_") | not)]' <"$1"
+     | .value |= (if test("^\".*\"$") or test("^'"'"'.*'"'"'$") then .[1:-1] else . end)]' <"$1"
 }
+env_json() { env_parse "$1" | jq '[.[] | select(.name | startswith("PORTAINER_") | not)]'; }
+# Même lecture pour .portainer.env : celui de l'Infra, sourcé par le shell là-bas,
+# met sa clé entre guillemets — lue brute, elle partait avec, et Portainer répondait 401.
+env_get() { env_parse "$1" | jq -r --arg n "$2" '[.[] | select(.name == $n)] | last | .value // empty'; }
 
 # Une variable que la stack a déjà par défaut et que le fichier d'environnement
 # redéclare passe quand même, et gagne, sans que rien ne le dise : c'est ainsi
@@ -60,9 +63,12 @@ selftest() {
   printf '%s\n' '# commentaire' '' 'A=1' 'export B="x y"' "C='p\$w#d'" 'EMPTY=' \
     'PORTAINER_API_KEY=secret' '  INDENTED=no' >"$tmp/env"
   got="$(env_json "$tmp/env" | jq -c .)"
-  rm -rf "$tmp"
   want='[{"name":"A","value":"1"},{"name":"B","value":"x y"},{"name":"C","value":"p$w#d"},{"name":"EMPTY","value":""}]'
   [ "$got" = "$want" ] || die "selftest : env_json\n  obtenu : $got\n  attendu : $want"
+  printf '%s\n' "PORTAINER_API_KEY='ptr_x'" 'PORTAINER_API_KEY="ptr_y"' >"$tmp/portainer"
+  got="$(env_get "$tmp/portainer" PORTAINER_API_KEY)$(env_get "$tmp/portainer" PORTAINER_ENDPOINT_ID)"
+  [ "$got" = ptr_y ] || die "selftest : env_get\n  obtenu : $got\n  attendu : ptr_y"
+  rm -rf "$tmp"
 
   # overrides : ne nomme que ce qui contredit un défaut de la stack — pas une
   # variable absente, pas une variable qui répète le défaut, pas une `:?`.
@@ -84,11 +90,15 @@ selftest() {
 # curl tourne dans un conteneur jetable sur infra-net et parle à portainer:9443
 # directement : le NGINX et l'oauth2-proxy de l'Infra ne sont pas sur le
 # chemin. La clé arrive à curl par -K (un fichier écrit dans le conteneur),
-# jamais en argument, donc jamais dans une liste de processus.
+# jamais en argument, donc jamais dans une liste de processus. Elle entre par
+# la première ligne de stdin, le corps suit — pas par `-e PORTAINER_API_KEY` :
+# depuis WSL, le docker.exe de Windows ne voit pas l'environnement du shell, et
+# une clé vide ne se signale que par « A valid authorization token is missing ».
 api() { # <méthode> <chemin> [corps-json]
-  printf '%s' "${3:-}" | docker run --rm -i --network infra-net \
-    -e PORTAINER_API_KEY --entrypoint sh "$CURL_IMAGE" -c '
-      printf "header = \"X-API-Key: %s\"\n" "$PORTAINER_API_KEY" >/tmp/curl.cfg
+  printf '%s\n%s' "$PORTAINER_API_KEY" "${3:-}" | docker run --rm -i --network infra-net \
+    --entrypoint sh "$CURL_IMAGE" -c '
+      IFS= read -r key
+      printf "header = \"X-API-Key: %s\"\n" "$key" >/tmp/curl.cfg
       out="$(curl -sSk -K /tmp/curl.cfg --fail-with-body -X "$1" \
         -H "Content-Type: application/json" \
         --data-binary @- "https://portainer:9443/api$2" 2>&1)" \
@@ -129,8 +139,8 @@ fi
 if [ -z "${PORTAINER_API_KEY:-}" ]; then
   [ -f "$PORTAINER_ENV" ] \
     || die "$PORTAINER_ENV introuvable — y mettre PORTAINER_API_KEY=… (Portainer → My account → Access tokens)"
-  PORTAINER_API_KEY="$(jq -Rn -r '[inputs | select(startswith("PORTAINER_API_KEY=")) | sub("^[^=]*="; "")] | last // empty' <"$PORTAINER_ENV")"
-  PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-$(jq -Rn -r '[inputs | select(startswith("PORTAINER_ENDPOINT_ID=")) | sub("^[^=]*="; "")] | last // empty' <"$PORTAINER_ENV")}"
+  PORTAINER_API_KEY="$(env_get "$PORTAINER_ENV" PORTAINER_API_KEY)"
+  PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-$(env_get "$PORTAINER_ENV" PORTAINER_ENDPOINT_ID)}"
 fi
 [ -n "$PORTAINER_API_KEY" ] || die "PORTAINER_API_KEY vide dans $PORTAINER_ENV"
 export PORTAINER_API_KEY
