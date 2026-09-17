@@ -201,8 +201,10 @@
           "tags": {
             "default": [],
             "items": {
+              "maxLength": 50,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Tags",
             "type": "array"
           },

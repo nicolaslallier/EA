@@ -22,7 +22,7 @@ from ea.api.dependencies import (
 )
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
-from ea.api.errors import register_error_handlers
+from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
 from ea.api.files import router as files_router
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
@@ -507,6 +507,11 @@ def create_app(
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
 
+    # Added first, so it is the *innermost* layer: the envelope it sends for an
+    # unhandled failure then passes back out through CORS and the request id,
+    # like every other answer. Starlette's own `Exception` handler sits outside
+    # both and stays only as a last resort — see `api/errors.py`.
+    app.add_middleware(AnsweringUnexpectedFailures)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

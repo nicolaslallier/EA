@@ -288,7 +288,14 @@ also enforces — a name's length, a page, a depth, a prefix — is imported by
 `mcp/server.py`, which lays only a `Field(description=...)` over it, so the two
 adapters cannot drift into refusing different values. A new bounded argument
 goes into `schemas.py` and into `TestTheSameBoundsAsTheHttpAdapter` in
-`tests/unit/test_mcp_server.py`.
+`tests/unit/test_mcp_server.py`. **`api/` imports it too, including from a
+multipart form**: `POST /files` declared `tags` as a bare `list[str]` while
+`FileTags` already existed and the `PUT` and both MCP tools used it, so the one
+door that dropped the bound was the HTTP one — and, the bound being absent from
+the OpenAPI document, the generated client could not guard it either. A value a
+schema cannot express is a domain refusal, and it needs its own row in
+`_STATUS` (`api/errors.py`) or it comes back as a bare `400 invalid_request`
+instead of the typed 422 every neighbouring refusal gets.
 
 **`/mcp` is a resource server of the same realm.** `mcp/auth.py` hands the SDK
 a `KeycloakTokenVerifier` over the API's own `JwtVerifier`; the SDK publishes
@@ -698,6 +705,21 @@ serving is not its business. The middleware is a plain ASGI one and not a
 exposes that header so the SPA can print it too — a line in the browser console
 and a line in the server log are then the same request.
 
+**And the order the three middlewares are added in is load-bearing.**
+`create_app` adds `AnsweringUnexpectedFailures` first (innermost), then
+`CORSMiddleware`, then `RequestLogging` (outermost), so that *every* answer
+leaves through the CORS headers and the id — the 500 included. Starlette
+answers an unhandled exception from `ServerErrorMiddleware`, which wraps
+everything an app adds: while that was the normal path, a 500 arrived with
+neither header, the browser refused to let the SPA read it, and `lib/api.ts`
+reported « Backend injoignable » for an API that was running and had just
+answered. The envelope is therefore sent by that innermost middleware
+(`api/errors.py`), which logs the traceback itself — with the request id on it,
+which the ASGI server's own log cannot know — and steps aside once the response
+has started, because a download that fails halfway has nothing left to replace.
+The handler registered for `Exception` stays as the last resort for a failure
+raised by CORS or the access log themselves.
+
 **Each noisy stream has its own name and its own switch.** `EA_LOG_LEVEL` is
 the level of *our* code; `EA_LOG_SQL` (`sqlalchemy.engine`) and `EA_LOG_EMBEDDINGS` (`ea.embeddings`
 plus `httpx`) are two firehoses opened one at a time. `EA_LOG_LEVEL=DEBUG`
@@ -765,7 +787,7 @@ Rules that matter here: every bug fix starts with a regression test reproducing 
 - Request bodies are Pydantic models with explicit constraints; response models are declared so internal fields cannot leak. `model_config = ConfigDict(extra="forbid")` on inputs.
 - CORS is an explicit allowlist from settings — never `allow_origins=["*"]` with credentials.
 - `settings.debug` is never handed to FastAPI, which would answer an unhandled exception with a traceback to whoever on the LAN caused it; that exception gets the typed `internal_error` 500 envelope instead.
-- Errors returned to clients are typed and generic; stack traces and DB messages go to structured logs (stdlib `logging` through `core/logging.py` — JSON in a deployment, with a request id), never to the response body. Redaction is a filter on the handler, never a call site's job — see `docs/adr/0021`.
+- Errors returned to clients are typed and generic; stack traces and DB messages go to structured logs (stdlib `logging` through `core/logging.py` — JSON in a deployment, with a request id), never to the response body. Redaction is a filter on the handler, never a call site's job — see `docs/adr/0021`. **`pydantic.ValidationError` is a `ValueError`**, so the handler that answers a rejected input with 422 and `str(error)` would hand over the model, the field and the value pydantic refused: it has its own handler in `api/errors.py`, answering the mute 500, and Starlette's MRO lookup makes that one win whatever order they are registered in. A request body that does not validate is unaffected — FastAPI raises `RequestValidationError`, which is not a `ValueError`.
 - Never log tokens, passwords, or PII. Redact at the logging processor, not at each call site.
 - Frontend: no `dangerouslySetInnerHTML` without sanitisation; tokens in memory (`oidc-client-ts`'s `InMemoryWebStorage`), never `localStorage` — only the single-use PKCE state goes to `sessionStorage`. A 401 restarts the login once per page load, and not at all right after a login completed (`REAUTH_GUARD_MS`), so an API refusing a token Keycloak accepts cannot loop the browser.
 - `bandit`, `pip-audit --skip-editable` and `npm audit --audit-level=high` run in CI (`.github/workflows/ci.yml`) and locally as `make audit`. A false positive in `src` is silenced at the line, `# nosec BXXX` with its reason — never by a global exclusion. Dependabot (`.github/dependabot.yml`) keeps the actions, both lockfiles and the compose images current. **Nothing blocks a red merge yet**: requiring green CI is a GitHub branch-protection rule still to switch on.
