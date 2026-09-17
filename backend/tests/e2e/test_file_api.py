@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 
 from ea.core.config import Settings
-from ea.domain.files import MAX_FILE_BYTES
+from ea.domain.files import MAX_FILE_BYTES, MAX_FILE_TAGS
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
 from ea.services.files import FileService
@@ -197,6 +197,43 @@ class TestTheRecordBesideTheFile:
         )
 
         assert response.status_code == 422
+
+    async def test_more_tags_than_the_bound_are_refused_on_an_upload(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Regression: `tags` was declared here as a bare `list[str]`.
+
+        `FileTags` states the bound once in `api/schemas.py`, and the `PUT`
+        below and both MCP tools import it; this multipart form was the one
+        door that did not, so the OpenAPI document advertised no bound either
+        and the generated client could not guard it. See `CLAUDE.md`, "A bound
+        is declared once".
+        """
+        response = await client.post(
+            "/files",
+            files={"file": ("a.md", b"x", "text/markdown")},
+            data={"tags": [f"t{n}" for n in range(MAX_FILE_TAGS + 1)]},
+        )
+
+        assert response.status_code == 422, response.text
+
+    async def test_a_tag_holding_a_control_character_is_refused_as_such(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Regression: `InvalidFileMetadataError` was missing from the status
+        table, so the one refusal no schema can express came back as a bare
+        `400 invalid_request` — while every other refusal about a file is a
+        422 naming what was wrong."""
+        await upload(client)
+
+        response = await client.put(
+            "/files/metadata", params={"key": "notes.md"}, json={"tags": ["bud\u0001get"]}
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            422,
+            "invalid_file_metadata",
+        )
 
     async def test_describing_a_file_that_is_not_in_the_bucket_is_not_found(
         self, client: httpx.AsyncClient

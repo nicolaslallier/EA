@@ -25,6 +25,7 @@ from ea.api.schemas import (
     FileListingRead,
     FilePrefix,
     FileRead,
+    FileTags,
     FileTitle,
     ReconcileRead,
 )
@@ -70,7 +71,11 @@ async def upload_file(
     overwrite: Annotated[bool, Form()] = False,
     title: Annotated[FileTitle, Form()] = "",
     description: Annotated[FileDescription, Form()] = "",
-    tags: Annotated[list[str], Form()] = [],  # noqa: B006 - FastAPI reads the default, never mutates it
+    # `FileTags` and not a bare `list[str]`: the bound is declared once, in
+    # `api/schemas.py`, and the `PUT` below and both MCP tools already import
+    # it. Stated here too, it reaches the OpenAPI document — so the generated
+    # client refuses an over-long list before it is ever sent.
+    tags: Annotated[FileTags, Form()] = [],  # noqa: B006 - FastAPI reads the default, never mutates it
 ) -> FileRead:
     """Store a file in the folder `prefix`, under its own name.
 
