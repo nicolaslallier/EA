@@ -191,7 +191,7 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
-        app-up app-down app-delete app-ps app-logs \
+        app-up app-down app-restart app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
         embed-ping embed-models docs-reindex files-reconcile openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
@@ -346,6 +346,16 @@ app-up: ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images r
 
 app-down: ## Arrête la stack EA dans Portainer (elle reste déclarée)
 	$(PORTAINER_STACK) down
+
+# Un conteneur lit sa configuration et sonde ses magasins une fois, au
+# démarrage : rien ne re-sonde (docs/adr/0037). Le relancer est donc ce qui fait
+# revenir une section dégradée, l'utilisateur MinIO enfin créé, et ce qui
+# rejoue la chaîne Alembic. Ce que cette cible ne fait pas : aller chercher un
+# commit de main, reconstruire une image, ni porter à Portainer une ligne de
+# deploy/ea.env modifiée depuis le dernier déploiement — les variables ne
+# partent qu'avec un redéploiement, donc avec make app-up.
+app-restart: ## Relance la stack EA : les conteneurs relisent leur configuration
+	$(PORTAINER_STACK) restart
 
 app-delete: ## Retire la stack EA de Portainer (CONFIRM=yes obligatoire)
 	@test "$$CONFIRM" = "yes" || { \
