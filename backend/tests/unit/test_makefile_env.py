@@ -73,7 +73,7 @@ def an_env_file(tmp_path: Path) -> Path:
         "EA_POSTGRES_PORT=5442\n"
         "EA_POSTGRES_USER=eabis\n"
         "EA_POSTGRES_DATABASE=eadb\n"
-        "EA_EMBEDDINGS_BASE_URL=http://192.168.2.10:11435/v1\n"
+        "EA_EMBEDDINGS_BASE_URL=http://192.168.2.99:11434/v1\n"
         "EA_EMBEDDINGS_MODEL=un-autre-modele\n",
         encoding="utf-8",
     )
@@ -107,7 +107,7 @@ class TestThePsqlTargetsFollowTheSameConfiguration:
 class TestTheEmbedderToo:
     def test_embed_ping_asks_the_service_the_application_uses(self, an_env_file: Path) -> None:
         recipe = _dry_run("embed-ping", an_env_file)
-        assert "http://192.168.2.10:11435/v1/embeddings" in recipe
+        assert "http://192.168.2.99:11434/v1/embeddings" in recipe
         assert "un-autre-modele" in recipe
 
     def test_a_service_that_does_not_answer_is_said_in_one_line(self, an_env_file: Path) -> None:
@@ -154,6 +154,7 @@ class TestTheDefaultsStandWhenNothingIsConfigured:
         assert "127.0.0.1/ea" in _dry_run("docs-reindex", an_empty_env_file)
 
     def test_the_embedder_of_adr_0038(self, an_empty_env_file: Path) -> None:
-        assert "http://192.168.2.10:11435/v1/embeddings" in _dry_run(
+        """Le port est celui de docs/adr/0040, qui corrige 0038 sur ce seul point."""
+        assert "http://192.168.2.10:11434/v1/embeddings" in _dry_run(
             "embed-ping", an_empty_env_file
         )

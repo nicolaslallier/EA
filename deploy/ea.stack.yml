@@ -57,14 +57,14 @@ services:
       EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-postgres}
       EA_POSTGRES_PASSWORD: ${EA_POSTGRES_PASSWORD:?EA_POSTGRES_PASSWORD est obligatoire (EA_DB_PASSWORD de l'Infra)}
 
-      # Ollama sur le cluster Docker (192.168.2.10:11435), pas une instance du
+      # Ollama sur le cluster Docker (192.168.2.10:11434), pas une instance du
       # Mac. Le démarrage sonde le modèle et refuse une largeur
       # qui n'est pas celle de la colonne ; un embedder injoignable, lui,
       # dégrade la seule section qu'il sert — `/health` la nomme et
       # `search_documents` répond 503, l'API démarre (docs/adr/0037). Rien ne
       # re-sonde : remettre Ollama en route demande un redémarrage de `api`,
       # puis `make docs-reindex` pour rattraper ce qui a été déposé entre-temps.
-      EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11435/v1}
+      EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11434/v1}
 
       # Les fichiers (docs/adr/0036), dans le MinIO de l'Infra. Sur infra-net
       # c'est le service `minio`, en HTTP comme `postgres` : le nom public n'y a

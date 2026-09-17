@@ -11,8 +11,10 @@ Date : 2026-09-08
 Statut : Accepté
 
 Amendé par [`0038`](0038-ollama-plutot-que-lm-studio-pour-les-embeddings.md) —
-le fournisseur des vecteurs, désormais Ollama sur `192.168.2.10:11435` et le
-modèle `mxbai-embed-large` ; tout le reste de cette décision tient.
+le fournisseur des vecteurs, désormais Ollama et le modèle
+`mxbai-embed-large` — puis par [`0040`](0040-le-port-d-ollama-est-11434.md) sur
+l'adresse elle-même, `http://192.168.2.10:11434/v1` ; tout le reste de cette
+décision tient.
 
 Prolonge [`0017`](0017-documents-markdown-attaches-aux-elements.md), qui a
 attaché des fichiers markdown aux éléments, et

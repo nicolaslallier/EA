@@ -157,10 +157,14 @@ class TestTheEmbeddingService:
 
         A developer who never writes a `.env` reaches the service that is
         actually running rather than a `localhost` that answers nothing.
+
+        11434 is Ollama's own port; docs/adr/0038 wrote 11435 without probing
+        it and docs/adr/0040 is the correction. The `/v1` suffix is part of the
+        default because `HttpEmbedder` appends `/embeddings` and nothing else.
         """
         settings = Settings(debug=True)
 
-        assert settings.embeddings_base_url == "http://192.168.2.10:11435/v1"
+        assert settings.embeddings_base_url == "http://192.168.2.10:11434/v1"
 
     def test_the_default_model_is_the_width_the_column_stores(self) -> None:
         """Otherwise boot refuses it, which is the intended behaviour but a poor default."""
