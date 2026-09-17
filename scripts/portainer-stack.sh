@@ -5,9 +5,12 @@
 # requête. Même mécanique que scripts/portainer-stack.sh du dépôt Infra — voir
 # docs/adr/0027.
 #
-# Usage : scripts/portainer-stack.sh up|down|delete|selftest
+# Usage : scripts/portainer-stack.sh up|down|restart|delete|selftest
 #   up      crée la stack, ou la redéploie depuis main (images reconstruites)
 #   down    arrête la stack (elle reste déclarée dans Portainer)
+#   restart arrête puis relance la stack : les conteneurs sont recréés depuis la
+#           définition que Portainer détient déjà — ni clone de main, ni image
+#           reconstruite, donc rien de deploy/ea.env que `up` n'y ait mis
 #   delete  retire la stack de Portainer
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -110,8 +113,8 @@ api() { # <méthode> <chemin> [corps-json]
 cmd="${1:-}"
 case "$cmd" in
   selftest) selftest; exit 0 ;;
-  up|down|delete) ;;
-  *) die "usage : scripts/portainer-stack.sh up|down|delete|selftest" ;;
+  up|down|restart|delete) ;;
+  *) die "usage : scripts/portainer-stack.sh up|down|restart|delete|selftest" ;;
 esac
 
 # Avant tout appel à Portainer : un fichier incomplet se refuse ici, en clair,
@@ -181,6 +184,21 @@ case "$cmd" in
     fi
     api POST "/stacks/$sid/stop?endpointId=$eid" >/dev/null
     echo "portainer-stack.sh : stack '$STACK' arrêtée"
+    ;;
+  # Portainer arrête une stack compose par un `down` et la relance par un
+  # `up -d` : les conteneurs sont donc recréés, et relisent la configuration et
+  # sondent leurs magasins comme à tout démarrage (docs/adr/0037). Une stack
+  # déjà arrêtée est simplement relancée — `stop` sur elle répondrait une
+  # erreur, et le résultat demandé est le même.
+  restart)
+    [ -n "$sid" ] || die "aucune stack '$STACK' dans Portainer"
+    if [ "$(jq -r .Status <<<"$stack")" = 2 ]; then
+      echo "portainer-stack.sh : stack '$STACK' arrêtée, relance seule"
+    else
+      api POST "/stacks/$sid/stop?endpointId=$eid" >/dev/null
+    fi
+    api POST "/stacks/$sid/start?endpointId=$eid" >/dev/null
+    echo "portainer-stack.sh : stack '$STACK' relancée"
     ;;
   delete)
     [ -n "$sid" ] || { echo "portainer-stack.sh : aucune stack '$STACK' dans Portainer"; exit 0; }

@@ -205,3 +205,36 @@ def test_the_portainer_script_passes_its_own_selftest() -> None:
     )
 
     assert done.returncode == 0, done.stderr or done.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash absent")
+def test_the_portainer_script_knows_how_to_restart_the_stack() -> None:
+    """`restart` is a command of the script, and its usage says so.
+
+    Nothing re-probes a degraded store (docs/adr/0037): the API reads its
+    configuration and probes MinIO and the embedder once, at boot. Bringing a
+    fixed store back therefore means restarting the containers — an operation
+    the repository named in prose and offered nowhere.
+    """
+    done = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "portainer-stack.sh"), "commande-inconnue"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert done.returncode != 0
+    assert "up|down|restart|delete|selftest" in done.stderr
+
+
+def test_the_makefile_offers_that_restart() -> None:
+    """`make app-restart` exists, is phony, and drives Portainer.
+
+    Reads go through `docker compose -p ea`, writes through Portainer's API so
+    it stays the stack's owner (docs/adr/0027) — restarting is a write.
+    """
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert re.search(r"^app-restart:.*##", makefile, re.MULTILINE)
+    assert "app-up app-down app-restart app-delete" in makefile  # la liste .PHONY
+    assert re.search(r"^app-restart:.*\n\t\$\(PORTAINER_STACK\) restart$", makefile, re.MULTILINE)
