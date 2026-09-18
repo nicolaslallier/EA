@@ -2,7 +2,7 @@
 titre: Le port d'Ollama est 11434, et le suffixe /v1 fait partie de l'adresse
 date: 2026-09-17
 statut: Acceptée
-affects: backend/src/ea/core/config.py, backend/.env.example, deploy/ea.stack.yml, deploy/ea.env.example, Makefile, backend/tests/unit/test_config.py, backend/tests/unit/test_deploy_stack.py, backend/tests/unit/test_boot_degradation.py, backend/tests/unit/test_makefile_env.py, CLAUDE.md
+affects: backend/src/ea/core/config.py, backend/.env.example, deploy/ea.stack.yml, deploy/ea.env.example, Makefile, backend/tests/unit/test_config.py, backend/tests/unit/test_deploy_stack.py, backend/tests/unit/test_boot_degradation.py, backend/tests/unit/test_makefile_env.py, scripts/portainer-stack.sh, CLAUDE.md
 ---
 
 # 40. Le port d'Ollama est 11434, et le suffixe /v1 fait partie de l'adresse
