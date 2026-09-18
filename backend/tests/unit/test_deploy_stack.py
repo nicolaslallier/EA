@@ -173,16 +173,19 @@ def test_the_deployed_api_keeps_its_files_in_the_infra_minio_on_infra_net() -> N
 
 
 def test_the_deployed_api_embeds_with_the_ollama_of_the_cluster() -> None:
-    """The stack's own default is Ollama on 192.168.2.10:11435 (docs/adr/0038).
+    """The stack's own default is Ollama on 192.168.2.10:11434 (docs/adr/0040).
 
     A wrong default is what made `deploy/ea.env` — not versioned, one per
     machine — the only place the real address was written, and then the only
-    place it could drift.
+    place it could drift. docs/adr/0038 fixed the machine and left the port
+    wrong, which cost a second failed deployment: the stack's default was
+    finally right about *where*, so `deploy/ea.env` stopped overriding it, and
+    every container then probed a closed port.
     """
     env = api_environment()
 
     assert (
-        env["EA_EMBEDDINGS_BASE_URL"] == "${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11435/v1}"
+        env["EA_EMBEDDINGS_BASE_URL"] == "${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11434/v1}"
     )
 
 

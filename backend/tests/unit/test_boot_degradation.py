@@ -199,7 +199,7 @@ class _RefusingEmbedder:
         self.closed = False
 
     async def probe(self) -> None:
-        msg = "the embedding service at http://192.168.2.10:11435/v1 is unreachable"
+        msg = "the embedding service at http://192.168.2.10:11434/v1 is unreachable"
         raise RuntimeError(msg)
 
     async def aclose(self) -> None:

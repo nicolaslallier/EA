@@ -76,7 +76,7 @@ selftest() {
   # overrides : ne nomme que ce qui contredit un défaut de la stack — pas une
   # variable absente, pas une variable qui répète le défaut, pas une `:?`.
   tmp="$(mktemp -d)"
-  printf '%s\n' '    EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11435/v1}' \
+  printf '%s\n' '    EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11434/v1}' \
     '    EA_S3_BUCKET: ${EA_S3_BUCKET:-ea-catalogue}' \
     '    EA_S3_ENDPOINT: ${EA_S3_ENDPOINT:-minio:9000}' \
     '    EA_S3_ACCESS_KEY: ${EA_S3_ACCESS_KEY:?obligatoire}' >"$tmp/stack.yml"
@@ -84,7 +84,7 @@ selftest() {
                      {"name":"EA_S3_BUCKET","value":"ea-catalogue"},
                      {"name":"EA_S3_ACCESS_KEY","value":"ea-api"}]' "$tmp/stack.yml")"
   rm -rf "$tmp"
-  want='  EA_EMBEDDINGS_BASE_URL=http://192.168.2.35:1234/v1 (la stack a http://192.168.2.10:11435/v1)'
+  want='  EA_EMBEDDINGS_BASE_URL=http://192.168.2.35:1234/v1 (la stack a http://192.168.2.10:11434/v1)'
   [ "$got" = "$want" ] || die "selftest : overrides\n  obtenu : $got\n  attendu : $want"
 
   echo "portainer-stack.sh : selftest ok"

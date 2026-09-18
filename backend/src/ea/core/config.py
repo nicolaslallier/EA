@@ -95,10 +95,15 @@ class Settings(BaseSettings):
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
     # Ollama on the cluster, beside the graph, serving an OpenAI-compatible
-    # `/v1/embeddings` on 11435. The base URL is all that ties us to it: LM
-    # Studio, text-embeddings-inference and the hosted providers answer the
-    # same shape, so changing supplier is this line and a model name — which
-    # is exactly what docs/adr/0038 was.
+    # `/v1/embeddings` on 11434, Ollama's own port — docs/adr/0038 wrote 11435
+    # without probing it, and docs/adr/0040 is the correction. The base URL is
+    # all that ties us to it: LM Studio, text-embeddings-inference and the
+    # hosted providers answer the same shape, so changing supplier is this line
+    # and a model name — which is exactly what docs/adr/0038 was.
+    #
+    # The `/v1` suffix is part of it: `HttpEmbedder` appends `/embeddings` and
+    # nothing else, so a base URL without it reaches a 404 rather than the
+    # model.
     #
     # On by default, like the two stores, and for the same reason: a search
     # that silently returns nothing is worse than an API that refuses to start.
@@ -109,7 +114,7 @@ class Settings(BaseSettings):
     # the column, `EMBEDDING_DIMENSIONS`, and changing it is a migration plus a
     # full reindex, never an environment variable.
     embeddings_enabled: bool = True
-    embeddings_base_url: str = "http://192.168.2.10:11435/v1"
+    embeddings_base_url: str = "http://192.168.2.10:11434/v1"
 
     #: The same model docs/adr/0019 measured — 4 of 5 questions answered at
     #: rank 1 on French runbook prose with its heading trail, against 2 of 5
