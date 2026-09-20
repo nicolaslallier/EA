@@ -51,7 +51,7 @@ services:
     # PostgreSQL plutôt qu'en mémoire — nécessaire dès que le conteneur peut
     # redémarrer. Tag numéroté, jamais `main-latest`/`main-stable`, qui bougent
     # sous le même nom.
-    image: ghcr.io/berriai/litellm-database:v1.100.1@sha256:fc44cf7f72786e636dc4dc1032b4e431818abfec9d54b8e04284fdea7ef03e2a
+    image: ghcr.io/berriai/litellm-database:v1.102.0@sha256:70e3754699d2c5e969c65445e3b52cf58cf7998a815f2cb3551776152bbffaaf
     container_name: ea-pipelines-litellm
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     restart: unless-stopped
