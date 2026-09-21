@@ -27,7 +27,7 @@ dependencies = [
     # parses only when this is installed — see docs/adr/0017.
     "python-multipart>=0.0.18",
     "sqlalchemy[asyncio]>=2.0.54",
-    "uvicorn[standard]>=0.52.4",
+    "uvicorn[standard]>=0.53.0",
 ]
 
 [project.optional-dependencies]
