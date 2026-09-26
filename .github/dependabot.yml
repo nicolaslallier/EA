@@ -44,6 +44,10 @@ updates:
     ignore:
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # jsdom 30.1.0 casse FormData.forEach sur un File (« reading '_buffer' »),
+      # donc tout envoi multipart d'openapi-fetch dans Vitest : épinglé à 30.0.1.
+      - dependency-name: jsdom
+        versions: ["30.1.0"]
 
   # Les images épinglées par digest : docker-compose.yml à la racine, les deux
   # stacks du cluster, et celui de pipelines/ (docs/adr/0028).
