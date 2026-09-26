@@ -43,10 +43,11 @@ services:
       retries: 20
 
   minio:
-    # L'image de la stack Infra (~/OpenCode/Infra/docker-compose.yml) : un test
-    # qui passe ici parle le même S3 que la production. MinIO ne publie plus
-    # d'images, d'où quay.io et une release figée.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # MinIO a fermé ses registres (quay.io/minio répond 401, minio/minio n'est
+    # plus sur Docker Hub) : pgsty/minio, fork communautaire maintenu, épinglé
+    # par digest. L'Infra tourne encore sur la release 2025-09-07 en cache :
+    # même API S3, plus la même image.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     container_name: ea-minio
     command: ["server", "/data"]
     # 9100 : les fixtures refusent tout autre MinIO (tests/integration/throwaway.py).
