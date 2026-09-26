@@ -19,6 +19,11 @@ STACK=ea
 REPO_URL=https://github.com/nicolaslallier/EA
 REF=refs/heads/main
 COMPOSE_FILE=deploy/ea.stack.yml
+# Portainer interroge main à cet intervalle et redéploie sur tout nouveau
+# commit : pousser sur main, c'est déployer (docs/adr/0041). GitHub ne peut pas
+# joindre ce Portainer, et le repo est public — un runner auto-hébergé ici
+# serait à portée d'une PR venue d'un fork.
+POLL_INTERVAL=5m
 STACK_ENV="${EA_STACK_ENV:-deploy/ea.env}"
 PORTAINER_ENV="${PORTAINER_ENV_FILE:-.portainer.env}"
 CURL_IMAGE=curlimages/curl:8.5.0@sha256:08e466006f0860e54fc299378de998935333e0e130a15f6f98482e9f8dab3058
@@ -162,19 +167,27 @@ case "$cmd" in
 
     if [ -z "$sid" ]; then
       body="$(jq -n --arg name "$STACK" --arg url "$REPO_URL" --arg ref "$REF" --arg file "$COMPOSE_FILE" --argjson env "$env" \
+        --arg every "$POLL_INTERVAL" \
         '{Name: $name, RepositoryURL: $url, RepositoryReferenceName: $ref,
-          ComposeFile: $file, RepositoryAuthentication: false, Env: $env}')"
+          ComposeFile: $file, RepositoryAuthentication: false, Env: $env,
+          AutoUpdate: {Interval: $every}}')"
       api POST "/stacks/create/standalone/repository?endpointId=$eid" "$body" >/dev/null
-      echo "portainer-stack.sh : stack '$STACK' créée"
+      echo "portainer-stack.sh : stack '$STACK' créée, main interrogé toutes les $POLL_INTERVAL"
     else
       if [ "$(jq -r .Status <<<"$stack")" = 2 ]; then
         api POST "/stacks/$sid/start?endpointId=$eid" >/dev/null
       fi
+      # Le redéploiement ne porte pas l'AutoUpdate : ce sont les réglages Git
+      # de la stack qui le tiennent, posés d'abord.
+      body="$(jq -n --arg ref "$REF" --argjson env "$env" --arg every "$POLL_INTERVAL" \
+        '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
+          Prune: false, AutoUpdate: {Interval: $every}}')"
+      api PUT "/stacks/$sid/git?endpointId=$eid" "$body" >/dev/null
       body="$(jq -n --arg ref "$REF" --argjson env "$env" \
         '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
           Prune: false, RepullImageAndRedeploy: false}')"
       api PUT "/stacks/$sid/git/redeploy?endpointId=$eid" "$body" >/dev/null
-      echo "portainer-stack.sh : stack '$STACK' redéployée"
+      echo "portainer-stack.sh : stack '$STACK' redéployée, main interrogé toutes les $POLL_INTERVAL"
     fi
     ;;
   down)
