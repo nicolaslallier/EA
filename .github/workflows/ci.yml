@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv ne publie pas de tag majeur flottant : version complète.
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
@@ -76,7 +76,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Son propre lockfile : la variation de cache ne touche pas backend/uv.lock.
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: pipelines/uv.lock
@@ -127,7 +127,7 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
