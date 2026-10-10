@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List Diagrams
-         * @description Every saved diagram, sorted by name.
+         * @description Every saved diagram, sorted by name — or only those filed in a package.
          */
         get: operations["list_diagrams_diagrams_get"];
         put?: never;
@@ -113,7 +113,8 @@ export interface paths {
         };
         /**
          * List Elements
-         * @description Browse the catalogue, narrowed by type, by layer or by a name fragment.
+         * @description Browse the catalogue, narrowed by type, by layer, by a name fragment
+         *     or filed in a package (subpackages included unless told otherwise).
          */
         get: operations["list_elements_elements_get"];
         put?: never;
@@ -122,6 +123,26 @@ export interface paths {
          * @description Add an element to the catalogue.
          */
         post: operations["create_element_elements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Elements
+         * @description File up to 100 elements in a package, or at the root; all or none.
+         */
+        post: operations["move_elements_elements_move_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -589,6 +610,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Packages
+         * @description The whole tree, flat: each package names its parent, so the client builds the tree.
+         */
+        get: operations["list_packages_packages_get"];
+        put?: never;
+        /** Create Package */
+        post: operations["create_package_packages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/packages/{package_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Package */
+        get: operations["read_package_packages__package_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Package
+         * @description Delete a package — never what it holds.
+         *
+         *     A package that still holds anything is a 409 `package_not_empty`; pass
+         *     `move_contents_to` (a package id, or `root`) to move its direct contents
+         *     there in the same transaction.
+         */
+        delete: operations["delete_package_packages__package_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Package
+         * @description Rename, describe or move. `parent_id: null` puts the package at the root; omit it to keep.
+         */
+        patch: operations["update_package_packages__package_id__patch"];
+        trace?: never;
+    };
     "/relationships": {
         parameters: {
             query?: never;
@@ -774,6 +845,8 @@ export interface components {
             description?: string;
             /** Name */
             name: string;
+            /** Package Id */
+            package_id?: string | null;
         };
         /**
          * DiagramLayout
@@ -825,6 +898,8 @@ export interface components {
             name: string;
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Package Id */
+            package_id: string | null;
             /**
              * Relationships
              * @description Only the relationships whose two ends are both on the diagram.
@@ -854,6 +929,8 @@ export interface components {
             name: string;
             /** Node Count */
             node_count: number;
+            /** Package Id */
+            package_id: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -863,12 +940,17 @@ export interface components {
         /**
          * DiagramUpdate
          * @description A partial update. An omitted field keeps its stored value.
+         *
+         *     `package_id` is three-valued like a package's `parent_id`: absent keeps the
+         *     package, `null` puts the diagram at the root.
          */
         DiagramUpdate: {
             /** Description */
             description?: string | null;
             /** Name */
             name?: string | null;
+            /** Package Id */
+            package_id?: string | null;
         };
         /**
          * DocumentRead
@@ -1013,6 +1095,8 @@ export interface components {
             layer: components["schemas"]["Layer"];
             /** Name */
             name: string;
+            /** Package Id */
+            package_id: string | null;
             /** Properties */
             properties: {
                 [key: string]: string;
@@ -1251,6 +1335,91 @@ export interface components {
             layers: components["schemas"]["Layer"][];
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
+        };
+        /**
+         * MoveElements
+         * @description File up to `MAX_MOVE_BATCH` elements in a package, or at the root.
+         */
+        MoveElements: {
+            /** Element Ids */
+            element_ids: string[];
+            /**
+             * Package Id
+             * @description The package, or `null` for the root.
+             */
+            package_id: string | null;
+        };
+        /** PackageCreate */
+        PackageCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /** PackageRead */
+        PackageRead: {
+            /**
+             * Child Count
+             * @description Packages directly below this one.
+             */
+            child_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Diagram Count
+             * @description Diagrams filed directly in this package.
+             */
+            diagram_count: number;
+            /**
+             * Element Count
+             * @description Elements filed directly in this package.
+             */
+            element_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id: string | null;
+            /**
+             * Path
+             * @description Names from the root down, e.g. `Finance / Budget`.
+             */
+            path: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * PackageUpdate
+         * @description A partial update.
+         *
+         *     `parent_id` is three-valued: absent keeps the parent, `null` puts the
+         *     package at the root, an id moves it there — which is why the route reads
+         *     `model_fields_set` rather than the value.
+         */
+        PackageUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id?: string | null;
         };
         /**
          * ReconcileRead
@@ -1510,7 +1679,11 @@ export type $defs = Record<string, never>;
 export interface operations {
     list_diagrams_diagrams_get: {
         parameters: {
-            query?: never;
+            query?: {
+                package?: string | null;
+                include_subpackages?: boolean;
+                root_only?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1542,6 +1715,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1579,6 +1761,15 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1840,7 +2031,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1969,7 +2160,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2042,6 +2233,9 @@ export interface operations {
                 element_type?: components["schemas"]["ElementType"][] | null;
                 layer?: components["schemas"]["Layer"][] | null;
                 search?: string | null;
+                package?: string | null;
+                include_subpackages?: boolean;
+                root_only?: boolean;
                 limit?: number;
                 offset?: number;
             };
@@ -2145,6 +2339,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_elements_elements_move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveElements"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2443,7 +2704,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2761,7 +3022,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3040,7 +3301,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3247,7 +3508,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3317,7 +3578,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3492,7 +3753,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3559,7 +3820,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3630,7 +3891,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3819,6 +4080,309 @@ export interface operations {
             };
         };
     };
+    list_packages_packages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_package_packages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_package_packages__package_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_package_packages__package_id__delete: {
+        parameters: {
+            query?: {
+                move_contents_to?: string | null;
+            };
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_package_packages__package_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_relationships_relationships_get: {
         parameters: {
             query?: {
@@ -3929,7 +4493,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Unprocessable Entity */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
