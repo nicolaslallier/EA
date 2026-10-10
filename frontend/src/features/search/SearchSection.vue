@@ -46,6 +46,13 @@ const page = ref(0)
 const addressProblem = ref('')
 const tooLongForALink = ref(false)
 const hasAsked = ref(false)
+const builder = ref<{ flush: () => void } | null>(null)
+
+/** The filter on screen, text still being typed included. */
+function settle(): Query {
+  builder.value?.flush()
+  return query.value
+}
 
 const pageCount = computed(() => Math.max(1, Math.ceil(results.total.value / PAGE_SIZE)))
 
@@ -178,7 +185,7 @@ const supportError = computed(() => metamodel.error.value || packages.error.valu
 
     <div class="layout">
       <div class="main">
-        <QueryBuilder v-model="query" :metamodel="metamodel" :packages="packages.packages.value" @submit="submit" />
+        <QueryBuilder ref="builder" v-model="query" :metamodel="metamodel" :packages="packages.packages.value" @submit="submit" />
 
         <p v-if="tooLongForALink" class="banner" role="status">
           Ce filtre est trop long pour une adresse : enregistre-le pour le partager.
@@ -242,7 +249,7 @@ const supportError = computed(() => metamodel.error.value || packages.error.valu
       </div>
 
       <aside class="side">
-        <SavedQueries :store="saved" :current="query" :active-id="savedId" @open="openSaved" @removed="forget" />
+        <SavedQueries :store="saved" :settle="settle" :active-id="savedId" @open="openSaved" @removed="forget" />
       </aside>
     </div>
   </section>

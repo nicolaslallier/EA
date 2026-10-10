@@ -95,10 +95,16 @@ function setText(value: string): void {
 }
 const typing = debounce(setText, 300)
 
-/** Searching is not waiting for a pause: what is typed goes out with the submit. */
-function submit(): void {
+/** Take the text typed so far without waiting for the pause; the caller then has it. */
+function flush(): void {
   typing.cancel()
   setText(text.value)
+}
+defineExpose({ flush })
+
+/** Searching is not waiting for a pause: what is typed goes out with the submit. */
+function submit(): void {
+  flush()
   emit('submit')
 }
 

@@ -14,8 +14,9 @@ import type { useSavedQueries } from './useSavedQueries'
 
 const props = defineProps<{
   store: ReturnType<typeof useSavedQueries>
-  current: Query
   activeId: string
+  /** Settles what is still being typed, and answers with the filter on screen. */
+  settle: () => Query
 }>()
 const emit = defineEmits<{ open: [id: string]; removed: [id: string] }>()
 
@@ -47,7 +48,7 @@ async function guarded(action: () => Promise<void>): Promise<void> {
 
 async function save(): Promise<void> {
   await guarded(async () => {
-    const created = await props.store.create(name.value.trim(), description.value, props.current)
+    const created = await props.store.create(name.value.trim(), description.value, props.settle())
     name.value = ''
     description.value = ''
     emit('open', created.id)
@@ -68,7 +69,7 @@ async function rename(): Promise<void> {
 
 async function replaceFilter(id: string): Promise<void> {
   await guarded(async () => {
-    await props.store.update(id, { query: props.current })
+    await props.store.update(id, { query: props.settle() })
     // The same address, a new filter: the screen reloads it.
     emit('open', id)
   })

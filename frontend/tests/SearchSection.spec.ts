@@ -415,3 +415,49 @@ describe('SearchSection — paging follows the filter that was run', () => {
     expect((sent?.body as Query).text).toBe('fact')
   })
 })
+
+describe('SearchSection — saving takes what has just been typed', () => {
+  it('saves the text typed less than a pause ago', async () => {
+    const { calls } = await open(
+      [
+        { method: 'POST', path: '/queries', status: 201, body: aSavedQuery({ id: 'new' }) },
+        { path: '/queries/new', body: aSavedQuery({ id: 'new' }) },
+        { path: '/queries/new/elements', body: aPage([]) },
+        SEARCH([]),
+      ],
+      `?q=${q({})}`,
+    )
+    await fireEvent.update(await screen.findByLabelText(/nom de la requête/i), 'Mes bases')
+    vi.useFakeTimers()
+
+    await fireEvent.update(screen.getByLabelText(/nom contient/i), 'db')
+    await fireEvent.click(screen.getByRole('button', { name: /enregistrer/i }))
+
+    await vi.waitFor(() => {
+      const posted = calls.find((call) => call.method === 'POST' && call.url.pathname === '/queries')
+      expect((posted?.body as { query: Query }).query.text).toBe('db')
+    })
+  })
+
+  it('replaces the filter of a saved query with the text typed less than a pause ago', async () => {
+    const { calls } = await open(
+      [
+        { method: 'PATCH', path: '/queries/q1', body: aSavedQuery({ id: 'q1' }) },
+        { path: '/queries/q1', body: aSavedQuery({ id: 'q1' }) },
+        { path: '/queries/q1/elements', body: aPage([]) },
+        SEARCH([]),
+      ],
+      `?q=${q({})}`,
+    )
+    const replace = await screen.findByRole('button', { name: /remplacer le filtre de les noeuds/i })
+    vi.useFakeTimers()
+
+    await fireEvent.update(screen.getByLabelText(/nom contient/i), 'db')
+    await fireEvent.click(replace)
+
+    await vi.waitFor(() => {
+      const patched = calls.find((call) => call.method === 'PATCH')
+      expect((patched?.body as { query: Query }).query.text).toBe('db')
+    })
+  })
+})
