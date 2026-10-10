@@ -21,14 +21,20 @@ from mcp.server.mcpserver.exceptions import ToolError
 from ea.api.schemas import (
     AddressAssign,
     ElementCreate,
+    ElementQuerySchema,
     ElementUpdate,
     FileDetailsWrite,
+    MoveElements,
+    PackageCreate,
+    PackageUpdate,
     RelationshipCreate,
+    SavedQueryCreate,
     SubnetCreate,
 )
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import build_mcp_server
+from ea.mcp.server import INSTRUCTIONS
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
@@ -163,6 +169,43 @@ class TestTheToolset:
         for name in ("delete_element", "disconnect_elements", "discard_document"):
             assert annotations[name].read_only_hint is False, name
             assert annotations[name].destructive_hint is True, name
+
+    async def test_the_two_new_deletions_are_flagged_destructive_and_filing_is_not(
+        self, server: MCPServer[Any]
+    ) -> None:
+        annotations = {
+            tool.name: tool.annotations
+            for tool in await server.list_tools()
+            if tool.annotations is not None
+        }
+
+        for name in ("delete_package", "delete_saved_query"):
+            assert annotations[name].destructive_hint is True, name
+        for name in ("move_elements", "update_package", "create_package", "save_query"):
+            assert annotations[name].read_only_hint is False, name
+            assert annotations[name].destructive_hint is False, name
+        for name in ("list_packages", "search_elements", "list_saved_queries", "run_saved_query"):
+            assert annotations[name].read_only_hint is True, name
+
+    async def test_the_instructions_teach_packages_and_the_structured_search(self) -> None:
+        for phrase in (
+            "list_packages",
+            "move_elements",
+            "root",
+            "search_elements",
+            "list_saved_queries",
+            "run_saved_query",
+            "save_query",
+        ):
+            assert phrase in INSTRUCTIONS, phrase
+
+    async def test_the_filing_tools_tell_the_model_they_delete_no_element(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+
+        assert "never" in (tools["delete_package"].description or "").lower()
+        assert "no fact" in (tools["move_elements"].description or "").lower()
 
     async def test_every_tool_carries_a_description_for_the_model(
         self, server: MCPServer[Any]
@@ -1374,6 +1417,21 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("upload_file", "title", FileDetailsWrite, "title"),
             ("upload_file", "description", FileDetailsWrite, "description"),
             ("upload_file", "tags", FileDetailsWrite, "tags"),
+            ("create_package", "name", PackageCreate, "name"),
+            ("create_package", "description", PackageCreate, "description"),
+            ("update_package", "name", PackageUpdate, "name"),
+            ("update_package", "description", PackageUpdate, "description"),
+            ("move_elements", "element_ids", MoveElements, "element_ids"),
+            ("save_query", "name", SavedQueryCreate, "name"),
+            ("save_query", "description", SavedQueryCreate, "description"),
+            ("search_elements", "text", ElementQuerySchema, "text"),
+            ("search_elements", "limit", ElementQuerySchema, "limit"),
+            ("search_elements", "offset", ElementQuerySchema, "offset"),
+            ("search_elements", "properties", ElementQuerySchema, "properties"),
+            ("search_elements", "relations", ElementQuerySchema, "relations"),
+            ("save_query", "text", ElementQuerySchema, "text"),
+            ("save_query", "properties", ElementQuerySchema, "properties"),
+            ("save_query", "relations", ElementQuerySchema, "relations"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
@@ -1405,6 +1463,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("list_files", "prefix", "/files", "prefix"),
             ("read_file", "key", "/files/content", "key"),
             ("describe_file", "key", "/files/metadata", "key"),
+            ("run_saved_query", "limit", "/queries/{query_id}/elements", "limit"),
+            ("run_saved_query", "offset", "/queries/{query_id}/elements", "offset"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -1423,3 +1483,19 @@ class TestTheSameBoundsAsTheHttpAdapter:
 
         assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
         assert sent_to_the_agent == served_over_http
+
+    async def test_the_package_target_is_the_same_type_over_http_and_mcp(
+        self, server: MCPServer[Any], service: ArchitectureService
+    ) -> None:
+        openapi = create_app(Settings(debug=True), architecture_service=service).openapi()
+        operation = openapi["paths"]["/packages/{package_id}"]["delete"]
+        over_http = next(
+            p["schema"] for p in operation["parameters"] if p["name"] == "move_contents_to"
+        )
+        tools = {listed.name: listed for listed in await server.list_tools()}
+        sent = tools["delete_package"].input_schema["properties"]["move_contents_to"]
+
+        assert bounds_of(sent), "move_contents_to carries no bound at all"
+        assert bounds_of(sent) == bounds_of(over_http)
+        filing = tools["move_elements"].input_schema["properties"]["package_id"]
+        assert bounds_of(filing) == bounds_of(over_http)

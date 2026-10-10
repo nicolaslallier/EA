@@ -172,6 +172,25 @@ somebody declared, so `declare_ip_subnet` comes first.
 `locate_ip_address` is the question this is all for: it says which element
 answers on an address **and what that element is wired to**, in one call.
 
+Elements and diagrams are filed in *packages*, a tree of folders that carries
+no meaning in the model: filing an element changes nothing about it but where
+it sits. `list_packages` shows the tree with what each package holds;
+`create_package`, `update_package` and `delete_package` shape it — a package is
+deleted only when empty, or with `move_contents_to`, never with its contents —
+and `move_elements` files up to 100 elements at once. Packages are named by
+id; `update_package` (`parent_id`), `delete_package` (`move_contents_to`) and
+`move_elements` (`package_id`) also take the word `root` for the top of the
+tree. `create_package` leaves `parent_id` out for the top, and
+`search_elements` takes `root_only` for the elements filed nowhere.
+
+To find elements, prefer `search_elements` to paging through `list_elements`:
+it combines types, layers, a name fragment, a package (with or without its
+sub-packages), tests on attributes (`eq`, `contains`, `exists`, `absent`) and on
+links present or absent — "the application components of Finance with an owner
+and no serving link" is one call. `list_saved_queries` shows the filters the
+team already named; reuse one with `run_saved_query` rather than rebuilding it,
+and `save_query` keeps a good filter for the others.
+
 The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
 bucket organised in folders. `list_files` browses a folder, `read_file` reads a
 text file, `upload_file` stores one (base64 for anything that is not text, at
