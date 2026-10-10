@@ -192,3 +192,11 @@ class InvalidQueryError(DomainError):
     A query is data: it was valid when it was written and the code moved since.
     It is refused with a message, never trusted and never a 500.
     """
+
+
+class SavedQueryNotFoundError(DomainError):
+    """A saved query referenced by id is absent from the store."""
+
+
+class DuplicateSavedQueryError(DomainError):
+    """A saved query name is already taken."""

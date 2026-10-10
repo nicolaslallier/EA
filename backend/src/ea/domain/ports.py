@@ -19,6 +19,7 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
 from ea.domain.query import ElementQuery, PropertyTest, QueryOrder, RelationTest
+from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
@@ -465,3 +466,29 @@ class PackageRepository(Protocol):
         `PackageNotFoundError` for an absent package; nothing is moved then.
         """
         ...
+
+
+class SavedQueryRepository(Protocol):
+    """Persistence for the named, shared filters of the catalogue."""
+
+    async def list_all(self) -> tuple[SavedQuerySummary, ...]:
+        """Every saved query, sorted by lower-cased name, without reading a stored query.
+
+        A list that parsed every query would be unreadable the day one of them
+        is not: one stale row must not hide the others.
+        """
+        ...
+
+    async def get(self, query_id: UUID) -> SavedQuery | None:
+        """One saved query; raises `InvalidQueryError` when its stored JSON cannot be read."""
+        ...
+
+    async def add(self, saved: SavedQuery) -> SavedQuery:
+        """Store a new saved query, or refuse a name already taken."""
+        ...
+
+    async def save(self, saved: SavedQuery) -> SavedQuery:
+        """Overwrite name, description, query and update time; never the author."""
+        ...
+
+    async def delete(self, query_id: UUID) -> bool: ...
