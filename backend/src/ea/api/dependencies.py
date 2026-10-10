@@ -17,6 +17,7 @@ from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
 
 
 def architecture_service_of(app: FastAPI) -> ArchitectureService:
@@ -79,6 +80,27 @@ def get_diagram_service(request: Request) -> DiagramService:
 
 
 Diagrams = Annotated[DiagramService, Depends(get_diagram_service)]
+
+
+def package_service_of(app: FastAPI) -> PackageService:
+    """The package use cases the lifespan attached, or a clear failure.
+
+    Absent means the relational store is shut, and the tree lives in it: a
+    wiring fault and a 500, never an empty tree a client could not tell from
+    a catalogue with nothing filed.
+    """
+    service: PackageService | None = getattr(app.state, "package_service", None)
+    if service is None:
+        msg = "no package service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_package_service(request: Request) -> PackageService:
+    return package_service_of(request.app)
+
+
+Packages = Annotated[PackageService, Depends(get_package_service)]
 
 
 def ipam_service_of(app: FastAPI) -> IpamService:

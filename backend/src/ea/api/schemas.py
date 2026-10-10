@@ -47,6 +47,7 @@ from ea.domain.ipam import (
     SubnetDetail,
 )
 from ea.domain.model import Element, Relationship
+from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
@@ -148,6 +149,7 @@ class ElementRead(BaseModel):
     description: str
     documentation: str
     properties: dict[str, str]
+    package_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -162,6 +164,7 @@ class ElementRead(BaseModel):
             description=element.description,
             documentation=element.documentation,
             properties=dict(element.properties),
+            package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
         )
@@ -794,3 +797,94 @@ class DiagramRead(BaseModel):
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
         )
+
+
+# --- Packages: the classification tree ---------------------------------------
+# A package files elements and diagrams; it is not an ArchiMate element and
+# has no relationship. The bounds come from `domain/packages.py`, which the
+# services need too; they are re-declared as Pydantic types here, once, for
+# both adapters.
+
+PackageName = Annotated[
+    str, Field(min_length=1, max_length=MAX_PACKAGE_NAME_LENGTH, pattern=r"^[^/]+$")
+]
+#: What an agent or a query string says where a body would say `null`.
+ROOT_PACKAGE: Final = "root"
+PackageTarget = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=36,
+        description="The id of a package, or `root` for the top of the tree.",
+    ),
+]
+
+
+def package_target(value: str) -> UUID | None:
+    """`root` is the top of the tree (`None`); anything else must be a package id.
+
+    One parser for both adapters: `DELETE /packages/{id}?move_contents_to=` and
+    the MCP tools cannot express "the root" as `null`, so they say `root`.
+    """
+    if value == ROOT_PACKAGE:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        msg = f"expected a package id or {ROOT_PACKAGE!r}, got {value!r}"
+        raise ValueError(msg) from None
+
+
+class PackageCreate(_Input):
+    name: PackageName
+    description: Description = ""
+    parent_id: UUID | None = None
+
+
+class PackageUpdate(_Input):
+    """A partial update.
+
+    `parent_id` is three-valued: absent keeps the parent, `null` puts the
+    package at the root, an id moves it there — which is why the route reads
+    `model_fields_set` rather than the value.
+    """
+
+    name: PackageName | None = None
+    description: Description | None = None
+    parent_id: UUID | None = None
+
+
+class PackageRead(BaseModel):
+    id: UUID
+    parent_id: UUID | None
+    name: str
+    description: str
+    path: str = Field(description="Names from the root down, e.g. `Finance / Budget`.")
+    element_count: int = Field(description="Elements filed directly in this package.")
+    diagram_count: int = Field(description="Diagrams filed directly in this package.")
+    child_count: int = Field(description="Packages directly below this one.")
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, summary: PackageSummary) -> PackageRead:
+        package = summary.package
+        return cls(
+            id=package.id,
+            parent_id=package.parent_id,
+            name=package.name,
+            description=package.description,
+            path=summary.path,
+            element_count=summary.counts.elements,
+            diagram_count=summary.counts.diagrams,
+            child_count=summary.counts.children,
+            created_at=package.created_at,
+            updated_at=package.updated_at,
+        )
+
+
+class MoveElements(_Input):
+    """File up to `MAX_MOVE_BATCH` elements in a package, or at the root."""
+
+    element_ids: Annotated[list[UUID], Field(min_length=1, max_length=MAX_MOVE_BATCH)]
+    package_id: UUID | None = Field(description="The package, or `null` for the root.")

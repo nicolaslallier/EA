@@ -25,6 +25,7 @@ from ea.domain.errors import (
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
     CyclicContainmentError,
+    CyclicPackageError,
     DiagramNotFoundError,
     DocumentNotFoundError,
     DomainError,
@@ -32,6 +33,7 @@ from ea.domain.errors import (
     DuplicateDocumentError,
     DuplicateElementError,
     DuplicateNetworkError,
+    DuplicatePackageError,
     ElementNotFoundError,
     FileNotTextError,
     FileStorageUnavailableError,
@@ -44,10 +46,15 @@ from ea.domain.errors import (
     NotASubnetError,
     NotAuthenticatedError,
     NotAuthorisedError,
+    PackageNotEmptyError,
+    PackageNotFoundError,
+    PackageTooDeepError,
     SearchUnavailableError,
     StoredFileExistsError,
     StoredFileNotFoundError,
+    TooManyPackagesError,
     UnknownLayoutElementError,
+    UnknownPackageError,
 )
 
 if TYPE_CHECKING:
@@ -65,6 +72,17 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # --- Saved diagrams (docs/adr/0031) ---
     DiagramNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateDiagramError: (status.HTTP_409_CONFLICT, "duplicate"),
+    # --- Packages (the classification tree) ---
+    # `package_not_empty` and `cyclic_package` are the two a caller acts on:
+    # the first says to pass `move_contents_to`, the second to pick a target
+    # outside the subtree.
+    PackageNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicatePackageError: (status.HTTP_409_CONFLICT, "duplicate"),
+    CyclicPackageError: (status.HTTP_409_CONFLICT, "cyclic_package"),
+    PackageNotEmptyError: (status.HTTP_409_CONFLICT, "package_not_empty"),
+    PackageTooDeepError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "package_too_deep"),
+    TooManyPackagesError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_packages"),
+    UnknownPackageError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_package"),
     UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
     # A deployment with `EA_EMBEDDINGS_ENABLED` off, which is a configuration
     # and not a request that was wrong — hence 503 and not 4xx.
