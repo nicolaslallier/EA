@@ -45,6 +45,8 @@ par ET.
 | Valeurs textuelles | Les propriétés sont du texte (comme dans le modèle) : pas de comparaison numérique. |
 | Forme sérialisée | JSON versionné (`version: 1`) ; un schéma Pydantic strict (`extra="forbid"`, **sans valeur par défaut** pour ne pas scinder le composant OpenAPI en entrée et sortie) en est la porte HTTP, et `to_json`/`from_json` la porte du domaine. |
 | Tri | Nom croissant ; dates du plus récent au plus ancien ; l'identifiant départage toujours, pour qu'une pagination ne répète ni ne perde une ligne. |
+| Requêtes enregistrées | Table `saved_queries` (migration `0010`) : `query` est le JSON versionné de `to_json`, **sans clé étrangère** (un paquet y est désigné par son identifiant). Partagées : tout lecteur les exécute, tout éditeur les modifie, `created_by` est celui de l'appelant et n'est jamais lu d'un corps. Le nom est unique (sensible à la casse), par la contrainte `uq_saved_queries_name`. |
+| Relecture | Une requête relue repasse par `from_json` : version inconnue ou valeur que les énumérations ne connaissent plus → `422 invalid_query`. Un paquet disparu → `422 unknown_package` à l'exécution ; la requête reste lisible et modifiable. La liste ne lit jamais les requêtes : une ligne illisible ne cache pas les autres. |
 
 ## Alternatives envisagées et écartées
 
@@ -73,6 +75,12 @@ par ET.
 - `GET /elements` et `POST /elements/search` construisent le même
   `ElementFilter` et passent par le même `_matching` : un test d'intégration
   (`test_search_parity.py`) exige qu'ils rendent la même page.
+- Une requête enregistrée est de la donnée qui survit au code : toute évolution
+  incompatible du filtre passe par `version: 2` et un lecteur qui sait refuser
+  (ou migrer) la version 1 ; la table n'a pas besoin de migration pour cela.
+- Les requêtes sont partagées et sans propriétaire privé : « privé » serait un
+  ajout ultérieur (colonne et règle dans `SavedQueryService`).
+
 
 ## Références
 
