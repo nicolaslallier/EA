@@ -18,6 +18,7 @@ from ea.domain.documents import Document, DocumentSummary
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
+from ea.domain.query import ElementQuery, PropertyTest, QueryOrder, RelationTest
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
@@ -43,7 +44,12 @@ class GraphView:
 
 @dataclass(frozen=True, slots=True)
 class ElementFilter:
-    """The ways the catalogue can be narrowed. All criteria are combined with AND."""
+    """The ways the catalogue can be narrowed. All criteria are combined with AND.
+
+    What a repository compiles. `ElementQuery` is the validated form every
+    adapter builds; this narrow struct is what it becomes, and the one place
+    the SQL reads it is `architecture_store._matching`.
+    """
 
     element_types: tuple[ElementType, ...] = ()
     layers: tuple[Layer, ...] = ()
@@ -51,8 +57,27 @@ class ElementFilter:
     package_id: UUID | None = None
     include_subpackages: bool = True
     root_only: bool = False
+    properties: tuple[PropertyTest, ...] = ()
+    relations: tuple[RelationTest, ...] = ()
+    order: QueryOrder = QueryOrder.NAME
     limit: int = 50
     offset: int = 0
+
+    @classmethod
+    def from_query(cls, query: ElementQuery) -> ElementFilter:
+        return cls(
+            element_types=query.element_types,
+            layers=query.layers,
+            search=query.text,
+            package_id=query.package_id,
+            include_subpackages=query.include_subpackages,
+            root_only=query.root_only,
+            properties=query.properties,
+            relations=query.relations,
+            order=query.order,
+            limit=query.limit,
+            offset=query.offset,
+        )
 
 
 class ArchitectureRepository(Protocol):

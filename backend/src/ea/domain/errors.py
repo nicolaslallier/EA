@@ -183,3 +183,12 @@ class UnknownPackageError(DomainError):
     resource in the URL, and here the query exists — it is its content that
     went stale, which is a 422.
     """
+
+
+class InvalidQueryError(DomainError):
+    """A stored query that cannot be read back: unknown version, a value the
+    enumerations no longer know, or a size beyond what is kept.
+
+    A query is data: it was valid when it was written and the code moved since.
+    It is refused with a message, never trusted and never a 500.
+    """
