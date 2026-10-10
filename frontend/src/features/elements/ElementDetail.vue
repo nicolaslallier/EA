@@ -11,7 +11,7 @@ import { RouterLink } from 'vue-router'
 import { ASPECT_LABELS, LAYER_LABELS } from '../metamodel/useMetamodel'
 import type { ElementRead } from './useElementCatalogue'
 
-const props = defineProps<{ element: ElementRead; typeLabel: string }>()
+const props = defineProps<{ element: ElementRead; typeLabel: string; packagePath?: string }>()
 defineEmits<{ close: [] }>()
 
 const attributes = computed(() => Object.entries(props.element.properties))
@@ -41,6 +41,16 @@ function day(iso: string): string {
       <div class="field">
         <dt>Aspect</dt>
         <dd>{{ ASPECT_LABELS[element.aspect] }}</dd>
+      </div>
+      <div class="field field--wide">
+        <dt>Paquet</dt>
+        <dd v-if="element.package_id && packagePath">
+          <RouterLink :to="{ path: '/elements', query: { package: element.package_id } }">
+            {{ packagePath }}
+          </RouterLink>
+        </dd>
+        <dd v-else-if="element.package_id">Rangé dans un paquet</dd>
+        <dd v-else class="empty">À la racine</dd>
       </div>
       <div class="field">
         <dt>Créé le</dt>

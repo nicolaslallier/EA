@@ -6,12 +6,16 @@ import ElementDetail from '../src/features/elements/ElementDetail.vue'
 import { createAppRouter } from '../src/router'
 import { anElement } from './support/api'
 
-async function show(element = anElement(), typeLabel = 'Application Component') {
+async function show(
+  element = anElement(),
+  typeLabel = 'Application Component',
+  packagePath?: string,
+) {
   const router = createAppRouter(createMemoryHistory())
   await router.push('/elements')
   await router.isReady()
   return render(ElementDetail, {
-    props: { element, typeLabel },
+    props: { element, typeLabel, packagePath },
     global: { plugins: [router] },
   })
 }
@@ -66,5 +70,27 @@ describe('ElementDetail', () => {
     await fireEvent.click(screen.getByRole('button', { name: /fermer/i }))
 
     expect(rendered.emitted().close).toBeTruthy()
+  })
+
+  it('names the package as a link that lists what is filed there', async () => {
+    await show(anElement({ package_id: 'f' }), 'Application Component', 'Finance / Budget')
+
+    const link = within(screen.getByRole('region', { name: /détail de l'élément/i })).getByRole(
+      'link',
+      { name: 'Finance / Budget' },
+    )
+    expect(link.getAttribute('href')).toContain('package=f')
+  })
+
+  it('says an element at the root is at the root', async () => {
+    await show(anElement({ package_id: null }))
+
+    expect(screen.getByText('À la racine')).toBeInTheDocument()
+  })
+
+  it('does not invent a path it was not given', async () => {
+    await show(anElement({ package_id: 'f' }))
+
+    expect(screen.getByText('Rangé dans un paquet')).toBeInTheDocument()
   })
 })
