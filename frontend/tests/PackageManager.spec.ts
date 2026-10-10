@@ -141,4 +141,21 @@ describe('PackageManager', () => {
     expect(refused?.url.searchParams.has('move_contents_to')).toBe(false)
     expect(accepted?.url.searchParams.get('move_contents_to')).toBe('root')
   })
+
+  it('closes the open form when another package is selected, so it never acts on the new one', async () => {
+    const calls = stubApi([
+      { method: 'PATCH', path: '/packages/b', body: aPackage({ id: 'b' }) },
+      LIST,
+    ])
+    const store = usePackages()
+    await store.load()
+    const view = render(PackageManager, { props: { store, selected: 'f' } })
+
+    await fireEvent.click(screen.getByRole('button', { name: /renommer/i }))
+    await fireEvent.update(screen.getByLabelText(/nom du paquet/i), 'Autre nom')
+    await view.rerender({ selected: 'b' })
+
+    expect(screen.queryByRole('form')).toBeNull()
+    expect(calls.some((call) => call.method === 'PATCH')).toBe(false)
+  })
 })

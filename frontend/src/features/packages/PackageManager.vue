@@ -5,7 +5,7 @@
 // this only spares them controls that could not work. Every rule (a taken
 // name, a cycle, a tree too deep, a package that still holds something) is the
 // API's: its refusal is shown as it comes, and the package is left as it was.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
@@ -43,6 +43,16 @@ const LABELS: Record<Mode, string> = {
   move: 'Déplacer',
   delete: 'Supprimer',
 }
+
+// A form belongs to the package it was opened on: another selection closes it,
+// or "Confirmer" would apply what was typed for one package to the next.
+watch(
+  () => props.selected,
+  () => {
+    mode.value = null
+    failure.value = ''
+  },
+)
 
 function open(next: Mode): void {
   failure.value = ''
