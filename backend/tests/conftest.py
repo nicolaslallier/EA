@@ -28,10 +28,13 @@ from ea.domain.errors import (
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
+    DuplicateSavedQueryError,
     ElementNotFoundError,
+    InvalidQueryError,
     NotAuthenticatedError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    SavedQueryNotFoundError,
     StoredFileNotFoundError,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
@@ -39,6 +42,7 @@ from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
 from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
     EMBEDDING_DIMENSIONS,
@@ -53,6 +57,7 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -670,6 +675,49 @@ class InMemoryPackages:
             )
 
 
+class InMemorySavedQueries:
+    """A dictionary pretending to be `saved_queries`, with its unique name.
+
+    `corrupt` holds ids whose stored JSON can no longer be read, so a test can
+    prove a listing survives a row `get` refuses — as the real table does.
+    """
+
+    def __init__(self) -> None:
+        self.queries: dict[UUID, SavedQuery] = {}
+        self.corrupt: set[UUID] = set()
+
+    def _refuse_a_taken_name(self, saved: SavedQuery) -> None:
+        if any(s.name == saved.name and s.id != saved.id for s in self.queries.values()):
+            msg = f"a saved query is already named {saved.name!r}"
+            raise DuplicateSavedQueryError(msg)
+
+    async def list_all(self) -> tuple[SavedQuerySummary, ...]:
+        ordered = sorted(self.queries.values(), key=lambda s: (s.name.lower(), s.id))
+        return tuple(s.summary for s in ordered)
+
+    async def get(self, query_id: UUID) -> SavedQuery | None:
+        if query_id in self.corrupt:
+            msg = "the stored query cannot be read: unsupported query version: 2"
+            raise InvalidQueryError(msg)
+        return self.queries.get(query_id)
+
+    async def add(self, saved: SavedQuery) -> SavedQuery:
+        self._refuse_a_taken_name(saved)
+        self.queries[saved.id] = saved
+        return saved
+
+    async def save(self, saved: SavedQuery) -> SavedQuery:
+        if saved.id not in self.queries:
+            raise SavedQueryNotFoundError(str(saved.id))
+        self._refuse_a_taken_name(saved)
+        self.queries[saved.id] = saved
+        return saved
+
+    async def delete(self, query_id: UUID) -> bool:
+        self.corrupt.discard(query_id)
+        return self.queries.pop(query_id, None) is not None
+
+
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     product = sum(a * b for a, b in zip(left, right, strict=True))
     norms = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
@@ -900,6 +948,20 @@ def packages(repository: InMemoryRepository, diagrams: InMemoryDiagrams) -> InMe
 @pytest.fixture
 def package_service(packages: InMemoryPackages) -> PackageService:
     return PackageService(packages, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def saved_queries() -> InMemorySavedQueries:
+    return InMemorySavedQueries()
+
+
+@pytest.fixture
+def saved_query_service(
+    saved_queries: InMemorySavedQueries,
+    packages: InMemoryPackages,
+    service: ArchitectureService,
+) -> SavedQueryService:
+    return SavedQueryService(saved_queries, packages, service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture
