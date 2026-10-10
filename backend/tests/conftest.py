@@ -51,6 +51,7 @@ from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -886,6 +887,11 @@ def service(repository: InMemoryRepository) -> ArchitectureService:
 @pytest.fixture
 def packages(repository: InMemoryRepository, diagrams: InMemoryDiagrams) -> InMemoryPackages:
     return InMemoryPackages(repository, diagrams)
+
+
+@pytest.fixture
+def package_service(packages: InMemoryPackages) -> PackageService:
+    return PackageService(packages, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

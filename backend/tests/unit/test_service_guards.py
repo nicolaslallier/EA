@@ -23,6 +23,7 @@ from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
 from tests.conftest import a_reader
 
 WRITES = {
@@ -36,6 +37,7 @@ WRITES = {
     DiagramService: {"create", "update", "delete", "replace_layout"},
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
     FileService: {"upload", "delete", "set_details", "reconcile"},
+    PackageService: {"create", "update", "delete", "move_elements"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},
 }
 
