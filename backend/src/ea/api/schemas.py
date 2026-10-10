@@ -9,7 +9,7 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +49,18 @@ from ea.domain.ipam import (
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.query import (
+    MAX_PROPERTY_TESTS,
+    MAX_PROPERTY_VALUE,
+    MAX_RELATION_TESTS,
+    QUERY_VERSION,
+    Direction,
+    ElementQuery,
+    PropertyOp,
+    PropertyTest,
+    QueryOrder,
+    RelationTest,
+)
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 
@@ -898,3 +910,116 @@ class MoveElements(_Input):
 
     element_ids: Annotated[list[UUID], Field(min_length=1, max_length=MAX_MOVE_BATCH)]
     package_id: UUID | None = Field(description="The package, or `null` for the root.")
+
+
+# --- Structured search ------------------------------------------------------
+# `ElementQuerySchema` is the strict translation of `domain.query.ElementQuery`,
+# and its dump is the form a saved query is stored in. Every field is required
+# and none has a default, on purpose: it is both a request body and (in a saved
+# query) a response, and a default would split the component into an input and
+# an output type in the OpenAPI document and rename what the SPA imports — the
+# reason `DiagramNode` is built the same way. The SPA and the MCP tools always
+# build the whole object.
+
+PropertyKey = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=63,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]{0,62}$",
+        description="The name of a user-defined attribute: letters, digits, underscores.",
+    ),
+]
+PropertyValue = Annotated[str, Field(max_length=MAX_PROPERTY_VALUE)]
+
+
+class PropertyTestSchema(_Input):
+    """One test on a user-defined attribute.
+
+    `value` is required by `eq` and `contains`, refused by the others.
+    """
+
+    key: PropertyKey
+    op: PropertyOp
+    value: PropertyValue | None
+
+    def to_domain(self) -> PropertyTest:
+        return PropertyTest(key=self.key, op=self.op, value=self.value)
+
+
+class RelationTestSchema(_Input):
+    """Whether an element has (or has no) relationship of one type, optionally to one type."""
+
+    relationship_type: RelationshipType
+    direction: Direction
+    present: bool = Field(description="`false` finds the elements that have no such link.")
+    other_type: ElementType | None = Field(description="The type at the far end, if it matters.")
+
+    def to_domain(self) -> RelationTest:
+        return RelationTest(
+            relationship_type=self.relationship_type,
+            direction=self.direction,
+            present=self.present,
+            other_type=self.other_type,
+        )
+
+
+class ElementQuerySchema(_Input):
+    """A structured search of the catalogue; every criterion is combined with AND."""
+
+    version: Literal[1]
+    element_types: Annotated[list[ElementType], Field(max_length=len(ElementType))]
+    layers: Annotated[list[Layer], Field(max_length=len(Layer))]
+    text: Search | None
+    package_id: UUID | None
+    include_subpackages: bool
+    root_only: bool
+    properties: Annotated[list[PropertyTestSchema], Field(max_length=MAX_PROPERTY_TESTS)]
+    relations: Annotated[list[RelationTestSchema], Field(max_length=MAX_RELATION_TESTS)]
+    order: QueryOrder
+    limit: Limit
+    offset: Offset
+
+    def to_domain(self) -> ElementQuery:
+        """The validated domain object — where `root_only` + `package_id` is refused."""
+        return ElementQuery(
+            element_types=tuple(self.element_types),
+            layers=tuple(self.layers),
+            text=self.text,
+            package_id=self.package_id,
+            include_subpackages=self.include_subpackages,
+            root_only=self.root_only,
+            properties=tuple(test.to_domain() for test in self.properties),
+            relations=tuple(test.to_domain() for test in self.relations),
+            order=self.order,
+            limit=self.limit,
+            offset=self.offset,
+        )
+
+    @classmethod
+    def of(cls, query: ElementQuery) -> ElementQuerySchema:
+        return cls(
+            version=QUERY_VERSION,
+            element_types=list(query.element_types),
+            layers=list(query.layers),
+            text=query.text,
+            package_id=query.package_id,
+            include_subpackages=query.include_subpackages,
+            root_only=query.root_only,
+            properties=[
+                PropertyTestSchema(key=test.key, op=test.op, value=test.value)
+                for test in query.properties
+            ],
+            relations=[
+                RelationTestSchema(
+                    relationship_type=test.relationship_type,
+                    direction=test.direction,
+                    present=test.present,
+                    other_type=test.other_type,
+                )
+                for test in query.relations
+            ],
+            order=query.order,
+            limit=query.limit,
+            offset=query.offset,
+        )

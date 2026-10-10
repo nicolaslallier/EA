@@ -30,6 +30,7 @@ from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.packages import router as packages_router
+from ea.api.queries import router as queries_router
 from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
@@ -550,6 +551,7 @@ def create_app(
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
