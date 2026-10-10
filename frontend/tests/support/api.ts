@@ -1,6 +1,7 @@
 import { vi } from 'vitest'
 
 import type { components } from '../../src/api/schema'
+import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
@@ -14,6 +15,8 @@ type AddressLocationRead = components['schemas']['AddressLocationRead']
 type FileRead = components['schemas']['FileRead']
 type FileMetadataRead = components['schemas']['FileMetadataRead']
 type FileListingRead = components['schemas']['FileListingRead']
+type SavedQueryRead = components['schemas']['SavedQueryRead']
+type SavedQuerySummaryRead = components['schemas']['SavedQuerySummaryRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -354,4 +357,23 @@ export function aStoredFile(overrides: Partial<FileRead> = {}): FileRead {
 /** One folder of the bucket, as `GET /files` returns it. */
 export function aListing(overrides: Partial<FileListingRead> = {}): FileListingRead {
   return { prefix: '', folders: [], files: [], truncated: false, ...overrides }
+}
+/** A saved query as `GET /queries` lists it — no filter in it. */
+export function aSavedQuerySummary(
+  overrides: Partial<SavedQuerySummaryRead> = {},
+): SavedQuerySummaryRead {
+  return {
+    id: 'qqqqqqqq-1111-4111-8111-111111111111',
+    name: 'Les noeuds',
+    description: '',
+    created_by: 'nicolas',
+    created_at: '2026-10-10T12:00:00Z',
+    updated_at: '2026-10-10T12:00:00Z',
+    ...overrides,
+  }
+}
+
+/** The same query opened — with its filter. */
+export function aSavedQuery(overrides: Partial<SavedQueryRead> = {}): SavedQueryRead {
+  return { ...aSavedQuerySummary(), query: emptyQuery(), ...overrides }
 }
