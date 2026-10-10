@@ -712,13 +712,19 @@ BoxSize = Annotated[float, Field(ge=MIN_BOX_SIZE, le=MAX_BOX_SIZE, allow_inf_nan
 class DiagramCreate(_Input):
     name: Name
     description: Description = ""
+    package_id: UUID | None = None
 
 
 class DiagramUpdate(_Input):
-    """A partial update. An omitted field keeps its stored value."""
+    """A partial update. An omitted field keeps its stored value.
+
+    `package_id` is three-valued like a package's `parent_id`: absent keeps the
+    package, `null` puts the diagram at the root.
+    """
 
     name: Name | None = None
     description: Description | None = None
+    package_id: UUID | None = None
 
 
 class DiagramNode(_Input):
@@ -755,6 +761,7 @@ class DiagramSummaryRead(BaseModel):
     name: str
     description: str
     node_count: int
+    package_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -765,6 +772,7 @@ class DiagramSummaryRead(BaseModel):
             name=diagram.name,
             description=diagram.description,
             node_count=diagram.node_count,
+            package_id=diagram.package_id,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
         )
@@ -778,6 +786,7 @@ class DiagramRead(BaseModel):
     description: str
     created_at: datetime
     updated_at: datetime
+    package_id: UUID | None
     nodes: list[DiagramNode]
     elements: list[ElementRead]
     relationships: list[RelationshipRead] = Field(
@@ -793,6 +802,7 @@ class DiagramRead(BaseModel):
             description=diagram.description,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
+            package_id=diagram.package_id,
             nodes=[DiagramNode.of(node) for node in detail.nodes],
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],

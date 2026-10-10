@@ -71,14 +71,24 @@ async def list_elements(
     element_type: Annotated[list[ElementType] | None, Query()] = None,
     layer: Annotated[list[Layer] | None, Query()] = None,
     search: Annotated[Search | None, Query()] = None,
+    package: Annotated[UUID | None, Query()] = None,
+    include_subpackages: Annotated[bool, Query()] = True,
+    root_only: Annotated[bool, Query()] = False,
     limit: LimitQuery = 50,
     offset: OffsetQuery = 0,
 ) -> ElementPage:
-    """Browse the catalogue, narrowed by type, by layer or by a name fragment."""
+    """Browse the catalogue, narrowed by type, by layer, by a name fragment
+    or filed in a package (subpackages included unless told otherwise)."""
+    if root_only and package is not None:
+        msg = "root_only and package cannot be combined: an element is either filed or not"
+        raise ValueError(msg)
     criteria = ElementFilter(
         element_types=tuple(element_type or ()),
         layers=tuple(layer or ()),
         search=search,
+        package_id=package,
+        include_subpackages=include_subpackages,
+        root_only=root_only,
         limit=limit,
         offset=offset,
     )
