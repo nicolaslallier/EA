@@ -149,6 +149,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/elements/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search Elements
+         * @description Types, layers, name fragment, package, attributes and links present or absent.
+         *
+         *     Every criterion is combined with AND. `total` counts everything the query
+         *     matches, not the page. Reading needs no more than a login — it is a read.
+         */
+        post: operations["search_elements_elements_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/elements/{element_id}": {
         parameters: {
             query?: never;
@@ -953,6 +976,11 @@ export interface components {
             package_id?: string | null;
         };
         /**
+         * Direction
+         * @enum {string}
+         */
+        Direction: "out" | "in" | "any";
+        /**
          * DocumentRead
          * @description One attached markdown file, content included — the whole document.
          *
@@ -1070,6 +1098,38 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /**
+         * ElementQuerySchema
+         * @description A structured search of the catalogue; every criterion is combined with AND.
+         */
+        ElementQuerySchema: {
+            /** Element Types */
+            element_types: components["schemas"]["ElementType"][];
+            /** Include Subpackages */
+            include_subpackages: boolean;
+            /** Layers */
+            layers: components["schemas"]["Layer"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            order: components["schemas"]["QueryOrder"];
+            /** Package Id */
+            package_id: string | null;
+            /** Properties */
+            properties: components["schemas"]["PropertyTestSchema"][];
+            /** Relations */
+            relations: components["schemas"]["RelationTestSchema"][];
+            /** Root Only */
+            root_only: boolean;
+            /** Text */
+            text: string | null;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
         };
         /**
          * ElementRead
@@ -1422,6 +1482,32 @@ export interface components {
             parent_id?: string | null;
         };
         /**
+         * PropertyOp
+         * @enum {string}
+         */
+        PropertyOp: "eq" | "contains" | "exists" | "absent";
+        /**
+         * PropertyTestSchema
+         * @description One test on a user-defined attribute.
+         *
+         *     `value` is required by `eq` and `contains`, refused by the others.
+         */
+        PropertyTestSchema: {
+            /**
+             * Key
+             * @description The name of a user-defined attribute: letters, digits, underscores.
+             */
+            key: string;
+            op: components["schemas"]["PropertyOp"];
+            /** Value */
+            value: string | null;
+        };
+        /**
+         * QueryOrder
+         * @enum {string}
+         */
+        QueryOrder: "name" | "created_at" | "updated_at";
+        /**
          * ReconcileRead
          * @description What one pass of the file catch-up changed — see docs/adr/0039.
          */
@@ -1436,6 +1522,21 @@ export interface components {
              * @description Files the catalogue had never heard of.
              */
             recorded: number;
+        };
+        /**
+         * RelationTestSchema
+         * @description Whether an element has (or has no) relationship of one type, optionally to one type.
+         */
+        RelationTestSchema: {
+            direction: components["schemas"]["Direction"];
+            /** @description The type at the far end, if it matters. */
+            other_type: components["schemas"]["ElementType"] | null;
+            /**
+             * Present
+             * @description `false` finds the elements that have no such link.
+             */
+            present: boolean;
+            relationship_type: components["schemas"]["RelationshipType"];
         };
         /**
          * RelationshipCategory
@@ -2392,6 +2493,57 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_elements_elements_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElementQuerySchema"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

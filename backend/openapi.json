@@ -492,6 +492,15 @@
         "title": "DiagramUpdate",
         "type": "object"
       },
+      "Direction": {
+        "enum": [
+          "out",
+          "in",
+          "any"
+        ],
+        "title": "Direction",
+        "type": "string"
+      },
       "DocumentRead": {
         "description": "One attached markdown file, content included \u2014 the whole document.\n\nNot a subclass of the summary above: it would inherit an `of` that builds\nit from a `DocumentSummary`, which has no content to give it.",
         "properties": {
@@ -657,6 +666,111 @@
           "offset"
         ],
         "title": "ElementPage",
+        "type": "object"
+      },
+      "ElementQuerySchema": {
+        "additionalProperties": false,
+        "description": "A structured search of the catalogue; every criterion is combined with AND.",
+        "properties": {
+          "element_types": {
+            "items": {
+              "$ref": "#/components/schemas/ElementType"
+            },
+            "maxItems": 61,
+            "title": "Element Types",
+            "type": "array"
+          },
+          "include_subpackages": {
+            "title": "Include Subpackages",
+            "type": "boolean"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "maxItems": 8,
+            "title": "Layers",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "order": {
+            "$ref": "#/components/schemas/QueryOrder"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyTestSchema"
+            },
+            "maxItems": 10,
+            "title": "Properties",
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/RelationTestSchema"
+            },
+            "maxItems": 5,
+            "title": "Relations",
+            "type": "array"
+          },
+          "root_only": {
+            "title": "Root Only",
+            "type": "boolean"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "element_types",
+          "layers",
+          "text",
+          "package_id",
+          "include_subpackages",
+          "root_only",
+          "properties",
+          "relations",
+          "order",
+          "limit",
+          "offset"
+        ],
+        "title": "ElementQuerySchema",
         "type": "object"
       },
       "ElementRead": {
@@ -1403,6 +1517,61 @@
         "title": "PackageUpdate",
         "type": "object"
       },
+      "PropertyOp": {
+        "enum": [
+          "eq",
+          "contains",
+          "exists",
+          "absent"
+        ],
+        "title": "PropertyOp",
+        "type": "string"
+      },
+      "PropertyTestSchema": {
+        "additionalProperties": false,
+        "description": "One test on a user-defined attribute.\n\n`value` is required by `eq` and `contains`, refused by the others.",
+        "properties": {
+          "key": {
+            "description": "The name of a user-defined attribute: letters, digits, underscores.",
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/PropertyOp"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "op",
+          "value"
+        ],
+        "title": "PropertyTestSchema",
+        "type": "object"
+      },
+      "QueryOrder": {
+        "enum": [
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "QueryOrder",
+        "type": "string"
+      },
       "ReconcileRead": {
         "description": "What one pass of the file catch-up changed \u2014 see docs/adr/0039.",
         "properties": {
@@ -1422,6 +1591,42 @@
           "forgotten"
         ],
         "title": "ReconcileRead",
+        "type": "object"
+      },
+      "RelationTestSchema": {
+        "additionalProperties": false,
+        "description": "Whether an element has (or has no) relationship of one type, optionally to one type.",
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "other_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ElementType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The type at the far end, if it matters."
+          },
+          "present": {
+            "description": "`false` finds the elements that have no such link.",
+            "title": "Present",
+            "type": "boolean"
+          },
+          "relationship_type": {
+            "$ref": "#/components/schemas/RelationshipType"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "direction",
+          "present",
+          "other_type"
+        ],
+        "title": "RelationTestSchema",
         "type": "object"
       },
       "RelationshipCategory": {
@@ -2940,6 +3145,73 @@
         "tags": [
           "packages",
           "packages"
+        ]
+      }
+    },
+    "/elements/search": {
+      "post": {
+        "description": "Types, layers, name fragment, package, attributes and links present or absent.\n\nEvery criterion is combined with AND. `total` counts everything the query\nmatches, not the page. Reading needs no more than a login \u2014 it is a read.",
+        "operationId": "search_elements_elements_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ElementQuerySchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Elements",
+        "tags": [
+          "search"
         ]
       }
     },
