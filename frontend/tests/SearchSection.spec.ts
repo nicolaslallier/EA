@@ -396,3 +396,22 @@ describe('SearchSection — deleting the query that is open', () => {
     expect(await screen.findByText(/définis un filtre/i)).toBeInTheDocument()
   })
 })
+
+describe('SearchSection — paging follows the filter that was run', () => {
+  it('pages the submitted filter, not what has been edited in the form since', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => anElement({ id: `e${i}`, name: `Élément ${i}` }))
+    const { calls } = await open([SEARCH(many, 60)], `?q=${q({ text: 'fact' })}`)
+    await screen.findByText('Élément 0')
+
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Métier' }))
+    await fireEvent.click(screen.getByRole('button', { name: /page suivante/i }))
+
+    await waitFor(() => {
+      const sent = calls.filter((call) => call.url.pathname === '/elements/search').at(-1)
+      expect((sent?.body as Query).offset).toBe(25)
+    })
+    const sent = calls.filter((call) => call.url.pathname === '/elements/search').at(-1)
+    expect((sent?.body as Query).layers).toEqual([])
+    expect((sent?.body as Query).text).toBe('fact')
+  })
+})

@@ -54,15 +54,20 @@ onMounted(async () => {
 })
 
 /** Run what the screen holds, at the current page. */
-async function run(): Promise<void> {
+async function run(filter: Query = query.value): Promise<void> {
   hasAsked.value = true
   const offset = page.value * PAGE_SIZE
   if (savedId.value && saved.opened.value) {
     await results.runSaved(savedId.value, PAGE_SIZE, offset)
   } else {
-    await results.run({ ...cloneQuery(query.value), limit: PAGE_SIZE, offset })
+    lastRun = cloneQuery(filter)
+    await results.run({ ...cloneQuery(filter), limit: PAGE_SIZE, offset })
   }
 }
+
+// The filter the results on screen answer: paging goes on with it, not with
+// whatever has been edited in the form since.
+let lastRun: Query | null = null
 
 /** The address changed: read the question it asks and answer it. */
 async function readAddress(): Promise<void> {
@@ -152,7 +157,7 @@ async function forget(id: string): Promise<void> {
 
 async function goToPage(target: number): Promise<void> {
   page.value = Math.max(0, target)
-  await run()
+  await run(lastRun ?? query.value)
 }
 
 /** One message for the two places a question can fail: opening the saved query, running it. */
