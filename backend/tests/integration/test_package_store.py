@@ -15,6 +15,7 @@ from ea.domain.errors import (
     CyclicPackageError,
     DuplicatePackageError,
     ElementNotFoundError,
+    PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
 )
@@ -270,3 +271,48 @@ class TestTheTreeUnderConcurrency:
 
         with pytest.raises(CyclicPackageError):
             await world.packages.save(a.moved_to(b.id, now=NOW))
+
+
+class TestDeletingAnEmptyPackageOnly:
+    """`require_empty` is the service's "no move_contents_to": never a silent re-rooting."""
+
+    async def test_a_package_that_now_holds_an_element_is_refused_and_the_element_stays(
+        self, world: World
+    ) -> None:
+        finance = await world.package("Finance")
+        element = await world.element("a", finance)
+
+        with pytest.raises(PackageNotEmptyError):
+            await world.packages.delete(finance.id, into=None, require_empty=True)
+
+        stored = await world.graph.get_element(element.id)
+        assert stored is not None
+        assert stored.package_id == finance.id
+
+    async def test_an_empty_package_is_deleted(self, world: World) -> None:
+        finance = await world.package("Finance")
+
+        assert await world.packages.delete(finance.id, into=None, require_empty=True) is True
+
+    async def test_a_delete_racing_a_filing_never_re_roots_the_element(self, world: World) -> None:
+        for round_ in range(8):
+            finance = await world.package(f"F{round_}")
+            element = await world.element(f"e{round_}")
+
+            outcomes = await asyncio.gather(
+                world.packages.delete(finance.id, into=None, require_empty=True),
+                world.packages.move_elements([element.id], finance.id),
+                return_exceptions=True,
+            )
+
+            stored = await world.graph.get_element(element.id)
+            assert stored is not None
+            deleted = await world.packages.get(finance.id) is None
+            if deleted:
+                assert outcomes[0] is True
+                assert isinstance(outcomes[1], PackageNotFoundError)
+                assert stored.package_id is None
+            else:
+                assert isinstance(outcomes[0], PackageNotEmptyError)
+                assert outcomes[1] is None
+                assert stored.package_id == finance.id

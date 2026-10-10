@@ -417,12 +417,19 @@ class PackageRepository(Protocol):
         """Overwrite name, description, parent and update time of a stored package."""
         ...
 
-    async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
+    async def delete(
+        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+    ) -> bool:
         """Move the direct sub-packages, elements and diagrams to `into`, then delete.
 
         `into=None` is the root. One transaction: a sibling name taken at the
         destination refuses everything and moves nothing. `False` if the
         package is gone.
+
+        `require_empty` is the caller saying it asked for no move: nothing is
+        moved, and a package that holds anything *at that moment* (counted in
+        the same transaction) raises `PackageNotEmptyError`. `into=None` alone
+        cannot say it — it means "the root".
         """
         ...
 

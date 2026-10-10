@@ -30,6 +30,7 @@ from ea.domain.errors import (
     DuplicatePackageError,
     ElementNotFoundError,
     NotAuthenticatedError,
+    PackageNotEmptyError,
     PackageNotFoundError,
     StoredFileNotFoundError,
 )
@@ -633,9 +634,16 @@ class InMemoryPackages:
         self.packages[package.id] = package
         return package
 
-    async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
+    async def delete(
+        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+    ) -> bool:
         if package_id not in self.packages:
             return False
+        if require_empty:
+            held = (await self.counts()).get(package_id, PackageCounts())
+            if held.elements or held.diagrams or held.children:
+                msg = "the package still holds sub-packages, elements or diagrams"
+                raise PackageNotEmptyError(msg)
         children = [p for p in self.packages.values() if p.parent_id == package_id]
         for child in children:  # checked before anything moves: all or none
             self._refuse_a_taken_name(replace(child, parent_id=into))

@@ -170,7 +170,9 @@ class PackageService:
                 if child.parent_id == package_id:
                     remaining[child.id] = child.moved_to(into, now=now)
             check_tree(remaining)
-        if not await self._repository.delete(package_id, into=into):
+        if not await self._repository.delete(
+            package_id, into=into, require_empty=isinstance(move_contents_to, Unset)
+        ):
             raise _not_found(package_id)
         logger.info(
             "package deleted: %r",

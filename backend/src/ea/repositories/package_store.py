@@ -173,7 +173,9 @@ class PostgresPackageRepository:
                 raise refusal from error
         return package
 
-    async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
+    async def delete(
+        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+    ) -> bool:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
             if package_id not in tree:
@@ -194,22 +196,30 @@ class PostgresPackageRepository:
             row = await session.get(PackageRecord, package_id)
             if row is None:  # pragma: no cover - the lock excludes a concurrent delete
                 return False
+            if require_empty:
+                held = [
+                    await session.scalar(select(func.count()).where(column == package_id))
+                    for column in (
+                        PackageRecord.parent_id,
+                        ElementRecord.package_id,
+                        DiagramRecord.package_id,
+                    )
+                ]
+                if any(held):
+                    msg = "the package still holds sub-packages, elements or diagrams"
+                    raise PackageNotEmptyError(msg)
             try:
-                await session.execute(
-                    update(PackageRecord)
-                    .where(PackageRecord.parent_id == package_id)
-                    .values(parent_id=into)
-                )
-                await session.execute(
-                    update(ElementRecord)
-                    .where(ElementRecord.package_id == package_id)
-                    .values(package_id=into)
-                )
-                await session.execute(
-                    update(DiagramRecord)
-                    .where(DiagramRecord.package_id == package_id)
-                    .values(package_id=into)
-                )
+                if not require_empty:
+                    for table, column in (
+                        (PackageRecord, PackageRecord.parent_id),
+                        (ElementRecord, ElementRecord.package_id),
+                        (DiagramRecord, DiagramRecord.package_id),
+                    ):
+                        await session.execute(
+                            update(table).where(column == package_id).values({column.key: into})
+                        )
+                # With `require_empty` the RESTRICT keys are the last net: a row filed
+                # here after the count above makes the DELETE fail, never re-roots it.
                 deleted = await session.execute(
                     delete(PackageRecord).where(PackageRecord.id == package_id)
                 )

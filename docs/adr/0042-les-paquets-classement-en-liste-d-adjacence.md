@@ -57,7 +57,14 @@ applique `check_tree()` à l'arbre résultant, puis écrit. Le dépôt n'écrit 
 `parent_id` sans cette garde, y compris pour `move_contents_to`. Les tests
 d'intégration lancent deux déplacements concurrents (`asyncio.gather`) et
 prouvent qu'un seul passe et que l'autre reçoit `CyclicPackageError` (ou
-`PackageTooDeepError` pour la profondeur). L'unicité des noms de frères reste
+`PackageTooDeepError` pour la profondeur). La suppression sans `move_contents_to` passe `require_empty=True` au dépôt
+(`into=None` seul voudrait dire « à la racine ») : dans la même transaction, le
+dépôt recompte enfants, éléments et diagrammes, ne déplace rien, et lève
+`PackageNotEmptyError` si le paquet contient quoi que ce soit. Un rangement
+validé entre ce comptage et le `DELETE` est arrêté par les clés `RESTRICT` : le
+rangement ou la suppression gagne, jamais un re-racinement silencieux (test
+d'intégration `asyncio.gather` suppression contre rangement).
+L'unicité des noms de frères reste
 garantie par les index partiels. Le plafond `MAX_PACKAGES` est, lui, vérifié
 par le service sans verrou : il peut être dépassé de quelques unités sous
 concurrence, c'est un garde-fou de taille et non un invariant.
