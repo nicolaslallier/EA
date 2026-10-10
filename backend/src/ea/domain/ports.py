@@ -6,7 +6,7 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
@@ -205,8 +205,14 @@ class DocumentRepository(Protocol):
 class DiagramRepository(Protocol):
     """Persistence for saved diagrams — see docs/adr/0031."""
 
-    async def list_all(self) -> tuple[Diagram, ...]:
-        """Every diagram, sorted by name, each with its node count."""
+    async def list_all(
+        self, *, package_ids: Collection[UUID] | None = None, root_only: bool = False
+    ) -> tuple[Diagram, ...]:
+        """Every diagram, sorted by name, each with its node count.
+
+        `package_ids` keeps only the diagrams filed in one of those packages
+        (the service resolves a subtree to ids); `root_only` only the unfiled.
+        """
         ...
 
     async def add(self, diagram: Diagram) -> Diagram:

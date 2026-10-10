@@ -11,7 +11,7 @@ Every value is bound: SQLAlchemy constructs compile to parameters.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from sqlalchemy import Select, delete, func, select
 from sqlalchemy.engine import CursorResult
@@ -19,10 +19,11 @@ from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.domain.diagrams import Diagram, DiagramNode
-from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError
+from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError, PackageNotFoundError
+from ea.repositories.architecture_store import constraint_of
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -39,6 +40,9 @@ def _summaries() -> Select[tuple[DiagramRecord, int]]:
     return select(DiagramRecord, count)
 
 
+FOREIGN_KEY_TO_PACKAGE: Final = "fk_diagrams_package_id_packages"
+
+
 def _to_diagram(row: DiagramRecord, node_count: int) -> Diagram:
     return Diagram(
         id=row.id,
@@ -47,7 +51,15 @@ def _to_diagram(row: DiagramRecord, node_count: int) -> Diagram:
         created_at=row.created_at,
         updated_at=row.updated_at,
         node_count=node_count,
+        package_id=row.package_id,
     )
+
+
+def _refused(error: IntegrityError, diagram: Diagram) -> Exception:
+    """A missing package is a 404; any other refusal here is the unique name."""
+    if constraint_of(error) == FOREIGN_KEY_TO_PACKAGE:
+        return PackageNotFoundError(f"no package with id {diagram.package_id}")
+    return _taken(diagram)
 
 
 def _taken(diagram: Diagram) -> DuplicateDiagramError:
@@ -60,8 +72,14 @@ class PostgresDiagramRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def list_all(self) -> tuple[Diagram, ...]:
+    async def list_all(
+        self, *, package_ids: Collection[UUID] | None = None, root_only: bool = False
+    ) -> tuple[Diagram, ...]:
         statement = _summaries().order_by(DiagramRecord.name, DiagramRecord.id)
+        if root_only:
+            statement = statement.where(DiagramRecord.package_id.is_(None))
+        elif package_ids is not None:
+            statement = statement.where(DiagramRecord.package_id.in_(package_ids))
         async with self._sessions() as session:
             return tuple(_to_diagram(row, count) for row, count in await session.execute(statement))
 
@@ -100,12 +118,13 @@ class PostgresDiagramRepository:
                     description=diagram.description,
                     created_at=diagram.created_at,
                     updated_at=diagram.updated_at,
+                    package_id=diagram.package_id,
                 )
             )
             try:
                 await session.flush()
             except IntegrityError as error:
-                raise _taken(diagram) from error
+                raise _refused(error, diagram) from error
         return diagram
 
     async def save(self, diagram: Diagram) -> Diagram:
@@ -117,11 +136,12 @@ class PostgresDiagramRepository:
                 raise DiagramNotFoundError(msg)
             row.name = diagram.name
             row.description = diagram.description
+            row.package_id = diagram.package_id
             row.updated_at = diagram.updated_at
             try:
                 await session.flush()
             except IntegrityError as error:
-                raise _taken(diagram) from error
+                raise _refused(error, diagram) from error
         return diagram
 
     async def delete(self, diagram_id: UUID) -> bool:

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Final
 from uuid import UUID, uuid4
 
+from ea.domain.packages import UNSET, Unset
 from ea.domain.ports import GraphView
 
 MAX_DIAGRAM_NAME_LENGTH: Final = 200
@@ -56,25 +57,44 @@ class Diagram:
     created_at: datetime
     updated_at: datetime
     node_count: int = 0
+    #: The package that files this view; `None` is "at the root".
+    package_id: UUID | None = None
 
     @classmethod
-    def create(cls, *, name: str, now: datetime, description: str = "") -> Diagram:
+    def create(
+        cls,
+        *,
+        name: str,
+        now: datetime,
+        description: str = "",
+        package_id: UUID | None = None,
+    ) -> Diagram:
         return cls(
             id=uuid4(),
             name=_clean_name(name),
             description=description.strip(),
             created_at=now,
             updated_at=now,
+            package_id=package_id,
         )
 
     def revise(
-        self, *, now: datetime, name: str | None = None, description: str | None = None
+        self,
+        *,
+        now: datetime,
+        name: str | None = None,
+        description: str | None = None,
+        package_id: UUID | Unset | None = UNSET,
     ) -> Diagram:
-        """The same diagram under a new name or description; an omitted one is kept."""
+        """The same diagram under a new name, description or package; an omitted one is kept.
+
+        `package_id=None` is the root; leaving it out (`UNSET`) is "do not move".
+        """
         return replace(
             self,
             name=self.name if name is None else _clean_name(name),
             description=self.description if description is None else description.strip(),
+            package_id=self.package_id if isinstance(package_id, Unset) else package_id,
             updated_at=now,
         )
 

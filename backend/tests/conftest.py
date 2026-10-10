@@ -9,7 +9,7 @@ import math
 import os
 import re
 import socket
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Collection, Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -27,13 +27,16 @@ from ea.domain.errors import (
     DocumentNotFoundError,
     DuplicateDiagramError,
     DuplicateDocumentError,
+    DuplicatePackageError,
     ElementNotFoundError,
     NotAuthenticatedError,
+    PackageNotFoundError,
     StoredFileNotFoundError,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
+from ea.domain.packages import Package, PackageCounts
 from ea.domain.ports import ElementFilter, GraphView
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -530,8 +533,16 @@ class InMemoryDiagrams:
             msg = f"a diagram is already named {diagram.name!r}"
             raise DuplicateDiagramError(msg)
 
-    async def list_all(self) -> tuple[Diagram, ...]:
-        return tuple(self._counted(d) for d in sorted(self.diagrams.values(), key=lambda d: d.name))
+    async def list_all(
+        self, *, package_ids: Collection[UUID] | None = None, root_only: bool = False
+    ) -> tuple[Diagram, ...]:
+        wanted = [
+            d
+            for d in self.diagrams.values()
+            if (not root_only or d.package_id is None)
+            and (package_ids is None or d.package_id in package_ids)
+        ]
+        return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
     async def add(self, diagram: Diagram) -> Diagram:
         self._refuse_a_taken_name(diagram)
@@ -565,6 +576,89 @@ class InMemoryDiagrams:
         self.nodes[diagram_id] = tuple(nodes)
         self.diagrams[diagram_id] = stored.touched(now)
         return True
+
+
+class InMemoryPackages:
+    """A dictionary pretending to be `packages`: the sibling-name rule of its two indexes,
+    and the counts and moves that SQL does across tables, reaching into the element and
+    diagram doubles it is built over."""
+
+    def __init__(self, graph: InMemoryRepository, diagrams: InMemoryDiagrams) -> None:
+        self.packages: dict[UUID, Package] = {}
+        self._graph = graph
+        self._diagrams = diagrams
+
+    def _refuse_a_taken_name(self, package: Package) -> None:
+        if any(
+            p.id != package.id
+            and p.parent_id == package.parent_id
+            and p.name.lower() == package.name.lower()
+            for p in self.packages.values()
+        ):
+            msg = f"a package is already named {package.name!r} in that place"
+            raise DuplicatePackageError(msg)
+
+    def _require_parent(self, package: Package) -> None:
+        if package.parent_id is not None and package.parent_id not in self.packages:
+            raise PackageNotFoundError(str(package.parent_id))
+
+    async def list_all(self) -> tuple[Package, ...]:
+        return tuple(sorted(self.packages.values(), key=lambda p: (p.name.lower(), p.id)))
+
+    async def counts(self) -> dict[UUID, PackageCounts]:
+        return {
+            p.id: PackageCounts(
+                elements=sum(1 for e in self._graph.elements.values() if e.package_id == p.id),
+                diagrams=sum(1 for d in self._diagrams.diagrams.values() if d.package_id == p.id),
+                children=sum(1 for c in self.packages.values() if c.parent_id == p.id),
+            )
+            for p in self.packages.values()
+        }
+
+    async def get(self, package_id: UUID) -> Package | None:
+        return self.packages.get(package_id)
+
+    async def add(self, package: Package) -> Package:
+        self._require_parent(package)
+        self._refuse_a_taken_name(package)
+        self.packages[package.id] = package
+        return package
+
+    async def save(self, package: Package) -> Package:
+        if package.id not in self.packages:
+            raise PackageNotFoundError(str(package.id))
+        self._require_parent(package)
+        self._refuse_a_taken_name(package)
+        self.packages[package.id] = package
+        return package
+
+    async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
+        if package_id not in self.packages:
+            return False
+        children = [p for p in self.packages.values() if p.parent_id == package_id]
+        for child in children:  # checked before anything moves: all or none
+            self._refuse_a_taken_name(replace(child, parent_id=into))
+        for child in children:
+            self.packages[child.id] = replace(child, parent_id=into)
+        for element_id, element in list(self._graph.elements.items()):
+            if element.package_id == package_id:
+                self._graph.elements[element_id] = replace(element, package_id=into)
+        for diagram_id, diagram in list(self._diagrams.diagrams.items()):
+            if diagram.package_id == package_id:
+                self._diagrams.diagrams[diagram_id] = replace(diagram, package_id=into)
+        del self.packages[package_id]
+        return True
+
+    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+        missing = [str(i) for i in element_ids if i not in self._graph.elements]
+        if missing:
+            raise ElementNotFoundError(f"no element with id {', '.join(missing)}")
+        if package_id is not None and package_id not in self.packages:
+            raise PackageNotFoundError(str(package_id))
+        for element_id in element_ids:
+            self._graph.elements[element_id] = replace(
+                self._graph.elements[element_id], package_id=package_id
+            )
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -790,8 +884,15 @@ def service(repository: InMemoryRepository) -> ArchitectureService:
 
 
 @pytest.fixture
-def diagram_service(diagrams: InMemoryDiagrams, service: ArchitectureService) -> DiagramService:
-    return DiagramService(diagrams, service, clock=lambda: FIXED_NOW)
+def packages(repository: InMemoryRepository, diagrams: InMemoryDiagrams) -> InMemoryPackages:
+    return InMemoryPackages(repository, diagrams)
+
+
+@pytest.fixture
+def diagram_service(
+    diagrams: InMemoryDiagrams, service: ArchitectureService, packages: InMemoryPackages
+) -> DiagramService:
+    return DiagramService(diagrams, service, packages=packages, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture
