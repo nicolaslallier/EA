@@ -138,6 +138,11 @@ class TestTheToolset:
             "update_package",
             "delete_package",
             "move_elements",
+            "search_elements",
+            "list_saved_queries",
+            "save_query",
+            "run_saved_query",
+            "delete_saved_query",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -1158,6 +1163,181 @@ class TestThePackageTools:
         page = await call(server, "list_elements")
 
         assert (page["total"], page["limit"], page["offset"]) == (1, 50, 0)
+
+
+@pytest.mark.asyncio
+class TestTheSearchTools:
+    """What an agent sends reaches the repository as one `ElementFilter` — and nothing else does."""
+
+    @pytest.fixture
+    def seen(self, service: ArchitectureService, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        criteria: list[Any] = []
+        real = service.list_elements
+
+        async def spy(found):  # type: ignore[no-untyped-def]
+            criteria.append(found)
+            return await real(found)
+
+        monkeypatch.setattr(service, "list_elements", spy)
+        return criteria
+
+    async def test_every_criterion_reaches_the_filter(
+        self, server: MCPServer[Any], seen: list[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+
+        page = await call(
+            server,
+            "search_elements",
+            element_types=["application_component"],
+            layers=["application"],
+            text=" fact ",
+            package_id=package["id"],
+            include_subpackages=False,
+            properties=[
+                {"key": "owner", "op": "eq", "value": "finance"},
+                {"key": "cidr", "op": "exists"},
+            ],
+            relations=[
+                {
+                    "relationship_type": "serving",
+                    "direction": "out",
+                    "other_type": "business_process",
+                },
+                {"relationship_type": "association", "present": False},
+            ],
+            order="updated_at",
+            limit=10,
+            offset=20,
+        )
+
+        criteria = seen[0]
+        assert [t.value for t in criteria.element_types] == ["application_component"]
+        assert criteria.search == "fact"
+        assert str(criteria.package_id) == package["id"]
+        assert criteria.include_subpackages is False
+        assert [(p.key, p.op.value, p.value) for p in criteria.properties] == [
+            ("owner", "eq", "finance"),
+            ("cidr", "exists", None),
+        ]
+        assert [
+            (r.relationship_type.value, r.direction.value, r.present) for r in criteria.relations
+        ] == [
+            ("serving", "out", True),
+            ("association", "any", False),
+        ]
+        assert (criteria.order.value, criteria.limit, criteria.offset) == ("updated_at", 10, 20)
+        assert (page["limit"], page["offset"]) == (10, 20)
+
+    async def test_no_argument_at_all_is_the_whole_catalogue_paged(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+
+        page = await call(server, "search_elements")
+
+        assert (page["total"], page["limit"], page["offset"]) == (1, 50, 0)
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"properties": [{"key": "owner", "op": "eq"}]},
+            {"properties": [{"key": "owner", "op": "exists", "value": "x"}]},
+            {"properties": [{"key": "a-b", "op": "exists"}]},
+            {"properties": [{"key": "owner", "op": "gt", "value": "1"}]},
+            {"properties": [{"key": "owner", "op": "contains", "value": "a\x00b"}]},
+            {"root_only": True, "package_id": "11111111-1111-4111-8111-111111111111"},
+            {"element_types": ["microservice"]},
+            {"limit": 0},
+        ],
+    )
+    async def test_a_filter_the_server_would_refuse_is_refused_with_a_message(
+        self, server: MCPServer[Any], arguments: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "search_elements", **arguments)
+
+    async def test_a_contradictory_filter_says_why(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError) as refused:
+            await call(
+                server,
+                "search_elements",
+                root_only=True,
+                package_id="11111111-1111-4111-8111-111111111111",
+            )
+
+        assert "package" in str(refused.value).lower()
+
+    async def test_a_filter_is_kept_under_a_name_and_run_again(
+        self, server: MCPServer[Any], seen: list[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+        saved = await call(
+            server,
+            "save_query",
+            name="Les noeuds",
+            description="Tous",
+            element_types=["node"],
+            properties=[{"key": "owner", "op": "absent"}],
+        )
+
+        assert saved["created_by"] == "editor"
+        assert saved["query"]["element_types"] == ["node"]
+        listed = (await call(server, "list_saved_queries"))["result"]
+        assert [(q["name"], "query" in q) for q in listed] == [("Les noeuds", False)]
+
+        page = await call(server, "run_saved_query", query_id=saved["id"], limit=10)
+
+        assert (page["total"], page["limit"]) == (1, 10)
+        assert [t.value for t in seen[-1].element_types] == ["node"]
+
+    async def test_a_name_already_taken_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
+        await call(server, "save_query", name="A")
+
+        with pytest.raises(ToolError, match="already named"):
+            await call(server, "save_query", name="A")
+
+    async def test_a_query_naming_a_vanished_package_says_so_and_stays(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+        saved = await call(server, "save_query", name="Compta", package_id=package["id"])
+        await call(server, "delete_package", package_id=package["id"], move_contents_to="root")
+
+        with pytest.raises(ToolError, match="no longer exists"):
+            await call(server, "run_saved_query", query_id=saved["id"])
+
+        assert len((await call(server, "list_saved_queries"))["result"]) == 1
+
+    async def test_deleting_a_query_leaves_the_elements_it_found(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "node", "db-01")
+        saved = await call(server, "save_query", name="Tous")
+
+        await call(server, "delete_saved_query", query_id=saved["id"])
+
+        assert (await call(server, "list_saved_queries"))["result"] == []
+        assert (await call(server, "get_element", element_id=element["id"]))["name"] == "db-01"
+
+    async def test_an_unknown_query_is_a_message(self, server: MCPServer[Any]) -> None:
+        for name in ("run_saved_query", "delete_saved_query"):
+            with pytest.raises(ToolError, match="no saved query"):
+                await call(server, name, query_id=str(uuid4()))
+
+    async def test_a_reader_searches_lists_and_runs_but_does_not_write(
+        self, server: MCPServer[Any]
+    ) -> None:
+        saved = await call(server, "save_query", name="A")
+
+        with acting_as(a_reader()):
+            await call(server, "search_elements")
+            assert len((await call(server, "list_saved_queries"))["result"]) == 1
+            await call(server, "run_saved_query", query_id=saved["id"])
+            with pytest.raises(ToolError):
+                await call(server, "save_query", name="B")
+            with pytest.raises(ToolError):
+                await call(server, "delete_saved_query", query_id=saved["id"])
 
 
 @pytest.mark.asyncio

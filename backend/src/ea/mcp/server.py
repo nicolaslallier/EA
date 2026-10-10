@@ -34,7 +34,7 @@ from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ea.api.schemas import (
     Address,
@@ -46,6 +46,7 @@ from ea.api.schemas import (
     DocumentRead,
     DocumentSummaryRead,
     ElementPage,
+    ElementQuerySchema,
     ElementRead,
     FileDescription,
     FileKey,
@@ -64,9 +65,15 @@ from ea.api.schemas import (
     PackageRead,
     PackageTarget,
     PassageRead,
+    PropertyKey,
+    PropertyTestSchema,
+    PropertyValue,
     RelationshipMatrixRead,
     RelationshipRead,
+    RelationTestSchema,
     Reserved,
+    SavedQueryRead,
+    SavedQuerySummaryRead,
     Search,
     SubnetDetailRead,
     SubnetRead,
@@ -90,6 +97,13 @@ from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_typ
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
+from ea.domain.query import (
+    MAX_PROPERTY_TESTS,
+    MAX_RELATION_TESTS,
+    Direction,
+    PropertyOp,
+    QueryOrder,
+)
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
@@ -323,6 +337,103 @@ ElementIds = Annotated[
         description="The ids of the elements to file, at most 100.",
     ),
 ]
+
+
+class PropertyArgument(BaseModel):
+    """One test on a user-defined attribute, in the words an agent writes it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: PropertyKey
+    op: PropertyOp = Field(
+        description="`eq` equals, `contains` has the fragment (case ignored), `exists`, `absent`."
+    )
+    value: PropertyValue | None = Field(
+        default=None, description="Required by `eq` and `contains`; leave out for the others."
+    )
+
+
+class RelationArgument(BaseModel):
+    """Whether an element has — or has no — relationship of one type."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relationship_type: RelationshipType
+    direction: Direction = Field(
+        default=Direction.ANY, description="`out` leaves the element, `in` arrives at it."
+    )
+    present: bool = Field(
+        default=True, description="`false` finds the elements that have NO such relationship."
+    )
+    other_type: ElementType | None = Field(
+        default=None, description="The type of the element at the other end, if it matters."
+    )
+
+
+PropertyTests = Annotated[
+    list[PropertyArgument] | None,
+    Field(
+        max_length=MAX_PROPERTY_TESTS,
+        description="Tests on attributes, combined with AND. At most 10.",
+    ),
+]
+RelationTests = Annotated[
+    list[RelationArgument] | None,
+    Field(
+        max_length=MAX_RELATION_TESTS,
+        description="Tests on links present or absent, combined with AND. At most 5.",
+    ),
+]
+QueryId = Annotated[
+    UUID, Field(description="The id of a saved query, as `list_saved_queries` gives it.")
+]
+
+
+def _query_schema(
+    *,
+    element_types: list[ElementType] | None,
+    layers: list[Layer] | None,
+    text: str | None,
+    package_id: UUID | None,
+    include_subpackages: bool,
+    root_only: bool,
+    properties: list[PropertyArgument] | None,
+    relations: list[RelationArgument] | None,
+    order: QueryOrder,
+    limit: int,
+    offset: int,
+) -> ElementQuerySchema:
+    """The HTTP adapter's own schema, built from an agent's friendlier arguments.
+
+    Going through it — and then `to_domain()` — means a filter is judged by
+    the very same bounds and rules whichever door it came in by.
+    """
+    return ElementQuerySchema(
+        version=1,
+        element_types=list(element_types or ()),
+        layers=list(layers or ()),
+        text=text,
+        package_id=package_id,
+        include_subpackages=include_subpackages,
+        root_only=root_only,
+        properties=[
+            PropertyTestSchema(key=test.key, op=test.op, value=test.value)
+            for test in properties or ()
+        ],
+        relations=[
+            RelationTestSchema(
+                relationship_type=test.relationship_type,
+                direction=test.direction,
+                present=test.present,
+                other_type=test.other_type,
+            )
+            for test in relations or ()
+        ],
+        order=order,
+        limit=limit,
+        offset=offset,
+    )
+
 
 # --- What a tool does to the graph, said in the protocol's own terms --------
 # A client shows these to the person behind the agent, who decides from them
@@ -1052,6 +1163,135 @@ def build_mcp_server(
         """
         moved = await get_packages().move_elements(element_ids, package_target(package_id))
         return f"{moved} element(s) filed in {package_id}"
+
+    # --- Structured search and saved queries ------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def search_elements(
+        element_types: list[ElementType] | None = None,
+        layers: list[Layer] | None = None,
+        text: Search | None = None,
+        package_id: Annotated[
+            UUID | None, Field(description="Only the elements filed in this package.")
+        ] = None,
+        include_subpackages: bool = True,
+        root_only: Annotated[
+            bool, Field(description="Only the elements filed in no package at all.")
+        ] = False,
+        properties: PropertyTests = None,
+        relations: RelationTests = None,
+        order: QueryOrder = QueryOrder.NAME,
+        limit: Limit = 50,
+        offset: Offset = 0,
+    ) -> ElementPage:
+        """Structured search of the catalogue: prefer it to paging through `list_elements`.
+
+        Combine, with AND: element types, layers, a name fragment, a package
+        (with or without its sub-packages, or `root_only` for the unfiled),
+        tests on attributes (`eq`, `contains`, `exists`, `absent`) and tests on
+        links present or absent, optionally to an element of a given type —
+        "the application components of Finance that have an owner and serve
+        nothing" is one call. `total` counts everything the filter matches.
+        A filter no element can satisfy answers an empty page, not an error.
+        """
+        query = _query_schema(
+            element_types=element_types,
+            layers=layers,
+            text=text,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
+            root_only=root_only,
+            properties=properties,
+            relations=relations,
+            order=order,
+            limit=limit,
+            offset=offset,
+        ).to_domain()
+        criteria = ElementFilter.from_query(query)
+        service = get_service()
+        return ElementPage(
+            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            total=await service.count_elements(criteria),
+            limit=query.limit,
+            offset=query.offset,
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_saved_queries() -> list[SavedQuerySummaryRead]:
+        """The named filters the team already keeps: reuse one rather than rebuild it.
+
+        A summary names the query and who wrote it; `run_saved_query` runs it.
+        """
+        return [SavedQuerySummaryRead.of(summary) for summary in await get_queries().list_queries()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def save_query(
+        name: Name,
+        description: Description = "",
+        element_types: list[ElementType] | None = None,
+        layers: list[Layer] | None = None,
+        text: Search | None = None,
+        package_id: Annotated[
+            UUID | None, Field(description="Only the elements filed in this package.")
+        ] = None,
+        include_subpackages: bool = True,
+        root_only: Annotated[
+            bool, Field(description="Only the elements filed in no package at all.")
+        ] = False,
+        properties: PropertyTests = None,
+        relations: RelationTests = None,
+        order: QueryOrder = QueryOrder.NAME,
+    ) -> SavedQueryRead:
+        """Keep a filter under a name, for the whole team.
+
+        The filter arguments are those of `search_elements`. The name must be
+        free. Anyone can run the query afterwards; any editor can change it.
+        A query names its package by id: if the package is deleted later the
+        query stays, and running it says which package is gone.
+        """
+        query = _query_schema(
+            element_types=element_types,
+            layers=layers,
+            text=text,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
+            root_only=root_only,
+            properties=properties,
+            relations=relations,
+            order=order,
+            limit=50,
+            offset=0,
+        ).to_domain()
+        return SavedQueryRead.read(
+            await get_queries().create(name=name, description=description, query=query)
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def run_saved_query(
+        query_id: QueryId, limit: Limit = 50, offset: Offset = 0
+    ) -> ElementPage:
+        """Run a saved query, one page at a time."""
+        result = await get_queries().run(query_id, limit=limit, offset=offset)
+        return ElementPage(
+            items=[ElementRead.of(element) for element in result.elements],
+            total=result.total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def delete_saved_query(query_id: QueryId) -> str:
+        """Delete a saved query for everyone. The elements it finds are not touched.
+
+        Confirm with the person you are working for before calling it.
+        """
+        await get_queries().delete(query_id)
+        return f"saved query {query_id} was deleted"
 
     # --- Metamodel --------------------------------------------------------
 
