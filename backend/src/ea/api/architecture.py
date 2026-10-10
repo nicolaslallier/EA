@@ -30,6 +30,7 @@ from ea.api.schemas import (
 )
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.ports import ElementFilter
+from ea.domain.query import ElementQuery
 
 router = APIRouter(tags=["architecture"])
 
@@ -82,6 +83,7 @@ async def list_elements(
     if root_only and package is not None:
         msg = "root_only and package cannot be combined: an element is either filed or not"
         raise ValueError(msg)
+    ElementQuery(text=search)  # the same refusals (NUL) as `POST /elements/search`
     criteria = ElementFilter(
         element_types=tuple(element_type or ()),
         layers=tuple(layer or ()),

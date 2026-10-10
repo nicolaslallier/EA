@@ -38,6 +38,11 @@ MAX_STORED_QUERY_BYTES: Final = 16 * 1024
 MAX_PAGE: Final = 200
 
 
+#: PostgreSQL cannot hold a NUL in text, and the driver refuses it as a parameter:
+#: refused here, as a typed 422, instead of surfacing as a 500 at execution.
+_NUL: Final = "a query cannot contain a NUL character"
+
+
 class PropertyOp(StrEnum):
     EQ = "eq"
     CONTAINS = "contains"
@@ -74,6 +79,8 @@ class PropertyTest:
                 "(letters, digits and underscores, starting with a letter)"
             )
             raise ValueError(msg)
+        if self.value is not None and "\x00" in self.value:
+            raise InvalidQueryError(_NUL)
         if self.op in (PropertyOp.EQ, PropertyOp.CONTAINS):
             if self.value is None or (self.op is PropertyOp.CONTAINS and self.value == ""):
                 msg = f"the {self.op.value} test on {self.key!r} needs a value"
@@ -113,6 +120,8 @@ class ElementQuery:
     offset: int = 0
 
     def __post_init__(self) -> None:
+        if self.text is not None and "\x00" in self.text:
+            raise InvalidQueryError(_NUL)
         text = (self.text or "").strip()
         if len(text) > MAX_TEXT:
             msg = f"text is at most {MAX_TEXT} characters"

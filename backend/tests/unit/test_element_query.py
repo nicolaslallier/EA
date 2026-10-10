@@ -224,3 +224,14 @@ class TestTheFilterItBecomes:
         assert criteria.properties == query.properties
         assert criteria.relations == query.relations
         assert (criteria.order, criteria.limit, criteria.offset) == (QueryOrder.UPDATED_AT, 25, 50)
+
+
+class TestNulCharacter:
+    def test_a_nul_in_the_text_is_refused(self) -> None:
+        with pytest.raises(InvalidQueryError, match="NUL"):
+            ElementQuery(text="a\x00b")
+
+    @pytest.mark.parametrize("op", [PropertyOp.EQ, PropertyOp.CONTAINS])
+    def test_a_nul_in_a_property_value_is_refused(self, op: PropertyOp) -> None:
+        with pytest.raises(InvalidQueryError, match="NUL"):
+            PropertyTest("owner", op, "a\x00b")

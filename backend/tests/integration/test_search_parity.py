@@ -74,3 +74,17 @@ async def test_the_same_filter_gives_the_same_page_by_both_doors(
     await both(client, {"limit": 1, "offset": 1}, limit=1, offset=1)
     found = (await client.get("/elements", params={"search": "db_"})).json()
     assert [item["name"] for item in found["items"]] == ["db_01"]
+
+
+async def test_a_nul_byte_is_a_typed_422_not_a_500(client: httpx.AsyncClient) -> None:
+    def post(**changes: Any) -> Any:
+        return client.post("/elements/search", json={**to_json(ElementQuery()), **changes})
+
+    nul_property = [{"key": "owner", "op": "eq", "value": "a\u0000b"}]
+    for response in (
+        await post(text="a\u0000b"),
+        await post(properties=nul_property),
+        await client.get("/elements", params={"search": "a\u0000b"}),
+    ):
+        assert response.status_code == 422
+        assert response.json()["error"] == "invalid_query"
