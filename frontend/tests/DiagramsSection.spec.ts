@@ -283,4 +283,24 @@ describe('DiagramsSection — the package tree', () => {
     expect(screen.queryByLabelText(/ranger vue applicative dans/i)).toBeNull()
     expect(screen.queryByLabelText(/^paquet$/i)).toBeNull()
   })
+
+  it('puts the select back on the real package when the move is refused', async () => {
+    stubApi([
+      {
+        method: 'PATCH',
+        path: `/diagrams/${DIAGRAM_ID}`,
+        status: 404,
+        body: { error: 'not_found', detail: 'Paquet introuvable.' },
+      },
+      ...ROUTES,
+    ])
+    await open()
+    await screen.findByText('Vue applicative')
+    const select = screen.getByLabelText(/ranger vue applicative dans/i)
+
+    await fireEvent.update(select, 'f')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Paquet introuvable.')
+    expect(select).toHaveValue('root')
+  })
 })
