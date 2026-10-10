@@ -547,4 +547,48 @@ describe('ElementCatalogue — what a write leaves behind', () => {
     await waitFor(() => expect(screen.queryByRole('form')).not.toBeInTheDocument())
     expect(calls.some((call) => call.url.pathname === '/elements/move')).toBe(false)
   })
+
+  it('reloads the counts of the tree after creating and after deleting', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/packages', body: [FINANCE] },
+      { method: 'POST', path: '/elements', status: 201, body: created },
+      { method: 'DELETE', path: `/elements/${element.id}`, status: 204 },
+    ])
+    await screen.findByText('Facturation')
+    const treeReads = () => calls.filter((call) => call.url.pathname === '/packages').length
+    const before = treeReads()
+
+    await fillAndSubmit()
+    await waitFor(() => expect(treeReads()).toBe(before + 1))
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /supprimer facturation/i }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirmer' }))
+    await waitFor(() => expect(treeReads()).toBe(before + 2))
+  })
+
+  it('reloads the open detail after the element is filed, so its package is the new one', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([element]) },
+        { path: `/elements/${element.id}`, body: element },
+        { path: '/packages', body: [FINANCE] },
+        { method: 'POST', path: '/elements/move', status: 204 },
+      ],
+      `?element=${element.id}`,
+    )
+    await screen.findByRole('region', { name: /détail de l'élément/i })
+    const detailReads = () =>
+      calls.filter((call) => call.url.pathname === `/elements/${element.id}`).length
+    const before = detailReads()
+
+    await fireEvent.drop(await screen.findByRole('treeitem', { name: /Finance/ }), {
+      dataTransfer: { getData: () => element.id, types: [ELEMENT_DRAG_TYPE] },
+    })
+
+    await waitFor(() => expect(detailReads()).toBe(before + 1))
+  })
 })

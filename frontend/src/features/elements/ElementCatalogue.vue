@@ -105,7 +105,8 @@ async function file(elementIds: string[], target: string): Promise<void> {
   failure.value = ''
   try {
     await packages.moveElements(elementIds, target === ROOT ? null : target)
-    await catalogue.load()
+    // The detail on screen shows the package it had: read it again.
+    await Promise.all([catalogue.load(), detailedId.value ? detail.open(detailedId.value) : undefined])
   } catch (caught) {
     failure.value = messageOf(caught)
   }
@@ -216,6 +217,8 @@ async function onSubmit(payload: ElementCreate | ElementUpdate): Promise<void> {
         await file([created.id], selectedPackage.value.id)
       }
     }
+    // The tree counts what each package holds: a write on an element moves them.
+    await packages.load()
     // Closing only here keeps what the user typed on screen when the API
     // refuses the element — a duplicate name, say.
     closeForm()
@@ -234,6 +237,7 @@ async function confirmDelete(): Promise<void> {
   busy.value = true
   try {
     await catalogue.remove(element.id)
+    await packages.load()
     confirming.value = null
   } catch (caught) {
     failure.value = messageOf(caught)
