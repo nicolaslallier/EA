@@ -65,6 +65,17 @@ describe('the URL form', () => {
     expect(query).toEqual(emptyQuery())
   })
 
+  it('drops list entries of the wrong kind, so a hand-written link never breaks the form', () => {
+    const query = decodeQuery(
+      '{"version":1,"properties":[null,3,"x",[],{"key":"owner","op":"eq","value":"a"}],"relations":[null,"y"],"layers":["business",null,4],"element_types":[{}, "node"]}',
+    )
+
+    expect(query?.properties).toEqual([{ key: 'owner', op: 'eq', value: 'a' }])
+    expect(query?.relations).toEqual([])
+    expect(query?.layers).toEqual(['business'])
+    expect(query?.element_types).toEqual(['node'])
+  })
+
   it('clones without sharing', () => {
     const query = emptyQuery()
     const copy = cloneQuery(query)

@@ -65,10 +65,17 @@ export function decodeQuery(raw: string): Query | null {
     const query = { ...emptyQuery(), ...(parsed as Partial<Query>) }
     // The form iterates these: a non-list would throw while rendering. Whatever
     // else is wrong is the API's to refuse, with a readable 422.
-    for (const key of ['element_types', 'layers', 'properties', 'relations'] as const) {
-      if (!Array.isArray(query[key])) {
-        ;(query as Record<string, unknown>)[key] = []
-      }
+    const isObject = (item: unknown): boolean =>
+      typeof item === 'object' && item !== null && !Array.isArray(item)
+    const kept: Record<string, (item: unknown) => boolean> = {
+      element_types: (item) => typeof item === 'string',
+      layers: (item) => typeof item === 'string',
+      properties: isObject,
+      relations: isObject,
+    }
+    for (const [key, keep] of Object.entries(kept)) {
+      const list = (query as Record<string, unknown>)[key]
+      ;(query as Record<string, unknown>)[key] = Array.isArray(list) ? list.filter(keep) : []
     }
     return query
   } catch {
