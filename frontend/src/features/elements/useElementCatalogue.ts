@@ -9,6 +9,7 @@ import { computed, reactive, ref } from 'vue'
 import type { components } from '../../api/schema'
 import { ApiError, api, unwrap } from '../../lib/api'
 import { useLatestRequest } from '../../lib/latest'
+import { ROOT } from '../packages/packageTree'
 
 export type ElementRead = components['schemas']['ElementRead']
 export type ElementCreate = components['schemas']['ElementCreate']
@@ -22,6 +23,9 @@ export type Filters = {
   search: string
   elementType: ElementType | ''
   layer: Layer | ''
+  /** `''` everything, `'root'` the unfiled, otherwise the id of a package. */
+  package: string
+  includeSubpackages: boolean
 }
 
 export function useElementCatalogue() {
@@ -32,7 +36,13 @@ export function useElementCatalogue() {
   // must show what the filters say now rather than whichever query was slower.
   const listing = useLatestRequest()
   const { status, error } = listing
-  const filters = reactive<Filters>({ search: '', elementType: '', layer: '' })
+  const filters = reactive<Filters>({
+    search: '',
+    elementType: '',
+    layer: '',
+    package: '',
+    includeSubpackages: true,
+  })
 
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
   const hasNextPage = computed(() => (page.value + 1) * PAGE_SIZE < total.value)
@@ -49,6 +59,12 @@ export function useElementCatalogue() {
       ...(filters.search ? { search: filters.search } : {}),
       ...(filters.elementType ? { element_type: [filters.elementType] } : {}),
       ...(filters.layer ? { layer: [filters.layer] } : {}),
+      ...(filters.package === ROOT ? { root_only: true } : {}),
+      ...(filters.package && filters.package !== ROOT ? { package: filters.package } : {}),
+      // Sent only when it differs from the server's default, like every other filter.
+      ...(filters.package && filters.package !== ROOT && !filters.includeSubpackages
+        ? { include_subpackages: false }
+        : {}),
     }
     await listing.run(
       async (signal) => unwrap(await api.GET('/elements', { params: { query }, signal })),
