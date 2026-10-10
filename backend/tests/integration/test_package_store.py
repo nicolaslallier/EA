@@ -340,3 +340,21 @@ class TestTheCapUnderTheLock:
 
         assert sum(isinstance(o, TooManyPackagesError) for o in outcomes) == 1
         assert len(await world.packages.list_all()) == 1
+
+
+class TestTheServiceOverTheRealStore:
+    async def test_two_deletions_of_the_same_package_one_wins_the_other_is_a_not_found(
+        self, world: World
+    ) -> None:
+        from ea.services.packages import PackageService
+
+        service = PackageService(world.packages)
+        created = await service.create(name="Finance")
+
+        outcomes = await asyncio.gather(
+            service.delete(created.package.id),
+            service.delete(created.package.id),
+            return_exceptions=True,
+        )
+
+        assert sorted(type(o).__name__ for o in outcomes) == ["NoneType", "PackageNotFoundError"]
