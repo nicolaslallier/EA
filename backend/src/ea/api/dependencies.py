@@ -18,6 +18,7 @@ from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 
 def architecture_service_of(app: FastAPI) -> ArchitectureService:
@@ -171,3 +172,23 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+
+
+def saved_query_service_of(app: FastAPI) -> SavedQueryService:
+    """The saved-query use cases the lifespan attached, or a clear failure.
+
+    Absent means the relational store is shut, and the queries live in it: a
+    wiring fault and a 500, never an empty list a client could take for "none saved".
+    """
+    service: SavedQueryService | None = getattr(app.state, "saved_query_service", None)
+    if service is None:
+        msg = "no saved-query service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_saved_query_service(request: Request) -> SavedQueryService:
+    return saved_query_service_of(request.app)
+
+
+SavedQueries = Annotated[SavedQueryService, Depends(get_saved_query_service)]

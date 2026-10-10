@@ -45,6 +45,7 @@ from ea.domain.ports import (
     IpamRepository,
     ObjectStore,
     PackageRepository,
+    SavedQueryRepository,
 )
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
@@ -58,6 +59,7 @@ from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.repositories.saved_query_store import PostgresSavedQueryRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -65,6 +67,7 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +156,7 @@ def _lifespan(
     indexer: DocumentIndexer | None = None,
     diagrams: DiagramRepository | None = None,
     packages: PackageRepository | None = None,
+    queries: SavedQueryRepository | None = None,
     file_metadata: FileMetadataRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
@@ -219,6 +223,7 @@ def _lifespan(
             document_store = documents
             diagram_store = diagrams
             package_store = packages
+            query_store = queries
             metadata_store = file_metadata
             if settings.postgres_enabled:
                 engine = create_engine(settings)
@@ -231,6 +236,8 @@ def _lifespan(
                     diagram_store = PostgresDiagramRepository(app.state.db_sessions)
                 if package_store is None:
                     package_store = PostgresPackageRepository(app.state.db_sessions)
+                if query_store is None:
+                    query_store = PostgresSavedQueryRepository(app.state.db_sessions)
                 if metadata_store is None:
                     metadata_store = PostgresFileMetadataRepository(app.state.db_sessions)
                 logger.info(
@@ -276,6 +283,10 @@ def _lifespan(
                 )
             if package_store is not None:
                 app.state.package_service = PackageService(package_store)
+            if query_store is not None:
+                app.state.saved_query_service = SavedQueryService(
+                    query_store, package_store, architecture_service_of(app)
+                )
             if diagram_store is not None:
                 app.state.diagram_service = DiagramService(
                     diagram_store, architecture_service_of(app), packages=package_store
@@ -454,6 +465,7 @@ def create_app(
     ipam: IpamRepository | None = None,
     diagrams: DiagramRepository | None = None,
     packages: PackageRepository | None = None,
+    queries: SavedQueryRepository | None = None,
     files: ObjectStore | None = None,
     file_metadata: FileMetadataRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
@@ -473,7 +485,7 @@ def create_app(
     builds and probes the real client when `embeddings_enabled` says so.
 
     `diagrams` does the same for the saved diagrams (docs/adr/0031), and
-    `packages` for the classification tree.
+    `packages` for the classification tree and `queries` for the saved queries.
     `files` does the same for the bucket (docs/adr/0036), and `file_metadata`
     for the catalogue kept beside it (docs/adr/0039).
     `verifier` does the same for authentication: given one — `StaticVerifier`
@@ -502,6 +514,7 @@ def create_app(
             indexer=indexer,
             diagrams=diagrams,
             packages=packages,
+            queries=queries,
             file_metadata=file_metadata,
         ),
     )
@@ -518,6 +531,10 @@ def create_app(
             app.state.ipam_service = IpamService(architecture_service, ipam)
         if packages is not None:
             app.state.package_service = PackageService(packages)
+        if queries is not None:
+            app.state.saved_query_service = SavedQueryService(
+                queries, packages, architecture_service
+            )
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
                 diagrams, architecture_service, packages=packages

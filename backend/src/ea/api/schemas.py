@@ -61,6 +61,12 @@ from ea.domain.query import (
     QueryOrder,
     RelationTest,
 )
+from ea.domain.saved_queries import (
+    MAX_SAVED_QUERY_DESCRIPTION,
+    MAX_SAVED_QUERY_NAME_LENGTH,
+    SavedQuery,
+    SavedQuerySummary,
+)
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 
@@ -1022,4 +1028,58 @@ class ElementQuerySchema(_Input):
             order=query.order,
             limit=query.limit,
             offset=query.offset,
+        )
+
+
+# --- Saved queries -------------------------------------------------------------
+# Shared by every reader; `created_by` is read from the caller, so the body has
+# no such field (and `extra="forbid"` turns an attempt to send one into a 422).
+# The bounds are the domain's, imported rather than restated, like the packages'.
+
+SavedQueryName = Annotated[str, Field(min_length=1, max_length=MAX_SAVED_QUERY_NAME_LENGTH)]
+SavedQueryDescription = Annotated[str, Field(max_length=MAX_SAVED_QUERY_DESCRIPTION)]
+
+
+class SavedQueryCreate(_Input):
+    name: SavedQueryName
+    description: SavedQueryDescription = ""
+    query: ElementQuerySchema
+
+
+class SavedQueryUpdate(_Input):
+    """A partial update. An omitted field keeps its stored value."""
+
+    name: SavedQueryName | None = None
+    description: SavedQueryDescription | None = None
+    query: ElementQuerySchema | None = None
+
+
+class SavedQuerySummaryRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, summary: SavedQuerySummary) -> SavedQuerySummaryRead:
+        return cls(
+            id=summary.id,
+            name=summary.name,
+            description=summary.description,
+            created_by=summary.created_by,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
+class SavedQueryRead(SavedQuerySummaryRead):
+    query: ElementQuerySchema
+
+    @classmethod
+    def read(cls, saved: SavedQuery) -> SavedQueryRead:
+        return cls(
+            **SavedQuerySummaryRead.of(saved.summary).model_dump(),
+            query=ElementQuerySchema.of(saved.query),
         )

@@ -34,6 +34,7 @@ from ea.domain.errors import (
     DuplicateElementError,
     DuplicateNetworkError,
     DuplicatePackageError,
+    DuplicateSavedQueryError,
     ElementNotFoundError,
     FileNotTextError,
     FileStorageUnavailableError,
@@ -50,6 +51,7 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
+    SavedQueryNotFoundError,
     SearchUnavailableError,
     StoredFileExistsError,
     StoredFileNotFoundError,
@@ -86,6 +88,8 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     UnknownPackageError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_package"),
     # --- Structured search and saved queries ---
     InvalidQueryError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_query"),
+    SavedQueryNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateSavedQueryError: (status.HTTP_409_CONFLICT, "duplicate"),
     UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
     # A deployment with `EA_EMBEDDINGS_ENABLED` off, which is a configuration
     # and not a request that was wrong — hence 503 and not 4xx.

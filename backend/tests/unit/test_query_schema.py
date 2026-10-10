@@ -112,3 +112,14 @@ class TestWhatItRefuses:
 
         with pytest.raises(ValueError, match="root_only"):
             schema.to_domain()
+
+
+def test_the_query_is_one_openapi_component_for_requests_and_responses() -> None:
+    """A default would split it into `-Input` and `-Output`, renaming what the SPA imports."""
+    from ea.openapi import openapi_document
+
+    schemas = openapi_document()["components"]["schemas"]
+
+    assert "ElementQuerySchema" in schemas
+    assert not [name for name in schemas if name.startswith("ElementQuerySchema-")]
+    assert "SavedQueryRead" in schemas
