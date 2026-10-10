@@ -88,3 +88,12 @@ async def test_a_nul_byte_is_a_typed_422_not_a_500(client: httpx.AsyncClient) ->
     ):
         assert response.status_code == 422
         assert response.json()["error"] == "invalid_query"
+
+
+async def test_the_text_is_trimmed_by_both_doors(client: httpx.AsyncClient) -> None:
+    await both(client, {"search": " db_ "}, text=" db_ ")
+    await both(client, {"search": "   "}, text="   ")
+    blank = (await client.get("/elements", params={"search": "   "})).json()
+    assert blank["total"] == 4
+    padded = (await client.get("/elements", params={"search": " db_"})).json()
+    assert [item["name"] for item in padded["items"]] == ["db_01"]

@@ -80,20 +80,19 @@ async def list_elements(
 ) -> ElementPage:
     """Browse the catalogue, narrowed by type, by layer, by a name fragment
     or filed in a package (subpackages included unless told otherwise)."""
-    if root_only and package is not None:
-        msg = "root_only and package cannot be combined: an element is either filed or not"
-        raise ValueError(msg)
-    ElementQuery(text=search)  # the same refusals (NUL) as `POST /elements/search`
-    criteria = ElementFilter(
+    # The same object, the same normalisation and the same refusals as
+    # `POST /elements/search`: one filter, whichever door it came through.
+    query = ElementQuery(
         element_types=tuple(element_type or ()),
         layers=tuple(layer or ()),
-        search=search,
+        text=search,
         package_id=package,
         include_subpackages=include_subpackages,
         root_only=root_only,
         limit=limit,
         offset=offset,
     )
+    criteria = ElementFilter.from_query(query)
     elements = await service.list_elements(criteria)
     return ElementPage(
         items=[ElementRead.of(element) for element in elements],
