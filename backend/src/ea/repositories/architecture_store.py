@@ -22,6 +22,7 @@ from sqlalchemy import (
     and_,
     case,
     delete,
+    exists,
     func,
     literal_column,
     not_,
@@ -30,6 +31,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.package import PackageRecord
@@ -44,6 +46,7 @@ from ea.domain.errors import (
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -211,6 +214,49 @@ def _subtree(package_id: UUID) -> CTE:
     return tree.union(below)
 
 
+def _property_clause(test: PropertyTest) -> ColumnElement[bool]:
+    """One test on `properties`. The key and the value are bound parameters, never text."""
+    if test.op is PropertyOp.EXISTS:
+        return _has(test.key)
+    if test.op is PropertyOp.ABSENT:
+        return not_(_has(test.key))
+    value = test.value or ""
+    if test.op is PropertyOp.EQ:
+        return _text_of(test.key) == value
+    # `strpos` like the name search: `%` and `_` are characters, not wildcards.
+    return func.strpos(func.lower(_text_of(test.key)), func.lower(value)) > 0
+
+
+def _relation_clause(test: RelationTest) -> ColumnElement[bool]:
+    """A correlated `EXISTS` on `relationships`: the element has — or has not — such a link."""
+    link = aliased(RelationshipRecord)
+    far = test.other_type.value if test.other_type is not None else None
+    leaving = and_(
+        link.source_id == ElementRecord.id,
+        *([link.target_type == far] if far is not None else []),
+    )
+    arriving = and_(
+        link.target_id == ElementRecord.id,
+        *([link.source_type == far] if far is not None else []),
+    )
+    side = {
+        Direction.OUT: leaving,
+        Direction.IN: arriving,
+        Direction.ANY: or_(leaving, arriving),
+    }[test.direction]
+    found = exists().where(link.relationship_type == test.relationship_type.value, side)
+    return found if test.present else not_(found)
+
+
+def _ordering(order: QueryOrder) -> tuple[Any, ...]:
+    """The id breaks every tie, so two pages of one query never share a row."""
+    if order is QueryOrder.CREATED_AT:
+        return (ElementRecord.created_at.desc(), ElementRecord.id)
+    if order is QueryOrder.UPDATED_AT:
+        return (ElementRecord.updated_at.desc(), ElementRecord.id)
+    return (ElementRecord.name, ElementRecord.id)
+
+
 def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
     clauses: list[ColumnElement[bool]] = []
     if criteria.element_types:
@@ -228,6 +274,8 @@ def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
             clauses.append(ElementRecord.package_id.in_(select(_subtree(criteria.package_id).c.id)))
         else:
             clauses.append(ElementRecord.package_id == criteria.package_id)
+    clauses.extend(_property_clause(test) for test in criteria.properties)
+    clauses.extend(_relation_clause(test) for test in criteria.relations)
     return clauses
 
 
@@ -363,7 +411,7 @@ class PostgresArchitectureRepository:
         statement = (
             select(ElementRecord)
             .where(*_matching(criteria))
-            .order_by(ElementRecord.name, ElementRecord.id)
+            .order_by(*_ordering(criteria.order))
             .offset(criteria.offset)
             .limit(criteria.limit)
         )
