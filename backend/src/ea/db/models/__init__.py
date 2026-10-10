@@ -15,6 +15,7 @@ from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
+from ea.db.models.saved_query import SavedQueryRecord
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "FileMetadataRecord",
     "PackageRecord",
     "RelationshipRecord",
+    "SavedQueryRecord",
 ]

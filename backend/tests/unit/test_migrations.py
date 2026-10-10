@@ -279,3 +279,18 @@ def test_elements_and_diagrams_restrict_the_deletion_of_their_package() -> None:
         assert column.nullable
         assert foreign_key.ondelete == "RESTRICT"
         assert foreign_key.column.table.name == "packages"
+
+
+def test_revision_0010_follows_0009() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0010")
+
+    assert revision is not None
+    assert revision.down_revision == "0009"
+
+
+def test_the_saved_queries_table_has_a_unique_name_and_a_jsonb_query() -> None:
+    table = Base.metadata.tables["saved_queries"]
+
+    assert {c.name for c in table.constraints if c.name} >= {"uq_saved_queries_name"}
+    assert table.c.query.type.__class__.__name__ == "JSONB"
+    assert not table.c.query.nullable
