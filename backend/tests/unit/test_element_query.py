@@ -235,3 +235,12 @@ class TestNulCharacter:
     def test_a_nul_in_a_property_value_is_refused(self, op: PropertyOp) -> None:
         with pytest.raises(InvalidQueryError, match="NUL"):
             PropertyTest("owner", op, "a\x00b")
+
+
+def test_a_property_name_with_a_trailing_newline_is_not_an_identifier() -> None:
+    from ea.domain.model import PROPERTY_KEY
+
+    assert PROPERTY_KEY.fullmatch("owner")
+    assert not PROPERTY_KEY.fullmatch("owner\n")
+    with pytest.raises(ValueError, match="plain identifier"):
+        PropertyTest("owner\n", PropertyOp.EXISTS)

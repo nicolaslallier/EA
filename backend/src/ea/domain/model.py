@@ -35,7 +35,7 @@ def _clean_name(name: str) -> str:
 
 #: A user-defined attribute is a key of the element's `properties` map, so its
 #: name has to be a plain identifier — see `db/models/architecture.py`.
-PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
+PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}\Z")
 
 
 def _freeze(properties: Mapping[str, str] | None) -> Mapping[str, str]:
