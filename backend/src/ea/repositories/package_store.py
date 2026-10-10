@@ -9,6 +9,7 @@ both find a name free.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from sqlalchemy import delete, func, select, update
@@ -19,13 +20,14 @@ from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
 from ea.domain.errors import (
+    CyclicPackageError,
     DomainError,
     DuplicatePackageError,
     ElementNotFoundError,
     PackageNotEmptyError,
     PackageNotFoundError,
 )
-from ea.domain.packages import Package, PackageCounts
+from ea.domain.packages import Package, PackageCounts, check_tree, descendants_of
 from ea.repositories.architecture_store import constraint_of
 
 if TYPE_CHECKING:
@@ -34,6 +36,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+#: Key of the transaction-scoped advisory lock every write to the tree takes
+#: (docs/adr/0042). A constant, not a hash of something: one tree, one lock.
+TREE_LOCK: Final = 0x45415041  # "EAPA"
 NAME_TAKEN: Final = ("uq_packages_root_name", "uq_packages_child_name")
 #: The three foreign keys that name a package.
 REFERENCES: Final = (
@@ -66,6 +71,19 @@ def _refusal(error: IntegrityError, name: str, *, deleting: bool = False) -> Dom
             )
         return PackageNotFoundError("the package does not exist")
     return None
+
+
+async def _locked_tree(session: AsyncSession) -> dict[UUID, Package]:
+    """Take the tree's lock, then read the flat list under it.
+
+    The lock is released at commit or rollback. In READ COMMITTED the read that
+    follows sees whatever the previous holder committed, so what `check_tree`
+    validates is the tree this transaction is about to modify, not the one the
+    service read earlier. Nothing writes a `parent_id` without going through it.
+    """
+    await session.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
+    rows = await session.scalars(select(PackageRecord))
+    return {row.id: _to_package(row) for row in rows}
 
 
 async def _count_by(session: AsyncSession, column: Any) -> dict[UUID, int]:
@@ -104,6 +122,11 @@ class PostgresPackageRepository:
 
     async def add(self, package: Package) -> Package:
         async with self._sessions.begin() as session:
+            tree = await _locked_tree(session)
+            if package.parent_id is not None and package.parent_id not in tree:
+                msg = f"no package with id {package.parent_id}"
+                raise PackageNotFoundError(msg)
+            check_tree({**tree, package.id: package})
             session.add(
                 PackageRecord(
                     id=package.id,
@@ -125,8 +148,16 @@ class PostgresPackageRepository:
 
     async def save(self, package: Package) -> Package:
         async with self._sessions.begin() as session:
-            row = await session.get(PackageRecord, package.id)
-            if row is None:
+            tree = await _locked_tree(session)
+            if package.id not in tree:
+                msg = f"no package with id {package.id}"
+                raise PackageNotFoundError(msg)
+            if package.parent_id is not None and package.parent_id not in tree:
+                msg = f"no package with id {package.parent_id}"
+                raise PackageNotFoundError(msg)
+            check_tree({**tree, package.id: package})
+            row = await session.get(PackageRecord, package.id, with_for_update=True)
+            if row is None:  # pragma: no cover - the lock excludes a concurrent delete
                 msg = f"no package with id {package.id}"
                 raise PackageNotFoundError(msg)
             row.name = package.name
@@ -144,8 +175,24 @@ class PostgresPackageRepository:
 
     async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
         async with self._sessions.begin() as session:
-            row = await session.get(PackageRecord, package_id, with_for_update=True)
-            if row is None:
+            tree = await _locked_tree(session)
+            if package_id not in tree:
+                return False
+            if into is not None and into not in tree:
+                msg = f"no package with id {into}"
+                raise PackageNotFoundError(msg)
+            if into is not None and (
+                into == package_id or into in descendants_of(package_id, tree)
+            ):
+                msg = "the contents cannot move into the package being deleted or below it"
+                raise CyclicPackageError(msg)
+            remaining = {key: value for key, value in tree.items() if key != package_id}
+            for child in list(remaining.values()):
+                if child.parent_id == package_id:
+                    remaining[child.id] = replace(child, parent_id=into)
+            check_tree(remaining)
+            row = await session.get(PackageRecord, package_id)
+            if row is None:  # pragma: no cover - the lock excludes a concurrent delete
                 return False
             try:
                 await session.execute(

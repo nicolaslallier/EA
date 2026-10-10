@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.errors import (
+    CyclicPackageError,
     DuplicatePackageError,
     ElementNotFoundError,
     PackageNotFoundError,
+    PackageTooDeepError,
 )
 from ea.domain.model import Element
-from ea.domain.packages import Package
+from ea.domain.packages import MAX_PACKAGE_DEPTH, Package
 from ea.domain.ports import ElementFilter
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.package_store import PostgresPackageRepository
@@ -220,3 +223,50 @@ class TestTheFilter:
         await self.seed(world)
 
         assert await names(world, package_id=uuid4()) == []
+
+
+class TestTheTreeUnderConcurrency:
+    """The tree's invariants are checked and written under one lock (docs/adr/0042)."""
+
+    async def test_two_moves_that_would_each_close_a_cycle_let_only_one_through(
+        self, world: World
+    ) -> None:
+        for _ in range(5):  # a race is not proven by one lucky ordering
+            a = await world.package(f"A{_}")
+            b = await world.package(f"B{_}")
+
+            outcomes = await asyncio.gather(
+                world.packages.save(a.moved_to(b.id, now=NOW)),
+                world.packages.save(b.moved_to(a.id, now=NOW)),
+                return_exceptions=True,
+            )
+
+            assert sum(isinstance(o, CyclicPackageError) for o in outcomes) == 1
+            assert sum(isinstance(o, Package) for o in outcomes) == 1
+
+    async def test_a_move_and_a_creation_that_together_exceed_the_depth_let_only_one_through(
+        self, world: World
+    ) -> None:
+        chain = [await world.package("p0")]
+        for level in range(1, MAX_PACKAGE_DEPTH - 2):
+            chain.append(await world.package(f"p{level}", chain[-1]))
+        s = await world.package("s")
+        s1 = await world.package("s1", s)
+        # Moved alone, s lands at depth 11 and s1 at 12; a child of s1 alone is fine too.
+        outcomes = await asyncio.gather(
+            world.packages.save(s.moved_to(chain[-1].id, now=NOW)),
+            world.packages.add(Package.create(name="s2", parent_id=s1.id, now=NOW)),
+            return_exceptions=True,
+        )
+
+        assert sum(isinstance(o, PackageTooDeepError) for o in outcomes) == 1
+        assert sum(isinstance(o, Package) for o in outcomes) == 1
+
+    async def test_the_repository_refuses_a_cycle_even_without_the_service(
+        self, world: World
+    ) -> None:
+        a = await world.package("A")
+        b = await world.package("B", a)
+
+        with pytest.raises(CyclicPackageError):
+            await world.packages.save(a.moved_to(b.id, now=NOW))
