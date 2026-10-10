@@ -7,7 +7,7 @@ import { createMemoryHistory } from 'vue-router'
 import DiagramsSection from '../src/features/diagrams/DiagramsSection.vue'
 import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
-import { anElement, aPage, METAMODEL, stubApi, type Route } from './support/api'
+import { aPackage, anElement, aPage, METAMODEL, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -27,6 +27,7 @@ const SUMMARY = {
   name: 'Vue applicative',
   description: '',
   node_count: 1,
+  package_id: null,
   created_at: '2026-09-13T12:00:00Z',
   updated_at: '2026-09-13T12:00:00Z',
 }
@@ -46,7 +47,10 @@ const METAMODEL_ROUTE: Route = { path: '/metamodel', body: METAMODEL }
 const DETAIL: Route = { path: `/elements/${A.id}`, body: A }
 const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 204 }
 
-const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE]
+const FINANCE = aPackage({ id: 'f', name: 'Finance', path: 'Finance' })
+const PACKAGES: Route = { path: '/packages', body: [FINANCE] }
+
+const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES]
 
 async function open(query = ''): Promise<Router> {
   const router = createAppRouter(createMemoryHistory())
@@ -216,5 +220,67 @@ describe('DiagramsSection — a reader', () => {
     expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retirer du diagramme' })).toBeNull()
     expect(screen.queryByText('Enregistré automatiquement.')).toBeNull()
+  })
+})
+
+describe('DiagramsSection — the package tree', () => {
+  it('filters the list by the package the URL names', async () => {
+    const calls = stubApi(ROUTES)
+    await open('?package=f&subpackages=0')
+
+    await screen.findByText('Vue applicative')
+    const query = calls.find((call) => call.url.pathname === '/diagrams')?.url.searchParams
+    expect(query?.get('package')).toBe('f')
+    expect(query?.get('include_subpackages')).toBe('false')
+  })
+
+  it('files a new diagram in the chosen package, and sends nothing when none is chosen', async () => {
+    const calls = stubApi([
+      { method: 'POST', path: '/diagrams', status: 201, body: SUMMARY },
+      ...ROUTES,
+    ])
+    await open()
+    await screen.findByText('Vue applicative')
+
+    await fireEvent.update(screen.getByLabelText(/nom du diagramme/i), 'Compta')
+    await fireEvent.update(screen.getByLabelText(/^paquet$/i), 'f')
+    await fireEvent.click(screen.getByRole('button', { name: 'Créer' }))
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+        name: 'Compta',
+        package_id: 'f',
+      }),
+    )
+  })
+
+  it('moves a diagram to another package from its row, the root included', async () => {
+    const calls = stubApi([
+      { method: 'PATCH', path: `/diagrams/${DIAGRAM_ID}`, body: SUMMARY },
+      ...ROUTES,
+    ])
+    await open()
+    await screen.findByText('Vue applicative')
+
+    await fireEvent.update(screen.getByLabelText(/ranger vue applicative dans/i), 'root')
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ package_id: null }),
+    )
+  })
+
+  it('lets a reader read the tree and filter by it, but not file anything', async () => {
+    vi.mocked(useMe).mockReturnValueOnce({
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    })
+    stubApi(ROUTES)
+    await open()
+
+    expect(await screen.findByRole('treeitem', { name: /Finance/ })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/ranger vue applicative dans/i)).toBeNull()
+    expect(screen.queryByLabelText(/^paquet$/i)).toBeNull()
   })
 })

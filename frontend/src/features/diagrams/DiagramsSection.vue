@@ -15,6 +15,9 @@ import { BOX_HEIGHT } from '../../lib/graphLayout'
 import ElementDetail from '../elements/ElementDetail.vue'
 import { useElementDetail } from '../elements/useElementDetail'
 import { useMetamodel } from '../metamodel/useMetamodel'
+import PackageTree from '../packages/PackageTree.vue'
+import { ALL, ROOT } from '../packages/packageTree'
+import { usePackages } from '../packages/usePackages'
 import DiagramCanvas from './DiagramCanvas.vue'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
@@ -28,6 +31,7 @@ const editor = useDiagram()
 const palette = useElementPalette()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
+const packages = usePackages()
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
 const { canWrite } = useMe()
@@ -39,6 +43,36 @@ function one(value: unknown): string {
 
 const diagramId = computed(() => one(route.query.diagram))
 const selectedId = computed(() => one(route.query.element))
+const packageParam = computed(() => one(route.query.package))
+const withSubpackages = computed(() => route.query.subpackages !== '0')
+/** The package chosen for a new diagram. */
+const newPackage = ref('')
+
+// Applied here, synchronously, so the first load — started by the `watch` below
+// before any hook runs — already carries the filter.
+function applyFilters(): void {
+  list.filters.package = packageParam.value
+  list.filters.includeSubpackages = withSubpackages.value
+}
+applyFilters()
+
+async function selectPackage(value: string): Promise<void> {
+  const { package: _previous, ...rest } = route.query
+  await router.push({ query: value === ALL ? rest : { ...rest, package: value } })
+}
+
+async function moveDiagram(diagram: DiagramSummaryRead, value: string): Promise<void> {
+  listFailure.value = ''
+  try {
+    await list.move(diagram.id, value === ROOT ? null : value)
+  } catch (caught) {
+    listFailure.value = messageOf(caught)
+  }
+}
+
+function pathOf(packageId: string | null): string {
+  return packageId ? (packages.byId.value.get(packageId)?.path ?? '') : ''
+}
 
 const newName = ref('')
 const listFailure = ref('')
@@ -55,7 +89,14 @@ const saveState = computed(() => {
 })
 
 onMounted(async () => {
-  await metamodel.load()
+  await Promise.all([metamodel.load(), packages.load()])
+})
+
+watch([packageParam, withSubpackages], async () => {
+  applyFilters()
+  if (!diagramId.value) {
+    await list.load()
+  }
 })
 
 watch(
@@ -104,8 +145,9 @@ async function create(): Promise<void> {
   busy.value = true
   listFailure.value = ''
   try {
-    const created = await list.create(name)
+    const created = await list.create(name, newPackage.value || undefined)
     newName.value = ''
+    newPackage.value = ''
     await router.push({ query: { diagram: created.id } })
   } catch (caught) {
     listFailure.value = messageOf(caught)
@@ -161,47 +203,79 @@ function onConnect(sourceId: string, targetId: string): void {
 </script>
 
 <template>
-  <section v-if="!diagramId" class="diagrams">
-    <header>
-      <h2>Diagrammes</h2>
-      <p class="hint">Des vues enregistrées : quels éléments, et où. Les faits restent dans le modèle.</p>
-    </header>
+  <div v-if="!diagramId" class="browser">
+    <aside class="browser__tree" aria-label="Rangement">
+      <PackageTree
+        :packages="packages.packages.value"
+        :selected="packageParam"
+        :can-drop="false"
+        @select="selectPackage"
+      />
+    </aside>
 
-    <form v-if="canWrite" class="create" aria-label="Créer un diagramme" @submit.prevent="create">
-      <div class="field">
-        <label for="diagram-name">Nom du diagramme</label>
-        <input id="diagram-name" v-model="newName" maxlength="200" autocomplete="off" />
-      </div>
-      <button type="submit" :disabled="busy || !newName.trim()">Créer</button>
-    </form>
+    <section class="diagrams">
+      <header>
+        <h2>Diagrammes</h2>
+        <p class="hint">Des vues enregistrées : quels éléments, et où. Les faits restent dans le modèle.</p>
+      </header>
 
-    <p v-if="listFailure" class="banner banner--error" role="alert">{{ listFailure }}</p>
-    <p v-if="list.status.value === 'error'" class="banner banner--error" role="alert">
-      {{ list.error.value }}
-    </p>
+      <form v-if="canWrite" class="create" aria-label="Créer un diagramme" @submit.prevent="create">
+        <div class="field">
+          <label for="diagram-name">Nom du diagramme</label>
+          <input id="diagram-name" v-model="newName" maxlength="200" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="diagram-package">Paquet</label>
+          <select id="diagram-package" v-model="newPackage">
+            <option value="">Racine (sans paquet)</option>
+            <option v-for="entry in packages.packages.value" :key="entry.id" :value="entry.id">
+              {{ entry.path }}
+            </option>
+          </select>
+        </div>
+        <button type="submit" :disabled="busy || !newName.trim()">Créer</button>
+      </form>
 
-    <p v-if="confirming" class="banner banner--confirm" role="alert">
-      Supprimer le diagramme « {{ confirming.name }} » ? Les éléments sont conservés.
-      <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
-      <button type="button" class="secondary" @click="confirming = null">Renoncer</button>
-    </p>
+      <p v-if="listFailure" class="banner banner--error" role="alert">{{ listFailure }}</p>
+      <p v-if="list.status.value === 'error'" class="banner banner--error" role="alert">
+        {{ list.error.value }}
+      </p>
 
-    <p v-if="list.status.value === 'ready' && list.diagrams.value.length === 0" class="hint">
-      Aucun diagramme pour l'instant.
-    </p>
+      <p v-if="confirming" class="banner banner--confirm" role="alert">
+        Supprimer le diagramme « {{ confirming.name }} » ? Les éléments sont conservés.
+        <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
+        <button type="button" class="secondary" @click="confirming = null">Renoncer</button>
+      </p>
 
-    <ul class="list">
-      <li v-for="diagram in list.diagrams.value" :key="diagram.id">
-        <RouterLink :to="{ query: { diagram: diagram.id } }">{{ diagram.name }}</RouterLink>
-        <span class="hint">
-          {{ diagram.node_count }} élément{{ diagram.node_count > 1 ? 's' : '' }}
-        </span>
-        <button v-if="canWrite" type="button" class="secondary" @click="confirming = diagram">
-          Supprimer
-        </button>
-      </li>
-    </ul>
-  </section>
+      <p v-if="list.status.value === 'ready' && list.diagrams.value.length === 0" class="hint">
+        Aucun diagramme pour l'instant.
+      </p>
+
+      <ul class="list">
+        <li v-for="diagram in list.diagrams.value" :key="diagram.id">
+          <RouterLink :to="{ query: { diagram: diagram.id } }">{{ diagram.name }}</RouterLink>
+          <span class="hint">
+            {{ diagram.node_count }} élément{{ diagram.node_count > 1 ? 's' : '' }}
+          </span>
+          <span v-if="pathOf(diagram.package_id)" class="hint">{{ pathOf(diagram.package_id) }}</span>
+          <select
+            v-if="canWrite"
+            :aria-label="`Ranger ${diagram.name} dans…`"
+            :value="diagram.package_id ?? ROOT"
+            @change="moveDiagram(diagram, ($event.target as HTMLSelectElement).value)"
+          >
+            <option :value="ROOT">Racine (sans paquet)</option>
+            <option v-for="entry in packages.packages.value" :key="entry.id" :value="entry.id">
+              {{ entry.path }}
+            </option>
+          </select>
+          <button v-if="canWrite" type="button" class="secondary" @click="confirming = diagram">
+            Supprimer
+          </button>
+        </li>
+      </ul>
+    </section>
+  </div>
 
   <section v-else class="diagrams">
     <header class="editor__header">
@@ -287,6 +361,21 @@ function onConnect(sourceId: string, targetId: string): void {
 </template>
 
 <style scoped>
+.browser {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: 1.2rem;
+  align-items: start;
+}
+.browser__tree {
+  display: grid;
+  gap: 0.8rem;
+}
+@media (max-width: 48rem) {
+  .browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .diagrams {
   display: grid;
   gap: 1rem;
@@ -340,7 +429,8 @@ label {
   font-size: 0.85rem;
   font-weight: 600;
 }
-input {
+input,
+select {
   font: inherit;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
