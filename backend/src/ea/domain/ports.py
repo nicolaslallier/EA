@@ -17,6 +17,7 @@ from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
+from ea.domain.packages import Package, PackageCounts
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
@@ -47,6 +48,9 @@ class ElementFilter:
     element_types: tuple[ElementType, ...] = ()
     layers: tuple[Layer, ...] = ()
     search: str | None = None
+    package_id: UUID | None = None
+    include_subpackages: bool = True
+    root_only: bool = False
     limit: int = 50
     offset: int = 0
 
@@ -384,3 +388,42 @@ class ObjectStore(Protocol):
         ...
 
     async def delete(self, key: str) -> None: ...
+
+
+class PackageRepository(Protocol):
+    """Persistence for the classification tree."""
+
+    async def list_all(self) -> tuple[Package, ...]:
+        """Every package, sorted by lower-cased name."""
+        ...
+
+    async def counts(self) -> dict[UUID, PackageCounts]:
+        """What each package holds directly. A package holding nothing may be absent."""
+        ...
+
+    async def get(self, package_id: UUID) -> Package | None: ...
+
+    async def add(self, package: Package) -> Package:
+        """Store a new package, or refuse a sibling name already taken."""
+        ...
+
+    async def save(self, package: Package) -> Package:
+        """Overwrite name, description, parent and update time of a stored package."""
+        ...
+
+    async def delete(self, package_id: UUID, *, into: UUID | None) -> bool:
+        """Move the direct sub-packages, elements and diagrams to `into`, then delete.
+
+        `into=None` is the root. One transaction: a sibling name taken at the
+        destination refuses everything and moves nothing. `False` if the
+        package is gone.
+        """
+        ...
+
+    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+        """Put these elements in a package (`None`: the root), all or none.
+
+        Raises `ElementNotFoundError` naming an absent id and
+        `PackageNotFoundError` for an absent package; nothing is moved then.
+        """
+        ...

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -130,11 +131,8 @@ class ArchitectureService:
         if properties is not None:
             updated = updated.with_properties(properties, now=now)
         if description is not None or documentation is not None:
-            updated = Element(
-                id=updated.id,
-                element_type=updated.element_type,
-                name=updated.name,
-                created_at=updated.created_at,
+            updated = replace(
+                updated,
                 updated_at=now,
                 description=(
                     description.strip() if description is not None else updated.description
@@ -142,7 +140,6 @@ class ArchitectureService:
                 documentation=(
                     documentation.strip() if documentation is not None else updated.documentation
                 ),
-                properties=updated.properties,
             )
         stored = await self._repository.save_element(updated)
         logger.info(

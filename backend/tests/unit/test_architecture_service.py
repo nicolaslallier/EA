@@ -7,6 +7,7 @@ implementation is covered in `tests/integration`.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -163,3 +164,35 @@ class TestAnalysis:
 
         assert {element.name for element in view.elements} == {"Invoice API", "Order"}
         assert [link.relationship_type for link in view.relationships] == [R.SERVING]
+
+
+@pytest.mark.asyncio
+class TestAnElementKeepsItsPackage:
+    async def test_updating_a_description_keeps_the_package(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        created = await service.create_element(element_type=E.APPLICATION_COMPONENT, name="Billing")
+        package_id = uuid4()
+        repository.elements[created.id] = replace(created, package_id=package_id)
+
+        updated = await service.update_element(created.id, description="Les factures")
+
+        assert updated.package_id == package_id
+
+    async def test_renaming_and_replacing_properties_keep_the_package(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        created = await service.create_element(element_type=E.APPLICATION_COMPONENT, name="Billing")
+        package_id = uuid4()
+        repository.elements[created.id] = replace(created, package_id=package_id)
+
+        renamed = await service.update_element(
+            created.id, name="Billing 2", properties={"owner": "x"}
+        )
+
+        assert renamed.package_id == package_id
+
+    async def test_a_new_element_is_at_the_root(self, service: ArchitectureService) -> None:
+        created = await service.create_element(element_type=E.NODE, name="db-01")
+
+        assert created.package_id is None
