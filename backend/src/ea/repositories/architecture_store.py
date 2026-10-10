@@ -32,6 +32,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
+from ea.db.models.package import PackageRecord
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
@@ -96,6 +97,7 @@ def element_from_row(row: ElementRecord) -> Element:
         description=row.description,
         documentation=row.documentation,
         properties=dict(row.properties),
+        package_id=row.package_id,
     )
 
 
@@ -194,6 +196,21 @@ def _rows_affected(result: object) -> int:
 # --------------------------------------------------------------------------
 
 
+def _subtree(package_id: UUID) -> CTE:
+    """The package and every package below it, by a recursive CTE on `parent_id`.
+
+    The id is a bound parameter; the depth is bounded by `MAX_PACKAGE_DEPTH`
+    on write, so the walk always ends.
+    """
+    tree = (
+        select(PackageRecord.id.label("id"))
+        .where(PackageRecord.id == package_id)
+        .cte("subtree", recursive=True)
+    )
+    below = select(PackageRecord.id).join(tree, PackageRecord.parent_id == tree.c.id)
+    return tree.union(below)
+
+
 def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
     clauses: list[ColumnElement[bool]] = []
     if criteria.element_types:
@@ -204,6 +221,13 @@ def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
         # `strpos` and not `ILIKE`: `%` and `_` typed in the search box stay
         # characters, never wildcards.
         clauses.append(func.strpos(func.lower(ElementRecord.name), func.lower(criteria.search)) > 0)
+    if criteria.root_only:
+        clauses.append(ElementRecord.package_id.is_(None))
+    if criteria.package_id is not None:
+        if criteria.include_subpackages:
+            clauses.append(ElementRecord.package_id.in_(select(_subtree(criteria.package_id).c.id)))
+        else:
+            clauses.append(ElementRecord.package_id == criteria.package_id)
     return clauses
 
 
