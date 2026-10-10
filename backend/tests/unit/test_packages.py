@@ -40,7 +40,7 @@ class TestNames:
     def test_a_name_is_trimmed(self) -> None:
         assert validate_package_name("  Finance ") == "Finance"
 
-    @pytest.mark.parametrize("name", ["", "   ", "a/b", "x" * 201])
+    @pytest.mark.parametrize("name", ["", "   ", "a/b", "x" * 201, "a\x00b"])
     def test_blank_slashed_or_long_names_are_refused(self, name: str) -> None:
         with pytest.raises(ValueError):
             validate_package_name(name)
@@ -56,6 +56,13 @@ class TestThePackage:
         assert (package.name, package.description) == ("Finance", "Les comptes")
         assert package.created_at == package.updated_at == NOW
         assert package.parent_id is None
+
+    def test_a_nul_is_refused_in_the_description_not_at_insert(self) -> None:
+        # PostgreSQL cannot store a NUL in `text`: a driver error, in a log, otherwise.
+        with pytest.raises(ValueError, match="NUL"):
+            a_package(description="a\x00b")
+        with pytest.raises(ValueError, match="NUL"):
+            a_package().revise(now=NOW, description="a\x00b")
 
     def test_revise_keeps_what_is_omitted(self) -> None:
         later = NOW + timedelta(hours=1)

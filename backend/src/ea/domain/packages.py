@@ -44,8 +44,21 @@ class Unset:
 UNSET: Final = Unset()
 
 
+def _no_nul(value: str, what: str) -> None:
+    # PostgreSQL cannot store a NUL in `text`: refused here, not at INSERT.
+    if "\x00" in value:
+        msg = f"a package {what} cannot contain a NUL character"
+        raise ValueError(msg)
+
+
+def _clean_description(description: str) -> str:
+    _no_nul(description, "description")
+    return description.strip()
+
+
 def validate_package_name(name: str) -> str:
     """Trimmed, 1..200 characters, no `/` so that a path reads `A / B / C`."""
+    _no_nul(name, "name")
     cleaned = name.strip()
     if not cleaned:
         msg = "a package name cannot be blank"
@@ -81,7 +94,7 @@ class Package:
             id=uuid4(),
             parent_id=parent_id,
             name=validate_package_name(name),
-            description=description.strip(),
+            description=_clean_description(description),
             created_at=now,
             updated_at=now,
         )
@@ -93,7 +106,9 @@ class Package:
         return replace(
             self,
             name=self.name if name is None else validate_package_name(name),
-            description=self.description if description is None else description.strip(),
+            description=self.description
+            if description is None
+            else _clean_description(description),
             updated_at=now,
         )
 
