@@ -209,7 +209,12 @@ async function onSubmit(payload: ElementCreate | ElementUpdate): Promise<void> {
     if (editing.value) {
       await catalogue.update(editing.value.id, payload)
     } else {
-      await catalogue.create(payload as ElementCreate)
+      const created = await catalogue.create(payload as ElementCreate)
+      // The API files nothing on creation: an element made while a package is
+      // browsed would land at the root and vanish from the filtered list.
+      if (selectedPackage.value) {
+        await file([created.id], selectedPackage.value.id)
+      }
     }
     // Closing only here keeps what the user typed on screen when the API
     // refuses the element — a duplicate name, say.

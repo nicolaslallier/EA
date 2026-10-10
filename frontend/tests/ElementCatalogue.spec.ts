@@ -496,3 +496,55 @@ describe('ElementCatalogue — the package tree', () => {
     expect(screen.queryByRole('button', { name: /nouveau paquet/i })).toBeNull()
   })
 })
+
+describe('ElementCatalogue — what a write leaves behind', () => {
+  const created = anElement({ id: '22222222-2222-4222-8222-222222222222', name: 'Grand livre' })
+
+  async function fillAndSubmit() {
+    await fireEvent.click(await screen.findByRole('button', { name: /nouvel élément/i }))
+    await fireEvent.update(screen.getByLabelText(/nom/i), 'Grand livre')
+    await fireEvent.submit(screen.getByRole('form'))
+  }
+
+  it('files a new element in the package being browsed, so it stays in the list', async () => {
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([]) },
+        { path: '/packages', body: [FINANCE] },
+        { method: 'POST', path: '/elements', status: 201, body: created },
+        { method: 'POST', path: '/elements/move', status: 204 },
+      ],
+      '?package=f',
+    )
+
+    await fillAndSubmit()
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.url.pathname === '/elements/move')?.body).toEqual({
+        element_ids: [created.id],
+        package_id: 'f',
+      }),
+    )
+    // The list is read again after the filing, not before.
+    await waitFor(() => {
+      const order = calls.map((call) => `${call.method} ${call.url.pathname}`)
+      expect(order.lastIndexOf('GET /elements')).toBeGreaterThan(order.indexOf('POST /elements/move'))
+    })
+  })
+
+  it('leaves a new element at the root when no real package is selected', async () => {
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([]) },
+        { method: 'POST', path: '/elements', status: 201, body: created },
+      ],
+      '?package=root',
+    )
+
+    await fillAndSubmit()
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true))
+    await waitFor(() => expect(screen.queryByRole('form')).not.toBeInTheDocument())
+    expect(calls.some((call) => call.url.pathname === '/elements/move')).toBe(false)
+  })
+})
