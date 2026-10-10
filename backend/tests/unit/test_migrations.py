@@ -255,3 +255,27 @@ def test_tags_are_an_array_of_values_and_not_a_joined_string() -> None:
 
     assert isinstance(tags.type, ARRAY)
     assert tags.nullable is False
+
+
+def test_revision_0009_follows_0008() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0009")
+
+    assert revision is not None
+    assert revision.down_revision == "0008"
+
+
+def test_the_packages_table_declares_its_two_sibling_indexes_by_name() -> None:
+    table = Base.metadata.tables["packages"]
+    indexes = {index.name: index for index in table.indexes}
+
+    assert set(indexes) == {"uq_packages_root_name", "uq_packages_child_name"}
+    assert all(index.unique for index in indexes.values())
+
+
+def test_elements_and_diagrams_restrict_the_deletion_of_their_package() -> None:
+    for name in ("elements", "diagrams"):
+        column = Base.metadata.tables[name].c.package_id
+        (foreign_key,) = column.foreign_keys
+        assert column.nullable
+        assert foreign_key.ondelete == "RESTRICT"
+        assert foreign_key.column.table.name == "packages"
