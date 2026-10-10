@@ -146,3 +146,40 @@ class FileStorageUnavailableError(DomainError):
     A configuration, not a bug — like `SearchUnavailableError` — so the caller is
     told what is missing instead of receiving a 500.
     """
+
+
+class PackageNotFoundError(DomainError):
+    """A package referenced by id is absent from the store."""
+
+
+class DuplicatePackageError(DomainError):
+    """Two packages with the same parent would carry the same name (case ignored)."""
+
+
+class CyclicPackageError(DomainError):
+    """A package that would end up inside itself."""
+
+
+class PackageNotEmptyError(DomainError):
+    """A package still holds sub-packages, elements or diagrams.
+
+    Refused rather than cascaded: deleting elements to tidy a folder would
+    destroy facts of the graph on a click.
+    """
+
+
+class PackageTooDeepError(DomainError):
+    """A tree deeper than `MAX_PACKAGE_DEPTH` levels."""
+
+
+class TooManyPackagesError(DomainError):
+    """The tree is served in one piece, so it is capped at `MAX_PACKAGES`."""
+
+
+class UnknownPackageError(DomainError):
+    """A stored query names a package that no longer exists.
+
+    Its own error rather than `PackageNotFoundError`: that one is a 404 for the
+    resource in the URL, and here the query exists — it is its content that
+    went stale, which is a 422.
+    """
