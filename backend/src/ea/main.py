@@ -19,6 +19,8 @@ from ea.api.dependencies import (
     document_service_of,
     file_service_of,
     ipam_service_of,
+    package_service_of,
+    saved_query_service_of,
 )
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
@@ -426,6 +428,8 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
         lambda: file_service_of(app),
+        lambda: package_service_of(app),
+        lambda: saved_query_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

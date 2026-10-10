@@ -7,15 +7,17 @@ here decides anything: a tool binds its arguments, calls a service, and renders
 the answer with the very models the REST API renders, so an agent and the SPA
 are told the same thing about the same element.
 
-Four services, because the catalogue spans four concerns: the graph, the
+Six services, because the catalogue spans six concerns: the graph, the
 markdown attached to its elements (docs/adr/0017), the IP addressing
-(docs/adr/0020), and the files kept in a bucket beside it (docs/adr/0036). They
+(docs/adr/0020), the files kept in a bucket beside it (docs/adr/0036), the tree
+of packages that files elements and diagrams (docs/adr/0042), and the saved
+queries that keep a structured search under a name (docs/adr/0043). They
 are kept apart here exactly as they are in `api/`, since the rules that bind
 them — an element must exist before a file hangs off it — belong to the
 service and an adapter holding a repository instead would be free to skip
 them.
 
-All four are fetched through callables rather than held, because the
+All six are fetched through callables rather than held, because the
 application builds them during its lifespan and this module is assembled
 before that: see `main.create_app`.
 """
@@ -58,6 +60,9 @@ from ea.api.schemas import (
     MetamodelRead,
     Name,
     Offset,
+    PackageName,
+    PackageRead,
+    PackageTarget,
     PassageRead,
     RelationshipMatrixRead,
     RelationshipRead,
@@ -65,6 +70,7 @@ from ea.api.schemas import (
     Search,
     SubnetDetailRead,
     SubnetRead,
+    package_target,
 )
 from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import Vrf as VrfBounds
@@ -82,6 +88,7 @@ from ea.domain.archimate import (
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
+from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
@@ -89,6 +96,8 @@ from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
@@ -173,6 +182,8 @@ ServiceProvider = Callable[[], ArchitectureService]
 DocumentProvider = Callable[[], DocumentService]
 IpamProvider = Callable[[], IpamService]
 FileProvider = Callable[[], FileService]
+PackageProvider = Callable[[], PackageService]
+QueryProvider = Callable[[], SavedQueryService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -275,6 +286,44 @@ FileContent = Annotated[
     ),
 ]
 
+PackageId = Annotated[
+    UUID, Field(description="The id of a package, as `list_packages` reports it.")
+]
+PackageParent = Annotated[
+    PackageTarget | None,
+    Field(
+        description=(
+            "A package id to put it under, or `root` to put it at the top of the tree. "
+            "Leave it out to keep where it is."
+        )
+    ),
+]
+MoveContentsTo = Annotated[
+    PackageTarget | None,
+    Field(
+        description=(
+            "Where the package's direct contents (sub-packages, elements, diagrams) go "
+            "first: a package id, or `root`. Required when the package is not empty."
+        )
+    ),
+]
+FilingTarget = Annotated[
+    PackageTarget,
+    Field(
+        description=(
+            "The package to file them in: its id, or `root` to take them out of any package."
+        )
+    ),
+]
+ElementIds = Annotated[
+    list[UUID],
+    Field(
+        min_length=1,
+        max_length=MAX_MOVE_BATCH,
+        description="The ids of the elements to file, at most 100.",
+    ),
+]
+
 # --- What a tool does to the graph, said in the protocol's own terms --------
 # A client shows these to the person behind the agent, who decides from them
 # whether to confirm a call. Getting one wrong is how a delete gets waved
@@ -296,12 +345,14 @@ def build_mcp_server(
     get_documents: DocumentProvider,
     get_ipam: IpamProvider,
     get_files: FileProvider,
+    get_packages: PackageProvider,
+    get_queries: QueryProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the architecture, document, IPAM and file services.
+    """Assemble the tool set over the six services of the module docstring.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -311,8 +362,8 @@ def build_mcp_server(
     an app assembled without a relational store or without a graph fails when
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
-    shorter tool list than the one this module documents. `get_files` is
-    required for the same reason.
+    shorter tool list than the one this module documents. `get_files`,
+    `get_packages` and `get_queries` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -365,18 +416,26 @@ def build_mcp_server(
         element_types: list[ElementType] | None = None,
         layers: list[Layer] | None = None,
         search: Search | None = None,
+        package_id: Annotated[
+            UUID | None,
+            Field(description="Only the elements filed in this package (see `list_packages`)."),
+        ] = None,
+        include_subpackages: bool = True,
         limit: Limit = 50,
         offset: Offset = 0,
     ) -> ElementPage:
-        """Browse the catalogue, narrowed by type, by layer or by a name fragment.
+        """Browse the catalogue, narrowed by type, layer, name fragment or package.
 
-        All three criteria are combined with AND. `total` counts everything the
+        All the criteria are combined with AND. `total` counts everything the
         criteria match, not the page, so a follow-up call can page through it.
+        For attribute or relation tests use `search_elements`.
         """
         criteria = ElementFilter(
             element_types=tuple(element_types or ()),
             layers=tuple(layers or ()),
             search=search,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
             limit=limit,
             offset=offset,
         )
@@ -911,6 +970,88 @@ def build_mcp_server(
         """
         await get_files().delete(key)
         return f"file {key} was deleted"
+
+    # --- Packages ---------------------------------------------------------
+    # A package is a folder, not an ArchiMate element: filing changes nothing
+    # about what an element says, and no tool here deletes one.
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_packages() -> list[PackageRead]:
+        """Show the tree of packages, flat, with what each one holds.
+
+        Packages file elements and diagrams the way folders do. They are not
+        ArchiMate elements and carry no relationship. Each entry names its
+        parent, gives its full `path` (`Finance / Budget`) and counts what it
+        holds *directly*. Call this before filing something or before searching
+        inside a domain.
+        """
+        return [PackageRead.of(summary) for summary in await get_packages().list_packages()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_package(
+        name: PackageName,
+        description: Description = "",
+        parent_id: Annotated[
+            UUID | None, Field(description="The package to create it in; leave out for the top.")
+        ] = None,
+    ) -> PackageRead:
+        """Create a package (a classification folder); this is not an ArchiMate element.
+
+        Names are unique among siblings, ignoring case, and cannot contain `/`.
+        The tree is at most 12 levels deep.
+        """
+        return PackageRead.of(
+            await get_packages().create(name=name, description=description, parent_id=parent_id)
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def update_package(
+        package_id: PackageId,
+        name: PackageName | None = None,
+        description: Description | None = None,
+        parent_id: PackageParent = None,
+    ) -> PackageRead:
+        """Rename or describe a package, or move it (and everything below it).
+
+        An omitted field is kept. `parent_id` is a package id, or `root` for the
+        top of the tree; a package cannot be moved under itself or below itself.
+        """
+        parent = UNSET if parent_id is None else package_target(parent_id)
+        return PackageRead.of(
+            await get_packages().update(
+                package_id, name=name, description=description, parent_id=parent
+            )
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def delete_package(package_id: PackageId, move_contents_to: MoveContentsTo = None) -> str:
+        """Delete a package — never what it holds.
+
+        An empty package is deleted. One that still holds sub-packages,
+        elements or diagrams is refused unless you pass `move_contents_to` (a
+        package id, or `root`): the direct contents move there first, in one
+        step. Elements and diagrams are never deleted by this tool. Confirm
+        with the person you are working for before calling it.
+        """
+        target = UNSET if move_contents_to is None else package_target(move_contents_to)
+        await get_packages().delete(package_id, move_contents_to=target)
+        return f"package {package_id} was deleted"
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def move_elements(element_ids: ElementIds, package_id: FilingTarget) -> str:
+        """File up to 100 elements in a package, or take them out of any package.
+
+        Filing changes no fact of the graph: an element's name, links and
+        attributes are untouched. All or none move — an unknown element or
+        package refuses the whole call. `package_id` is a package id, or `root`.
+        """
+        moved = await get_packages().move_elements(element_ids, package_target(package_id))
+        return f"{moved} element(s) filed in {package_id}"
 
     # --- Metamodel --------------------------------------------------------
 

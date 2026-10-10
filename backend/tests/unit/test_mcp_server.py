@@ -34,6 +34,8 @@ from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 from tests.conftest import InMemoryObjectStore, a_reader
 
 
@@ -43,10 +45,17 @@ def server(
     document_service: DocumentService,
     ipam: IpamService,
     file_service: FileService,
+    package_service: PackageService,
+    saved_query_service: SavedQueryService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
-        lambda: service, lambda: document_service, lambda: ipam, lambda: file_service
+        lambda: service,
+        lambda: document_service,
+        lambda: ipam,
+        lambda: file_service,
+        lambda: package_service,
+        lambda: saved_query_service,
     )
 
 
@@ -56,6 +65,8 @@ def server_without_an_index(
     document_service_without_an_index: DocumentService,
     ipam: IpamService,
     file_service: FileService,
+    package_service: PackageService,
+    saved_query_service: SavedQueryService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -63,6 +74,8 @@ def server_without_an_index(
         lambda: document_service_without_an_index,
         lambda: ipam,
         lambda: file_service,
+        lambda: package_service,
+        lambda: saved_query_service,
     )
 
 
@@ -120,6 +133,11 @@ class TestTheToolset:
             "set_file_details",
             "upload_file",
             "delete_file",
+            "list_packages",
+            "create_package",
+            "update_package",
+            "delete_package",
+            "move_elements",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -985,6 +1003,161 @@ class TestTheRecordBesideAFile:
     ) -> None:
         with pytest.raises(ToolError):
             await call(server, "describe_file", key="nothing.md")
+
+
+@pytest.mark.asyncio
+class TestThePackageTools:
+    """Packages are folders: a tool files things, and never deletes what it files."""
+
+    async def test_the_tree_comes_back_flat_with_paths_and_direct_counts(
+        self, server: MCPServer[Any]
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        await call(server, "create_package", name="Budget", parent_id=finance["id"])
+        element = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[element["id"]], package_id=finance["id"])
+
+        listed = (await call(server, "list_packages"))["result"]
+
+        assert [(p["path"], p["element_count"], p["child_count"]) for p in listed] == [
+            ("Finance", 1, 1),
+            ("Finance / Budget", 0, 0),
+        ]
+
+    async def test_a_taken_sibling_name_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
+        await call(server, "create_package", name="Finance")
+
+        with pytest.raises(ToolError, match="already named"):
+            await call(server, "create_package", name="FINANCE")
+
+    async def test_a_name_with_a_slash_is_refused_by_the_schema(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "create_package", name="a/b")
+
+    async def test_the_parent_is_kept_when_omitted_and_the_word_root_is_the_top(
+        self, server: MCPServer[Any]
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        budget = await call(server, "create_package", name="Budget", parent_id=finance["id"])
+
+        kept = await call(server, "update_package", package_id=budget["id"], description="x")
+        at_the_top = await call(server, "update_package", package_id=budget["id"], parent_id="root")
+        back = await call(
+            server, "update_package", package_id=budget["id"], parent_id=finance["id"]
+        )
+
+        assert kept["parent_id"] == finance["id"]
+        assert at_the_top["parent_id"] is None
+        assert back["parent_id"] == finance["id"]
+
+    async def test_a_parent_that_is_neither_an_id_nor_root_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+
+        with pytest.raises(ToolError, match="root"):
+            await call(server, "update_package", package_id=package["id"], parent_id="ici")
+
+    async def test_a_package_cannot_be_moved_below_itself(self, server: MCPServer[Any]) -> None:
+        a = await call(server, "create_package", name="A")
+        b = await call(server, "create_package", name="B", parent_id=a["id"])
+
+        with pytest.raises(ToolError, match="inside itself"):
+            await call(server, "update_package", package_id=a["id"], parent_id=b["id"])
+
+    async def test_a_package_that_holds_something_is_not_deleted_until_told_where_it_goes(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+        element = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[element["id"]], package_id=package["id"])
+
+        with pytest.raises(ToolError, match="move_contents_to"):
+            await call(server, "delete_package", package_id=package["id"])
+
+        await call(server, "delete_package", package_id=package["id"], move_contents_to="root")
+        assert (await call(server, "get_element", element_id=element["id"]))["package_id"] is None
+        assert (await call(server, "list_packages"))["result"] == []
+
+    async def test_files_up_to_the_batch_at_once_and_back_to_the_root(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+        one, two = await an_element(server, "node", "one"), await an_element(server, "node", "two")
+
+        await call(
+            server, "move_elements", element_ids=[one["id"], two["id"]], package_id=package["id"]
+        )
+        assert (await call(server, "list_packages"))["result"][0]["element_count"] == 2
+
+        await call(server, "move_elements", element_ids=[one["id"]], package_id="root")
+        assert (await call(server, "list_packages"))["result"][0]["element_count"] == 1
+
+    async def test_an_absent_element_moves_nothing(self, server: MCPServer[Any]) -> None:
+        package = await call(server, "create_package", name="A")
+        kept = await an_element(server, "node", "db-01")
+
+        with pytest.raises(ToolError, match="no element"):
+            await call(
+                server,
+                "move_elements",
+                element_ids=[kept["id"], str(uuid4())],
+                package_id=package["id"],
+            )
+
+        assert (await call(server, "get_element", element_id=kept["id"]))["package_id"] is None
+
+    async def test_more_than_the_batch_or_none_is_refused_by_the_schema(
+        self, server: MCPServer[Any]
+    ) -> None:
+        for ids in ([str(uuid4()) for _ in range(101)], []):
+            with pytest.raises(ToolError):
+                await call(server, "move_elements", element_ids=ids, package_id="root")
+
+    async def test_a_reader_may_read_the_tree_and_nothing_more(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+
+        with acting_as(a_reader()):
+            assert len((await call(server, "list_packages"))["result"]) == 1
+            for name, arguments in (
+                ("create_package", {"name": "B"}),
+                ("update_package", {"package_id": package["id"], "name": "C"}),
+                ("delete_package", {"package_id": package["id"]}),
+                ("move_elements", {"element_ids": [str(uuid4())], "package_id": "root"}),
+            ):
+                with pytest.raises(ToolError):
+                    await call(server, name, **arguments)
+
+    async def test_the_catalogue_listing_takes_a_package(
+        self, server: MCPServer[Any], service: ArchitectureService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen = []
+        real = service.list_elements
+
+        async def spy(criteria):  # type: ignore[no-untyped-def]
+            seen.append(criteria)
+            return await real(criteria)
+
+        monkeypatch.setattr(service, "list_elements", spy)
+        package = await call(server, "create_package", name="A")
+
+        await call(server, "list_elements", package_id=package["id"], include_subpackages=False)
+
+        assert str(seen[0].package_id) == package["id"]
+        assert seen[0].include_subpackages is False
+
+    async def test_listing_without_a_package_still_works_as_before(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+
+        page = await call(server, "list_elements")
+
+        assert (page["total"], page["limit"], page["offset"]) == (1, 50, 0)
 
 
 @pytest.mark.asyncio
