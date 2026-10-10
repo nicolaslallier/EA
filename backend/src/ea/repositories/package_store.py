@@ -26,8 +26,9 @@ from ea.domain.errors import (
     ElementNotFoundError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    TooManyPackagesError,
 )
-from ea.domain.packages import Package, PackageCounts, check_tree, descendants_of
+from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
 from ea.repositories.architecture_store import constraint_of
 
 if TYPE_CHECKING:
@@ -123,6 +124,9 @@ class PostgresPackageRepository:
     async def add(self, package: Package) -> Package:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
+            if len(tree) >= MAX_PACKAGES:
+                msg = f"the tree holds at most {MAX_PACKAGES} packages"
+                raise TooManyPackagesError(msg)
             if package.parent_id is not None and package.parent_id not in tree:
                 msg = f"no package with id {package.parent_id}"
                 raise PackageNotFoundError(msg)

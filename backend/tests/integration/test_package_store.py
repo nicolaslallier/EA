@@ -18,6 +18,7 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
+    TooManyPackagesError,
 )
 from ea.domain.model import Element
 from ea.domain.packages import MAX_PACKAGE_DEPTH, Package
@@ -316,3 +317,26 @@ class TestDeletingAnEmptyPackageOnly:
                 assert isinstance(outcomes[0], PackageNotEmptyError)
                 assert outcomes[1] is None
                 assert stored.package_id == finance.id
+
+
+class TestTheCapUnderTheLock:
+    async def test_the_cap_is_rechecked_by_the_repository_itself(
+        self, world: World, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.repositories.package_store.MAX_PACKAGES", 1)
+        await world.package("Un")
+
+        with pytest.raises(TooManyPackagesError):
+            await world.package("Deux")
+
+    async def test_two_creations_racing_for_the_last_slot_let_only_one_through(
+        self, world: World, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.repositories.package_store.MAX_PACKAGES", 1)
+
+        outcomes = await asyncio.gather(
+            world.package("A"), world.package("B"), return_exceptions=True
+        )
+
+        assert sum(isinstance(o, TooManyPackagesError) for o in outcomes) == 1
+        assert len(await world.packages.list_all()) == 1

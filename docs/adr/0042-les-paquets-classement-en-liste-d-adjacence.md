@@ -65,9 +65,8 @@ validé entre ce comptage et le `DELETE` est arrêté par les clés `RESTRICT` :
 rangement ou la suppression gagne, jamais un re-racinement silencieux (test
 d'intégration `asyncio.gather` suppression contre rangement).
 L'unicité des noms de frères reste
-garantie par les index partiels. Le plafond `MAX_PACKAGES` est, lui, vérifié
-par le service sans verrou : il peut être dépassé de quelques unités sous
-concurrence, c'est un garde-fou de taille et non un invariant.
+garantie par les index partiels. Le plafond `MAX_PACKAGES` est revérifié par `add` sous le même verrou
+(le service le vérifie aussi, pour un refus rapide).
 
 ## Alternatives envisagées et écartées
 
