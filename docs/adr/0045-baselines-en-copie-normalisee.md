@@ -1,14 +1,14 @@
 ---
 titre: Baselines en copie normalisée du graphe, restauration en une transaction SERIALIZABLE
 date: 2026-10-11
-statut: Proposition
+statut: Proposition (partiellement remplacée par 0047)
 affects: backend/src/ea/domain/baselines.py, backend/src/ea/services/baselines.py, backend/src/ea/repositories/baseline_store.py, backend/src/ea/db/models/baseline.py, backend/src/ea/api/baselines.py, backend/src/ea/api/schemas.py, backend/src/ea/mcp/server.py, backend/migrations/versions/0012_baselines.py, frontend/src/features/baselines
 ---
 
 # 45. Baselines en copie normalisée du graphe, restauration en une transaction SERIALIZABLE
 
 Date : 2026-10-11
-Statut : Proposition
+Statut : Proposition (partiellement remplacée par 0047, sur `protected_ids`)
 
 ## Contexte
 

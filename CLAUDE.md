@@ -695,8 +695,9 @@ two baselines or one with the live model. A restore is `plan_restore` (pure),
 shown with `dry_run` — true by default, in HTTP and in MCP — then applied only
 with `dry_run=false` and the `digest` of the plan that was read, in one
 `SERIALIZABLE` transaction; any other plan is `409 restore_conflict` and nothing
-is written. A restore never touches an approved or locked element: the plan is
-blocked until an approver reopens it. Every capture is bounded, none is
+is written. A restore never touches an approved or locked element (`protected_ids`,
+`docs/adr/0047`): the plan is blocked until an approver reopens it, and the
+`baseline_*` copies do not hold the approval, so a recreated element is a draft. Every capture is bounded, none is
 purged and their number is unlimited (`docs/audit-retention.md`).
 `make baseline-capture CONFIRM=yes` takes the one before go-live: it names the
 shared database it writes to and refuses without the confirmation.
