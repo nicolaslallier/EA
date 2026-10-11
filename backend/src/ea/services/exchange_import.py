@@ -69,7 +69,7 @@ from ea.domain.exchange import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element
-from ea.domain.packages import MAX_MOVE_BATCH
+from ea.domain.packages import MAX_MOVE_BATCH, name_key, validate_package_name
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, MutableSet, Sequence
@@ -300,6 +300,7 @@ class ImportRun:
     ) -> None:
         self._packages = packages
         self._package_of: dict[UUID, UUID | None] = {}
+        self._keys: dict[str, str] = {}
         self._loose: list[tuple[Category, Issue]] = []
         self._repository = repository
         self._architecture = architecture
@@ -328,7 +329,7 @@ class ImportRun:
         # the rows of the elements it carries, so an import that held elements and then waited
         # for the tree could be a half of a deadlock. The target is checked before any write.
         if self._files_into_packages(model):
-            await self._seed_packages(state)
+            await self._seed_packages(model, state)
             await self._repository.lock_package_tree()
         self._package_of = {e.id: e.package_id for e in known}
         rows = self._plan(model, state)
@@ -675,17 +676,31 @@ class ImportRun:
     def _files_into_packages(self, model: ExchangeModel) -> bool:
         return self._packages is not None and bool(model.folders or self._options.target_package_id)
 
-    async def _seed_packages(self, state: _State) -> None:
-        """Read the tree once: every path, and the target (which must exist: a 404 otherwise)."""
+    async def _seed_packages(self, model: ExchangeModel, state: _State) -> None:
+        """Read the tree once: every path, and the target (which must exist: a 404 otherwise).
+
+        Paths are made of the database's own comparison keys for the names (one round trip for the
+        tree's names and the file's), so that planning agrees with the unique indexes it will meet.
+        """
         if self._packages is None:  # pragma: no cover - guarded by `_files_into_packages`
             return
         by_id = {s.package.id: s.package for s in await self._packages.list_packages()}
+        wanted = [package.name for package in by_id.values()]
+        stack = list(model.folders)
+        while stack:
+            folder = stack.pop()
+            stack.extend(folder.children)
+            try:
+                wanted.append(validate_package_name(folder.label))
+            except ValueError:
+                continue  # refused by the plan, which has no use for its key
+        self._keys = await self._packages.name_keys(wanted)
 
         def path_of(package_id: UUID) -> tuple[str, ...]:
             names: list[str] = []
             current: UUID | None = package_id
             while current is not None and current in by_id and len(names) <= len(by_id):
-                names.append(by_id[current].name.casefold())
+                names.append(self._keys[by_id[current].name])
                 current = by_id[current].parent_id
             return tuple(reversed(names))
 
@@ -715,7 +730,12 @@ class ImportRun:
             return []
         target = self._options.target_package_id
         base = next((p for p, i in state.packages.items() if i == target), ()) if target else ()
-        steps, notes = plan_folders(model.folders, base=base, existing=list(state.packages))
+        steps, notes = plan_folders(
+            model.folders,
+            base=base,
+            existing=list(state.packages),
+            key=lambda name: self._keys.get(name, name_key(name)),
+        )
         for note in notes:
             issue = Issue(
                 Severity.ERROR if note.rejected else Severity.WARNING,

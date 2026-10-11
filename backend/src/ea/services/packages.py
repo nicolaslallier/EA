@@ -92,6 +92,14 @@ class PackageService:
         summaries = await self._summaries()
         return tuple(sorted(summaries.values(), key=lambda s: s.path.lower()))
 
+    async def name_keys(self, names: Sequence[str]) -> dict[str, str]:
+        """Each name's comparison key, as the database that will enforce sibling uniqueness
+        computes it (one round trip). An import plans against these keys, so that it refuses in
+        memory exactly what the database would refuse, and no more."""
+        require_caller()
+        unique = tuple(dict.fromkeys(names))
+        return dict(zip(unique, await self._repository.fold_names(unique), strict=True))
+
     async def get(self, package_id: UUID) -> PackageSummary:
         require_caller()
         summary = (await self._summaries()).get(package_id)

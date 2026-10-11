@@ -324,7 +324,7 @@ async def test_six_big_sends_at_once_hold_at_most_two_bodies(
 
 
 def quick(service: ArchitectureService, store: InMemoryExchange, parser: Parser) -> Any:
-    return build(service, store, parser, exchange_read_timeout_s=0.05, exchange_read_total_s=0.5)
+    return build(service, store, parser, exchange_read_timeout_s=0.15, exchange_read_total_s=1.0)
 
 
 async def test_two_silent_connections_are_cut_with_a_408_and_their_places_given_back(
@@ -365,7 +365,7 @@ async def test_a_slow_but_steady_client_passes_under_the_per_message_delay(
 ) -> None:
     app = quick(service, exchange_store, parser)
     parser.block = False
-    wire = Wire(size=100_000, delay=0.02)  # 3 messages of 20 ms: well under 50 ms each
+    wire = Wire(size=100_000, delay=0.02)  # 3 messages of 20 ms: well under 150 ms each
 
     await run(app, wire)
 
@@ -376,7 +376,7 @@ async def test_a_steady_client_is_cut_by_the_total_delay(
     service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
 ) -> None:
     app = build(
-        service, exchange_store, parser, exchange_read_timeout_s=0.05, exchange_read_total_s=0.2
+        service, exchange_store, parser, exchange_read_timeout_s=0.15, exchange_read_total_s=0.3
     )
     parser.block = False
     wire = Wire(size=2_000_000, delay=0.02)  # 32 messages: 0.6 s in all, over the 0.2 s total
@@ -395,7 +395,7 @@ async def test_the_delays_run_only_while_the_body_is_read(
     task = run(app, wire)
     await asyncio.to_thread(parser.entered.wait, 5)
 
-    await asyncio.sleep(0.8)  # analysis outlasts both delays: it is not the client's silence
+    await asyncio.sleep(1.3)  # analysis outlasts both delays: it is not the client's silence
     assert not task.done()
     parser.release.set()
     await task

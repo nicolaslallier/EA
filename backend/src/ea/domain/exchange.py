@@ -11,7 +11,7 @@ import hashlib
 import math
 import re
 import unicodedata
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
@@ -22,7 +22,7 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType, valid
 from ea.domain.errors import DomainError, IllegalRelationshipError, RowRefusedError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, is_property_key
-from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, validate_package_name
+from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, name_key, validate_package_name
 from ea.domain.query import ElementQuery
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
@@ -346,8 +346,9 @@ def build_organization(
 class FolderStep:
     """A folder to find or create: where, under what name, and the elements it files.
 
-    `path` is the casefolded names from the root of the package tree down (the target's
-    included): the key a folder is found by, since sibling names are unique ignoring case.
+    `path` is the keys of the names (the database's own, or `name_key`) from the root of the
+    package tree down (the target's included): the key a folder is found by, since sibling
+    names are unique ignoring case.
     """
 
     path: tuple[str, ...]
@@ -373,6 +374,7 @@ def plan_folders(
     *,
     base: tuple[str, ...],
     existing: Collection[tuple[str, ...]],
+    key: Callable[[str], str] = name_key,
 ) -> tuple[list[FolderStep], list[FolderNote]]:
     """Judge the folders of a file against the rules of the package tree, in memory.
 
@@ -410,7 +412,7 @@ def plan_folders(
                 )
                 refused = True
             else:
-                path = (*parent, name.casefold())
+                path = (*parent, key(name))
                 if path in seen:
                     notes.append(
                         FolderNote(

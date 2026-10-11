@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import ARRAY, Text, bindparam, delete, func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
@@ -146,6 +146,18 @@ class PostgresPackageRepository:
         async with reading(self._sessions) as session:
             row = await session.get(PackageRecord, package_id)
             return _to_package(row) if row is not None else None
+
+    async def fold_names(self, names: Sequence[str]) -> list[str]:
+        if not names:
+            return []
+        # `text()` with one bound array: there is no expression for `unnest ... WITH ORDINALITY`
+        # that keeps the order, and the order is the point. Nothing is spliced into the SQL.
+        statement = text(
+            "SELECT lower(n) FROM unnest(CAST(:names AS text[])) WITH ORDINALITY AS t(n, i) "
+            "ORDER BY i"
+        ).bindparams(bindparam("names", type_=ARRAY(Text)))
+        async with reading(self._sessions) as session:
+            return list((await session.scalars(statement, {"names": list(names)})).all())
 
     async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         async with work(self._sessions) as session:

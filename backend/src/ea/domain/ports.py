@@ -677,6 +677,11 @@ class PackageRepository(Protocol):
 
     async def get(self, package_id: UUID) -> Package | None: ...
 
+    async def fold_names(self, names: Sequence[str]) -> list[str]:
+        """`lower()` of each name as the database computes it, in the same order: the key its
+        unique indexes on sibling names compare by, which Python cannot be trusted to compute."""
+        ...
+
     async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         """Store a new package, or refuse a sibling name already taken."""
         ...

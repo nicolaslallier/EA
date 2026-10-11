@@ -80,7 +80,7 @@ from ea.domain.exchange import (
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.packages import Package, PackageCounts
+from ea.domain.packages import Package, PackageCounts, name_key
 from ea.domain.ports import (
     ElementChange,
     ElementFilter,
@@ -1121,6 +1121,9 @@ class InMemoryPackages:
             )
             for p in self.packages.values()
         }
+
+    async def fold_names(self, names: Sequence[str]) -> list[str]:
+        return [name_key(name) for name in names]
 
     async def get(self, package_id: UUID) -> Package | None:
         return self.packages.get(package_id)
