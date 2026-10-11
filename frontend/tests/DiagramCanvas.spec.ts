@@ -352,3 +352,85 @@ describe('DiagramCanvas — the keyboard', () => {
     ])
   })
 })
+
+describe('DiagramCanvas — zoom and pan', () => {
+  const widthOf = () => Number(svg().getAttribute('width'))
+  const originOf = () => svg().getAttribute('viewBox')!.split(' ').map(Number)
+
+  it('zooms with the wheel, around the cursor', async () => {
+    draw()
+
+    await fireEvent.wheel(svg(), { deltaY: -100, clientX: 100, clientY: 50 })
+
+    expect(widthOf()).toBeCloseTo(880, 1)
+    const [panX, panY] = originOf()
+    expect(panX).toBeGreaterThan(0)
+    expect(panY).toBeGreaterThan(0)
+  })
+
+  it('zooms out with the wheel the other way, never below the floor', async () => {
+    draw()
+
+    for (let i = 0; i < 40; i += 1) {
+      await fireEvent.wheel(svg(), { deltaY: 100 })
+    }
+
+    expect(widthOf()).toBeCloseTo(800 * 0.4, 1)
+  })
+
+  it('fits every box in the view, then goes back to 100 %', async () => {
+    draw({ boxes: [{ ...BOXES[0], width: 1600 }] })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Ajuster à la vue' }))
+    const fitted = widthOf()
+    expect(fitted).toBeLessThan(1600 + 160)
+
+    await fireEvent.click(screen.getByRole('button', { name: '100 %' }))
+    expect(widthOf()).toBe(1760)
+    expect(originOf().slice(0, 2)).toEqual([0, 0])
+  })
+
+  it('pans with the middle button', async () => {
+    draw()
+
+    await fireEvent(svg(), new MouseEvent('pointerdown', { clientX: 100, clientY: 100, button: 1, bubbles: true }))
+    await fireEvent(svg(), pointer('pointermove', 60, 80))
+    await fireEvent(svg(), pointer('pointerup', 60, 80))
+
+    expect(originOf().slice(0, 2)).toEqual([40, 20])
+  })
+
+  it('pans with Space held and a drag, and not with a plain drag (that draws a band)', async () => {
+    const rendered = draw()
+
+    await fireEvent.keyDown(svg(), { key: ' ' })
+    await fireEvent(svg(), pointer('pointerdown', 100, 100))
+    await fireEvent(svg(), pointer('pointermove', 90, 100))
+    await fireEvent(svg(), pointer('pointerup', 90, 100))
+    expect(originOf().slice(0, 2)).toEqual([10, 0])
+    expect(rendered.emitted()['select-many']).toBeUndefined()
+
+    await fireEvent.keyUp(svg(), { key: ' ' })
+    await fireEvent(svg(), pointer('pointerdown', 100, 100))
+    await fireEvent(svg(), pointer('pointermove', 90, 100))
+    await fireEvent(svg(), pointer('pointerup', 90, 100))
+    expect(rendered.emitted()['select-many']).toHaveLength(1)
+  })
+
+  it('maps a drop through the pan and the zoom', async () => {
+    const rendered = draw({ boxes: [] })
+    await fireEvent.wheel(svg(), { deltaY: -100, clientX: 0, clientY: 0 }) // zoom 1.1 at the corner
+    const drop = pointer('drop', 330, 220)
+    Object.defineProperty(drop, 'dataTransfer', {
+      value: { getData: (type: string) => (type === ELEMENT_DRAG_TYPE ? B.id : '') },
+    })
+
+    await fireEvent(screen.getByLabelText(/zone de dessin/i), drop)
+
+    // 330 / 1.1 = 300 and 220 / 1.1 = 200, minus half the default box.
+    const [[id, at]] = rendered.emitted().place as [string, { x: number; y: number }][]
+    expect(id).toBe(B.id)
+    expect(at.x).toBeCloseTo(300 - 66, 6)
+    expect(at.y).toBeCloseTo(200 - 23, 6)
+  })
+})

@@ -12,6 +12,11 @@ import { BOX_TEXT, LAYER_COLOURS } from '../metamodel/useMetamodel'
 import { verbOf } from '../relationships/labels'
 import {
   MIN_BOX,
+  MIN_CANVAS,
+  clampZoom,
+  fitView,
+  zoomAt,
+  type View,
   boxesIn,
   canvasExtent,
   centreOf,
@@ -61,12 +66,15 @@ const emit = defineEmits<{
 const BAND_SLOP = 4
 
 const ZOOM_STEP = 0.25
-const ZOOM_RANGE = [0.4, 2] as const
+const WHEEL_STEP = 1.1
 /** Room kept past the furthest box, so there is always somewhere to drop. */
 const MARGIN = 160
 
 const svg = useTemplateRef<SVGSVGElement>('svg')
-const zoom = ref(1)
+const view = ref<View>({ zoom: 1, pan: { x: 0, y: 0 } })
+const area = useTemplateRef<HTMLDivElement>('area')
+/** True while the space bar is down: a drag then pans instead of drawing a band. */
+const spaceHeld = ref(false)
 
 type Grab = { elementId: string; offset: Point }
 type Gesture =
@@ -74,6 +82,7 @@ type Gesture =
   | { kind: 'resize'; elementId: string; offset: Point; moved: boolean }
   | { kind: 'link'; sourceId: string; to: Point }
   | { kind: 'band'; from: Point; to: Point }
+  | { kind: 'pan'; start: Point; origin: Point }
 const gesture = ref<Gesture | null>(null)
 
 const chosen = computed(
@@ -104,7 +113,7 @@ const summary = computed(() => {
 })
 
 function step(by: number): void {
-  zoom.value = Math.min(ZOOM_RANGE[1], Math.max(ZOOM_RANGE[0], zoom.value + by))
+  view.value = { ...view.value, zoom: clampZoom(view.value.zoom + by) }
 }
 
 /** Where the pointer is, in canvas units. */
@@ -113,8 +122,33 @@ function at(event: MouseEvent): Point {
   return toCanvasPoint(
     { x: event.clientX, y: event.clientY },
     { x: rect?.left ?? 0, y: rect?.top ?? 0 },
-    zoom.value,
+    view.value.zoom,
+    view.value.pan,
   )
+}
+
+function onWheel(event: WheelEvent): void {
+  const rect = svg.value?.getBoundingClientRect()
+  const anchor = { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) }
+  view.value = zoomAt(view.value, event.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP, anchor)
+}
+
+function fit(): void {
+  const viewport = {
+    width: area.value?.clientWidth || MIN_CANVAS.width,
+    height: area.value?.clientHeight || MIN_CANVAS.height,
+  }
+  view.value = fitView(props.boxes.map(rectOf), viewport)
+}
+
+function actualSize(): void {
+  view.value = { zoom: 1, pan: { x: 0, y: 0 } }
+}
+
+function onCanvasKeyUp(event: KeyboardEvent): void {
+  if (event.key === ' ') {
+    spaceHeld.value = false
+  }
 }
 
 /**
@@ -138,7 +172,7 @@ function onDrop(event: DragEvent): void {
 }
 
 function grab(event: PointerEvent, box: Box): void {
-  if (event.button !== 0 || props.readonly || event.shiftKey) {
+  if (event.button !== 0 || props.readonly || event.shiftKey || spaceHeld.value) {
     return
   }
   capture(event)
@@ -158,6 +192,16 @@ function grab(event: PointerEvent, box: Box): void {
 
 /** A drag that starts on the empty canvas draws a selection band. */
 function startBackground(event: PointerEvent): void {
+  const panning = event.button === 1 || (event.button === 0 && spaceHeld.value)
+  if (panning) {
+    capture(event)
+    gesture.value = {
+      kind: 'pan',
+      start: { x: event.clientX, y: event.clientY },
+      origin: view.value.pan,
+    }
+    return
+  }
   if (event.button !== 0 || event.target !== event.currentTarget) {
     return
   }
@@ -193,6 +237,16 @@ function startLink(event: PointerEvent): void {
 function drag(event: PointerEvent): void {
   const current = gesture.value
   if (!current) {
+    return
+  }
+  if (current.kind === 'pan') {
+    view.value = {
+      ...view.value,
+      pan: {
+        x: current.origin.x - (event.clientX - current.start.x) / view.value.zoom,
+        y: current.origin.y - (event.clientY - current.start.y) / view.value.zoom,
+      },
+    }
     return
   }
   const pointer = at(event)
@@ -233,7 +287,7 @@ function drag(event: PointerEvent): void {
 function interrupt(): void {
   const current = gesture.value
   gesture.value = null
-  if (current && current.kind !== 'link' && current.kind !== 'band' && current.moved) {
+  if (current && current.kind !== 'link' && current.kind !== 'band' && current.kind !== 'pan' && current.moved) {
     emit('moved')
   }
 }
@@ -241,6 +295,9 @@ function interrupt(): void {
 function release(event: PointerEvent): void {
   const current = gesture.value
   gesture.value = null
+  if (current?.kind === 'pan') {
+    return
+  }
   if (current?.kind === 'band') {
     const band = rubberBand(current.from, current.to)
     const hits = band.width + band.height < BAND_SLOP ? [] : boxesIn(band, props.boxes.map(rectOf))
@@ -316,6 +373,11 @@ function onNodeKey(event: KeyboardEvent, box: Box): void {
 }
 
 function onCanvasKey(event: KeyboardEvent): void {
+  if (event.key === ' ') {
+    event.preventDefault()
+    spaceHeld.value = true
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
     event.preventDefault()
     emit('select-many', props.boxes.map((box) => box.element.id))
@@ -330,6 +392,8 @@ function onCanvasKey(event: KeyboardEvent): void {
       <div class="canvas__zoom" role="group" aria-label="Échelle du diagramme">
         <button type="button" aria-label="Dézoomer" @click="step(-ZOOM_STEP)">−</button>
         <button type="button" aria-label="Zoomer" @click="step(ZOOM_STEP)">+</button>
+        <button type="button" aria-label="Ajuster à la vue" @click="fit">Ajuster</button>
+        <button type="button" aria-label="100 %" @click="actualSize">100 %</button>
       </div>
     </figcaption>
 
@@ -337,14 +401,16 @@ function onCanvasKey(event: KeyboardEvent): void {
       Glisse un élément de la palette jusqu'ici.
     </p>
 
-    <div class="canvas__area">
+    <div ref="area" class="canvas__area">
       <svg
         ref="svg"
         role="group"
         :aria-label="`Zone de dessin : ${summary}`"
-        :viewBox="`0 0 ${extent.width} ${extent.height}`"
-        :width="extent.width * zoom"
-        :height="extent.height * zoom"
+        :viewBox="`${view.pan.x} ${view.pan.y} ${extent.width} ${extent.height}`"
+        :width="extent.width * view.zoom"
+        :height="extent.height * view.zoom"
+        @wheel.prevent="onWheel"
+        @keyup="onCanvasKeyUp"
         tabindex="0"
         @pointerdown="startBackground"
         @keydown="onCanvasKey"
