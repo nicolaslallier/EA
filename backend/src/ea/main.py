@@ -654,8 +654,15 @@ def create_app(
         allow_headers=["*"],
         # A browser cannot read a response header it was not told about, and
         # the request id is only useful to the SPA if it can put it in its own
-        # console line — see docs/adr/0021.
-        expose_headers=[REQUEST_ID_HEADER],
+        # console line — see docs/adr/0021. The same goes for the name of an
+        # exported file, the count of views it left out and the `Retry-After` of
+        # a 429: none is CORS-safelisted, and the SPA's Échanges screen reads all three.
+        expose_headers=[
+            REQUEST_ID_HEADER,
+            "Content-Disposition",
+            "X-Export-Skipped-Views",
+            "Retry-After",
+        ],
     )
     # Added last, so it is the outermost layer: it then times and reports the
     # CORS preflight and the 404 as readily as a route that ran.

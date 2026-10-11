@@ -16,6 +16,7 @@ type FileRead = components['schemas']['FileRead']
 type FileMetadataRead = components['schemas']['FileMetadataRead']
 type FileListingRead = components['schemas']['FileListingRead']
 type SavedQueryRead = components['schemas']['SavedQueryRead']
+type ImportReportRead = components['schemas']['ImportReportRead']
 type SavedQuerySummaryRead = components['schemas']['SavedQuerySummaryRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
@@ -24,6 +25,8 @@ export type Route = {
   path: string
   status?: number
   body?: unknown
+  /** Extra response headers (`Retry-After`, `Content-Disposition`…). */
+  headers?: Record<string, string>
 }
 
 export type RecordedCall = { method: string; url: URL; body: unknown }
@@ -79,7 +82,7 @@ export function stubApi(routes: Route[]): RecordedCall[] {
       }
       return new Response(JSON.stringify(route.body ?? {}), {
         status,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...route.headers },
       })
     }),
   )
@@ -471,6 +474,41 @@ export function aRestore(
     applied: false,
     digest: 'a'.repeat(64),
     plan: aRestorePlan(plan),
+    ...overrides,
+  }
+}
+
+/** The report of an import: three elements to create, nothing else, unless a spec says. */
+export function aReport(overrides: Partial<ImportReportRead> = {}): ImportReportRead {
+  const none = { created: 0, reused: 0, rejected: 0, ignored: 0 }
+  return {
+    dry_run: true,
+    applied: false,
+    format: 'archimate-xml',
+    sha256: 'a.xml:1',
+    duration_ms: 12,
+    issue_count: 0,
+    counts: {
+      elements: { ...none, created: 3 },
+      relationships: { ...none },
+      packages: { ...none },
+      views: { ...none },
+    },
+    issues: [],
+    truncated: false,
+    ...overrides,
+  }
+}
+
+/** One line of that report: a refused relationship, unless a spec says. */
+export function anIssue(overrides: Partial<ImportReportRead['issues'][number]> = {}) {
+  return {
+    severity: 'error' as const,
+    code: 'relationship_not_allowed',
+    message: 'not allowed',
+    source_id: 'r-1',
+    line: null,
+    path: null,
     ...overrides,
   }
 }

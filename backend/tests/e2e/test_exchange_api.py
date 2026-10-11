@@ -53,6 +53,16 @@ async def client(
 
 
 class TestExport:
+    async def test_the_download_headers_can_be_read_by_the_spa(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.get(
+            "/exchanges/export", headers={"Origin": "http://localhost:5173"}
+        )
+
+        exposed = response.headers["access-control-expose-headers"].lower()
+        assert "content-disposition" in exposed and "x-export-skipped-views" in exposed
+
     async def test_it_streams_the_model_as_an_xml_attachment(
         self, client: httpx.AsyncClient, service: ArchitectureService
     ) -> None:
