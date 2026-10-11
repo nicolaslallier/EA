@@ -46,17 +46,21 @@ QUIET_PATHS: Final[frozenset[str]] = frozenset({"/health"})
 _ID: Final = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
-def _identifier(scope: Scope) -> str:
-    """The caller's id when it brought one we can safely repeat, else a fresh one."""
+def _client_identifier(scope: Scope) -> str | None:
+    """The caller's own id when it brought one we can safely repeat, else `None`.
+
+    It is *only* a label of the caller's: logged apart (`client_request_id`),
+    never the `request_id` the logs and the audit trail carry. That one is made
+    here, so no caller can choose the id of its own event, or collide with
+    another's.
+    """
     wanted = REQUEST_ID_HEADER.lower().encode()
     headers: Iterable[tuple[bytes, bytes]] = scope.get("headers", ())
     for name, value in headers:
         if name.lower() == wanted:
             candidate = value.decode("latin-1", "replace")
-            if _ID.match(candidate):
-                return candidate
-            break
-    return uuid4().hex[:12]
+            return candidate if _ID.match(candidate) else None
+    return None
 
 
 def _level(status: int, path: str) -> int:
@@ -81,7 +85,8 @@ class RequestLogging:
             await self._app(scope, receive, send)
             return
 
-        identifier = _identifier(scope)
+        identifier = uuid4().hex[:12]  # the server's, whatever the caller sent
+        client_identifier = _client_identifier(scope)
         token = request_id.set(identifier)
         started = perf_counter()
         # The value used when the application raises before answering: nothing
@@ -108,6 +113,8 @@ class RequestLogging:
                 "status": status,
                 "duration_ms": round(elapsed, 1),
             }
+            if client_identifier is not None:
+                fields["client_request_id"] = client_identifier
             logger.log(
                 _level(status, path),
                 "%s %s -> %s in %.1f ms",

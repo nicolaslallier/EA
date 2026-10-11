@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import pytest
 
-from ea.api.middleware import _identifier
+from ea.api.middleware import _client_identifier
 from ea.domain.archimate import ElementType as E
 from ea.domain.audit import AuditAction, AuditChannel
 from ea.domain.auth import LOCAL_DEVELOPER, SYSTEM
@@ -98,17 +98,16 @@ async def test_properties_named_like_audit_fields_cannot_forge_an_event(
     "header",
     ["bad id", "line\nbreak", "x" * 65, "", "é"],
 )
-async def test_a_request_id_that_is_not_plain_is_replaced_by_a_fresh_one(header: str) -> None:
+async def test_a_client_request_id_that_is_not_plain_is_ignored(header: str) -> None:
     scope = {"headers": [(b"x-request-id", header.encode("latin-1", "replace"))]}
 
-    chosen = _identifier(scope)  # type: ignore[arg-type]
-
-    assert chosen != header
-    assert re.fullmatch(r"[0-9a-f]{12}", chosen)
+    assert _client_identifier(scope) is None  # type: ignore[arg-type]
 
 
-async def test_a_plain_request_id_is_kept_as_a_correlation_label_only() -> None:
-    assert _identifier({"headers": [(b"x-request-id", b"trace-1.a:b")]}) == "trace-1.a:b"  # type: ignore[arg-type]
+async def test_a_plain_client_request_id_is_kept_apart_for_the_logs() -> None:
+    scope = {"headers": [(b"x-request-id", b"trace-1.a:b")]}
+
+    assert _client_identifier(scope) == "trace-1.a:b"  # type: ignore[arg-type]
 
 
 async def test_an_mcp_tool_runs_through_the_mcp_door_whatever_it_is_told() -> None:

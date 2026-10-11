@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 
@@ -11,6 +12,7 @@ import pytest
 import pytest_asyncio
 
 from ea.core.config import Settings
+from ea.core.logging import REQUESTS_LOGGER
 from ea.domain.audit import AuditChannel
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
@@ -79,23 +81,44 @@ class TestTheIdentityOfAnHttpEvent:
         assert response.status_code == 403
         assert audit_log.events == []
 
-    async def test_a_forged_request_id_header_is_replaced_not_recorded(
+    async def test_the_request_id_of_an_event_is_always_the_servers(
         self, client: httpx.AsyncClient, audit_log: InMemoryAuditLog
     ) -> None:
-        await client.post(
-            "/elements",
-            json=new_node("a"),
-            headers={**bearer(ALICE), "X-Request-Id": "trace-1"},
+        first = await client.post(
+            "/elements", json=new_node("a"), headers={**bearer(ALICE), "X-Request-Id": "trace-1"}
         )
-        await client.post(
-            "/elements",
-            json=new_node("b"),
-            headers={**bearer(ALICE), "X-Request-Id": "x" * 200},
+        second = await client.post(
+            "/elements", json=new_node("b"), headers={**bearer(ALICE), "X-Request-Id": "x" * 200}
         )
 
-        kept, replaced = audit_log.events
-        assert kept.request_id == "trace-1"
-        assert re.fullmatch(r"[0-9a-f]{12}", replaced.request_id)
+        one, two = audit_log.events
+        for event in (one, two):
+            assert re.fullmatch(r"[0-9a-f]{12}", event.request_id)
+        assert one.request_id != "trace-1"
+        # What the SPA prints from the response is what the trail recorded.
+        assert first.headers["x-request-id"] == one.request_id
+        assert second.headers["x-request-id"] == two.request_id
+
+    async def test_a_caller_cannot_choose_the_request_id_of_another(
+        self, client: httpx.AsyncClient, audit_log: InMemoryAuditLog
+    ) -> None:
+        """Two callers sending the same id still get two distinct, server-made ones."""
+        headers = {"X-Request-Id": "shared-id"}
+        await client.post("/elements", json=new_node("a"), headers={**bearer(ALICE), **headers})
+        await client.post("/elements", json=new_node("b"), headers={**bearer(BOB), **headers})
+
+        alice, bob = audit_log.events
+        assert alice.request_id != bob.request_id
+        assert "shared-id" not in (alice.request_id, bob.request_id)
+
+    async def test_the_clients_own_id_is_logged_apart(
+        self, client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger=REQUESTS_LOGGER):
+            await client.get("/me", headers={**bearer(ALICE), "X-Request-Id": "trace-9"})
+
+        record = next(r for r in caplog.records if r.name == REQUESTS_LOGGER)
+        assert record.client_request_id == "trace-9"  # type: ignore[attr-defined]
 
     async def test_two_requests_in_flight_never_swap_actors(
         self, client: httpx.AsyncClient, audit_log: InMemoryAuditLog
