@@ -33,7 +33,7 @@ from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_approver, require_caller, require_editor
+from ea.services.caller import logged, require_approver, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -148,7 +148,7 @@ class ArchitectureService:
         logger.info(
             "element created: %s %r",
             stored.element_type.value,
-            stored.name,
+            logged(stored.name),
             extra={
                 "action": "created",
                 "element_id": str(stored.id),
@@ -242,7 +242,7 @@ class ArchitectureService:
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,
-            stored.name,
+            logged(stored.name),
             extra={
                 "action": "updated",
                 "element_id": str(stored.id),
@@ -411,9 +411,9 @@ class ArchitectureService:
             )
         logger.info(
             "%r --%s--> %r",
-            source.name,
+            logged(source.name),
             stored.relationship_type.value,
-            target.name,
+            logged(target.name),
             extra={
                 "action": "connected",
                 "relationship_id": str(stored.id),

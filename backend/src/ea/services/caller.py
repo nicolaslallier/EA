@@ -24,6 +24,15 @@ current_channel: ContextVar[AuditChannel] = ContextVar(
     "ea_current_channel", default=AuditChannel.SYSTEM
 )
 
+#: False while a file is being imported: its element names are the file's content, and a
+#: log line per row must not repeat them (docs/adr/0048). The audit trail keeps them.
+names_in_logs: ContextVar[bool] = ContextVar("ea_names_in_logs", default=True)
+
+
+def logged(name: str) -> str:
+    """A name as a log line may show it."""
+    return name if names_in_logs.get() else "<imported>"
+
 
 def require_caller() -> Caller:
     caller = current_caller.get()

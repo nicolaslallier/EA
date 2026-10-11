@@ -11,6 +11,7 @@ import re
 import socket
 from collections.abc import (
     AsyncIterator,
+    Awaitable,
     Callable,
     Collection,
     Iterable,
@@ -26,6 +27,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from ea.db.unit_of_work import BATCH_SIZE, MAX_REFUSED_ROWS
 from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
@@ -47,20 +49,25 @@ from ea.domain.errors import (
     BaselineNotFoundError,
     DiagramNotFoundError,
     DocumentNotFoundError,
+    DomainError,
     DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
     DuplicateSavedQueryError,
     ElementNotFoundError,
+    ImportInProgressError,
     InvalidQueryError,
     NotAuthenticatedError,
+    NotAuthorisedError,
     PackageNotEmptyError,
     PackageNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
     SavedQueryNotFoundError,
     StoredFileNotFoundError,
+    TooManyRefusedRowsError,
+    WriteConflictError,
 )
 from ea.domain.exchange import SOURCE_ID, ExportScope, identifier_of
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
@@ -76,6 +83,8 @@ from ea.domain.ports import (
     GraphView,
     Held,
     PackageRemoval,
+    RowRefusal,
+    Transaction,
 )
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
@@ -1306,14 +1315,106 @@ class _MemorySnapshot:
 
 
 class InMemoryExchange:
-    """The `ExchangeRepository` over the in-memory graph (grown in later tasks)."""
+    """The `ExchangeRepository` over the in-memory graph.
+
+    `apply_rows` mirrors `db.unit_of_work.apply_rows` step for step — a batch is one
+    savepoint, a refusal rolls the batch back and *replays* the rows before it — because
+    that replay is exactly what an import's callback must survive.
+    """
+
+    #: What is not the row's fault (kept in step with `db.unit_of_work._NOT_THE_ROWS`).
+    NOT_THE_ROWS = (
+        WriteConflictError,
+        ImportInProgressError,
+        NotAuthenticatedError,
+        NotAuthorisedError,
+        TooManyRefusedRowsError,
+    )
 
     def __init__(self, repository: InMemoryRepository) -> None:
         self.repository = repository
+        self.lock_held = False
+        self.batch_size = BATCH_SIZE
+        #: Rows handed to `apply`, replays included, and the replays alone.
+        self.applied = 0
+        self.replayed = 0
+        self.locked: list[UUID] = []
 
     @asynccontextmanager
     async def snapshot(self, scope: ExportScope) -> AsyncIterator[_MemorySnapshot]:
         yield _MemorySnapshot(self.repository)
+
+    def _copy(self) -> tuple[dict[UUID, Element], dict[UUID, Relationship], list[AuditEvent]]:
+        return (
+            dict(self.repository.elements),
+            dict(self.repository.relationships),
+            list(self.repository.audit_log.events),
+        )
+
+    def _restore(
+        self, saved: tuple[dict[UUID, Element], dict[UUID, Relationship], list[AuditEvent]]
+    ) -> None:
+        self.repository.elements = dict(saved[0])
+        self.repository.relationships = dict(saved[1])
+        self.repository.audit_log.events = list(saved[2])
+
+    @asynccontextmanager
+    async def transaction(self, *, commit: bool) -> AsyncIterator[Transaction]:
+        """All-or-nothing over the in-memory graph, like the real shared transaction."""
+        if self.lock_held:
+            msg = "another import is running: wait for it to finish"
+            raise ImportInProgressError(msg)
+        before = self._copy()
+        handle = Transaction(commit=commit)
+        try:
+            yield handle
+        except BaseException:
+            self._restore(before)
+            raise
+        if not handle.commit:
+            self._restore(before)
+
+    async def apply_rows[Row](
+        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+    ) -> list[RowRefusal]:
+        refused: list[RowRefusal] = []
+        start = 0
+        while start < len(rows):
+            end = min(start + self.batch_size, len(rows))
+            position = start
+            saved = self._copy()
+            try:
+                for position in range(start, end):
+                    self.applied += 1
+                    await apply(rows[position])
+            except self.NOT_THE_ROWS:
+                raise
+            except DomainError as error:
+                self._restore(saved)  # ROLLBACK TO SAVEPOINT
+                refused.append(RowRefusal(position, error))
+                if len(refused) > MAX_REFUSED_ROWS:
+                    msg = f"more than {MAX_REFUSED_ROWS} rows were refused"
+                    raise TooManyRefusedRowsError(msg) from error
+                for index in range(start, position):  # the replay, without a savepoint
+                    self.applied += 1
+                    self.replayed += 1
+                    await apply(rows[index])
+                start = position + 1
+            else:
+                start = end
+        return refused
+
+    async def known_elements(self) -> tuple[Element, ...]:
+        return tuple(self.repository.elements.values())
+
+    async def known_relationship_keys(self) -> frozenset[tuple[R, UUID, UUID]]:
+        return frozenset(
+            (link.relationship_type, link.source_id, link.target_id)
+            for link in self.repository.relationships.values()
+        )
+
+    async def lock_elements(self, ids: Iterable[UUID]) -> None:
+        self.locked.extend(sorted(set(ids)))
 
 
 class InMemoryObjectStore:

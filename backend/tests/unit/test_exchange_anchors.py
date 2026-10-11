@@ -25,7 +25,12 @@ def test_an_identifier_with_stray_whitespace_is_still_normalised(raw: str) -> No
 
 
 def exchange_modules() -> list[Path]:
-    return [SRC / "domain" / "exchange.py", *sorted((SRC / "formats").glob("*.py"))]
+    return [
+        SRC / "domain" / "exchange.py",
+        *sorted((SRC / "formats").glob("*.py")),
+        SRC / "services" / "exchanges.py",
+        SRC / "services" / "exchange_import.py",
+    ]
 
 
 def anchored_patterns(path: Path) -> list[str]:

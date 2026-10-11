@@ -8,6 +8,7 @@ IPAM rule is enforced for a file exactly as for a person.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
@@ -16,20 +17,28 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.errors import UnknownScopeError
+from ea.domain.errors import ExchangeFileTooLargeError, UnknownScopeError
 from ea.domain.exchange import (
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
+    Category,
     ExchangeElement,
     ExchangeRelationship,
     ExportRequest,
     IdentifierRegistry,
+    ImportContent,
+    ImportOptions,
+    ImportReport,
+    Issue,
+    ReportBuilder,
+    Severity,
     exchange_element_of,
     exchange_relationship_of,
 )
-from ea.formats.archimate_xml import buffered, render_model
-from ea.services.caller import require_caller
+from ea.formats.archimate_xml import buffered, parse_model, render_model
+from ea.services.caller import names_in_logs, require_caller, require_editor
+from ea.services.exchange_import import ImportRun
 
 if TYPE_CHECKING:
     from ea.domain.ports import ExchangeRepository, ExportSnapshot
@@ -73,6 +82,78 @@ class ExchangeService:
         self._max_bytes = max_bytes
         self._now = clock
         self._monotonic = monotonic
+
+    @property
+    def max_bytes(self) -> int:
+        return self._max_bytes
+
+    async def import_exchange(self, content: ImportContent, options: ImportOptions) -> ImportReport:
+        """Apply (or simulate) an exchange file through the architecture service.
+
+        Editors only, *dry run included*: the simulation really performs the writes, then
+        rolls them back — that is what makes it honest. The file is read before the
+        transaction opens, so a database connection is never held while parsing.
+        """
+        caller = require_editor()
+        if content.size > self._max_bytes:
+            msg = f"an exchange file is at most {self._max_bytes} bytes"
+            raise ExchangeFileTooLargeError(msg)
+        # A thread, not the event loop: parsing 20 MB is seconds of pure CPU.
+        model = await asyncio.to_thread(parse_model, content.main)
+        report = ReportBuilder()
+        for issue in model.issues:
+            report.add(
+                issue,
+                Category.RELATIONSHIPS
+                if (issue.path or "").startswith("rel")
+                else Category.ELEMENTS,
+            )
+        async with self._repository.transaction(commit=not options.dry_run) as transaction:
+            quiet = names_in_logs.set(False)  # the rows' log lines must not quote the file
+            try:
+                await ImportRun(self._repository, self._architecture, options).run(model, report)
+            finally:
+                names_in_logs.reset(quiet)
+            if options.strict and report.has_rejections():
+                transaction.commit = False
+                report.add(
+                    Issue(
+                        Severity.ERROR,
+                        "strict_refused",
+                        "strict mode: at least one row was refused, so nothing was written",
+                    ),
+                    always=True,
+                )
+        built = report.build(
+            dry_run=options.dry_run,
+            applied=transaction.commit and not options.dry_run,
+            format=content.format,
+            sha256=content.sha256,
+        )
+        self._log_import(caller.subject, content, built)
+        return built
+
+    @staticmethod
+    def _log_import(actor: str, content: ImportContent, report: ImportReport) -> None:
+        # `rows_*` and not `created`: that is a `LogRecord` attribute (its timestamp),
+        # and `extra=` refuses a key that collides with one. Counts only, never the content.
+        totals = {
+            f"rows_{outcome}": sum(getattr(counts, outcome) for counts in report.counts.values())
+            for outcome in ("created", "reused", "rejected", "ignored")
+        }
+        logger.info(
+            "exchange file imported",
+            extra={
+                "action": "imported",
+                "dry_run": report.dry_run,
+                "applied": report.applied,
+                "format": report.format.value,
+                "size_bytes": content.size,
+                "sha256": report.sha256,
+                "actor": actor,
+                **totals,
+            },
+        )
 
     async def export(self, request: ExportRequest) -> Export:
         require_caller()

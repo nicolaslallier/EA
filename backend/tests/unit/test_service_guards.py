@@ -42,7 +42,7 @@ WRITES = {
     },
     DiagramService: {"create", "update", "delete", "replace_layout"},
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
-    ExchangeService: set(),
+    ExchangeService: {"import_exchange"},
     FileService: {"upload", "delete", "set_details", "reconcile"},
     PackageService: {"create", "update", "delete", "move_elements"},
     SavedQueryService: {"create", "update", "delete"},
