@@ -273,6 +273,31 @@ def exchange_relationship_of(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ExchangeBox:
+    """One element drawn on a view: where, and how big. `element` is a file identifier."""
+
+    element: str
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeView:
+    """A view of the file. A view owns no fact: only its boxes are ever stored."""
+
+    identifier: str
+    name: str
+    boxes: tuple[ExchangeBox, ...]
+    description: str = ""
+    #: What the reader set aside: a view link is never a fact, a container or label is no element.
+    connections_ignored: int = 0
+    shapes_ignored: int = 0
+    path: str | None = None
+
+
 # --- What reading a file yields ----------------------------------------------
 
 MAX_EXCHANGE_ITEMS: Final = 50_000

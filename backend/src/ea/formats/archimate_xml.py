@@ -50,6 +50,7 @@ from ea.domain.exchange import (
     ExchangeElement,
     ExchangeModel,
     ExchangeRelationship,
+    ExchangeView,
     Issue,
     Severity,
     Unreadable,
@@ -117,6 +118,23 @@ class _Writer:
             self._on_dropped(identifier, self._dropped)
             self._dropped = 0
 
+    def view(self, view: ExchangeView) -> str:
+        """A view as `Diagram` nodes: boxes only, in whole units; never a connection."""
+        body = self.lang("name", view.name)
+        if view.description:
+            body += self.lang("documentation", view.description)
+        identifier = self.attr(view.identifier)
+        for box in view.boxes:
+            reference = self.attr(box.element)
+            body += (
+                f'<node identifier="{identifier}-{reference}" elementRef="{reference}" '
+                f'xsi:type="Element" x="{round(box.x)}" y="{round(box.y)}" '
+                f'w="{round(box.width)}" h="{round(box.height)}"/>'
+            )
+        xml = f'<view identifier="{identifier}" xsi:type="Diagram">{body}</view>'
+        self.settle(view.identifier)
+        return xml
+
     def element(self, item: ExchangeElement) -> str:
         properties = dict(item.properties)
         if item.description:
@@ -156,6 +174,7 @@ async def render_model(
     relationships: AsyncIterator[ExchangeRelationship],
     *,
     on_dropped: DroppedReport = _ignore,
+    views: AsyncIterator[ExchangeView] | None = None,
 ) -> AsyncIterator[str]:
     """The whole document as text pieces, pulling from the two iterators in turn.
 
@@ -194,6 +213,15 @@ async def render_model(
                 f' type="string">{writer.lang("name", key)}</propertyDefinition>'
             )
         yield "</propertyDefinitions>"
+    if views is not None:
+        opened = False
+        async for view in views:
+            if not opened:
+                yield "<views><diagrams>"
+                opened = True
+            yield writer.view(view)
+        if opened:
+            yield "</diagrams></views>"
     yield "</model>\n"
 
 

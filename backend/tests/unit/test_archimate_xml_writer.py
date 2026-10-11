@@ -8,7 +8,13 @@ import pytest
 from defusedxml import ElementTree as DefusedET
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.exchange import NAMESPACE, ExchangeElement, ExchangeRelationship
+from ea.domain.exchange import (
+    NAMESPACE,
+    ExchangeBox,
+    ExchangeElement,
+    ExchangeRelationship,
+    ExchangeView,
+)
 from ea.formats.archimate_xml import buffered, render_model
 
 pytestmark = pytest.mark.asyncio
@@ -183,3 +189,49 @@ async def test_clean_text_is_not_reported() -> None:
     [part async for part in parts]
 
     assert reported == []
+
+
+async def render_with_views(views: Iterable[ExchangeView]) -> str:
+    parts = render_model("M", aiter_of([actor("a-1")]), aiter_of([]), views=aiter_of(views))
+    return "".join([part async for part in parts])
+
+
+async def test_a_view_lists_its_boxes_with_integer_geometry() -> None:
+    view = ExchangeView(
+        "view-Overview", "Overview", (ExchangeBox("a-1", 10.4, 20.6, 120.0, 55.0),), "Main picture"
+    )
+
+    root = DefusedET.fromstring(await render_with_views([view]))
+
+    node_view = root.find("x:views/x:diagrams/x:view", NS)
+    assert node_view is not None and node_view.get("identifier") == "view-Overview"
+    assert node_view.get(XSI_TYPE) == "Diagram"
+    assert node_view.find("x:name", NS).text == "Overview"  # type: ignore[union-attr]
+    assert node_view.find("x:documentation", NS).text == "Main picture"  # type: ignore[union-attr]
+    box = node_view.find("x:node", NS)
+    assert box is not None
+    assert (box.get("identifier"), box.get("elementRef"), box.get(XSI_TYPE)) == (
+        "view-Overview-a-1",
+        "a-1",
+        "Element",
+    )
+    assert (box.get("x"), box.get("y"), box.get("w"), box.get("h")) == ("10", "21", "120", "55")
+    assert node_view.find("x:connection", NS) is None
+
+
+async def test_views_come_last_and_a_model_without_views_has_no_views_section() -> None:
+    with_views = DefusedET.fromstring(await render_with_views([ExchangeView("view-V", "V", ())]))
+    without = DefusedET.fromstring(await render([actor()]))
+
+    assert [c.tag.split("}")[1] for c in with_views][-1] == "views"
+    assert without.find("x:views", NS) is None
+
+
+async def test_the_text_of_a_view_is_escaped_and_cleaned_like_any_other() -> None:
+    view = ExchangeView("view-V", 'a <b> & "c"\x01', (), "d]]>e")
+
+    root = DefusedET.fromstring(await render_with_views([view]))
+
+    found = root.find("x:views/x:diagrams/x:view", NS)
+    assert found is not None
+    assert found.find("x:name", NS).text == 'a <b> & "c"'  # type: ignore[union-attr]
