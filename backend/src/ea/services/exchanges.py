@@ -15,16 +15,18 @@ import tempfile
 import time
 import weakref
 import zipfile
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from ea.domain.errors import (
     DomainError,
     ExchangeFileTooLargeError,
+    ExportInProgressError,
+    ExportTooLargeError,
     ImportInProgressError,
     UnknownScopeError,
 )
@@ -33,6 +35,8 @@ from ea.domain.exchange import (
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
+    MAX_EXPORT_BYTES,
+    MAX_EXPORTS_IN_FLIGHT,
     MAX_NEW_FOLDERS,
     Category,
     ExchangeBox,
@@ -60,7 +64,7 @@ from ea.domain.packages import descendants_of
 from ea.formats.archimate_xml import buffered, parse_model, render_model
 from ea.formats.csv_files import parse_csv, render_csv
 from ea.services.caller import names_in_logs, require_caller, require_editor
-from ea.services.exchange_admission import current_ticket
+from ea.services.exchange_admission import ImportAdmission, Ticket, current_ticket
 from ea.services.exchange_import import ImportRun
 
 if TYPE_CHECKING:
@@ -116,6 +120,8 @@ class Export:
     skipped_views: int = 0
     #: CSV only: `safe` (formulas neutralised) or `raw`; None for the XML.
     cells: str | None = None
+    #: Bytes of the file, known before the first is sent.
+    size: int = 0
 
 
 class ExchangeService:
@@ -134,8 +140,19 @@ class ExchangeService:
         packages: PackageService | None = None,
         queries: SavedQueryService | None = None,
         max_new_folders: int = MAX_NEW_FOLDERS,
+        max_export_bytes: int = MAX_EXPORT_BYTES,
+        max_exports: int = MAX_EXPORTS_IN_FLIGHT,
     ) -> None:
         self._max_new_folders = max_new_folders
+        self._max_export_bytes = max_export_bytes
+        # Exports prepared or being sent, apart from the imports: a download holds no
+        # connection, but it holds a file and a place (docs/adr/0048).
+        self._exports = ImportAdmission(
+            max_exports,
+            lambda: ExportInProgressError(
+                "other exports are being prepared or sent: try again in a moment"
+            ),
+        )
         self._queries = queries
         self._parse = parser
         self._diagrams = diagrams
@@ -263,38 +280,64 @@ class ExchangeService:
         )
 
     async def export(self, request: ExportRequest) -> Export:
+        """Prepare a download: the whole file is rendered into a temporary file, the snapshot is
+        given back, and only the file is left to send.
+
+        A client that reads slowly then holds a descriptor and a place (`MAX_EXPORTS_IN_FLIGHT`),
+        never a connection of the pool: ten slow downloads would otherwise stop every other
+        request of the API. The place is taken before the snapshot is opened and given back with
+        the file, whatever ends the download — or the preparation.
+        """
         require_caller()
-        request = replace(request, scope=await self._resolve(request.scope))
-        is_csv = request.format is ExchangeFormat.CSV
-        extension = "zip" if is_csv else "xml"
-        raw = is_csv and not request.safe_cells
-        label = "-raw" if raw else ""
-        wants_views = request.with_views and not is_csv
-        # The snapshot is opened here, not when the first byte is asked for: the header that
-        # counts the views left out and the file that leaves them out must be one reading of
-        # the database, and a saved query that cannot run must fail before any header is sent.
+        ticket = self._exports.admit()  # before any connection: a refusal opens nothing
+        files: list[Any] = []
         stack = AsyncExitStack()
-        snapshot = await stack.enter_async_context(self._repository.snapshot(request.scope))
         try:
+            request = replace(request, scope=await self._resolve(request.scope))
+            is_csv = request.format is ExchangeFormat.CSV
+            wants_views = request.with_views and not is_csv
+            # The snapshot is opened here, not when the first byte is asked for: the header that
+            # counts the views left out and the file that leaves them out are one reading of
+            # the database, and a saved query that cannot run fails before any header is sent.
+            snapshot = await stack.enter_async_context(self._repository.snapshot(request.scope))
             if request.scope.query is not None:
                 await snapshot.check_scope()
             skipped = await snapshot.skipped_views() if wants_views else 0
             streams = _Streams(snapshot, self._monotonic)
+            out = tempfile.SpooledTemporaryFile(max_size=1 << 20)  # noqa: SIM115
+            files.append(out)
+            dropped: dict[str, int] = {}
+            parts: dict[str, Any] = {}
+            if is_csv:
+                parts = {n: tempfile.SpooledTemporaryFile(max_size=1 << 20) for n in CSV_FILES}  # noqa: SIM115
+                files.extend(parts.values())
+                await self._render_csv(request, streams, parts)
+            else:
+                await self._render_xml(request, streams, snapshot, out, dropped)
+            await stack.aclose()  # the connection goes back before a byte goes out
+            if is_csv:
+                await asyncio.to_thread(_zip_into, parts, out)
+            size = out.tell()
+            out.seek(0)
+            for spare in files[1:]:
+                spare.close()
+            _report(request, streams, dropped)
         except BaseException:
             await stack.aclose()
+            for opened in files:
+                opened.close()
+            ticket.release()
             raise
-        release = _Once(stack.aclose)
-        source = (
-            self._csv(request, streams, release)
-            if is_csv
-            else self._xml(request, streams, snapshot)
-        )
+        raw = is_csv and not request.safe_cells
+        label = "-raw" if raw else ""
         return Export(
-            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}.{extension}",
+            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}."
+            f"{'zip' if is_csv else 'xml'}",
             cells=("raw" if raw else "safe") if is_csv else None,
             media_type="application/zip" if is_csv else "application/xml",
-            chunks=_Chunks(source, release),
+            chunks=_FileChunks(out, size, ticket),
             skipped_views=skipped,
+            size=size,
         )
 
     async def _resolve(self, scope: ExportScope) -> ExportScope:
@@ -347,10 +390,14 @@ class ExchangeService:
             raise UnknownScopeError(msg)
         return query
 
-    async def _xml(
-        self, request: ExportRequest, streams: _Streams, snapshot: ExportSnapshot
-    ) -> AsyncIterator[bytes]:
-        dropped: dict[str, int] = {}
+    async def _render_xml(
+        self,
+        request: ExportRequest,
+        streams: _Streams,
+        snapshot: ExportSnapshot,
+        out: Any,
+        dropped: dict[str, int],
+    ) -> None:
         streams.packages = await snapshot.packages()
         parts = render_model(
             "EA catalogue",
@@ -360,79 +407,83 @@ class ExchangeService:
             views=streams.views(request.with_views),
             organizations=lambda: build_organization(streams.packages, streams.members),
         )
+        written = 0
         async for chunk in buffered(parts):
-            yield chunk
-        _report(request, streams, dropped)
+            written += len(chunk)
+            self._within_the_ceiling(written)
+            out.write(chunk)
 
-    async def _csv(
-        self, request: ExportRequest, streams: _Streams, release: _Once
-    ) -> AsyncIterator[bytes]:
-        # ponytail: three spooled files then one archive, written synchronously on the
-        # loop: fine to the model's size today; stream a zip64 writer if exports outgrow it.
-        spools = {name: tempfile.SpooledTemporaryFile(max_size=1 << 20) for name in CSV_FILES}  # noqa: SIM115
-        archive = tempfile.SpooledTemporaryFile(max_size=1 << 20)  # noqa: SIM115
-        try:
-            async for name, text in render_csv(
-                streams.elements(), streams.relationships(), safe_cells=request.safe_cells
-            ):
-                spools[name].write(text.encode("utf-8"))
-            await release()  # everything is read: the snapshot is not held while the zip goes out
-            with zipfile.ZipFile(archive, "w") as bundle:
-                for name in CSV_FILES:  # the names are ours, never a cell's
-                    # A fixed date: the archive is a pure function of the model.
-                    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = 0o644 << 16
-                    spools[name].seek(0)
-                    with bundle.open(info, "w") as entry:
-                        shutil.copyfileobj(spools[name], entry)
-            archive.seek(0)
-            while chunk := archive.read(65_536):
-                yield chunk
-            _report(request, streams, {})
-        finally:
-            archive.close()
-            for spool in spools.values():
-                spool.close()
+    async def _render_csv(
+        self, request: ExportRequest, streams: _Streams, parts: dict[str, Any]
+    ) -> None:
+        written = 0
+        async for name, text in render_csv(
+            streams.elements(), streams.relationships(), safe_cells=request.safe_cells
+        ):
+            data = text.encode("utf-8")
+            written += len(data)
+            self._within_the_ceiling(written)
+            parts[name].write(data)
+
+    def _within_the_ceiling(self, written: int) -> None:
+        if written > self._max_export_bytes:
+            msg = (
+                f"this export is past {self._max_export_bytes} bytes: ask for a narrower scope "
+                "(a package, or a saved query)"
+            )
+            raise ExportTooLargeError(msg)
 
 
-class _Once:
-    """Close something exactly once, whoever gets there first."""
+def _zip_into(parts: dict[str, Any], out: Any) -> None:
+    """The three files as one archive, fixed in date and order: a pure function of the model.
+    Synchronous work on files: it runs in a thread, never on the event loop."""
+    with zipfile.ZipFile(out, "w") as bundle:
+        for name in CSV_FILES:  # the names are ours, never a cell's
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            parts[name].seek(0)
+            with bundle.open(info, "w") as entry:
+                shutil.copyfileobj(parts[name], entry)
 
-    def __init__(self, close: Callable[[], Awaitable[None]]) -> None:
-        self._close = close
-        self._done = False
 
-    async def __call__(self) -> None:
-        if not self._done:
-            self._done = True
-            await self._close()
+_SEND_CHUNK = 65_536
 
 
-class _Chunks:
-    """The body of a download, which gives its snapshot back however it ends: read to the end,
-    interrupted by the client, or never started (the generator it wraps has no `finally` to
-    run until it has begun)."""
+class _FileChunks:
+    """The body of a download: a temporary file read 64 KB at a time.
 
-    def __init__(self, source: AsyncIterator[bytes], release: _Once) -> None:
+    It gives the file and the place back however the download ends — read to the end, left by
+    the client, cancelled, or never started — because both are released by `aclose`, which the
+    response always calls, and not by a generator's `finally` (which a generator never started
+    does not have).
+    """
+
+    def __init__(self, source: Any, size: int, ticket: Ticket) -> None:
         self._source = source
-        self._release = release
+        self.size = size
+        self._ticket = ticket
+        self.closed = False
 
-    def __aiter__(self) -> _Chunks:
+    def __aiter__(self) -> _FileChunks:
         return self
 
     async def __anext__(self) -> bytes:
-        try:
-            return await self._source.__anext__()
-        except BaseException:  # the end, an error, or a client that left
+        if self.closed:
+            raise StopAsyncIteration
+        data = self._source.read(_SEND_CHUNK)
+        if not data:
             await self.aclose()
-            raise
+            raise StopAsyncIteration
+        return bytes(data)
 
     async def aclose(self) -> None:
-        try:
-            await self._source.aclose()  # type: ignore[attr-defined]
-        finally:
-            await self._release()
+        if not self.closed:
+            self.closed = True
+            try:
+                self._source.close()
+            finally:
+                self._ticket.release()
 
 
 class _Streams:

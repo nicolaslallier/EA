@@ -780,7 +780,7 @@ class TestTheSnapshotOfAnExport:
         monkeypatch.setattr(store, "snapshot", snapshot)
         return events
 
-    async def test_it_is_open_before_the_first_byte_and_given_back_if_none_is_ever_read(
+    async def test_it_is_one_reading_over_before_the_first_byte_and_never_held_by_a_reader(
         self,
         exchange_service: ExchangeService,
         exchange_store: object,
@@ -789,7 +789,9 @@ class TestTheSnapshotOfAnExport:
         events = self.watching(exchange_store, monkeypatch)
 
         export = await exchange_service.export(ExportRequest())
-        assert events == ["open"]  # the count of the header and the file share this reading
+        # The count of the header and the file share one reading, and it is already over: the
+        # connection went back before a byte was sent (test_exchange_download).
+        assert events == ["open", "closed"]
         await export.chunks.aclose()  # type: ignore[attr-defined]
 
         assert events == ["open", "closed"]

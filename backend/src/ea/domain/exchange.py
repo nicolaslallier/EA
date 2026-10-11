@@ -31,6 +31,14 @@ MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
 #: write of the deployment waiting for minutes. The folders that already exist cost nothing.
 MAX_NEW_FOLDERS: Final = 200
 EXPORT_PAGE_SIZE: Final = 1_000
+#: Bytes an export may produce (the XML; for a CSV, the text of its three files). Rendered to
+#: a temporary file before a byte is sent: past this it is refused, and a narrower scope is asked.
+MAX_EXPORT_BYTES: Final = 256 * 1024 * 1024
+#: Exports prepared or being sent at once, in a process: each holds a file and, while it renders,
+#: a connection. A reader is held to them as an editor is.
+MAX_EXPORTS_IN_FLIGHT: Final = 4
+#: How long a client has to take a whole download once the file is ready.
+EXPORT_SEND_TIMEOUT_SECONDS: Final = 300.0
 EXPORT_TIMEOUT_SECONDS: Final = 300.0
 #: The deployment's language; Exchange wants an `xml:lang` on every text.
 EXPORT_LANGUAGE: Final = "fr"

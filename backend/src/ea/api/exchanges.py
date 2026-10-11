@@ -7,12 +7,15 @@ caller sent.
 
 from __future__ import annotations
 
-from typing import Annotated
+import asyncio
+import logging
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
+from starlette.types import Send
 
 from ea.api.dependencies import Exchanges
 from ea.api.files import attachment
@@ -28,11 +31,35 @@ from ea.domain.exchange import (
     ScopeKind,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/exchanges", tags=["exchanges"])
 
 REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
 }
+
+
+class BoundedDownload(StreamingResponse):
+    """A download that a client must take within a delay, and that always gives its file back.
+
+    The delay covers the whole sending, so a client that stops reading is cut when it runs out
+    (the connection is closed, the response left incomplete), and one that reads slowly but
+    steadily is not. However it ends — complete, cut, cancelled by a disconnect — the body is
+    closed: the temporary file is deleted and the place in the queue of downloads is freed.
+    """
+
+    def __init__(self, *args: Any, timeout: float, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._timeout = timeout
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            async with asyncio.timeout(self._timeout):
+                await super().stream_response(send)
+        except TimeoutError:
+            logger.warning("a download was cut: the client did not take it in time")
+        finally:
+            await self.body_iterator.aclose()  # type: ignore[attr-defined]
 
 
 def _scope_of(name: str) -> ScopeKind:
@@ -74,6 +101,7 @@ def _scope_of(name: str) -> ScopeKind:
 )
 async def export_model(
     exchanges: Exchanges,
+    request: Request,
     export_format: Annotated[ExchangeFormat, Query(alias="format")] = ExchangeFormat.ARCHIMATE_XML,
     scope: Annotated[
         str,
@@ -99,7 +127,12 @@ async def export_model(
         ),
     ] = True,
 ) -> StreamingResponse:
-    """Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may)."""
+    """Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).
+
+    The file is prepared before the first byte is sent, and no database connection is held while
+    a client reads it. A client has `EA_EXCHANGE_SEND_TIMEOUT_S` to take it; at most
+    `EA_EXCHANGE_MAX_EXPORTS` are prepared or sent at once (429 and `Retry-After` beyond).
+    """
     export = await exchanges.export(
         ExportRequest(
             format=export_format,
@@ -113,10 +146,12 @@ async def export_model(
             safe_cells=safe_cells,
         )
     )
-    return StreamingResponse(
+    return BoundedDownload(
         export.chunks,
+        timeout=request.app.state.settings.exchange_send_timeout_s,
         media_type=export.media_type,
         headers={
+            "Content-Length": str(export.size),
             "Content-Disposition": attachment(export.filename),
             "X-Content-Type-Options": "nosniff",
             "X-Export-Skipped-Views": str(export.skipped_views),

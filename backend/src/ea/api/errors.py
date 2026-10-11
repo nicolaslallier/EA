@@ -44,6 +44,8 @@ from ea.domain.errors import (
     ElementNotFoundError,
     ExchangeBodyTimeoutError,
     ExchangeFileTooLargeError,
+    ExportInProgressError,
+    ExportTooLargeError,
     FileNotTextError,
     FileStorageUnavailableError,
     FileTooLargeError,
@@ -169,6 +171,8 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     ExchangeFileTooLargeError: (413, "file_too_large"),
     ExchangeBodyTimeoutError: (status.HTTP_408_REQUEST_TIMEOUT, "body_timeout"),
     ImportInProgressError: (status.HTTP_409_CONFLICT, "import_in_progress"),
+    ExportInProgressError: (status.HTTP_429_TOO_MANY_REQUESTS, "export_in_progress"),
+    ExportTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "export_too_large"),
     TooManyRefusedRowsError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_refused_rows"),
     UnknownScopeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_scope"),
     # Never sent: a refused row is a line of the import report. The row exists
@@ -192,6 +196,8 @@ def domain_error_response(error: Exception) -> JSONResponse:
     headers = (
         {"WWW-Authenticate": "Bearer"} if http_status == status.HTTP_401_UNAUTHORIZED else None
     )
+    if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
+        headers = {"Retry-After": str(RETRY_AFTER_SECONDS)}
     return JSONResponse(
         status_code=http_status, content={"error": code, "detail": str(error)}, headers=headers
     )
@@ -255,6 +261,8 @@ async def _handle_unexpected_error(_: Request, error: Exception) -> JSONResponse
     return _internal_error()
 
 
+#: What a client refused for lack of a place is told to wait before asking again.
+RETRY_AFTER_SECONDS: Final = 5
 _DRIVERS = ("sqlalchemy", "asyncpg", "psycopg")
 #: The only things a database failure may say to a log: where and which rule, never with what.
 _STRUCTURE = ("sqlstate", "constraint_name", "table_name", "column_name", "schema_name")

@@ -189,6 +189,20 @@ CORS et identifiant de requête), la place est rendue par le `finally`. Ces dél
 réception : l'analyse et l'import sont longs par nature. Le `client_body_timeout` de NGINX s'applique aussi
 devant et se cumule avec eux : c'est le plus court des deux qui coupe.
 
+## Aucune connexion du pool n'est tenue pendant qu'un client lit
+
+Un export est d'abord **rendu dans un fichier temporaire** (en mémoire jusqu'à 1 Mo, sur disque au-delà), pendant que
+son instantané est ouvert ; l'instantané est **rendu au pool**, puis le fichier est envoyé par morceaux de 64 Ko. Dix
+téléchargements lents n'épuisent donc plus un pool de 5+5 : un lecteur qui ne lit pas coûte un descripteur et une
+place, jamais une connexion (ni un retard du nettoyage de la base). Le fichier est supprimé et la place rendue
+quoi qu'il arrive : fin, client parti, annulation, exception, ou corps jamais lu. Trois bornes, toutes nommées :
+`MAX_EXPORT_BYTES` (256 Mo : au-delà, 422 `export_too_large` avant le premier octet, « demande un périmètre plus
+étroit »), `MAX_EXPORTS_IN_FLIGHT` (4 par processus, `EA_EXCHANGE_MAX_EXPORTS` ; la cinquième reçoit 429
+`export_in_progress` avec `Retry-After`, sans avoir ouvert de connexion ; un lecteur y est tenu comme un éditeur), et
+`EXPORT_SEND_TIMEOUT_SECONDS` (300 s pour prendre tout le fichier, `EA_EXCHANGE_SEND_TIMEOUT_S` ; passé ce délai la
+réponse est coupée). La longueur du fichier est connue : l'en-tête `Content-Length` est envoyé. Le zip d'un export CSV
+est écrit dans un fil, jamais sur la boucle.
+
 ## Les journaux ne citent pas le fichier
 
 Un nom venu d'un fichier est cité par `logged()` dans tout service (`test_log_names_guard.py`), et une défaillance que

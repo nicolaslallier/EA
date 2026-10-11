@@ -10,7 +10,12 @@ from typing import Annotated
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from ea.domain.exchange import MAX_EXCHANGE_BYTES, MAX_NEW_FOLDERS
+from ea.domain.exchange import (
+    EXPORT_SEND_TIMEOUT_SECONDS,
+    MAX_EXCHANGE_BYTES,
+    MAX_EXPORTS_IN_FLIGHT,
+    MAX_NEW_FOLDERS,
+)
 from ea.domain.packages import MAX_PACKAGES
 
 
@@ -116,6 +121,10 @@ class Settings(BaseSettings):
     # Packages one import may create: each costs a reading of the tree under the locks of the
     # import and of the tree (docs/adr/0052). Those that already exist do not count.
     exchange_max_new_folders: int = Field(default=MAX_NEW_FOLDERS, ge=0, le=MAX_PACKAGES)
+    # Downloads in a process, and how long a client has to take one (docs/adr/0048): neither
+    # holds a database connection, only a file and a place.
+    exchange_max_exports: int = Field(default=MAX_EXPORTS_IN_FLIGHT, ge=1, le=64)
+    exchange_send_timeout_s: float = Field(default=EXPORT_SEND_TIMEOUT_SECONDS, ge=0.01, le=3600.0)
     exchange_read_timeout_s: float = Field(default=15.0, ge=0.01, le=60.0)
     exchange_read_total_s: float = Field(default=120.0, ge=0.05, le=600.0)
 

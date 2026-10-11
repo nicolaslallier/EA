@@ -12,23 +12,30 @@ workers it is workers x limit x the ceiling.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
-from ea.domain.errors import ImportInProgressError
+from ea.domain.errors import DomainError, ImportInProgressError
 
 
 class ImportAdmission:
     """The imports in flight in this process. Single-threaded: no await between check and take."""
 
-    def __init__(self, limit: int) -> None:
+    def __init__(
+        self,
+        limit: int,
+        refusal: Callable[[], DomainError] = lambda: ImportInProgressError(
+            "other imports are being processed: try again in a moment"
+        ),
+    ) -> None:
         self.limit = limit
         self.in_flight = 0
+        self._refusal = refusal
 
     def admit(self) -> Ticket:
         if self.in_flight >= self.limit:
-            msg = "other imports are being processed: try again in a moment"
-            raise ImportInProgressError(msg)
+            raise self._refusal()
         self.in_flight += 1
         return Ticket(self)
 

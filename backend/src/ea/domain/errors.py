@@ -279,6 +279,14 @@ class ExchangeBodyTimeoutError(DomainError):
     """The client stopped sending, or sent too slowly, the body of an import (a 408)."""
 
 
+class ExportInProgressError(DomainError):
+    """As many exports are being prepared or sent as the process allows: try again shortly."""
+
+
+class ExportTooLargeError(DomainError):
+    """The file an export would produce is past its ceiling: a narrower scope would fit."""
+
+
 class ImportInProgressError(DomainError):
     """Another import holds the advisory lock; only one runs at a time."""
 
