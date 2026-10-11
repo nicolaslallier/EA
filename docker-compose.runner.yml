@@ -1,0 +1,37 @@
+# Le runner GitHub Actions auto-hébergé qui déploie EA après un push sur main
+# (docs/adr/0044). Son propre projet compose, hors de la stack qu'il déploie :
+# un redéploiement recrée les conteneurs, et un runner recréé en plein job ne
+# rend jamais son résultat. Un runner de dépôt ne sert que ce dépôt.
+#
+# Lire le workflow .github/workflows/deploy.yml avant de toucher à qui peut
+# fusionner dans main. Le runner ne monte plus le socket Docker (docs/adr/0045) :
+# il appelle Portainer par son URL, et ne tient que la CA de l'Infra, en lecture.
+name: ea-runner
+
+services:
+  runner:
+    # Tag mobile exprès : GitHub retire les vieilles versions de runner, un
+    # digest épinglé finirait refusé. `make runner-pull` y remédie.
+    image: myoung34/github-runner:ubuntu-noble
+    restart: unless-stopped
+    environment:
+      RUNNER_SCOPE: repo
+      REPO_URL: https://github.com/nicolaslallier/EA
+      RUNNER_NAME: ${GH_RUNNER_NAME:-ea-host}
+      # deploy.yml cible ce label : renommé d'un côté seulement, le job reste
+      # en file sans erreur.
+      LABELS: ea
+      # Se désinscrit après chaque job ; `restart` en remonte un neuf. Aucun
+      # job n'hérite de ce qu'un autre a laissé.
+      EPHEMERAL: "true"
+      # Un PAT (droit d'administrer les runners du dépôt), dans .runner.env,
+      # jamais dans la stack.
+      ACCESS_TOKEN: ${GH_RUNNER_TOKEN:?GH_RUNNER_TOKEN dans .runner.env (make runner-env)}
+    volumes:
+      # La CA de l'Infra, pour que portainer-stack.sh vérifie le certificat de
+      # PORTAINER_URL. INFRA_CA_CERT (chemin sur l'hôte) dans .runner.env.
+      - ${INFRA_CA_CERT:?INFRA_CA_CERT dans .runner.env (chemin de infra-ca.crt)}:/etc/ea/infra-ca.crt:ro
+      - runner-work:/_work
+
+volumes:
+  runner-work:

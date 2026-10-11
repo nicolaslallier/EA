@@ -1,5 +1,5 @@
 """Review over HTTP: 403 for the wrong role, 409 for the wrong state or revision, and what the
-SPA is told (docs/adr/0046)."""
+SPA is told (docs/adr/0048)."""
 
 from __future__ import annotations
 

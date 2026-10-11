@@ -8,7 +8,7 @@ Une baseline recopie les colonnes de `elements`, `relationships` et des boîtes
 de diagramme sous un `baseline_id`. Aucune clé vers le modèle vivant — ni vers
 `elements`, ni vers `packages`, ni vers `diagrams` : la copie doit survivre à ce
 qu'elle a copié. Le paquet d'un élément est gardé par son id et son chemin
-lisible, sans clé. Les documents ne sont pas capturés (docs/adr/0045).
+lisible, sans clé. Les documents ne sont pas capturés (docs/adr/0047).
 """
 
 from __future__ import annotations

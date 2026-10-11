@@ -4,8 +4,8 @@ Deux choses grossissent sans que rien ne les borne, et il n'existe
 **aucune purge automatique** ni pour l'une ni pour l'autre. Ce document est la procédure
 d'un opérateur, **hors application** : l'API et les services ne peuvent ni
 modifier ni supprimer une ligne du journal (les triggers lèvent), et c'est
-voulu. Voir `docs/adr/0044` (journal), `docs/adr/0045` (baselines) et
-`docs/adr/0046` (approbation).
+voulu. Voir `docs/adr/0046` (journal), `docs/adr/0047` (baselines) et
+`docs/adr/0048` (approbation).
 
 ## Ordres de grandeur
 

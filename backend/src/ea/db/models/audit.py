@@ -1,4 +1,4 @@
-"""The audit trail: one append-only table — see docs/adr/0044.
+"""The audit trail: one append-only table — see docs/adr/0046.
 
 `entity_id` is deliberately not a foreign key: an event has to outlive the
 element it describes, which is the whole point of a trail. Immutability is a

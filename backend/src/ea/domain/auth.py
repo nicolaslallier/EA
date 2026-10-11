@@ -16,7 +16,7 @@ EDITOR_ROLE: Final = "ea-editor"
 #: The realm role that approves, rejects, reopens and locks an element. It does
 #: not imply `EDITOR_ROLE`: roles accumulate, so an approver who is not also an
 #: editor can move an element through review but cannot change one
-#: (docs/adr/0046).
+#: (docs/adr/0048).
 APPROVER_ROLE: Final = "ea-approver"
 
 

@@ -485,7 +485,7 @@ def lock_order(ids: Iterable[UUID]) -> list[UUID]:
 
     Two writers that lock overlapping sets of elements — a link between two of them,
     a batch of filings, the neighbours of a deleted element — queue behind one
-    another instead of each holding what the other wants (docs/adr/0046).
+    another instead of each holding what the other wants (docs/adr/0048).
     """
     return sorted(set(ids))
 

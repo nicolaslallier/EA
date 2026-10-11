@@ -5,7 +5,7 @@ statut: Proposition
 affects: backend/src/ea/domain/approval.py, backend/src/ea/domain/auth.py, backend/src/ea/services/architecture.py, backend/src/ea/api/architecture.py, backend/src/ea/mcp/server.py, backend/src/ea/repositories/architecture_store.py, backend/src/ea/repositories/conflicts.py, backend/migrations/versions/0013_element_approval.py, frontend/src/features/elements
 ---
 
-# 46. Approbation et verrouillage des éléments, rôle ea-approver
+# 48. Approbation et verrouillage des éléments, rôle ea-approver
 
 Date : 2026-10-11
 Statut : Proposition
@@ -16,8 +16,8 @@ Le catalogue sert de référence : certains éléments doivent être relus puis
 figés. Le rôle `ea-editor` écrit (`docs/adr/0032`) et n'a aucun moyen de dire
 « cet élément a été revu ». Les agents MCP, le pipeline `alimenter-catalogue`
 et le SPA écrivent par les mêmes services : la règle est dans `services/`, pas
-dans un écran. Le journal d'audit (`docs/adr/0044`) et les baselines
-(`docs/adr/0045`) disent qui a changé quoi et permettent de revenir en arrière ;
+dans un écran. Le journal d'audit (`docs/adr/0046`) et les baselines
+(`docs/adr/0047`) disent qui a changé quoi et permettent de revenir en arrière ;
 ils ne disent pas qu'une version précise a été relue par une autre personne.
 
 ## Décision
@@ -142,5 +142,5 @@ Limites connues, dites sans détour :
 
 ## Références
 
-- ADR liés : [0032](0032-authentification-par-keycloak.md), [0044](0044-journal-d-audit-append-only.md), [0045](0045-baselines-en-copie-normalisee.md), [0042](0042-les-paquets-classement-en-liste-d-adjacence.md)
+- ADR liés : [0032](0032-authentification-par-keycloak.md), [0046](0046-journal-d-audit-append-only.md), [0047](0047-baselines-en-copie-normalisee.md), [0042](0042-les-paquets-classement-en-liste-d-adjacence.md)
 - Code : `backend/src/ea/domain/approval.py`, `backend/src/ea/services/architecture.py`, `backend/migrations/versions/0013_element_approval.py`, `frontend/src/features/elements/ApprovalBanner.vue`

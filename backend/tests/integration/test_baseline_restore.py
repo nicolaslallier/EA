@@ -1,4 +1,4 @@
-"""Restoring a baseline against a real PostgreSQL: all of it, or none of it (docs/adr/0045)."""
+"""Restoring a baseline against a real PostgreSQL: all of it, or none of it (docs/adr/0047)."""
 
 from __future__ import annotations
 
@@ -377,7 +377,7 @@ async def test_the_journal_of_a_restoration_lets_one_rebuild_everything_that_dis
     assert deleted.correlation == f"restore:{empty.id}"
 
 
-# --- Review and locking (docs/adr/0046) ------------------------------------
+# --- Review and locking (docs/adr/0048) ------------------------------------
 
 
 async def freeze(engine: AsyncEngine, element_id: UUID, *, locked: bool = False) -> None:

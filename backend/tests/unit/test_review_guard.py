@@ -1,4 +1,4 @@
-"""Every way into an element asks the same rule, in the transaction that writes (docs/adr/0046).
+"""Every way into an element asks the same rule, in the transaction that writes (docs/adr/0048).
 
 Like `test_audit_coverage.py`, this reads the source. The rule is ONE function,
 `guard_element_write`; a route that stops calling it — or a new route that never

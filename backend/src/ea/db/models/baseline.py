@@ -1,11 +1,11 @@
-"""Baselines: a normalised copy of the graph — see docs/adr/0045.
+"""Baselines: a normalised copy of the graph — see docs/adr/0047.
 
 The copy repeats the columns of `elements` and `relationships` under a
 `baseline_id`, so a diff is a join on typed columns and a baseline stays
 readable if the audit trail is purged. Nothing here references the live model:
 the copy must outlive what it copied — the elements, and the packages and
 diagrams it remembers by id (`package_id`, `diagram_id` are plain columns).
-Documents are not copied (docs/adr/0045).
+Documents are not copied (docs/adr/0047).
 """
 
 from __future__ import annotations

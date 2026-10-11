@@ -1,4 +1,4 @@
-"""An event's moment is taken inside the write it describes (docs/adr/0044).
+"""An event's moment is taken inside the write it describes (docs/adr/0046).
 
 Taken before the transaction opens, a slow commit lets a *later* moment become
 visible first, and a reader paging by `(at, id)` has already gone past the

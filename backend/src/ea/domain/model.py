@@ -82,16 +82,16 @@ class Element:
     #: The package that files this element; `None` is "at the root". Not one of
     #: the element's facts: `update_element` keeps it, only a move changes it.
     package_id: UUID | None = None
-    #: Review state (docs/adr/0046). Not a fact about the thing modelled, and not
+    #: Review state (docs/adr/0048). Not a fact about the thing modelled, and not
     #: in `properties`: a `PATCH` that replaces the map cannot erase it.
     approval_state: ApprovalState = ApprovalState.DRAFT
     locked: bool = False
     approved_by_sub: str | None = None
     approved_at: datetime | None = None
-    #: Counts the changes to the element's content (docs/adr/0046). An approval is
+    #: Counts the changes to the element's content (docs/adr/0048). An approval is
     #: of one revision: approving a revision someone has since changed is refused.
     revision: int = 1
-    #: The subject that last changed the element (docs/adr/0046): its creation, its
+    #: The subject that last changed the element (docs/adr/0048): its creation, its
     #: content, a link, a document, its filing, a restoration. Set by the
     #: repository, under the row's lock, from the actor of the event it writes —
     #: never by a client. Unknown (`None`) is not "nobody": the separation of

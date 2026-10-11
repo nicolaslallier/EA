@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Les baselines (docs/adr/0045) : des copies figées du modèle, comparables.
+// Les baselines (docs/adr/0047) : des copies figées du modèle, comparables.
 //
 // La paire comparée est dans l'URL (`?a=` la baseline, `?b=` l'autre ; `b` absent
 // = le modèle courant) : une question qu'on partage et qu'on remonte avec

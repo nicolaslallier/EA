@@ -1,4 +1,4 @@
-"""The approval columns: born `draft` on a populated database, and constrained (docs/adr/0046)."""
+"""The approval columns: born `draft` on a populated database, and constrained (docs/adr/0048)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-// The audit trail (docs/adr/0044): one page at a time, the page named by the URL.
+// The audit trail (docs/adr/0046): one page at a time, the page named by the URL.
 import { ref } from 'vue'
 
 import type { components } from '../../api/schema'

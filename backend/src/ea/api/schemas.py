@@ -147,13 +147,13 @@ Offset = Annotated[int, Field(ge=0)]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
 LinkName = Annotated[str, Field(max_length=200)]
-#: The audit filters, bounded once for both adapters (docs/adr/0044). A NUL is
+#: The audit filters, bounded once for both adapters (docs/adr/0046). A NUL is
 #: refused here because PostgreSQL cannot compare a `text` column to one: it
 #: would reach the driver and come back as a 500.
 Actor = Annotated[str, Field(max_length=200, pattern=r"^[^\x00]*$")]
 RequestIdFilter = Annotated[str, Field(max_length=128, pattern=r"^[^\x00]*$")]
 CursorToken = Annotated[str, Field(max_length=512)]
-#: The baselines (docs/adr/0045). The lengths are the domain's, imported, so the
+#: The baselines (docs/adr/0047). The lengths are the domain's, imported, so the
 #: schema and `Baseline.create` cannot drift into refusing different values.
 BaselineName = Annotated[str, Field(min_length=1, max_length=MAX_BASELINE_NAME_LENGTH)]
 BaselineDescription = Annotated[str, Field(max_length=MAX_BASELINE_DESCRIPTION_LENGTH)]
@@ -164,7 +164,7 @@ Against = Annotated[
 #: What a dry run of a restoration hands out (`plan_digest`, a SHA-256) and what
 #: applying must hand back.
 PlanDigest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
-#: The revision of an element an approver read (docs/adr/0046): a positive counter.
+#: The revision of an element an approver read (docs/adr/0048): a positive counter.
 ExpectedRevision = Annotated[
     int,
     Field(
@@ -1175,7 +1175,7 @@ class SavedQueryRead(SavedQuerySummaryRead):
         )
 
 
-# --- The audit trail (docs/adr/0044) ----------------------------------------
+# --- The audit trail (docs/adr/0046) ----------------------------------------
 
 
 class FieldChangeRead(BaseModel):
@@ -1239,7 +1239,7 @@ class AuditPageRead(BaseModel):
         )
 
 
-# --- Baselines (docs/adr/0045) ------------------------------------------------
+# --- Baselines (docs/adr/0047) ------------------------------------------------
 
 #: How many entities of each kind a restoration plan names. The counts are exact
 #: and unbounded; the names are the first few, because a baseline can hold twenty

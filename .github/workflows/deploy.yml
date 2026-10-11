@@ -1,0 +1,60 @@
+# Redéploie la stack « ea » dans Portainer après un push sur main
+# (docs/adr/0044). Même montage que les dépôts Infra et DarkAngel.
+#
+# runs-on est le runner auto-hébergé de docker-compose.runner.yml : le Portainer
+# de l'Infra est sur le LAN, un runner hébergé par GitHub ne peut pas le joindre.
+# Le runner l'appelle par son URL (docs/adr/0045), sans socket Docker.
+#
+# N'ajoutez JAMAIS de déclencheur pull_request (ni pull_request_target) à un
+# workflow qui tourne sur ce label. Le repo est public, le runner
+# tient les secrets de déploiement et une PR de fork apporte son propre fichier
+# de workflow : c'est de l'exécution de code arbitraire avec ces secrets.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    # Ce qui ne peut changer aucun conteneur ne mérite pas un redéploiement.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+# Un déploiement à la fois, et jamais annulé en vol : Portainer resterait à
+# mi-redéploiement.
+concurrency:
+  group: deploy-ea
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, ea]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Redéployer par Portainer
+        env:
+          # Publics : l'API de Portainer vue du Mac, et la CA de l'Infra montée
+          # par docker-compose.runner.yml, contre laquelle son certificat est vérifié.
+          PORTAINER_URL: ${{ vars.PORTAINER_URL || 'https://portainer.infra.famillelallier.net' }}
+          PORTAINER_CA_CERT: /etc/ea/infra-ca.crt
+          # Secrets du dépôt : la clé (Portainer → My account → Access tokens)
+          # et le contenu entier de deploy/ea.env. L'API réécrit toute la liste
+          # des variables à chaque déploiement : sans le second, chaque run les
+          # viderait.
+          PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+          EA_STACK_ENV_CONTENT: ${{ secrets.EA_STACK_ENV }}
+        run: |
+          set -euo pipefail
+          [ -n "$PORTAINER_API_KEY" ] || { echo "::error::secret PORTAINER_API_KEY absent"; exit 1; }
+          [ -n "$EA_STACK_ENV_CONTENT" ] || { echo "::error::secret EA_STACK_ENV absent (contenu de deploy/ea.env)"; exit 1; }
+          umask 077
+          printf '%s\n' "$EA_STACK_ENV_CONTENT" > "$RUNNER_TEMP/ea.env"
+          trap 'rm -f "$RUNNER_TEMP/ea.env"' EXIT
+          EA_STACK_ENV="$RUNNER_TEMP/ea.env" scripts/portainer-stack.sh up

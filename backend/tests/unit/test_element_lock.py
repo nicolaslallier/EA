@@ -233,7 +233,7 @@ class TestLinking:
 
 
 class TestTheOtherDoorsIntoAnElement:
-    """Every way to write to an element is protected, or says why it is not (docs/adr/0046)."""
+    """Every way to write to an element is protected, or says why it is not (docs/adr/0048)."""
 
     async def test_documents_are_frozen_with_the_element_for_everyone(
         self,

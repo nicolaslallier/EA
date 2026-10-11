@@ -106,17 +106,17 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     PackageTooDeepError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "package_too_deep"),
     TooManyPackagesError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_packages"),
     UnknownPackageError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_package"),
-    # --- The audit trail (docs/adr/0044) ---
+    # --- The audit trail (docs/adr/0046) ---
     # A cursor travels in a URL and anyone can edit one: a refusal, never a 500.
     InvalidCursorError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_cursor"),
-    # --- Baselines (docs/adr/0045) ---
+    # --- Baselines (docs/adr/0047) ---
     # `restore_conflict` is the one a caller retries: the model moved under the
     # plan, or a name or an address was taken meanwhile, and nothing was written.
     # `restore_blocked` is the one it must not: an element is locked.
     BaselineNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
     BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
-    # --- Review and locking (docs/adr/0046) ---
+    # --- Review and locking (docs/adr/0048) ---
     ApprovalStaleError: (status.HTTP_409_CONFLICT, "approval_stale"),
     WriteConflictError: (status.HTTP_409_CONFLICT, "write_conflict"),
     ElementLockedError: (status.HTTP_409_CONFLICT, "element_locked"),

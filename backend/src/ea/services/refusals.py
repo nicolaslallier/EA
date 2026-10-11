@@ -1,7 +1,7 @@
 """The log line of a refusal that leaves no event in the journal.
 
 A write refused by review or locking changes nothing, so the audit trail is
-silent about it (docs/adr/0044): the structured log is the only trace. The ids
+silent about it (docs/adr/0046): the structured log is the only trace. The ids
 are bounded here, at the source — a refusal over a thousand elements names the
 first few and their count.
 """

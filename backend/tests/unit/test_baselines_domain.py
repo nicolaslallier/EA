@@ -1,4 +1,4 @@
-"""A snapshot of the model, and what separates two of them (docs/adr/0045)."""
+"""A snapshot of the model, and what separates two of them (docs/adr/0047)."""
 
 from __future__ import annotations
 

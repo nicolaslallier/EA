@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditOf
 
 
-def _summaries() -> Select[tuple[DiagramRecord, int]]:
+def _summaries() -> Select[DiagramRecord, int]:
     """Diagrams with their node count, computed by the server rather than stored."""
     count = (
         select(func.count())

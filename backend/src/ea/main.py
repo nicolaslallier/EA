@@ -546,7 +546,7 @@ def create_app(
     `packages` for the classification tree and `queries` for the saved queries.
     `files` does the same for the bucket (docs/adr/0036), and `file_metadata`
     for the catalogue kept beside it (docs/adr/0039), and `audit` for the audit
-    trail (docs/adr/0044), and `baselines` for the baselines (docs/adr/0045).
+    trail (docs/adr/0046), and `baselines` for the baselines (docs/adr/0047).
     `verifier` does the same for authentication: given one — `StaticVerifier`
     in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
     without reaching Keycloak; given none, the lifespan builds and probes the

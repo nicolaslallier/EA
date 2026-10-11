@@ -1,31 +1,31 @@
 ---
-titre: Les éléments protégés d'une restauration — remplace le point de 0045 sur protected_ids
+titre: Les éléments protégés d'une restauration — remplace le point de 0047 sur protected_ids
 date: 2026-10-11
 statut: Proposition
 affects: backend/src/ea/repositories/baseline_store.py, backend/src/ea/domain/baselines.py, backend/src/ea/domain/approval.py, backend/src/ea/services/baselines.py
 ---
 
-# 47. Les éléments protégés d'une restauration — remplace le point de 0045 sur protected_ids
+# 49. Les éléments protégés d'une restauration — remplace le point de 0047 sur protected_ids
 
 Date : 2026-10-11
 Statut : Proposition
 
-Remplace un seul point de `docs/adr/0045` (« la porte `protected_ids` est vide
-jusqu'à la tâche d'approbation »), que l'ADR 0046 a rendu périmé. Le reste de
-0045 tient.
+Remplace un seul point de `docs/adr/0047` (« la porte `protected_ids` est vide
+jusqu'à la tâche d'approbation »), que l'ADR 0048 a rendu périmé. Le reste de
+0047 tient.
 
 ## Contexte
 
-L'ADR 0045 a été écrit avant l'approbation et disait que `protected_ids`, la liste
+L'ADR 0047 a été écrit avant l'approbation et disait que `protected_ids`, la liste
 des éléments qu'une restauration ne doit pas toucher, était vide, donc que
-`restore_blocked` ne se produisait pas en pratique. L'ADR 0046 l'a branchée. On
-ne réécrit pas l'histoire d'un ADR : le texte de 0045 reste tel quel, son statut
+`restore_blocked` ne se produisait pas en pratique. L'ADR 0048 l'a branchée. On
+ne réécrit pas l'histoire d'un ADR : le texte de 0047 reste tel quel, son statut
 passe à « partiellement remplacée », et c'est ici qu'est dit ce qui vaut
 aujourd'hui.
 
 ## Décision
 
-Depuis l'ADR 0046, `protected_ids` contient les éléments approuvés ou verrouillés
+Depuis l'ADR 0048, `protected_ids` contient les éléments approuvés ou verrouillés
 (`is_frozen`), lus dans la transaction de restauration ; un plan qui les touche
 est bloqué (`restore_blocked`, 409) jusqu'à ce qu'un approbateur les rouvre. Les
 tables `baseline_*` ne copient pas l'état d'approbation : un élément recréé
@@ -51,8 +51,8 @@ Ce que le code fait, précisément :
 
 | Option | Pour | Contre | Verdict |
 |---|---|---|---|
-| Éditer 0045 | Un seul texte | Réécrit l'histoire d'une décision | Écartée |
-| Remettre les approuvés en revue pendant la restauration | Plus pratique | Défait des approbations en masse sans que personne ne les ait rouvertes | Écartée (0046) |
+| Éditer 0047 | Un seul texte | Réécrit l'histoire d'une décision | Écartée |
+| Remettre les approuvés en revue pendant la restauration | Plus pratique | Défait des approbations en masse sans que personne ne les ait rouvertes | Écartée (0048) |
 
 ## Conséquences
 
@@ -64,5 +64,5 @@ Ce que le code fait, précisément :
 
 ## Références
 
-- ADR liés : [0045](0045-baselines-en-copie-normalisee.md), [0046](0046-approbation-et-verrouillage-des-elements.md)
+- ADR liés : [0047](0047-baselines-en-copie-normalisee.md), [0048](0048-approbation-et-verrouillage-des-elements.md)
 - Code : `backend/src/ea/repositories/baseline_store.py`, `backend/src/ea/domain/baselines.py`

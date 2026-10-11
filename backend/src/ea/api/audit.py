@@ -2,7 +2,7 @@
 
 Reads only. A trail that could be written to over HTTP would not be one: events
 are made by the services, in the transaction of the write they describe.
-Any authenticated caller reads (docs/adr/0044).
+Any authenticated caller reads (docs/adr/0046).
 """
 
 from __future__ import annotations

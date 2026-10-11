@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `BaselineRepository` — see docs/adr/0045.
+"""The PostgreSQL implementation of `BaselineRepository` — see docs/adr/0047.
 
 A capture is three `INSERT … SELECT` in one REPEATABLE READ transaction: the copy
 never passes through Python, every statement sees the same instant of the model
@@ -117,7 +117,7 @@ _RELATIONSHIP_COLUMNS = (
 _BOX_COLUMNS = ("diagram_id", "element_id", "x", "y", "width", "height")
 
 #: Which elements are protected from a restoration, read in the transaction that
-#: applies it (docs/adr/0046).
+#: applies it (docs/adr/0048).
 ProtectedIds = Callable[["AsyncSession"], Awaitable[frozenset["UUID"]]]
 
 
@@ -622,7 +622,7 @@ async def _write(
     """Links out, elements out (their documents, boxes and links follow by foreign key),
     then fields, elements and links back, then boxes."""
     # A link that appears, disappears or goes with a deleted element is a change to the
-    # elements at its other end (docs/adr/0046): each is a new revision, by `author`. The
+    # elements at its other end (docs/adr/0048): each is a new revision, by `author`. The
     # plan has already refused any of them that is approved or locked (`touched`).
     gone = {e.id for e in plan.elements_to_delete}
     rewritten = {u.current.id for u in plan.elements_to_update}

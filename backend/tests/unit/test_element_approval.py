@@ -1,4 +1,4 @@
-"""Moving an element through review: roles, states, four eyes, one event each (docs/adr/0046)."""
+"""Moving an element through review: roles, states, four eyes, one event each (docs/adr/0048)."""
 
 from __future__ import annotations
 

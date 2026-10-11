@@ -1,4 +1,4 @@
-"""Use cases over baselines — docs/adr/0045.
+"""Use cases over baselines — docs/adr/0047.
 
 The rules this layer owns: a baseline is read before it is used (a readable
 404), restoring is a two-step gesture (a dry run to read, then `confirm`), and a
