@@ -30,9 +30,9 @@ def _only_safe_links(url: str) -> bool:
 
 
 _RENDERER: Final = MarkdownIt("commonmark", {"html": False, "linkify": False}).disable("image")
-_RENDERER.validateLink = _only_safe_links
+_RENDERER.validateLink = _only_safe_links  # type: ignore[method-assign]
 
 
 def render_markdown(source: str) -> str:
     """The HTML fragment for `source`; text from the author never becomes markup."""
-    return _RENDERER.render(source)
+    return str(_RENDERER.render(source))
