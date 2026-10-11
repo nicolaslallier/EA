@@ -52,6 +52,7 @@ from ea.domain.errors import (
     FileTooLargeError,
     IllegalRelationshipError,
     ImportInProgressError,
+    InvalidAnalysisError,
     InvalidCursorError,
     InvalidExchangeFileError,
     InvalidFileKeyError,
@@ -184,6 +185,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # --- Model analysis (docs/adr/0056) ---
     MatrixAxisTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "matrix_axis_too_large"),
     ScopeTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "scope_too_large"),
+    InvalidAnalysisError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_analysis"),
     AnalysisBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "analysis_busy"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),

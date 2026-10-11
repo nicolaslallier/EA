@@ -4,6 +4,51 @@
  */
 
 export interface paths {
+    "/analytics/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Aggregate
+         * @description Elements grouped by one dimension, each bucket with a count, a metric and a level.
+         *
+         *     `sum`, `avg`, `min` and `max` read `property` as a number (`.` or `,`
+         *     decimal, spaces as thousands separators); a value that does not read is
+         *     counted in `unreadable`, never silently ignored. `level` (0 to 4) is the
+         *     server's colour decision.
+         */
+        get: operations["read_aggregate_analytics_aggregate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Heatmap
+         * @description The same, grouped by two dimensions: a grid of cells with a level each.
+         */
+        get: operations["read_heatmap_analytics_heatmap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -1134,6 +1179,28 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /** AggregateRead */
+        AggregateRead: {
+            /** Buckets */
+            buckets: components["schemas"]["BucketRead"][];
+            /** By */
+            by: string;
+            metric: components["schemas"]["Metric"];
+            /** Property Key */
+            property_key: string | null;
+            /** Total */
+            total: number;
+            /**
+             * Truncated
+             * @description True when more than 200 buckets were cut.
+             */
+            truncated: boolean;
+            /**
+             * Unreadable
+             * @description Elements whose property is present but not a number.
+             */
+            unreadable: number;
+        };
         /**
          * ApprovalRequest
          * @description One step of review. `approve` must say which revision the approver read.
@@ -1400,6 +1467,26 @@ export interface components {
              * @default
              */
             title?: string;
+        };
+        /**
+         * BucketRead
+         * @description One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension.
+         */
+        BucketRead: {
+            /** Count */
+            count: number;
+            /** Key */
+            key: string;
+            /**
+             * Level
+             * @description 0 (lowest) to 4, decided by the server; null if none.
+             */
+            level: number | null;
+            /**
+             * Value
+             * @description The metric over the bucket; null if nothing was readable.
+             */
+            value: number | null;
         };
         /**
          * ConflictPolicy
@@ -2014,6 +2101,44 @@ export interface components {
              */
             status: "ok" | "degraded";
         };
+        /** HeatCellRead */
+        HeatCellRead: {
+            /** Col */
+            col: string;
+            /** Count */
+            count: number;
+            /** Level */
+            level: number | null;
+            /** Row */
+            row: string;
+            /** Value */
+            value: number | null;
+        };
+        /** HeatmapRead */
+        HeatmapRead: {
+            /** Cells */
+            cells: components["schemas"]["HeatCellRead"][];
+            /** Cols */
+            cols: string[];
+            /** Cols By */
+            cols_by: string;
+            metric: components["schemas"]["Metric"];
+            /** Property Key */
+            property_key: string | null;
+            /**
+             * Rows
+             * @description Row keys, in the order the dimension reads.
+             */
+            rows: string[];
+            /** Rows By */
+            rows_by: string;
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Unreadable */
+            unreadable: number;
+        };
         /** ImportCountsRead */
         ImportCountsRead: {
             elements: components["schemas"]["CountsRead"];
@@ -2171,6 +2296,11 @@ export interface components {
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
         };
+        /**
+         * Metric
+         * @enum {string}
+         */
+        Metric: "count" | "sum" | "avg" | "min" | "max";
         /** ModifiedRead */
         ModifiedRead: {
             /** Changes */
@@ -2748,6 +2878,109 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    read_aggregate_analytics_aggregate_get: {
+        parameters: {
+            query: {
+                by: string;
+                metric?: components["schemas"]["Metric"];
+                property?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_heatmap_analytics_heatmap_get: {
+        parameters: {
+            query: {
+                rows: string;
+                cols: string;
+                metric?: components["schemas"]["Metric"];
+                property?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeatmapRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_audit_events_audit_get: {
         parameters: {
             query?: {

@@ -237,3 +237,109 @@ class TestTheQualityReport:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as anonymous:
             assert (await anonymous.get("/quality")).status_code == 401
+
+
+async def an_element_with(
+    client: httpx.AsyncClient, element_type: str, name: str, **properties: str
+) -> dict[str, Any]:
+    response = await client.post(
+        "/elements", json={"element_type": element_type, "name": name, "properties": properties}
+    )
+    assert response.status_code == 201, response.text
+    return dict(response.json())
+
+
+@pytest.mark.asyncio
+class TestTheAggregates:
+    async def test_counting_by_layer_colours_each_bucket_with_a_level(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await an_element(client, "node", "srv-01")
+        await an_element(client, "node", "srv-02")
+        await an_element(client, "business_process", "Order")
+
+        body = (await client.get("/analytics/aggregate", params={"by": "layer"})).json()
+
+        assert {b["key"]: b["count"] for b in body["buckets"]} == {"business": 1, "technology": 2}
+        assert body["total"] == 3 and body["truncated"] is False
+        assert all(0 <= b["level"] <= 4 for b in body["buckets"])
+        assert (
+            next(b for b in body["buckets"] if b["key"] == "technology")["level"]
+            > next(b for b in body["buckets"] if b["key"] == "business")["level"]
+        )
+
+    async def test_a_dirty_cost_is_summed_around_and_reported(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await an_element_with(client, "node", "a", cost="1 200,50")
+        await an_element_with(client, "node", "b", cost="300")
+        await an_element_with(client, "node", "c", cost="1 200 €")
+
+        body = (
+            await client.get(
+                "/analytics/aggregate", params={"by": "layer", "metric": "sum", "property": "cost"}
+            )
+        ).json()
+
+        assert body["buckets"][0]["value"] == 1500.5
+        assert body["unreadable"] == 1
+        assert body["property_key"] == "cost"
+
+    async def test_a_heat_map_is_a_grid_of_cells_with_ordered_axes(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await an_element_with(client, "node", "a", lifecycle="retiré")
+        await an_element_with(client, "node", "b", lifecycle="planifié")
+
+        body = (
+            await client.get(
+                "/analytics/heatmap", params={"rows": "layer", "cols": "property:lifecycle"}
+            )
+        ).json()
+
+        assert body["rows"] == ["technology"]
+        assert body["cols"] == ["planifié", "retiré"]
+        assert {(c["row"], c["col"], c["count"]) for c in body["cells"]} == {
+            ("technology", "planifié", 1),
+            ("technology", "retiré", 1),
+        }
+
+    async def test_an_empty_model_is_an_empty_answer(self, client: httpx.AsyncClient) -> None:
+        body = (await client.get("/analytics/aggregate", params={"by": "layer"})).json()
+
+        assert body["buckets"] == [] and body["total"] == 0
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"by": "bogus"},
+            {"by": "property:"},
+            {"by": "layer", "metric": "median"},
+            {"by": "layer", "metric": "sum", "property": "cost'; --"},
+        ],
+    )
+    async def test_a_malformed_question_is_a_422(
+        self, client: httpx.AsyncClient, params: dict[str, str]
+    ) -> None:
+        assert (await client.get("/analytics/aggregate", params=params)).status_code == 422
+
+    async def test_a_sum_without_a_property_is_a_typed_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.get("/analytics/aggregate", params={"by": "layer", "metric": "sum"})
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "invalid_analysis"
+
+    async def test_no_token_is_a_401(
+        self, service: ArchitectureService, repository: InMemoryRepository, nobody_calling: None
+    ) -> None:
+        app = create_app(
+            Settings(debug=True, auth_enabled=True),
+            architecture_service=service,
+            analysis=repository,
+            verifier=StaticVerifier({}),
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as anonymous:
+            assert (
+                await anonymous.get("/analytics/aggregate", params={"by": "layer"})
+            ).status_code == 401

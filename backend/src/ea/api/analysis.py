@@ -15,14 +15,19 @@ from fastapi import APIRouter, Query, status
 
 from ea.api.dependencies import Analysis
 from ea.api.schemas import (
+    AggregateRead,
     Cursor,
+    DimensionParam,
     ErrorResponse,
     FindingsLimit,
+    HeatmapRead,
     MatrixCellDetailRead,
     MatrixQuery,
     MatrixRead,
+    PropertyKey,
     QualityReportRead,
 )
+from ea.domain.analytics import Dimension, Metric
 from ea.domain.exchange import Severity
 from ea.domain.quality import RuleCode
 
@@ -88,3 +93,45 @@ async def read_quality(
     return QualityReportRead.of(
         await service.check(severity=severity, code=code, limit=limit, cursor=cursor)
     )
+
+
+PropertyQuery = Annotated[PropertyKey | None, Query(alias="property")]
+INVALID: dict[int | str, dict[str, type[ErrorResponse]]] = {
+    status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse}
+}
+
+
+# --- Aggregates and heat maps ---------------------------------------------------
+
+
+@router.get("/analytics/aggregate", response_model=AggregateRead, responses=INVALID)
+async def read_aggregate(
+    service: Analysis,
+    by: Annotated[DimensionParam, Query()],
+    metric: Annotated[Metric, Query()] = Metric.COUNT,
+    property_key: PropertyQuery = None,
+) -> AggregateRead:
+    """Elements grouped by one dimension, each bucket with a count, a metric and a level.
+
+    `sum`, `avg`, `min` and `max` read `property` as a number (`.` or `,`
+    decimal, spaces as thousands separators); a value that does not read is
+    counted in `unreadable`, never silently ignored. `level` (0 to 4) is the
+    server's colour decision.
+    """
+    dimension = Dimension.parse(by)
+    return AggregateRead.of(await service.aggregate(dimension, metric, property_key))
+
+
+@router.get("/analytics/heatmap", response_model=HeatmapRead, responses=INVALID)
+async def read_heatmap(
+    service: Analysis,
+    rows: Annotated[DimensionParam, Query()],
+    cols: Annotated[DimensionParam, Query()],
+    metric: Annotated[Metric, Query()] = Metric.COUNT,
+    property_key: PropertyQuery = None,
+) -> HeatmapRead:
+    """The same, grouped by two dimensions: a grid of cells with a level each."""
+    result = await service.heatmap(
+        Dimension.parse(rows), Dimension.parse(cols), metric, property_key
+    )
+    return HeatmapRead.of(result)

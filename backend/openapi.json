@@ -130,6 +130,60 @@
         "title": "AddressRead",
         "type": "object"
       },
+      "AggregateRead": {
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/BucketRead"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "by": {
+            "title": "By",
+            "type": "string"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "property_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Key"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "True when more than 200 buckets were cut.",
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unreadable": {
+            "description": "Elements whose property is present but not a number.",
+            "title": "Unreadable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by",
+          "metric",
+          "property_key",
+          "total",
+          "unreadable",
+          "truncated",
+          "buckets"
+        ],
+        "title": "AggregateRead",
+        "type": "object"
+      },
       "ApprovalRequest": {
         "additionalProperties": false,
         "description": "One step of review. `approve` must say which revision the approver read.",
@@ -732,6 +786,51 @@
           "file"
         ],
         "title": "Body_upload_file_files_post",
+        "type": "object"
+      },
+      "BucketRead": {
+        "description": "One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "0 (lowest) to 4, decided by the server; null if none.",
+            "title": "Level"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The metric over the bucket; null if nothing was readable.",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "count",
+          "value",
+          "level"
+        ],
+        "title": "BucketRead",
         "type": "object"
       },
       "ConflictPolicy": {
@@ -2019,6 +2118,127 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HeatCellRead": {
+        "properties": {
+          "col": {
+            "title": "Col",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "row",
+          "col",
+          "count",
+          "value",
+          "level"
+        ],
+        "title": "HeatCellRead",
+        "type": "object"
+      },
+      "HeatmapRead": {
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/HeatCellRead"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "cols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cols",
+            "type": "array"
+          },
+          "cols_by": {
+            "title": "Cols By",
+            "type": "string"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "property_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Key"
+          },
+          "rows": {
+            "description": "Row keys, in the order the dimension reads.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_by": {
+            "title": "Rows By",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unreadable": {
+            "title": "Unreadable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_by",
+          "cols_by",
+          "rows",
+          "cols",
+          "metric",
+          "property_key",
+          "total",
+          "unreadable",
+          "truncated",
+          "cells"
+        ],
+        "title": "HeatmapRead",
+        "type": "object"
+      },
       "ImportCountsRead": {
         "properties": {
           "elements": {
@@ -2373,6 +2593,17 @@
         ],
         "title": "MetamodelRead",
         "type": "object"
+      },
+      "Metric": {
+        "enum": [
+          "count",
+          "sum",
+          "avg",
+          "min",
+          "max"
+        ],
+        "title": "Metric",
+        "type": "string"
       },
       "ModifiedRead": {
         "properties": {
@@ -3563,6 +3794,212 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/analytics/aggregate": {
+      "get": {
+        "description": "Elements grouped by one dimension, each bucket with a count, a metric and a level.\n\n`sum`, `avg`, `min` and `max` read `property` as a number (`.` or `,`\ndecimal, spaces as thousands separators); a value that does not read is\ncounted in `unreadable`, never silently ignored. `level` (0 to 4) is the\nserver's colour decision.",
+        "operationId": "read_aggregate_analytics_aggregate_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "by",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "default": "count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The name of a user-defined attribute: letters, digits, underscores.",
+                  "maxLength": 63,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Property"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Aggregate",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/analytics/heatmap": {
+      "get": {
+        "description": "The same, grouped by two dimensions: a grid of cells with a level each.",
+        "operationId": "read_heatmap_analytics_heatmap_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "rows",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "Rows",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cols",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "Cols",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "default": "count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The name of a user-defined attribute: letters, digits, underscores.",
+                  "maxLength": 63,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Property"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeatmapRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Heatmap",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
     "/audit": {
       "get": {
         "description": "Who changed what, and when \u2014 newest first. `since` is inclusive, `until` exclusive.",

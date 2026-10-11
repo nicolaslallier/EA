@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ea.domain.analytics import DIMENSION_PATTERN, MAX_BUCKETS, Aggregate, Metric
 from ea.domain.approval import ApprovalState, Transition, allowed_transitions
 from ea.domain.archimate import (
     AccessType,
@@ -1657,4 +1658,92 @@ class QualityReportRead(BaseModel):
             ],
             findings=[FindingRead.of(finding) for finding in page.findings],
             next_cursor=page.next_cursor,
+        )
+
+
+# --- Aggregates and heat maps (docs/adr/0058) -------------------------
+
+DimensionParam = Annotated[
+    str,
+    Field(
+        pattern=DIMENSION_PATTERN,
+        description="`element_type`, `layer`, or `property:<key>` for an attribute of the element.",
+    ),
+]
+
+
+class BucketRead(BaseModel):
+    """One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension."""
+
+    key: str
+    count: int
+    value: float | None = Field(
+        description="The metric over the bucket; null if nothing was readable."
+    )
+    level: int | None = Field(description="0 (lowest) to 4, decided by the server; null if none.")
+
+
+class AggregateRead(BaseModel):
+    by: str
+    metric: Metric
+    property_key: str | None
+    total: int
+    unreadable: int = Field(description="Elements whose property is present but not a number.")
+    truncated: bool = Field(description=f"True when more than {MAX_BUCKETS} buckets were cut.")
+    buckets: list[BucketRead]
+
+    @classmethod
+    def of(cls, aggregate: Aggregate) -> AggregateRead:
+        return cls(
+            by=str(aggregate.dimensions[0]),
+            metric=aggregate.metric,
+            property_key=aggregate.property_key,
+            total=aggregate.total,
+            unreadable=aggregate.unreadable,
+            truncated=aggregate.truncated,
+            buckets=[
+                BucketRead(key=b.keys[0], count=b.count, value=b.value, level=b.level)
+                for b in aggregate.buckets
+            ],
+        )
+
+
+class HeatCellRead(BaseModel):
+    row: str
+    col: str
+    count: int
+    value: float | None
+    level: int | None
+
+
+class HeatmapRead(BaseModel):
+    rows_by: str
+    cols_by: str
+    rows: list[str] = Field(description="Row keys, in the order the dimension reads.")
+    cols: list[str]
+    metric: Metric
+    property_key: str | None
+    total: int
+    unreadable: int
+    truncated: bool
+    cells: list[HeatCellRead]
+
+    @classmethod
+    def of(cls, aggregate: Aggregate) -> HeatmapRead:
+        return cls(
+            rows_by=str(aggregate.dimensions[0]),
+            cols_by=str(aggregate.dimensions[1]),
+            rows=list(aggregate.axis_keys(0)),
+            cols=list(aggregate.axis_keys(1)),
+            metric=aggregate.metric,
+            property_key=aggregate.property_key,
+            total=aggregate.total,
+            unreadable=aggregate.unreadable,
+            truncated=aggregate.truncated,
+            cells=[
+                HeatCellRead(
+                    row=b.keys[0], col=b.keys[1], count=b.count, value=b.value, level=b.level
+                )
+                for b in aggregate.buckets
+            ],
         )
