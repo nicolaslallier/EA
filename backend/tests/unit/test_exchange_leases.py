@@ -144,19 +144,47 @@ async def test_a_lease_whose_thread_has_not_ended_stays_until_it_has() -> None:
     assert adm.in_flight == 0
 
 
-async def test_a_lease_held_by_a_thread_that_never_ends_still_expires() -> None:
+async def test_an_expired_lease_whose_analysis_still_runs_stays_counted_until_it_ends(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
     clock = Clock()
-    adm = admission(clock, limit=1, lease=100.0)
+    adm = admission(clock, limit=1, per_caller=1, lease=100.0)
     work: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     async with adm.lease("a") as lease:
         lease.hold(work)
+
+    clock.now += 101  # past the deadline, the thread still running
+    with caplog.at_level(logging.WARNING, logger="ea"):
+        for _ in range(3):
+            with pytest.raises(ImportInProgressError):  # the global ceiling still holds...
+                async with adm.lease("b"):
+                    pytest.fail("the analysis is still running")
+    assert adm.callers == {"a": 1} and adm.expired_leases == 0  # ...and so does a's own
+    assert caplog.text.count("overdue") == 1  # said once, not at every attempt
+
+    work.set_result(None)
+    await asyncio.sleep(0)
+    assert adm.in_flight == 0
+    async with adm.lease("b"):
+        pass
+
+
+async def test_an_expired_lease_with_only_finished_work_is_taken_back() -> None:
+    clock = Clock()
+    adm = admission(clock, limit=1, lease=100.0)
+    done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    done.set_result(None)
+    leaked = adm.lease("a")
+    entered = await leaked.__aenter__()
+    entered.hold(done)  # (its thread ended, its block never did)
 
     clock.now += 101
     async with adm.lease("b"):
         pass
 
     assert adm.expired_leases == 1
-    work.cancel()
 
 
 async def test_a_thousand_random_cycles_leave_the_set_empty() -> None:

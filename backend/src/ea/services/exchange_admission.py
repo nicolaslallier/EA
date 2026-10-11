@@ -11,9 +11,11 @@ place, and every figure — in flight, per caller — is computed from that set,
 counter that is incremented on one path and decremented on another drifts the day one path
 forgets, and a counter stuck at its maximum refuses everybody until the process restarts. A lease
 is removed by identity (taking it out twice does nothing), and it expires by itself at its
-deadline: the next admission purges the expired ones and counts them (`expired_leases`), which is
-the proof that some path leaked. A lease is taken and given back by one asynchronous context
-manager, `lease()`, and by nothing else.
+deadline: the next admission purges the expired ones that do nothing any more and counts them
+(`expired_leases`), which is the proof that some path leaked. An expired lease whose analysis
+thread still runs stays counted — the thread still costs the place — and is logged as overdue.
+A lease is taken and given back by one asynchronous context manager, `lease()`, and by nothing
+else.
 
 Two ceilings: the global one, and one per caller, keyed by the `sub` of the verified token and by
 nothing the request says. What this does not stop: someone with several accounts still fills the
@@ -44,6 +46,7 @@ class Lease:
     acquired_at: float
     deadline: float
     work: list[asyncio.Future[Any]] = field(default_factory=list)
+    overdue_said: bool = False
 
     def hold(self, work: asyncio.Future[Any]) -> None:
         """Keep the place until `work` (an analysis running in a thread) has ended."""
@@ -114,19 +117,32 @@ class Admission:
             work.add_done_callback(lambda _: self._finish(taken))
 
     def _purge(self) -> None:
-        """Drop what outlived its deadline: a path that never gave its place back."""
+        """Drop what outlived its deadline and does nothing any more: a path that never gave its
+        place back. A lease whose analysis thread is still running is **not** dropped: the thread
+        still costs what the place stands for, and counting it out would be a way round the
+        ceilings (an analysis that outlasts the deadline is logged, `admission_lease_overdue`,
+        and leaves with its thread)."""
         now = self._clock()
         expired = [lease for lease in self._leases if lease.deadline <= now]
-        for lease in expired:
+        gone = [lease for lease in expired if all(work.done() for work in lease.work)]
+        for lease in gone:
             self._leases.discard(lease)
-        if expired:
-            self.expired_leases += len(expired)
+        if gone:
+            self.expired_leases += len(gone)
             logger.warning(
                 "admission leases expired",
+                extra={"action": "admission_lease_expired", "kind": self.kind, "count": len(gone)},
+            )
+        overdue = [lease for lease in expired if lease not in gone and not lease.overdue_said]
+        for lease in overdue:
+            lease.overdue_said = True
+        if overdue:
+            logger.warning(
+                "admission leases overdue: an analysis still runs",
                 extra={
-                    "action": "admission_lease_expired",
+                    "action": "admission_lease_overdue",
                     "kind": self.kind,
-                    "count": len(expired),
+                    "count": len(overdue),
                 },
             )
 
