@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import csv
+import io
 import re
+import zipfile
 from typing import Any
 
 import pytest
@@ -336,3 +339,265 @@ async def test_two_imports_at_once_one_gets_a_409(
         task = asyncio.create_task(second(), context=contextvars.Context())
         with pytest.raises(ImportInProgressError):
             await task
+
+
+# --- CSV: the same round trip, the same honesty ---------------------------------------------
+
+CSV_EXPORT = ExportRequest(format=ExchangeFormat.CSV)
+RAW_CSV_EXPORT = ExportRequest(format=ExchangeFormat.CSV, safe_cells=False)
+
+
+async def csv_parts(
+    exchange: ExchangeService, request: ExportRequest = CSV_EXPORT
+) -> dict[str, bytes]:
+    export = await exchange.export(request)
+    archive = zipfile.ZipFile(io.BytesIO(b"".join([chunk async for chunk in export.chunks])))
+    return {name: archive.read(name) for name in archive.namelist()}
+
+
+def csv_content(parts: dict[str, bytes]) -> ImportContent:
+    return ImportContent(
+        ExchangeFormat.CSV, parts["elements.csv"], parts["relations.csv"], parts["properties.csv"]
+    )
+
+
+def table_of(data: bytes) -> list[list[str]]:
+    return list(csv.reader(io.StringIO(data.decode("utf-8"), newline="")))
+
+
+def canonical_csv(parts: dict[str, bytes]) -> dict[str, Any]:
+    """Everything the three files say, the identifiers that mean nothing named by position."""
+    labels: dict[str, str] = {}
+
+    def label(identifier: str) -> str:
+        if not GENERATED.match(identifier):
+            return identifier
+        return labels.setdefault(identifier, f"~{len(labels)}")
+
+    elements = [
+        (kind, label(identifier), name, documentation, specialization)
+        for identifier, kind, name, documentation, specialization in table_of(
+            parts["elements.csv"]
+        )[1:]
+    ]
+    links = [
+        (kind, label(identifier), name, doc, label(source), label(target), specialization)
+        for identifier, kind, name, doc, source, target, specialization in table_of(
+            parts["relations.csv"]
+        )[1:]
+    ]
+    properties = [
+        (label(identifier), key, value)
+        for identifier, key, value in table_of(parts["properties.csv"])[1:]
+    ]
+    return {"elements": elements, "links": links, "properties": properties}
+
+
+#: Names and values a spreadsheet could run, and legitimate ones that merely look alike.
+FORMULAS = [
+    "=1+1",
+    "@SUM(A1)",
+    "+cmd|' /C calc'!A0",
+    "-2+3",
+    "-Legacy",  # a real name: it must come back as it went
+    "'=already quoted",
+    "''-twice",
+    "\N{ZERO WIDTH SPACE}=1",
+    "\N{ZERO WIDTH NO-BREAK SPACE}=1",
+    '=HYPERLINK("http://x")',
+]
+
+
+async def formula_model(architecture: ArchitectureService) -> None:
+    for number, name in enumerate(FORMULAS):
+        await architecture.create_element(
+            element_type=E.NODE,
+            name=name,
+            description=f"=described {number}",
+            documentation=f"+doc {number}\n-second line",
+            properties={
+                "tab": "\t=1",
+                "space": " =1",
+                "at": "@home",
+                "carriage": "\r=1",
+                "legacy": "-Legacy",
+            },
+        )
+
+
+def no_cell_runs_as_a_formula(parts: dict[str, bytes]) -> None:
+    for name, data in parts.items():
+        for row in table_of(data):
+            for cell in row:
+                assert cell[:1] not in ("=", "+", "-", "@", "\t", "\r"), (name, cell)
+
+
+async def test_csv_export_import_export_keeps_everything_but_the_identifiers_that_meant_nothing(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    repository, architecture, _, exchange = stack
+    await reference_model(architecture)
+    await formula_model(architecture)
+    first = await csv_parts(exchange)
+    assert first["elements.csv"].count(b"'=1+1") == 1  # neutralised in the file...
+    no_cell_runs_as_a_formula(first)  # ...and in every other cell of every file
+
+    await empty_the_graph(engine_at_head)
+    report = await exchange.import_exchange(csv_content(first), REAL)
+
+    assert not [i for i in report.issues if i.severity is Severity.ERROR], report.issues
+    assert report.counts[Category.ELEMENTS].created == 8 + len(FORMULAS)
+    assert report.counts[Category.RELATIONSHIPS].created == 5
+    names = {e.name for e in await repository.list_elements(ElementFilter(limit=100))}
+    assert set(FORMULAS) <= names  # given back as they went: no apostrophe gained or lost
+    second = await csv_parts(exchange)
+    assert canonical_csv(second) == canonical_csv(first)
+    # a second turn is as stable as the first: nothing accumulates, apostrophes included
+    await empty_the_graph(engine_at_head)
+    await exchange.import_exchange(csv_content(second), REAL)
+    assert canonical_csv(await csv_parts(exchange)) == canonical_csv(first)
+    assert await repository.count_elements(ElementFilter()) == 8 + len(FORMULAS)
+
+
+async def test_the_values_of_the_properties_survive_the_guard(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    repository, architecture, _, exchange = stack
+    await formula_model(architecture)
+    first = await csv_parts(exchange)
+
+    await empty_the_graph(engine_at_head)
+    await exchange.import_exchange(csv_content(first), REAL)
+
+    for element in await repository.list_elements(ElementFilter(limit=100)):
+        assert dict(element.properties) == {
+            "tab": "\t=1",
+            "space": " =1",
+            "at": "@home",
+            "carriage": "\r=1",
+            "legacy": "-Legacy",
+            "source_id": element.properties["source_id"],
+        }
+        assert element.description.startswith("=described")
+        assert element.documentation.startswith("+doc")
+
+
+async def test_csv_reimport_into_the_same_database_creates_nothing_and_changes_no_byte(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService],
+) -> None:
+    _, architecture, _, exchange = stack
+    await reference_model(architecture)
+    await formula_model(architecture)
+    export = await exchange.export(CSV_EXPORT)
+    first_zip = b"".join([chunk async for chunk in export.chunks])
+    first = await csv_parts(exchange)
+
+    report = await exchange.import_exchange(csv_content(first), REAL)
+
+    assert report.counts[Category.ELEMENTS].created == 0
+    assert report.counts[Category.ELEMENTS].rejected == 0
+    assert report.counts[Category.ELEMENTS].reused == 8 + len(FORMULAS)
+    assert report.counts[Category.RELATIONSHIPS].created == 0
+    assert report.counts[Category.RELATIONSHIPS].rejected == 0
+    assert report.counts[Category.RELATIONSHIPS].reused == 5
+    again = await exchange.export(CSV_EXPORT)
+    assert b"".join([chunk async for chunk in again.chunks]) == first_zip
+
+
+async def test_a_property_called_directed_or_access_type_is_not_taken_for_the_attribute(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    repository, architecture, _, exchange = stack
+    a = await architecture.create_element(element_type=E.NODE, name="A")
+    b = await architecture.create_element(element_type=E.NODE, name="B")
+    await architecture.connect(
+        relationship_type=R.ASSOCIATION,
+        source_id=a.id,
+        target_id=b.id,
+        properties={"directed": "true", "access_type": "read"},
+    )
+    first = await csv_parts(exchange)
+
+    await empty_the_graph(engine_at_head)
+    await exchange.import_exchange(csv_content(first), REAL)
+
+    (link,) = await repository.list_relationships(limit=10)
+    assert link.directed is False
+    assert dict(link.properties)["directed"] == "true"
+    assert dict(link.properties)["access_type"] == "read"
+
+
+async def test_ten_thousand_elements_make_the_same_csv_round_trip(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    _, _, _, exchange = stack
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    writer.writerow(["ID", "Type", "Name", "Documentation"])
+    for i in range(10_000):
+        writer.writerow([f"e{i}", "Node", f'node {i}, "q" é😀 ]]> {i}', f"line1\r\nline{i}"])
+    links = io.StringIO()
+    link_writer = csv.writer(links, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    link_writer.writerow(["ID", "Type", "Name", "Documentation", "Source", "Target"])
+    for i in range(0, 9_999, 3):
+        link_writer.writerow([f"r{i}", "Association", "", "", f"e{i}", f"e{i + 1}"])
+    built = await exchange.import_exchange(
+        ImportContent(ExchangeFormat.CSV, buffer.getvalue().encode(), links.getvalue().encode()),
+        REAL,
+    )
+    assert built.counts[Category.ELEMENTS].created == 10_000
+    first = await csv_parts(exchange)
+
+    await empty_the_graph(engine_at_head)
+    report = await exchange.import_exchange(csv_content(first), REAL)
+
+    assert report.counts[Category.ELEMENTS].created == 10_000
+    assert (
+        report.counts[Category.RELATIONSHIPS].created
+        == built.counts[Category.RELATIONSHIPS].created
+    )
+    again = await exchange.import_exchange(csv_content(first), ImportOptions())
+    assert (
+        again.counts[Category.ELEMENTS].created == 0
+        and again.counts[Category.ELEMENTS].reused == 10_000
+    )
+    assert canonical_csv(await csv_parts(exchange)) == canonical_csv(first)
+
+
+async def test_where_the_csv_round_trip_is_not_an_identity_it_says_so(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    """The documented limits, shown rather than hidden by the comparison."""
+    repository, architecture, _, exchange = stack
+    made = await reference_model(architecture)
+    await architecture.create_element(element_type=E.NODE, name="two\nlines")
+    first = await csv_parts(exchange)
+
+    # An identifier that cannot be used as it is stays replaced, as in the XML.
+    assert f'"id-{made["mimic"].id}"'.encode() in first["elements.csv"]
+    assert b"has spaces" not in first["elements.csv"]
+    await empty_the_graph(engine_at_head)
+    report = await exchange.import_exchange(csv_content(first), REAL)
+
+    # A name holding a line break is exported, and refused on the way back: names may not
+    # hold control characters (it is one row, rejected with its own code, not a failure).
+    assert report.counts[Category.ELEMENTS].rejected == 1
+    assert "control_character" in {i.code for i in report.issues}
+    elements = {e.name: e for e in await repository.list_elements(ElementFilter(limit=100))}
+    assert "two\nlines" not in elements
+    assert elements["Spaced"].properties[SOURCE_ID] == f"id-{made['spaced'].id}"
+
+
+async def test_a_name_quoted_by_the_export_comes_back_changed_if_the_guard_was_off_on_export_only(
+    stack: tuple[Any, ArchitectureService, Any, ExchangeService], engine_at_head: AsyncEngine
+) -> None:
+    """`safe_cells` must be the same on both sides: that is what makes the guard reversible."""
+    repository, architecture, _, exchange = stack
+    await architecture.create_element(element_type=E.NODE, name="'=literal")
+    raw = await csv_parts(exchange, RAW_CSV_EXPORT)
+    await empty_the_graph(engine_at_head)
+
+    await exchange.import_exchange(csv_content(raw), REAL)  # the guard is read back by default
+
+    (element,) = await repository.list_elements(ElementFilter(limit=100))
+    assert element.name == "=literal"  # not an identity: the apostrophe was taken for a guard
