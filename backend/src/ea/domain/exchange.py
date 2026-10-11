@@ -39,7 +39,7 @@ MODIFIER_KEY: Final = "modifier"
 JUNCTION_NAMES: Final = frozenset({"AndJunction", "OrJunction"})
 
 _EMPTY: Mapping[str, str] = MappingProxyType({})
-_NCNAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+_NCNAME = re.compile(r"\A[A-Za-z_][A-Za-z0-9_.-]*\Z")
 _NOT_NCNAME = re.compile(r"[^A-Za-z0-9_.-]")
 
 
