@@ -230,3 +230,6 @@ __marimo__/
 # by the bare `.env` pattern above; named explicitly so its absence is a
 # decision, not an omission.
 pipelines/.env
+
+# PAT du runner auto-hébergé (docs/adr/0044).
+/.runner.env

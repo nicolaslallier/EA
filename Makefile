@@ -192,6 +192,7 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
+        runner-up runner-down runner-logs runner-pull \
         app-up app-down app-restart app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
         embed-ping embed-models docs-reindex files-reconcile baseline-capture openapi openapi-check \
@@ -341,6 +342,24 @@ app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l
 # projet `ea` par ses étiquettes, sans fichier. Voir docs/adr/0027.
 PORTAINER_STACK := scripts/portainer-stack.sh
 APP_COMPOSE     := docker compose -p ea
+
+# Le runner de docs/adr/0044 : son .runner.env ne porte que le PAT et le chemin
+# de la CA de l'Infra (docs/adr/0045), rien d'autre.
+RUNNER_COMPOSE := docker compose -f docker-compose.runner.yml --env-file .runner.env
+
+runner-up: ## Démarre le runner GitHub auto-hébergé qui déploie sur un push dans main
+	@test -f .runner.env || { echo "make: .runner.env absent — y mettre GH_RUNNER_TOKEN=<PAT admin des runners du dépôt> et INFRA_CA_CERT=<chemin de infra-ca.crt>" >&2; exit 1; }
+	$(RUNNER_COMPOSE) up -d
+
+runner-down: ## Arrête le runner (pas en plein job : le déploiement en cours serait perdu)
+	$(RUNNER_COMPOSE) down
+
+runner-logs: ## Suit les journaux du runner
+	$(RUNNER_COMPOSE) logs -f
+
+runner-pull: ## Retire l'image du runner et le recrée (GitHub refuse les vieilles versions)
+	$(RUNNER_COMPOSE) pull
+	$(RUNNER_COMPOSE) up -d
 
 app-up: ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
 	$(PORTAINER_STACK) up
@@ -613,7 +632,9 @@ typecheck-fe: | $(FRONTEND)/node_modules ## vue-tsc sur le frontend
 # [tool.bandit] dans pyproject.toml (tests exclus) ; un faux positif se tait à
 # la ligne, par `# nosec BXXX` et sa raison. pip-audit audite le venv tel qu'il
 # est installé — `ea` lui-même, éditable, n'est pas sur PyPI. npm audit bloque
-# à partir de `high`. Les trois ont besoin du réseau. Voir docs/adr/0026.
+# à partir de `high` : la production sans aucune exception, le développement
+# sauf les avis nommés et non expirés de frontend/audit-exceptions.json
+# (scripts/npm_audit.py, docs/audit-exceptions.md). Les trois ont besoin du réseau. Voir docs/adr/0026.
 audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audit (high)
 	@status=0; \
 	printf "$(GREEN)bandit$(NC)\n"; \
@@ -621,7 +642,9 @@ audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audi
 	printf "$(GREEN)pip-audit$(NC)\n"; \
 	(cd $(BACKEND) && uv run pip-audit --skip-editable) || status=1; \
 	printf "$(GREEN)npm audit$(NC)\n"; \
-	(cd $(FRONTEND) && npm audit --audit-level=high) || status=1; \
+	(cd $(FRONTEND) && npm audit --omit=dev --audit-level=high) || status=1; \
+	printf "$(GREEN)npm audit (développement, exceptions nommées)$(NC)\n"; \
+	python3 scripts/npm_audit.py $(FRONTEND) $(FRONTEND)/audit-exceptions.json || status=1; \
 	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
 	exit $$status
 
