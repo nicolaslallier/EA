@@ -45,7 +45,15 @@ WRITES = {
         "connect",
         "disconnect",
     },
-    DiagramService: {"create", "update", "delete", "replace_layout"},
+    DiagramService: {
+        "create",
+        "update",
+        "delete",
+        "replace_layout",
+        "generate",
+        "freeze",
+        "unfreeze",
+    },
     ProfileService: {
         "create_profile",
         "update_profile",

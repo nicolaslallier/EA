@@ -256,6 +256,9 @@
           "diagram.updated",
           "diagram.deleted",
           "diagram.layout_replaced",
+          "diagram.generated",
+          "diagram.frozen",
+          "diagram.unfrozen",
           "document.attached",
           "document.revised",
           "document.discarded",
@@ -958,6 +961,51 @@
         "title": "DiagramEdge",
         "type": "object"
       },
+      "DiagramFreeze": {
+        "additionalProperties": false,
+        "description": "The layout the SPA computed for a live view, stored when it is frozen.\n\n`revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.",
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramNode"
+            },
+            "maxItems": 500,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "nodes"
+        ],
+        "title": "DiagramFreeze",
+        "type": "object"
+      },
+      "DiagramGenerate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ViewSource"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "DiagramGenerate",
+        "type": "object"
+      },
       "DiagramLayout": {
         "additionalProperties": false,
         "description": "The whole scene of a diagram, replacing the stored one \u2014 against the revision the client saw.\n\nEvery field is required, empty lists included: an optional one would split\nthis model into `-Input` and `-Output` schemas (docs/adr/0035).",
@@ -1214,6 +1262,16 @@
             "title": "Elements",
             "type": "array"
           },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Generation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1280,6 +1338,16 @@
             "title": "Revision",
             "type": "integer"
           },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ViewSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1293,6 +1361,8 @@
           "created_at",
           "updated_at",
           "package_id",
+          "generation",
+          "source",
           "revision",
           "nodes",
           "objects",
@@ -1313,6 +1383,16 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Generation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -1351,10 +1431,31 @@
           "description",
           "node_count",
           "package_id",
+          "generation",
           "created_at",
           "updated_at"
         ],
         "title": "DiagramSummaryRead",
+        "type": "object"
+      },
+      "DiagramUnfreeze": {
+        "additionalProperties": false,
+        "properties": {
+          "discard_annotations": {
+            "title": "Discard Annotations",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "discard_annotations"
+        ],
+        "title": "DiagramUnfreeze",
         "type": "object"
       },
       "DiagramUpdate": {
@@ -2379,6 +2480,14 @@
         ],
         "title": "GapCreate",
         "type": "object"
+      },
+      "Generation": {
+        "enum": [
+          "live",
+          "frozen"
+        ],
+        "title": "Generation",
+        "type": "string"
       },
       "GraphRead": {
         "description": "A sub-graph: the nodes and the edges between them, ready to be drawn.",
@@ -4330,6 +4439,31 @@
         "title": "Severity",
         "type": "string"
       },
+      "SourceDiffRead": {
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "added",
+          "removed"
+        ],
+        "title": "SourceDiffRead",
+        "type": "object"
+      },
       "StereotypePropertySchema": {
         "additionalProperties": false,
         "description": "One declared property. Every field is required: no default, no `-Input` twin.",
@@ -4726,6 +4860,47 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ViewSource": {
+        "additionalProperties": false,
+        "description": "Where a generated view reads its members: a saved query, or a package.\n\nExactly one of the two ids. Both fields are required (nullable) so the\nmodel is one schema for the request and for the answer.",
+        "properties": {
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
+          "recursive": {
+            "title": "Recursive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query_id",
+          "package_id",
+          "recursive"
+        ],
+        "title": "ViewSource",
         "type": "object"
       }
     },
@@ -5877,6 +6052,103 @@
         ]
       }
     },
+    "/diagrams/generate": {
+      "post": {
+        "description": "A new **live** view: everything a saved query or a package yields, at each opening.\n\nIt stores no box. To edit it, freeze it; to see it frozen from the start,\nfreeze it right after (the layout is the SPA's, the server computes none).",
+        "operationId": "generate_diagram_diagrams_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramGenerate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
     "/diagrams/{diagram_id}": {
       "delete": {
         "description": "Delete a diagram. The elements it showed are untouched.",
@@ -6140,6 +6412,115 @@
         ]
       }
     },
+    "/diagrams/{diagram_id}/freeze": {
+      "post": {
+        "description": "Store the layout and make the live view an ordinary editable diagram.",
+        "operationId": "freeze_diagram_diagrams__diagram_id__freeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramFreeze"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Freeze Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
     "/diagrams/{diagram_id}/layout": {
       "put": {
         "description": "Replace the whole scene of a diagram at once.\n\n`revision` is the one the client read; if somebody saved since, nothing is\nwritten and the answer is a 409 `diagram_revision_conflict`. Otherwise the\nnew revision comes back in `X-Diagram-Revision`. Each element must exist\nand appear once, and a route may only name a link joining two placed\nelements; otherwise nothing is written.",
@@ -6227,6 +6608,214 @@
           }
         ],
         "summary": "Replace Diagram Layout",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/source-diff": {
+      "get": {
+        "description": "What a frozen view would gain and lose if it followed its source again. Writes nothing.",
+        "operationId": "read_source_diff_diagrams__diagram_id__source_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDiffRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Source Diff",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/unfreeze": {
+      "post": {
+        "description": "Back to a live view. Refused (409) while notes, groups or routes would be lost,\nunless `discard_annotations` is true.",
+        "operationId": "unfreeze_diagram_diagrams__diagram_id__unfreeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramUnfreeze"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unfreeze Diagram",
         "tags": [
           "diagrams"
         ]

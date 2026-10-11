@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 from ea.domain.errors import InvalidCursorError
+from ea.domain.generated_views import QuerySource
 from ea.domain.model import Element, Relationship
 from ea.domain.query import to_json
 
@@ -81,6 +82,9 @@ class AuditAction(StrEnum):
     DIAGRAM_UPDATED = "diagram.updated"
     DIAGRAM_DELETED = "diagram.deleted"
     DIAGRAM_LAYOUT_REPLACED = "diagram.layout_replaced"
+    DIAGRAM_GENERATED = "diagram.generated"
+    DIAGRAM_FROZEN = "diagram.frozen"
+    DIAGRAM_UNFROZEN = "diagram.unfrozen"
     DOCUMENT_ATTACHED = "document.attached"
     DOCUMENT_REVISED = "document.revised"
     DOCUMENT_DISCARDED = "document.discarded"
@@ -215,7 +219,19 @@ def diagram_view(diagram: Diagram) -> dict[str, Any]:
         "name": diagram.name,
         "description": diagram.description,
         "package_id": str(diagram.package_id) if diagram.package_id else None,
+        "generation": diagram.generation.value if diagram.generation else None,
+        "source": _source_view(diagram),
     }
+
+
+def _source_view(diagram: Diagram) -> dict[str, Any] | None:
+    """Where a generated view reads: ids and a flag, never a name."""
+    source = diagram.source
+    if source is None:
+        return None
+    if isinstance(source, QuerySource):
+        return {"query_id": str(source.query_id)}
+    return {"package_id": str(source.package_id), "recursive": source.recursive}
 
 
 def scene_views(

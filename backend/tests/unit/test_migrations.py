@@ -428,3 +428,20 @@ def test_a_stereotype_name_is_unique_within_its_profile_and_a_profile_name_every
     }
 
     assert {"uq_profiles_name", "uq_profile_stereotypes_profile_id_name"} <= names
+
+
+def test_a_diagram_has_at_most_one_source_and_a_generation_exactly_when_it_has_one() -> None:
+    names = {c.name for c in Base.metadata.tables["diagrams"].constraints}
+
+    assert {
+        "ck_diagrams_generation",
+        "ck_diagrams_one_source",
+        "ck_diagrams_generation_iff_source",
+    } <= names
+
+
+def test_a_source_in_use_cannot_be_deleted() -> None:
+    table = Base.metadata.tables["diagrams"]
+
+    for column in ("source_query_id", "source_package_id"):
+        assert next(iter(table.c[column].foreign_keys)).ondelete == "RESTRICT"

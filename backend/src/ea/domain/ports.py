@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
+    from ea.domain.generated_views import SourceMembers, ViewSource
     from ea.domain.model import StereotypeRef
     from ea.domain.profiles import Profile, Stereotype
 
@@ -455,7 +456,48 @@ class DiagramRepository(Protocol):
         `revision` the write is refused with `DiagramRevisionConflictError`;
         otherwise the revision moves on by one and is returned. `None` means
         the diagram is gone. `audit` is given the scene it replaces.
+        A live view has no scene of its own: `DiagramLiveError`.
         """
+        ...
+
+    async def freeze(
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        revision: int,
+        now: datetime,
+        audit: AuditOf[Diagram],
+    ) -> int | None:
+        """Store the boxes of a live view and make it frozen, in one transaction.
+
+        Under the row's lock: a view that is not live is `DiagramNotLiveError`, a stale
+        `revision` a `DiagramRevisionConflictError`. Returns the new revision, or `None`
+        if the diagram is gone. `audit` is given the diagram as it was.
+        """
+        ...
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, now: datetime, audit: AuditOf[Diagram]
+    ) -> int | None:
+        """Delete every box, note, group and route and make the view live again.
+
+        Same locking and refusals as `freeze` (a view that is not frozen is `DiagramLiveError`).
+        """
+        ...
+
+    async def names_using_source(
+        self, *, query_id: UUID | None = None, package_id: UUID | None = None
+    ) -> tuple[str, ...]:
+        """The diagrams that read this query or package."""
+        ...
+
+
+class ViewSourceResolver(Protocol):
+    """Whatever answers "which elements does this query or package hold"."""
+
+    async def members(self, source: ViewSource, *, limit: int) -> SourceMembers:
+        """The first `limit` elements and the total; a missing source is a not-found."""
         ...
 
 

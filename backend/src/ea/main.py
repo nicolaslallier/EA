@@ -72,6 +72,7 @@ from ea.domain.ports import (
     ProfileRepository,
     SavedQueryRepository,
     TimelineRepository,
+    ViewSourceResolver,
 )
 from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
 from ea.domain.search import EMBEDDING_DIMENSIONS
@@ -106,6 +107,7 @@ from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
+from ea.services.view_sources import QueriesAndPackages
 
 logger = logging.getLogger(__name__)
 
@@ -385,8 +387,21 @@ def _lifespan(
                     query_store, package_store, architecture_service_of(app)
                 )
             if diagram_store is not None:
+                # A generated view reads the saved queries and the package tree; without
+                # either (the relational store shut) it answers 503 instead of guessing.
+                saved_queries = getattr(app.state, "saved_query_service", None)
+                package_tree = getattr(app.state, "package_service", None)
                 app.state.diagram_service = DiagramService(
-                    diagram_store, architecture_service_of(app), packages=package_store
+                    diagram_store,
+                    architecture_service_of(app),
+                    packages=package_store,
+                    sources=(
+                        QueriesAndPackages(
+                            architecture_service_of(app), saved_queries, package_tree
+                        )
+                        if saved_queries is not None and package_tree is not None
+                        else None
+                    ),
                 )
             if profile_store is not None:
                 app.state.profile_service = ProfileService(
@@ -602,6 +617,7 @@ def create_app(
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
     profiles: ProfileRepository | None = None,
+    view_sources: ViewSourceResolver | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -700,7 +716,7 @@ def create_app(
             )
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
-                diagrams, architecture_service, packages=packages
+                diagrams, architecture_service, packages=packages, sources=view_sources
             )
         if profiles is not None:
             app.state.profile_service = ProfileService(profiles, architecture_service)

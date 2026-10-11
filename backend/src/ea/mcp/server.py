@@ -137,6 +137,7 @@ from ea.domain.exchange import (
     Severity,
 )
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
+from ea.domain.generated_views import PackageSource, QuerySource
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
@@ -331,7 +332,9 @@ element — it writes, so ask first.
 A diagram is a saved *view* of the catalogue: `list_diagrams` names them and
 `get_diagram` opens one with its boxes, notes, groups and routed links. A group on
 a diagram means "drawn together", never a relationship, and there is no tool that
-moves a box: a layout is a person's gesture, not data to compute.
+moves a box: a layout is a person's gesture, not data to compute. To draw a perimeter,
+generate a view from a saved query or a package (`create_generated_diagram`) rather than
+placing boxes: it follows the catalogue by itself.
 
 An element may carry *stereotypes* - labels from a profile such as "database" or
 "external API", each with the properties expected on such an element. `list_profiles`
@@ -965,6 +968,36 @@ def build_mcp_server(
     # --- Time (docs/adr/0061) ---------------------------------------------
 
     # --- Diagrams (read only: geometry is not an agent's work) -------------
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_generated_diagram(
+        name: Name,
+        query_id: Annotated[
+            UUID | None, Field(description="A saved query, as `list_saved_queries` reports it.")
+        ] = None,
+        package_id: Annotated[
+            UUID | None, Field(description="A package, as `list_packages` reports it.")
+        ] = None,
+        recursive: Annotated[
+            bool, Field(description="With a package: include its sub-packages.")
+        ] = False,
+    ) -> DiagramRead:
+        """Draw a perimeter: a live view of everything a saved query or a package holds.
+
+        Prefer this to placing boxes one by one. The view follows the catalogue by itself
+        - an element created tomorrow that answers the query appears - and the application
+        arranges it by ArchiMate layer. Name exactly one of `query_id` and `package_id`; a
+        source that yields more than 500 elements is refused with its count, so narrow the
+        filter. It writes a diagram, not a fact: no element and no relationship changes.
+        """
+        if (query_id is None) == (package_id is None):
+            msg = "name a saved query or a package, not both and not neither"
+            raise ValueError(msg)
+        source = (
+            QuerySource(query_id) if query_id is not None else PackageSource(package_id, recursive)  # type: ignore[arg-type]
+        )
+        return DiagramRead.of(await get_diagrams().generate(name=name, source=source))
 
     @server.tool(annotations=READS)
     @speaking_plainly

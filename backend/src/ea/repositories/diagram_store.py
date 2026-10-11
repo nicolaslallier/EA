@@ -27,11 +27,15 @@ from ea.domain.audit import events_for
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, ObjectKind, Point
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.errors import (
+    DiagramLiveError,
     DiagramNotFoundError,
+    DiagramNotLiveError,
     DiagramRevisionConflictError,
     DuplicateDiagramError,
     PackageNotFoundError,
+    SavedQueryNotFoundError,
 )
+from ea.domain.generated_views import Generation, PackageSource, QuerySource, ViewSource
 from ea.repositories.architecture_store import constraint_of
 from ea.repositories.audit_store import write_events
 
@@ -58,6 +62,14 @@ def _summaries() -> Select[DiagramRecord, int]:
 FOREIGN_KEY_TO_PACKAGE: Final = "fk_diagrams_package_id_packages"
 
 
+def _source_of(row: DiagramRecord) -> ViewSource | None:
+    if row.source_query_id is not None:
+        return QuerySource(row.source_query_id)
+    if row.source_package_id is not None:
+        return PackageSource(row.source_package_id, row.source_recursive)
+    return None
+
+
 def _to_diagram(row: DiagramRecord, node_count: int) -> Diagram:
     return Diagram(
         id=row.id,
@@ -68,13 +80,20 @@ def _to_diagram(row: DiagramRecord, node_count: int) -> Diagram:
         node_count=node_count,
         package_id=row.package_id,
         revision=row.revision,
+        generation=Generation(row.generation) if row.generation else None,
+        source=_source_of(row),
     )
 
 
 def _refused(error: IntegrityError, diagram: Diagram) -> Exception:
     """A missing package is a 404; any other refusal here is the unique name."""
-    if constraint_of(error) == FOREIGN_KEY_TO_PACKAGE:
+    constraint = constraint_of(error)
+    if constraint == FOREIGN_KEY_TO_PACKAGE:
         return PackageNotFoundError(f"no package with id {diagram.package_id}")
+    if constraint == "fk_diagrams_source_package_id_packages":
+        return PackageNotFoundError("the package this view reads no longer exists")
+    if constraint == "fk_diagrams_source_query_id_saved_queries":
+        return SavedQueryNotFoundError("the saved query this view reads no longer exists")
     return _taken(diagram)
 
 
@@ -128,6 +147,20 @@ class PostgresDiagramRepository:
                     created_at=diagram.created_at,
                     updated_at=diagram.updated_at,
                     package_id=diagram.package_id,
+                    generation=diagram.generation.value if diagram.generation else None,
+                    source_query_id=(
+                        diagram.source.query_id if isinstance(diagram.source, QuerySource) else None
+                    ),
+                    source_package_id=(
+                        diagram.source.package_id
+                        if isinstance(diagram.source, PackageSource)
+                        else None
+                    ),
+                    source_recursive=(
+                        diagram.source.recursive
+                        if isinstance(diagram.source, PackageSource)
+                        else False
+                    ),
                 )
             )
             try:
@@ -187,6 +220,11 @@ class PostgresDiagramRepository:
             if row.revision != revision:
                 msg = f"the diagram is at revision {row.revision}, not {revision}"
                 raise DiagramRevisionConflictError(msg)
+            if row.generation == Generation.LIVE.value:
+                # Judged under the lock: a freeze or a thaw that raced with this save has
+                # already been committed or is waiting behind it.
+                msg = "a live view is recomputed at every opening and cannot be edited: freeze it"
+                raise DiagramLiveError(msg)
             before = DiagramScene(
                 nodes=await _nodes(session, diagram_id),
                 objects=await _objects(session, diagram_id),
@@ -242,6 +280,85 @@ class PostgresDiagramRepository:
             await session.flush()
             write_events(session, events)
             return row.revision
+
+    async def freeze(
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        revision: int,
+        now: datetime,
+        audit: AuditOf[Diagram],
+    ) -> int | None:
+        async with work(self._sessions) as session:
+            row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
+            if row is None:
+                return None
+            if row.revision != revision:
+                msg = f"the diagram is at revision {row.revision}, not {revision}"
+                raise DiagramRevisionConflictError(msg)
+            if row.generation != Generation.LIVE.value:
+                msg = "this diagram is not a live view: there is nothing to freeze"
+                raise DiagramNotLiveError(msg)
+            events = events_for(audit, _to_diagram(row, 0))
+            await session.execute(
+                delete(DiagramNodeRecord).where(DiagramNodeRecord.diagram_id == diagram_id)
+            )
+            session.add_all(
+                DiagramNodeRecord(
+                    diagram_id=diagram_id,
+                    element_id=n.element_id,
+                    x=n.x,
+                    y=n.y,
+                    width=n.width,
+                    height=n.height,
+                    parent_object_id=None,
+                    z=n.z,
+                )
+                for n in nodes
+            )
+            row.generation = Generation.FROZEN.value
+            row.revision += 1
+            row.updated_at = now
+            await session.flush()
+            write_events(session, events)
+            return row.revision
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, now: datetime, audit: AuditOf[Diagram]
+    ) -> int | None:
+        async with work(self._sessions) as session:
+            row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
+            if row is None:
+                return None
+            if row.revision != revision:
+                msg = f"the diagram is at revision {row.revision}, not {revision}"
+                raise DiagramRevisionConflictError(msg)
+            if row.generation != Generation.FROZEN.value:
+                msg = "this diagram is not a frozen view: there is nothing to thaw"
+                raise DiagramLiveError(msg)
+            events = events_for(audit, _to_diagram(row, 0))
+            for table in (DiagramNodeRecord, DiagramEdgeRecord, DiagramObjectRecord):
+                await session.execute(delete(table).where(table.diagram_id == diagram_id))
+            row.generation = Generation.LIVE.value
+            row.revision += 1
+            row.updated_at = now
+            await session.flush()
+            write_events(session, events)
+            return row.revision
+
+    async def names_using_source(
+        self, *, query_id: UUID | None = None, package_id: UUID | None = None
+    ) -> tuple[str, ...]:
+        statement = select(DiagramRecord.name).order_by(DiagramRecord.name).limit(100)
+        if query_id is not None:
+            statement = statement.where(DiagramRecord.source_query_id == query_id)
+        elif package_id is not None:
+            statement = statement.where(DiagramRecord.source_package_id == package_id)
+        else:
+            return ()
+        async with reading(self._sessions) as session:
+            return tuple(await session.scalars(statement))
 
 
 async def _nodes(session: AsyncSession, diagram_id: UUID) -> tuple[DiagramNode, ...]:

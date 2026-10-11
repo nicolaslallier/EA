@@ -63,6 +63,34 @@ class StereotypeInUseError(DomainError):
     """A stereotype is applied to elements and cannot be removed or re-typed."""
 
 
+class GeneratedViewTooLargeError(DomainError):
+    """A view's source yields more elements than a diagram can hold: narrow the filter."""
+
+
+class GeneratedViewsUnavailableError(DomainError):
+    """Generated views were asked for on a deployment without the queries and packages they read."""
+
+
+class DiagramLiveError(DomainError):
+    """A live view has no boxes of its own: it is recomputed at each opening, so not editable."""
+
+
+class DiagramNotLiveError(DomainError):
+    """The diagram is not a live view: there is nothing to freeze."""
+
+
+class DiagramNotGeneratedError(DomainError):
+    """The diagram was drawn by hand: it has no source to freeze, refresh or thaw."""
+
+
+class DiagramHasAnnotationsError(DomainError):
+    """Thawing a view would delete the notes, groups or routes drawn on it."""
+
+
+class SourceInUseError(DomainError):
+    """A query or a package is read by a generated view and cannot be deleted from under it."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 

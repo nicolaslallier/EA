@@ -14,6 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Double,
@@ -37,7 +38,15 @@ class DiagramRecord(Base):
     __tablename__ = "diagrams"
     # The constraint rather than a read-then-insert, so two concurrent creations
     # cannot both find the name free.
-    __table_args__ = (UniqueConstraint("name"),)
+    __table_args__ = (
+        UniqueConstraint("name"),
+        CheckConstraint("generation in ('live', 'frozen')", name="generation"),
+        CheckConstraint("num_nonnulls(source_query_id, source_package_id) <= 1", name="one_source"),
+        CheckConstraint(
+            "(generation is null) = (source_query_id is null and source_package_id is null)",
+            name="generation_iff_source",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     name: Mapped[str] = mapped_column(String(MAX_DIAGRAM_NAME_LENGTH), nullable=False)
@@ -50,6 +59,16 @@ class DiagramRecord(Base):
     # Moves on by one at every `PUT /layout` (docs/adr/0063) so a save
     # made on a stale copy is refused instead of overwriting a colleague's.
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # A view generated from a query or a package (docs/adr/0065); NULL: drawn by hand.
+    generation: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    # RESTRICT: a query or a package a view reads cannot be deleted from under it.
+    source_query_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("saved_queries.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    source_package_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("packages.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    source_recursive: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
 
 class DiagramNodeRecord(Base):

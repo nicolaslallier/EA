@@ -50,7 +50,9 @@ from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     BaselineNotFoundError,
+    DiagramLiveError,
     DiagramNotFoundError,
+    DiagramNotLiveError,
     DiagramRevisionConflictError,
     DocumentNotFoundError,
     DomainError,
@@ -86,6 +88,13 @@ from ea.domain.exchange import (
     identifier_of,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
+from ea.domain.generated_views import (
+    Generation,
+    PackageSource,
+    QuerySource,
+    SourceMembers,
+    ViewSource,
+)
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, StereotypeRef
 from ea.domain.packages import Package, PackageCounts, name_key
@@ -1066,6 +1075,9 @@ class InMemoryDiagrams:
         if revision != current:
             msg = f"the diagram is at revision {current}, not {revision}"
             raise DiagramRevisionConflictError(msg)
+        if stored.generation is Generation.LIVE:
+            msg = "a live view cannot be edited"
+            raise DiagramLiveError(msg)
         before = DiagramScene(
             nodes=self.nodes.get(diagram_id, ()),
             objects=self.objects.get(diagram_id, ()),
@@ -1079,6 +1091,62 @@ class InMemoryDiagrams:
         self.diagrams[diagram_id] = stored.touched(now)
         self.audit_log.append(events)
         return current + 1
+
+    async def freeze(
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        revision: int,
+        now: datetime,
+        audit: AuditOf[Diagram],
+    ) -> int | None:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        if stored.generation is not Generation.LIVE:
+            raise DiagramNotLiveError("not a live view")
+        events = events_for(audit, self._counted(stored))
+        self.nodes[diagram_id] = tuple(nodes)
+        self.revisions[diagram_id] = current + 1
+        self.diagrams[diagram_id] = replace(stored.touched(now), generation=Generation.FROZEN)
+        self.audit_log.append(events)
+        return current + 1
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, now: datetime, audit: AuditOf[Diagram]
+    ) -> int | None:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        if stored.generation is not Generation.FROZEN:
+            raise DiagramLiveError("not a frozen view")
+        events = events_for(audit, self._counted(stored))
+        for table in (self.nodes, self.objects, self.edges):
+            table.pop(diagram_id, None)
+        self.revisions[diagram_id] = current + 1
+        self.diagrams[diagram_id] = replace(stored.touched(now), generation=Generation.LIVE)
+        self.audit_log.append(events)
+        return current + 1
+
+    async def names_using_source(
+        self, *, query_id: UUID | None = None, package_id: UUID | None = None
+    ) -> tuple[str, ...]:
+        def uses(diagram: Diagram) -> bool:
+            source = diagram.source
+            return (isinstance(source, QuerySource) and source.query_id == query_id) or (
+                isinstance(source, PackageSource) and source.package_id == package_id
+            )
+
+        return tuple(sorted(d.name for d in self.diagrams.values() if uses(d)))
 
 
 class InMemoryProfiles:
@@ -1243,6 +1311,20 @@ class InMemoryProfiles:
     async def stereotypes_of(self, element_id: UUID) -> tuple[Stereotype, ...]:
         known = {s.id: s for s in self._all()}
         return tuple(known[sid] for sid in self.applied.get(element_id, ()) if sid in known)
+
+
+class InMemoryViewSources:
+    """The queries and packages a generated view reads, as a dictionary of answers."""
+
+    def __init__(self) -> None:
+        self.answers: dict[ViewSource, list[UUID]] = {}
+
+    async def members(self, source: ViewSource, *, limit: int) -> SourceMembers:
+        if source not in self.answers:
+            msg = f"no such source: {source}"
+            raise ElementNotFoundError(msg)
+        ids = self.answers[source]
+        return SourceMembers(tuple(ids[:limit]), total=len(ids))
 
 
 async def lay_out(
@@ -2148,6 +2230,11 @@ def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
 
 
 @pytest.fixture
+def view_sources() -> InMemoryViewSources:
+    return InMemoryViewSources()
+
+
+@pytest.fixture
 def profiles(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> InMemoryProfiles:
     return InMemoryProfiles(audit_log, repository)
 
@@ -2229,9 +2316,14 @@ def exchange_service(
 
 @pytest.fixture
 def diagram_service(
-    diagrams: InMemoryDiagrams, service: ArchitectureService, packages: InMemoryPackages
+    diagrams: InMemoryDiagrams,
+    service: ArchitectureService,
+    packages: InMemoryPackages,
+    view_sources: InMemoryViewSources,
 ) -> DiagramService:
-    return DiagramService(diagrams, service, packages=packages, clock=lambda: FIXED_NOW)
+    return DiagramService(
+        diagrams, service, packages=packages, clock=lambda: FIXED_NOW, sources=view_sources
+    )
 
 
 @pytest.fixture

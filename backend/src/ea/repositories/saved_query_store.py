@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.saved_query import SavedQueryRecord
 from ea.db.unit_of_work import reading, work
 from ea.domain.audit import events_for, saved_query_record_view
-from ea.domain.errors import DuplicateSavedQueryError, SavedQueryNotFoundError
+from ea.domain.errors import DuplicateSavedQueryError, SavedQueryNotFoundError, SourceInUseError
 from ea.domain.query import from_json, to_json
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.repositories.architecture_store import constraint_of
@@ -128,6 +128,15 @@ class PostgresSavedQueryRepository:
             if row is None:
                 return False
             events = events_for(audit, _record_view(row))
-            await session.execute(delete(SavedQueryRecord).where(SavedQueryRecord.id == query_id))
+            try:
+                await session.execute(
+                    delete(SavedQueryRecord).where(SavedQueryRecord.id == query_id)
+                )
+            except IntegrityError as error:
+                # RESTRICT: a generated view reads this query (docs/adr/0065).
+                if constraint_of(error) == "fk_diagrams_source_query_id_saved_queries":
+                    msg = "a generated view reads this query: delete the view first"
+                    raise SourceInUseError(msg) from error
+                raise
             write_events(session, events)
         return True

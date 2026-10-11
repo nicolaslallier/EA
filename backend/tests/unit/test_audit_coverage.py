@@ -278,7 +278,14 @@ def test_the_expected_writes_are_found() -> None:
         "delete_relationship",
     }
     assert found["PostgresDocumentRepository"] == {"add", "replace", "delete"}
-    assert found["PostgresDiagramRepository"] == {"add", "save", "delete", "replace_layout"}
+    assert found["PostgresDiagramRepository"] == {
+        "add",
+        "save",
+        "delete",
+        "replace_layout",
+        "freeze",
+        "unfreeze",
+    }
     assert found["PostgresPackageRepository"] == {"add", "save", "delete", "move_elements"}
     assert found["PostgresProfileRepository"] == {
         "add_profile",

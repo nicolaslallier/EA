@@ -37,6 +37,7 @@ from ea.api.schemas import (
 )
 from ea.core.config import Settings
 from ea.domain.archimate import ElementType
+from ea.domain.generated_views import QuerySource
 from ea.domain.profiles import IconKey
 from ea.main import create_app
 from ea.mcp import build_mcp_server
@@ -61,6 +62,7 @@ from tests.conftest import (
     InMemoryExchange,
     InMemoryObjectStore,
     InMemoryRepository,
+    InMemoryViewSources,
     a_reader,
     an_approver,
 )
@@ -366,8 +368,9 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert len(names) == 63  # fifty-eight, two that read a diagram, three of the profiles
+        assert len(names) == 64  # fifty-eight, two that read a diagram, three of the profiles
         assert names == {
+            "create_generated_diagram",
             "list_profiles",
             "apply_stereotype",
             "remove_stereotype",
@@ -2454,3 +2457,35 @@ class TestProfiles:
         assert tools["list_profiles"].annotations.read_only_hint is True  # type: ignore[union-attr]
         assert tools["apply_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]
         assert tools["remove_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+class TestGeneratedDiagrams:
+    async def test_an_agent_draws_a_perimeter_from_a_query_instead_of_placing_boxes(
+        self, server: MCPServer[Any], view_sources: InMemoryViewSources
+    ) -> None:
+        element = await an_element(server, "application_component", "Facturation")
+        query = uuid4()
+        view_sources.answers[QuerySource(query)] = [UUID(element["id"])]
+
+        view = await call(server, "create_generated_diagram", name="Périmètre", query_id=str(query))
+
+        assert view["generation"] == "live"
+        assert [e["id"] for e in view["elements"]] == [element["id"]]
+
+    async def test_it_needs_exactly_one_source(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="query or a package"):
+            await call(server, "create_generated_diagram", name="X")
+        with pytest.raises(ToolError, match="query or a package"):
+            await call(
+                server,
+                "create_generated_diagram",
+                name="X",
+                query_id=str(uuid4()),
+                package_id=str(uuid4()),
+            )
+
+    async def test_it_is_flagged_as_a_write(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "create_generated_diagram")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is False

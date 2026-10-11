@@ -16,11 +16,15 @@ from ea.api.dependencies import Diagrams
 from ea.api.schemas import (
     AsOf,
     DiagramCreate,
+    DiagramFreeze,
+    DiagramGenerate,
     DiagramLayout,
     DiagramRead,
     DiagramSummaryRead,
+    DiagramUnfreeze,
     DiagramUpdate,
     ErrorResponse,
+    SourceDiffRead,
 )
 from ea.domain.packages import UNSET
 
@@ -35,6 +39,12 @@ CONFLICT: dict[int | str, dict[str, type[ErrorResponse]]] = {status.HTTP_409_CON
 REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: _ERROR,
     status.HTTP_409_CONFLICT: _ERROR,
+}
+GENERATE_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
+    status.HTTP_404_NOT_FOUND: _ERROR,
+    status.HTTP_409_CONFLICT: _ERROR,
+    status.HTTP_422_UNPROCESSABLE_CONTENT: _ERROR,
+    status.HTTP_503_SERVICE_UNAVAILABLE: _ERROR,
 }
 LAYOUT_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: _ERROR,
@@ -128,3 +138,51 @@ async def replace_diagram_layout(
     return Response(
         status_code=status.HTTP_204_NO_CONTENT, headers={REVISION_HEADER: str(revision)}
     )
+
+
+@router.post(
+    "/diagrams/generate",
+    response_model=DiagramRead,
+    status_code=status.HTTP_201_CREATED,
+    responses=GENERATE_REJECTED,
+)
+async def generate_diagram(body: DiagramGenerate, diagrams: Diagrams) -> DiagramRead:
+    """A new **live** view: everything a saved query or a package yields, at each opening.
+
+    It stores no box. To edit it, freeze it; to see it frozen from the start,
+    freeze it right after (the layout is the SPA's, the server computes none).
+    """
+    return DiagramRead.of(await diagrams.generate(name=body.name, source=body.source.placed()))
+
+
+@router.get(
+    "/diagrams/{diagram_id}/source-diff", response_model=SourceDiffRead, responses=GENERATE_REJECTED
+)
+async def read_source_diff(diagram_id: UUID, diagrams: Diagrams) -> SourceDiffRead:
+    """What a frozen view would gain and lose if it followed its source again. Writes nothing."""
+    return SourceDiffRead.of(await diagrams.source_diff(diagram_id))
+
+
+@router.post(
+    "/diagrams/{diagram_id}/freeze", response_model=DiagramRead, responses=GENERATE_REJECTED
+)
+async def freeze_diagram(diagram_id: UUID, body: DiagramFreeze, diagrams: Diagrams) -> DiagramRead:
+    """Store the layout and make the live view an ordinary editable diagram."""
+    await diagrams.freeze(
+        diagram_id, [node.placed() for node in body.nodes], revision=body.revision
+    )
+    return DiagramRead.of(await diagrams.open(diagram_id))
+
+
+@router.post(
+    "/diagrams/{diagram_id}/unfreeze", response_model=DiagramRead, responses=GENERATE_REJECTED
+)
+async def unfreeze_diagram(
+    diagram_id: UUID, body: DiagramUnfreeze, diagrams: Diagrams
+) -> DiagramRead:
+    """Back to a live view. Refused (409) while notes, groups or routes would be lost,
+    unless `discard_annotations` is true."""
+    await diagrams.unfreeze(
+        diagram_id, revision=body.revision, discard_annotations=body.discard_annotations
+    )
+    return DiagramRead.of(await diagrams.open(diagram_id))

@@ -176,6 +176,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagrams/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Diagram
+         * @description A new **live** view: everything a saved query or a package yields, at each opening.
+         *
+         *     It stores no box. To edit it, freeze it; to see it frozen from the start,
+         *     freeze it right after (the layout is the SPA's, the server computes none).
+         */
+        post: operations["generate_diagram_diagrams_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams/{diagram_id}": {
         parameters: {
             query?: never;
@@ -203,6 +226,26 @@ export interface paths {
         patch: operations["update_diagram_diagrams__diagram_id__patch"];
         trace?: never;
     };
+    "/diagrams/{diagram_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Freeze Diagram
+         * @description Store the layout and make the live view an ordinary editable diagram.
+         */
+        post: operations["freeze_diagram_diagrams__diagram_id__freeze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams/{diagram_id}/layout": {
         parameters: {
             query?: never;
@@ -223,6 +266,47 @@ export interface paths {
          */
         put: operations["replace_diagram_layout_diagrams__diagram_id__layout_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/source-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Source Diff
+         * @description What a frozen view would gain and lose if it followed its source again. Writes nothing.
+         */
+        get: operations["read_source_diff_diagrams__diagram_id__source_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze Diagram
+         * @description Back to a live view. Refused (409) while notes, groups or routes would be lost,
+         *     unless `discard_annotations` is true.
+         */
+        post: operations["unfreeze_diagram_diagrams__diagram_id__unfreeze_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1470,7 +1554,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1784,6 +1868,24 @@ export interface components {
             waypoints: components["schemas"]["DiagramPoint"][];
         };
         /**
+         * DiagramFreeze
+         * @description The layout the SPA computed for a live view, stored when it is frozen.
+         *
+         *     `revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.
+         */
+        DiagramFreeze: {
+            /** Nodes */
+            nodes: components["schemas"]["DiagramNode"][];
+            /** Revision */
+            revision: number;
+        };
+        /** DiagramGenerate */
+        DiagramGenerate: {
+            /** Name */
+            name: string;
+            source: components["schemas"]["ViewSource"];
+        };
+        /**
          * DiagramLayout
          * @description The whole scene of a diagram, replacing the stored one — against the revision the client saw.
          *
@@ -1876,6 +1978,7 @@ export interface components {
             edges: components["schemas"]["DiagramEdge"][];
             /** Elements */
             elements: components["schemas"]["ElementRead"][];
+            generation: components["schemas"]["Generation"] | null;
             /**
              * Id
              * Format: uuid
@@ -1909,6 +2012,7 @@ export interface components {
              * @description Send it back with the next PUT /layout: a stale one is a 409.
              */
             revision: number;
+            source: components["schemas"]["ViewSource"] | null;
             /**
              * Updated At
              * Format: date-time
@@ -1924,6 +2028,7 @@ export interface components {
             created_at: string;
             /** Description */
             description: string;
+            generation: components["schemas"]["Generation"] | null;
             /**
              * Id
              * Format: uuid
@@ -1940,6 +2045,13 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** DiagramUnfreeze */
+        DiagramUnfreeze: {
+            /** Discard Annotations */
+            discard_annotations: boolean;
+            /** Revision */
+            revision: number;
         };
         /**
          * DiagramUpdate
@@ -2436,6 +2548,11 @@ export interface components {
              */
             name?: string | null;
         };
+        /**
+         * Generation
+         * @enum {string}
+         */
+        Generation: "live" | "frozen";
         /**
          * GraphRead
          * @description A sub-graph: the nodes and the edges between them, ready to be drawn.
@@ -3316,6 +3433,13 @@ export interface components {
          * @enum {string}
          */
         Severity: "error" | "warning" | "info";
+        /** SourceDiffRead */
+        SourceDiffRead: {
+            /** Added */
+            added: components["schemas"]["ElementRead"][];
+            /** Removed */
+            removed: string[];
+        };
         /**
          * StereotypePropertySchema
          * @description One declared property. Every field is required: no default, no `-Input` twin.
@@ -3487,6 +3611,21 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * ViewSource
+         * @description Where a generated view reads its members: a saved query, or a package.
+         *
+         *     Exactly one of the two ids. Both fields are required (nullable) so the
+         *     model is one schema for the request and for the answer.
+         */
+        ViewSource: {
+            /** Package Id */
+            package_id: string | null;
+            /** Query Id */
+            query_id: string | null;
+            /** Recursive */
+            recursive: boolean;
         };
     };
     responses: never;
@@ -4124,6 +4263,84 @@ export interface operations {
             };
         };
     };
+    generate_diagram_diagrams_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramGenerate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_diagram_diagrams__diagram_id__get: {
         parameters: {
             query?: {
@@ -4311,6 +4528,86 @@ export interface operations {
             };
         };
     };
+    freeze_diagram_diagrams__diagram_id__freeze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramFreeze"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     replace_diagram_layout_diagrams__diagram_id__layout_put: {
         parameters: {
             query?: never;
@@ -4371,6 +4668,162 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_source_diff_diagrams__diagram_id__source_diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDiffRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    unfreeze_diagram_diagrams__diagram_id__unfreeze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramUnfreeze"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

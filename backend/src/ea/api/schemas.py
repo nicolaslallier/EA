@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date, datetime
 from itertools import islice
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -69,6 +69,8 @@ from ea.domain.files import (
     FileDetails,
     FileMetadata,
 )
+from ea.domain.generated_views import Generation, PackageSource, QuerySource, SourceDiff
+from ea.domain.generated_views import ViewSource as PlacedSource
 from ea.domain.ipam import (
     DEFAULT_VRF,
     RESERVED_PROPERTY,
@@ -1014,12 +1016,76 @@ class DiagramLayout(_Input):
     edges: Annotated[list[DiagramEdge], Field(max_length=MAX_DIAGRAM_EDGES)]
 
 
+class ViewSource(_Input):
+    """Where a generated view reads its members: a saved query, or a package.
+
+    Exactly one of the two ids. Both fields are required (nullable) so the
+    model is one schema for the request and for the answer.
+    """
+
+    query_id: UUID | None
+    package_id: UUID | None
+    recursive: bool
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> Self:
+        if (self.query_id is None) == (self.package_id is None):
+            msg = "name a saved query or a package, not both and not neither"
+            raise ValueError(msg)
+        if self.query_id is not None and self.recursive:
+            msg = "`recursive` applies to a package"
+            raise ValueError(msg)
+        return self
+
+    @classmethod
+    def of(cls, source: PlacedSource) -> ViewSource:
+        if isinstance(source, QuerySource):
+            return cls(query_id=source.query_id, package_id=None, recursive=False)
+        return cls(query_id=None, package_id=source.package_id, recursive=source.recursive)
+
+    def placed(self) -> PlacedSource:
+        if self.query_id is not None:
+            return QuerySource(self.query_id)
+        assert self.package_id is not None
+        return PackageSource(self.package_id, self.recursive)
+
+
+class DiagramGenerate(_Input):
+    name: Name
+    source: ViewSource
+
+
+class DiagramFreeze(_Input):
+    """The layout the SPA computed for a live view, stored when it is frozen.
+
+    `revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.
+    """
+
+    revision: Revision
+    nodes: Annotated[list[DiagramNode], Field(max_length=MAX_DIAGRAM_NODES)]
+
+
+class DiagramUnfreeze(_Input):
+    revision: Revision
+    discard_annotations: bool
+
+
+class SourceDiffRead(BaseModel):
+    added: list[ElementRead]
+    removed: list[UUID]
+
+    @classmethod
+    def of(cls, diff: SourceDiff) -> SourceDiffRead:
+        return cls(added=[ElementRead.of(e) for e in diff.added], removed=list(diff.removed))
+
+
 class DiagramSummaryRead(BaseModel):
     id: UUID
     name: str
     description: str
     node_count: int
     package_id: UUID | None
+    generation: Generation | None
     created_at: datetime
     updated_at: datetime
 
@@ -1031,6 +1097,7 @@ class DiagramSummaryRead(BaseModel):
             description=diagram.description,
             node_count=diagram.node_count,
             package_id=diagram.package_id,
+            generation=diagram.generation,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
         )
@@ -1045,6 +1112,8 @@ class DiagramRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     package_id: UUID | None
+    generation: Generation | None
+    source: ViewSource | None
     revision: int = Field(
         description="Send it back with the next PUT /layout: a stale one is a 409."
     )
@@ -1074,6 +1143,8 @@ class DiagramRead(BaseModel):
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
             package_id=diagram.package_id,
+            generation=diagram.generation,
+            source=ViewSource.of(diagram.source) if diagram.source else None,
             revision=diagram.revision,
             nodes=[DiagramNode.of(node) for node in detail.nodes],
             objects=[DiagramObject.of(item) for item in detail.objects],

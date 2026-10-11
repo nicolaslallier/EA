@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Final
 from uuid import UUID, uuid4
 
+from ea.domain.generated_views import Generation, ViewSource
 from ea.domain.model import reject_nul
 from ea.domain.packages import UNSET, Unset
 from ea.domain.ports import GraphView
@@ -76,6 +77,9 @@ class Diagram:
     node_count: int = 0
     #: Moves on by one at every saved scene: the optimistic-concurrency token (docs/adr/0063).
     revision: int = 0
+    #: `None`: drawn by hand. Otherwise a view generated from `source` (docs/adr/0065).
+    generation: Generation | None = None
+    source: ViewSource | None = None
     #: The package that files this view; `None` is "at the root".
     package_id: UUID | None = None
 
@@ -87,7 +91,12 @@ class Diagram:
         now: datetime,
         description: str = "",
         package_id: UUID | None = None,
+        generation: Generation | None = None,
+        source: ViewSource | None = None,
     ) -> Diagram:
+        if (generation is None) != (source is None):
+            msg = "a generated view has a source and a generation, a hand-drawn one has neither"
+            raise ValueError(msg)
         return cls(
             id=uuid4(),
             name=_clean_name(name),
@@ -95,6 +104,8 @@ class Diagram:
             created_at=now,
             updated_at=now,
             package_id=package_id,
+            generation=generation,
+            source=source,
         )
 
     def revise(
