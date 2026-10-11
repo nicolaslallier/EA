@@ -18,6 +18,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -61,6 +62,7 @@ from ea.domain.errors import (
     SavedQueryNotFoundError,
     StoredFileNotFoundError,
 )
+from ea.domain.exchange import SOURCE_ID, ExportScope, identifier_of
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -88,6 +90,7 @@ from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -1265,6 +1268,54 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return product / norms if norms else 0.0
 
 
+class _MemorySnapshot:
+    """The pages the PostgreSQL snapshot would give, sorted the way its SQL sorts."""
+
+    def __init__(self, repository: InMemoryRepository) -> None:
+        self._repository = repository
+
+    @staticmethod
+    def _identifier(item: Element | Relationship) -> str:
+        return identifier_of(item.properties.get(SOURCE_ID), item.id)
+
+    async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]:
+        ordered = sorted(
+            self._repository.elements.values(),
+            key=lambda e: (e.element_type.value, e.name, self._identifier(e)),
+        )
+        return tuple(ordered[offset : offset + limit])
+
+    async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]:
+        elements = self._repository.elements
+
+        def key(link: Relationship) -> tuple[str, ...]:
+            source, target = elements[link.source_id], elements[link.target_id]
+            return (
+                source.element_type.value,
+                source.name,
+                target.element_type.value,
+                target.name,
+                link.relationship_type.value,
+                link.name,
+                self._identifier(link),
+                str(link.id),
+            )
+
+        ordered = sorted(self._repository.relationships.values(), key=key)
+        return tuple(ordered[offset : offset + limit])
+
+
+class InMemoryExchange:
+    """The `ExchangeRepository` over the in-memory graph (grown in later tasks)."""
+
+    def __init__(self, repository: InMemoryRepository) -> None:
+        self.repository = repository
+
+    @asynccontextmanager
+    async def snapshot(self, scope: ExportScope) -> AsyncIterator[_MemorySnapshot]:
+        yield _MemorySnapshot(self.repository)
+
+
 class InMemoryObjectStore:
     """The `ObjectStore` port over a dict — folders computed from keys, like S3."""
 
@@ -1523,6 +1574,18 @@ def saved_query_service(
     service: ArchitectureService,
 ) -> SavedQueryService:
     return SavedQueryService(saved_queries, packages, service, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def exchange_store(repository: InMemoryRepository) -> InMemoryExchange:
+    return InMemoryExchange(repository)
+
+
+@pytest.fixture
+def exchange_service(
+    exchange_store: InMemoryExchange, service: ArchitectureService
+) -> ExchangeService:
+    return ExchangeService(exchange_store, service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture
