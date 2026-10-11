@@ -434,7 +434,7 @@ class ImportRun:
                 )
             )
         elif key in state.by_key and self._options.on_conflict is ConflictPolicy.FAIL:
-            msg = f"a {item.element_type.value} named {key[1]!r} already exists"
+            msg = f"a {item.element_type.value} of this name already exists"
             return self._rejected(row, item, state, "already_exists", msg)
         match = state.by_key.get(key)
         if match is None:

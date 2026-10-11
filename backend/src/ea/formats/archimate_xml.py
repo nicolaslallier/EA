@@ -324,7 +324,7 @@ def _read_element(node: Element, index: int, reading: _Reading) -> _Slot:
             identifier,
             path,
             "duplicate_identifier",
-            f"identifier {identifier!r} is already used; this one is ignored",
+            "this identifier is already used; this one is ignored",
             shown=identifier,
             cascade=False,
         )
@@ -377,7 +377,7 @@ def _read_relationship(node: Element, index: int, reading: _Reading) -> _Slot:
             identifier,
             path,
             "duplicate_identifier",
-            f"identifier {identifier!r} is already used; this one is ignored",
+            "this identifier is already used; this one is ignored",
             shown=identifier,
             cascade=False,
         )

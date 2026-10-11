@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import unicodedata
 from dataclasses import replace
 from uuid import UUID
 
@@ -1081,3 +1082,28 @@ class TestAddressesAndPrefixesClashingInsideTheFile:
 
         assert [i.code for i in report.issues] == ["cidr_taken"]
         assert exchange_store.applied == 1
+
+
+class TestTheReportNeverEchoesTheFile:
+    async def test_a_five_megabyte_identifier_and_forged_lines_stay_small_and_inert(
+        self, exchange_service: ExchangeService
+    ) -> None:
+        huge = "A" * 5_000_000
+        forged = "id&#13;&#10;[ERROR] forged log line&#x202E;"
+        rows = (
+            el(huge, "Node", "first")
+            + el(huge, "Node", "second")
+            + el(huge, "Node", "third")
+            + el(forged, "Node", "bad&#13;&#10;[ERROR] fake log line&#x202E;")
+        )
+
+        report = await exchange_service.import_exchange(xml(exchange_xml(rows)), REAL)
+
+        assert report.issue_count >= 3
+        sizes = 0
+        for issue in report.issues:
+            for text in (issue.message, issue.source_id or "", issue.code, issue.path or ""):
+                sizes += len(text)
+                assert len(text) <= 201
+                assert not any(unicodedata.category(c) in ("Cc", "Cf") for c in text), repr(text)
+        assert sizes < 4_000  # a fixed bound, whatever the file's size

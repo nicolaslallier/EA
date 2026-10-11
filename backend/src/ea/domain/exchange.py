@@ -423,6 +423,20 @@ class ImportReport:
     issue_count: int = 0
 
 
+#: What a line of the report may show of the file: the report is read by people and by
+#: terminals, and the file is hostile (a 5 MB identifier, a forged log line, a bidi override).
+MAX_REPORT_TEXT: Final = 200
+
+
+def reportable(text: str) -> str:
+    """At most `MAX_REPORT_TEXT` characters, without control or format characters (Cc, Cf)."""
+    head = text[: MAX_REPORT_TEXT * 2]  # cut before scanning: the text may be megabytes
+    clean = "".join(c for c in head if unicodedata.category(c) not in ("Cc", "Cf"))
+    if len(clean) <= MAX_REPORT_TEXT and len(text) == len(head):
+        return clean
+    return clean[: MAX_REPORT_TEXT - 1] + "…"
+
+
 class ReportBuilder:
     """Counts every row, keeps the first `MAX_REPORT_ISSUES` lines of each category."""
 
@@ -441,6 +455,12 @@ class ReportBuilder:
         self._total += 1
         if self._kept[category] >= MAX_REPORT_ISSUES and not always:
             return
+        issue = replace(
+            issue,
+            message=reportable(issue.message),
+            source_id=None if issue.source_id is None else reportable(issue.source_id),
+            path=None if issue.path is None else reportable(issue.path),
+        )
         self._kept[category] += 1
         self._issues.append(issue)
 
