@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `ExternalReferenceRepository` (docs/adr/0063).
+"""The PostgreSQL implementation of `ExternalReferenceRepository` (docs/adr/0062).
 
 Like the other stores it takes the session factory and opens one unit of work per call, and a
 write and its audit events are one transaction. Unlike `document_store`, it does not hold the

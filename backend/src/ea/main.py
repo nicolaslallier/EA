@@ -120,7 +120,7 @@ logger = logging.getLogger(__name__)
 #: `FILES` is the MinIO bucket behind the *Fichiers* section; without it the
 #: `/files` routes and the four MCP file tools answer 503, exactly as they do
 #: where `EA_S3_ENABLED` is off.
-#: `EXTERNAL` is the third-party systems behind the references of an element (docs/adr/0063):
+#: `EXTERNAL` is the third-party systems behind the references of an element (docs/adr/0062):
 #: it is named when any declared target failed its boot probe; that target is then not
 #: asked, its references are served from the cache and linking to it answers 503.
 SEARCH: Final = "search"
@@ -727,7 +727,7 @@ def create_app(
         lease_seconds=settings.exchange_import_lease_s,
     )
     app.state.import_admission = admission
-    # And one for the calls out to third parties (docs/adr/0063), global and per caller.
+    # And one for the calls out to third parties (docs/adr/0062), global and per caller.
     app.state.external_admission = Admission(
         settings.external_max_in_flight,
         per_caller=settings.external_per_caller,

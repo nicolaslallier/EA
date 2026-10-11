@@ -1,7 +1,7 @@
 """The use cases over external references — rules, refusals, and who may do what.
 
 Providers are `FakeExternalSystem`s: nothing here reaches a network, and `system.calls` is how
-a test proves a request was — or was not — made (docs/adr/0063).
+a test proves a request was — or was not — made (docs/adr/0062).
 """
 
 from __future__ import annotations

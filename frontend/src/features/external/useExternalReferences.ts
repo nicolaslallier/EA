@@ -1,6 +1,6 @@
 // What one element cites in other tools: the listing (from the server's cache), the targets the
 // deployment declared, and the writes. Nothing here knows how an identifier is spelled or what
-// a provider accepts — the server decides, and says why in words (docs/adr/0063).
+// a provider accepts — the server decides, and says why in words (docs/adr/0062).
 import { ref } from 'vue'
 
 import type { components } from '../../api/schema'

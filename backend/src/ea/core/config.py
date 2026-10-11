@@ -52,7 +52,7 @@ class ExternalTargetSettings(BaseModel):
     """One third-party system EA may call, as the deployment declares it.
 
     The caller of an API never writes any of this: it names the target, and the host, the
-    scope and the account are these (docs/adr/0063). The secret is not here: it is in
+    scope and the account are these (docs/adr/0062). The secret is not here: it is in
     `Settings.external_tokens`, under the same name.
     """
 
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         # A validation error must never repeat what it refused: a malformed
-        # EA_EXTERNAL_TOKENS holds the tokens themselves (docs/adr/0063).
+        # EA_EXTERNAL_TOKENS holds the tokens themselves (docs/adr/0062).
         hide_input_in_errors=True,
     )
 
@@ -396,7 +396,7 @@ class Settings(BaseSettings):
     #: The Infra CA, when the endpoint is reached through the Infra NGINX.
     s3_ca_cert: str | None = None
 
-    # --- Third-party systems, by NAMED targets — see docs/adr/0063 ---
+    # --- Third-party systems, by NAMED targets — see docs/adr/0062 ---
     # A caller never gives an address: it names a target declared here, and the host, the
     # scope (repositories, projects) and the account are the deployment's. `EA_EXTERNAL_TARGETS`
     # is JSON, `{"name": {"kind": ..., "api_url": ..., "web_url": ..., "allow": [...]}}`;

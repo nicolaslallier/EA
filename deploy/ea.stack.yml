@@ -79,7 +79,7 @@ services:
       EA_S3_SECRET_KEY: ${EA_S3_SECRET_KEY:?EA_S3_SECRET_KEY est obligatoire (EA_S3_SECRET_KEY de l'Infra)}
 
       # Les systèmes tiers (GitHub, Jira, Confluence, ServiceNow), par cibles NOMMÉES
-      # (docs/adr/0063). Facultatives : vides, aucune cible, et le reste démarre.
+      # (docs/adr/0062). Facultatives : vides, aucune cible, et le reste démarre.
       # Les cibles (hôte, périmètre) et les jetons (le seul secret) vivent dans
       # deploy/ea.env, deux objets JSON — jamais dans ce fichier.
       EA_EXTERNAL_TARGETS: ${EA_EXTERNAL_TARGETS:-}

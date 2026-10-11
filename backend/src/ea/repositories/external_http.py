@@ -1,4 +1,4 @@
-"""The one door out to third-party systems — see docs/adr/0063.
+"""The one door out to third-party systems — see docs/adr/0062.
 
 Every connector (`external_github.py`, `external_jira.py`, ...) calls through an
 `EgressClient`, and nothing else in the codebase may open a connection to a provider. It

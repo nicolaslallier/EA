@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // A third party's text (a ticket title, a page name) is only ever interpolated as text.
-// `v-html` anywhere in the SPA would turn it into markup (docs/adr/0063).
+// `v-html` anywhere in the SPA would turn it into markup (docs/adr/0062).
 function vueFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)

@@ -2,7 +2,7 @@
 
 What matters is what a provider will *not* do: call another host, follow a redirect, read
 an unbounded body, trust an unexpected answer, cache a body, or let the token reach a log or
-a message (docs/adr/0063). The wire format of each is checked once; the refusals are shared
+a message (docs/adr/0062). The wire format of each is checked once; the refusals are shared
 and run against all four.
 """
 

@@ -1,7 +1,7 @@
 """`rafraichir-references`: the cache of the external references, kept fresh through the API.
 
 The flow reads the stale references and asks the API to refresh each one — over REST only,
-never `/mcp`, never a repository, and it opens no ticket (docs/adr/0028, docs/adr/0063). The
+never `/mcp`, never a repository, and it opens no ticket (docs/adr/0028, docs/adr/0062). The
 EA API is a double behind `httpx.MockTransport`; the flow runs for real under the same
 temporary Prefect server as `test_catalogue.py`.
 """

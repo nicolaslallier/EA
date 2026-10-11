@@ -1,7 +1,7 @@
 """Third-party text reaches an agent only in fields the registry names as untrusted.
 
 The registry (`ea.mcp.server.UNTRUSTED_FIELDS`) and the response models of the integration
-tools must agree *exactly* (docs/adr/0063): every free `str` field of a response is either
+tools must agree *exactly* (docs/adr/0062): every free `str` field of a response is either
 listed as untrusted (a third party wrote it) or as trusted (the server built or validated it),
 and the registry names no field that does not exist. A field added to a model without a
 decision fails here.

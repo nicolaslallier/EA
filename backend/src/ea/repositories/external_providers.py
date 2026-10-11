@@ -1,4 +1,4 @@
-"""GitHub, Jira, Confluence and ServiceNow behind the `ExternalSystem` port — docs/adr/0063.
+"""GitHub, Jira, Confluence and ServiceNow behind the `ExternalSystem` port — docs/adr/0062.
 
 Adapters in the sense this package means (like `HttpEmbedder`): each implements the port the
 domain declared, and each reaches its provider **only through an `EgressClient`**, which fixes

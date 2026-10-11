@@ -205,7 +205,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     InvalidLifespanError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifespan"),
     InvalidTimelineError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_timeline"),
     DuplicateGapError: (status.HTTP_409_CONFLICT, "duplicate_gap"),
-    # --- External references (docs/adr/0063) ---
+    # --- External references (docs/adr/0062) ---
     # 422 `external_refused` is the provider saying "not there" (or not in the allow-list);
     # 503 is the provider not being askable; 502/504 are a *write* that failed — the one
     # a caller must check at the provider before trying again, so it is never retried here.

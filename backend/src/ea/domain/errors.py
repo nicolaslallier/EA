@@ -360,7 +360,7 @@ class ExternalReferenceNotFoundError(DomainError):
 
 
 class DuplicateExternalReferenceError(DomainError):
-    """This element already cites this external object (docs/adr/0063)."""
+    """This element already cites this external object (docs/adr/0062)."""
 
 
 class InvalidExternalReferenceError(DomainError):

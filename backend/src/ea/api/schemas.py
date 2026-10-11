@@ -1911,7 +1911,7 @@ class RoadmapRead(BaseModel):
         )
 
 
-# --- External references (docs/adr/0063) ------------------------------------
+# --- External references (docs/adr/0062) ------------------------------------
 # The bounds are declared once, here, and imported by `mcp/server.py`.
 #: What a caller writes to name an object: an identifier or an address, never a host to call.
 ExternalReferenceText = Annotated[str, Field(min_length=1, max_length=MAX_REFERENCE_LENGTH)]

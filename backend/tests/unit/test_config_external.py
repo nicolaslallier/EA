@@ -2,7 +2,7 @@
 
 What these tests protect: a target's host and scope are fixed by whoever deploys; a secret
 is read from the environment, masked, and never echoed by an error; a typo does not
-silently widen anything (docs/adr/0063).
+silently widen anything (docs/adr/0062).
 """
 
 from __future__ import annotations

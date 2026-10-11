@@ -956,7 +956,7 @@ class ExternalSystem(Protocol):
     `resolve` raises `ExternalRefusedError` when the provider answers that the object is not
     there (or not in the target's allow-list), and `ExternalUnavailableError` for every other
     way it could not be asked. Writing to the provider is `create_issue`, offered only by a
-    target declared `writable`; it is never retried (docs/adr/0063).
+    target declared `writable`; it is never retried (docs/adr/0062).
     """
 
     @property

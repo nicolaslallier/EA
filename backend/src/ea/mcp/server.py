@@ -1092,7 +1092,7 @@ def build_mcp_server(
         comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
 
-    # --- External references (docs/adr/0063) --------------------------------
+    # --- External references (docs/adr/0062) --------------------------------
     # An element can cite an object in another tool. An agent names a *target* the deployment
     # configured and never gives an address; what a third party wrote comes back marked as
     # data (`untrusted_title`), bounded, and with a notice that it is not an instruction.
