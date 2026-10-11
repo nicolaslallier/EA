@@ -810,6 +810,20 @@ class ImportRun:
             judged = self._judge_view(view, state)
             if isinstance(judged, Issue):
                 self._results[index] = _Result(Category.VIEWS, Outcome.REJECTED, (judged,))
+            elif view.boxes and not judged.nodes:
+                # A picture of nothing: every box was omitted, and an empty diagram would be
+                # a different thing from the one the file described. Its own warnings say why.
+                lost = Issue(
+                    Severity.ERROR,
+                    "view_without_boxes",
+                    "every box of this view was omitted; the view is not created",
+                    view.identifier,
+                    None,
+                    view.path,
+                )
+                self._results[index] = _Result(
+                    Category.VIEWS, Outcome.REJECTED, (lost, *judged.notes)
+                )
             else:
                 rows.append(_Row(index, Category.VIEWS, judged))
         return rows
@@ -880,10 +894,9 @@ class ImportRun:
             msg = "no diagram service"
             raise RuntimeError(msg)
         ours = _layout_key(step.nodes)
-        family = re.compile(r"\A" + re.escape(step.name) + r"( \(import [0-9]+\))?\Z")
         for name, diagram_id in self._existing_diagrams:
             if (
-                family.fullmatch(name)
+                _is_a_copy_of(name, step.name)
                 and _layout_key((await diagrams.open(diagram_id)).nodes) == ours
             ):
                 return _Result(row.category, Outcome.REUSED, step.notes)
@@ -974,6 +987,20 @@ def _layout_key(nodes: Sequence[DiagramNode]) -> frozenset[tuple[UUID, int, int,
 
 
 _NAME_ATTEMPTS: Final = 1_000
+_COPY_SUFFIX: Final = re.compile(r"\A(?P<base>.*) \(import (?P<number>[0-9]+)\)\Z", re.DOTALL)
+
+
+def _is_a_copy_of(existing: str, name: str) -> bool:
+    """Whether `existing` is `name`, or the copy an earlier import made under `_free_name`:
+    the same cut of the name, and ` (import N)`. The cut is the point: a name too long to carry
+    its suffix is stored shortened, and must still be recognised."""
+    if existing == name:
+        return True
+    found = _COPY_SUFFIX.match(existing)
+    if found is None:
+        return False
+    suffix = f" (import {found['number']})"
+    return found["base"] == name[: MAX_DIAGRAM_NAME_LENGTH - len(suffix)]
 
 
 def _free_name(base: str, taken: set[str]) -> str:

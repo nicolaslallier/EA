@@ -84,11 +84,11 @@ async def test_a_view_is_recreated_with_its_boxes_and_never_its_connections(
 async def test_a_view_never_makes_an_element(
     importer: ExchangeService, diagrams: InMemoryDiagrams, repository: InMemoryRepository
 ) -> None:
-    await importer.import_exchange(a_file(view("V", box("ghost"))), REAL)
+    await importer.import_exchange(a_file(view("V", box("ghost"), box("a"))), REAL)
 
-    assert len(repository.elements) == 2  # a and b, from the file's elements
+    assert len(repository.elements) == 2  # a and b, from the file's elements; never "ghost"
     (diagram,) = diagrams.diagrams.values()
-    assert diagrams.nodes.get(diagram.id, ()) == ()
+    assert [repository.elements[n.element_id].name for n in diagrams.nodes[diagram.id]] == ["A"]
 
 
 async def test_a_box_may_show_an_element_the_catalogue_already_holds_by_its_source_id(
@@ -351,3 +351,40 @@ async def test_the_layout_replacing_a_view_is_checked_against_the_catalogue(
 
     with pytest.raises(UnknownLayoutElementError):
         await diagram_service.replace_layout(diagram.id, [DiagramNode(uuid4(), 0, 0)])
+
+
+async def test_a_long_name_that_needed_cutting_is_found_again_on_every_reimport(
+    importer: ExchangeService, diagram_service: DiagramService, diagrams: InMemoryDiagrams
+) -> None:
+    name = "N" * 195  # the suffix ` (import 2)` does not fit: the stored name is cut
+    await diagram_service.create(name=name)  # same name, other layout: the copy is suffixed
+    content = a_file(view(name, box("a")))
+
+    first = await importer.import_exchange(content, REAL)
+    for _ in range(3):
+        again = await importer.import_exchange(content, REAL)
+        assert again.counts[Category.VIEWS].created == 0
+        assert again.counts[Category.VIEWS].reused == 1
+
+    assert first.counts[Category.VIEWS].created == 1
+    assert len(diagrams.diagrams) == 2  # the original, and one copy — however often it is sent
+
+
+async def test_a_view_whose_every_box_was_omitted_is_not_created_empty(
+    importer: ExchangeService, diagrams: InMemoryDiagrams
+) -> None:
+    report = await importer.import_exchange(a_file(view("V", box("ghost"), box("nowhere"))), REAL)
+
+    assert report.counts[Category.VIEWS].rejected == 1
+    assert diagrams.diagrams == {}
+    codes = {i.code for i in report.issues}
+    assert {"view_without_boxes", "box_omitted"} <= codes
+
+
+async def test_a_view_that_never_had_a_box_is_still_a_view(
+    importer: ExchangeService, diagrams: InMemoryDiagrams
+) -> None:
+    report = await importer.import_exchange(a_file(view("Empty on purpose")), REAL)
+
+    assert report.counts[Category.VIEWS].created == 1
+    assert [d.name for d in diagrams.diagrams.values()] == ["Empty on purpose"]

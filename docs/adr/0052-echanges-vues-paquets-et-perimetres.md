@@ -74,6 +74,11 @@ de `api/schemas`, comparées par test) ; une boîte qui n'y tient pas est omise 
 Le nom d'une vue déjà pris reçoit ` (import N)` ; **une vue identique (même nom ou son double suffixé, mêmes boîtes
 à l'unité près) est réutilisée**, de sorte qu'importer deux fois le même fichier ne copie rien.
 
+Une vue dont **toutes** les boîtes ont été omises n'est pas créée vide (`view_without_boxes`, avec les avertissements de
+ses boîtes) : un diagramme vide serait autre chose que celui du fichier. Une vue qui n'avait aucune boîte reste une
+vue. La reconnaissance d'une copie suit la même coupe du nom que sa création (`_is_a_copy_of`), de sorte qu'un nom trop
+long pour porter son suffixe n'est pas recréé à chaque réimport.
+
 **Lecture bornée en flux.** Une vue est lue à sa fin (`MAX_NODES_PER_VIEW` nœuds au plus, vérifié au démarrage de
 chaque nœud ; `MAX_EXCHANGE_VIEWS` ; `MAX_FILE_VIEW_BOXES` en tout ; `MAX_VIEW_DEPTH`), puis libérée ; chaque
 dossier de premier niveau de `organizations` de même (`MAX_ORGANIZATION_DEPTH`, `MAX_ORGANIZATION_ENTRIES`).
