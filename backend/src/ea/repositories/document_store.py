@@ -89,6 +89,25 @@ async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing
         guard_element_write(element_from_row(row), WriteKind.DOCUMENT)
 
 
+async def _lock_document(
+    session: AsyncSession, document_id: UUID, *, new_content: str | None = None
+) -> ElementDocument | None:
+    """The document row, locked after its element's (see `_hold_the_element`), or `None`.
+
+    `new_content` is the text a replacement brings: if it is the stored text the
+    write changes nothing and the element is only read-locked. A deletion passes none.
+    """
+    known = await session.get(ElementDocument, document_id)
+    if known is None:
+        return None
+    await _hold_the_element(
+        session, known.element_id, changing=new_content is None or known.content != new_content
+    )
+    return await session.get(
+        ElementDocument, document_id, with_for_update=True, populate_existing=True
+    )
+
+
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:
     """The rows one document's passages become.
 
@@ -230,14 +249,7 @@ class PostgresDocumentRepository:
         revision from ever being searchable under its previous text.
         """
         async with self._sessions.begin() as session:
-            known = await session.get(ElementDocument, document.id)
-            if known is not None:
-                await _hold_the_element(
-                    session, known.element_id, changing=known.content != document.content
-                )
-            row = await session.get(
-                ElementDocument, document.id, with_for_update=True, populate_existing=True
-            )
+            row = await _lock_document(session, document.id, new_content=document.content)
             if row is None:
                 # Only reachable if the document was deleted between the
                 # service reading it and this write — a race, not a bug.
@@ -260,19 +272,13 @@ class PostgresDocumentRepository:
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
-            known = await session.get(ElementDocument, document_id)
-            if known is None:
-                return False
-            await _hold_the_element(session, known.element_id, changing=True)
-            row = await session.get(
-                ElementDocument, document_id, with_for_update=True, populate_existing=True
-            )
+            row = await _lock_document(session, document_id)
             if row is None:
                 return False
             events = events_for(audit, _to_document(row))
             await session.execute(delete(ElementDocument).where(ElementDocument.id == document_id))
             write_events(session, events)
-            await touch(session, [known.element_id], author_of(events))
+            await touch(session, [row.element_id], author_of(events))
         return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:

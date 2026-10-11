@@ -38,14 +38,15 @@ ROUTES = {
         "PostgresDocumentRepository.add",
         document_store.PostgresDocumentRepository.add,
     ): "_hold_the_element",
+    ("document_store._lock_document", document_store._lock_document): "_hold_the_element",
     (
         "PostgresDocumentRepository.replace",
         document_store.PostgresDocumentRepository.replace,
-    ): "_hold_the_element",
+    ): "_lock_document",
     (
         "PostgresDocumentRepository.delete",
         document_store.PostgresDocumentRepository.delete,
-    ): "_hold_the_element",
+    ): "_lock_document",
     (
         "PostgresPackageRepository.move_elements",
         package_store.PostgresPackageRepository.move_elements,

@@ -37,7 +37,6 @@ from ea.repositories.architecture_store import (
     constraint_of,
     element_from_row,
     frozen_clause,
-    touch,
 )
 from ea.repositories.audit_store import write_events
 
@@ -264,38 +263,38 @@ class PostgresPackageRepository:
                     # order: a row that does not match a `WHERE` is skipped by `FOR UPDATE`,
                     # not waited for, so a lock filtered on "frozen" would miss an approval
                     # in flight. The queries after it are new statements and see it.
-                    locked = (
-                        await session.scalars(
-                            select(ElementRecord.id)
-                            .where(ElementRecord.package_id == package_id)
-                            .order_by(ElementRecord.id)
-                            .with_for_update()
+                    await session.execute(
+                        select(ElementRecord.id)
+                        .where(ElementRecord.package_id == package_id)
+                        .order_by(ElementRecord.id)
+                        .with_for_update()
+                    )
+                    refused = (
+                        await session.execute(
+                            select(ElementRecord, func.count().over())
+                            .where(ElementRecord.package_id == package_id, frozen_clause())
+                            .order_by(ElementRecord.name, ElementRecord.id)
+                            .limit(_FROZEN_SAMPLE)
                         )
                     ).all()
-                    refusing = await session.scalar(
-                        select(func.count()).where(
-                            ElementRecord.package_id == package_id, frozen_clause()
-                        )
-                    )
-                    sample = await session.scalars(
-                        select(ElementRecord)
-                        .where(ElementRecord.package_id == package_id, frozen_clause())
-                        .order_by(ElementRecord.name, ElementRecord.id)
-                        .limit(_FROZEN_SAMPLE)
-                    )
                     guard_all(
-                        [element_from_row(found) for found in sample],
+                        [element_from_row(found) for found, _ in refused],
                         WriteKind.FILING,
-                        total=int(refusing or 0),
+                        total=refused[0][1] if refused else 0,
                     )
-                    await touch(session, locked, author_of(events))
                     for table, column in (
                         (PackageRecord, PackageRecord.parent_id),
                         (ElementRecord, ElementRecord.package_id),
                         (DiagramRecord, DiagramRecord.package_id),
                     ):
+                        moved: dict[str, Any] = {column.key: into}
+                        if table is ElementRecord:  # re-filing is a change to the element
+                            moved |= {
+                                "revision": ElementRecord.revision + 1,
+                                "last_modified_by_sub": author_of(events),
+                            }
                         await session.execute(
-                            update(table).where(column == package_id).values({column.key: into})
+                            update(table).where(column == package_id).values(moved)
                         )
                 # With `require_empty` the RESTRICT keys are the last net: a row filed
                 # here after the count above makes the DELETE fail, never re-roots it.

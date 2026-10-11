@@ -492,8 +492,7 @@ async def _review_ends(
     )
     rows = {row.id: row for row in found}
     if rows.keys() != set(end_ids):
-        msg = f"cannot link: an element at one end does not exist ({', '.join(map(str, end_ids))})"
-        raise ElementNotFoundError(msg)
+        raise ElementNotFoundError("cannot link: an element at one end does not exist")
     changes = [
         ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
         for c in ends.apply(element_from_row(row) for row in rows.values())
@@ -517,12 +516,11 @@ async def touch(session: AsyncSession, element_ids: Sequence[UUID], author: str 
     A new revision each, and the author the separation of duties looks at. The
     rows are already locked by the caller.
     """
-    if element_ids:
-        await session.execute(
-            update(ElementRecord)
-            .where(ElementRecord.id.in_(list(element_ids)))
-            .values(revision=ElementRecord.revision + 1, last_modified_by_sub=author)
-        )
+    await session.execute(
+        update(ElementRecord)
+        .where(ElementRecord.id.in_(list(element_ids)))
+        .values(revision=ElementRecord.revision + 1, last_modified_by_sub=author)
+    )
 
 
 # --------------------------------------------------------------------------
