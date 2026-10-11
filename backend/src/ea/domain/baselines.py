@@ -11,12 +11,14 @@ readable path for a diff), and nothing about the tree of packages itself.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from ea.domain.archimate import validate_relationship
 from ea.domain.audit import FieldChange, diff_fields
+from ea.domain.errors import IllegalRelationshipError
 from ea.domain.model import Element, Relationship, reject_nul
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
@@ -280,4 +282,211 @@ def diff_snapshots(older: ModelSnapshot, newer: ModelSnapshot) -> BaselineDiff:
             [link_ref(old_rel[i]) for i in old_rel.keys() - new_rel.keys()]
         ),
         relationships_modified=_by_modified_label(relationships_modified),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ElementUpdate:
+    """An element to put back: what it is now, what it becomes, and the fields between."""
+
+    current: Element
+    restored: Element
+    changes: tuple[FieldChange, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RestorePlan:
+    """What a restoration would do, and everything it costs.
+
+    `documents_lost` is the one figure `plan_restore` cannot know (documents are
+    not part of a baseline): the repository counts them, in the transaction.
+    The lists are sorted, so the same two models always give the same plan —
+    which is what lets the transaction check that the plan it applies is the
+    plan that was read.
+    """
+
+    elements_to_create: tuple[Element, ...] = ()
+    elements_to_update: tuple[ElementUpdate, ...] = ()
+    elements_to_delete: tuple[Element, ...] = ()
+    relationships_to_create: tuple[Relationship, ...] = ()
+    relationships_to_delete: tuple[Relationship, ...] = ()
+    cascaded_relationships: int = 0
+    boxes_to_restore: tuple[BoxSnapshot, ...] = ()
+    documents_lost: int = 0
+    boxes_lost: int = 0
+    warnings: tuple[str, ...] = ()
+    blocked: tuple[Element, ...] = ()
+
+    @property
+    def is_blocked(self) -> bool:
+        return bool(self.blocked)
+
+    @property
+    def is_noop(self) -> bool:
+        return not any(
+            (
+                self.elements_to_create,
+                self.elements_to_update,
+                self.elements_to_delete,
+                self.relationships_to_create,
+                self.relationships_to_delete,
+                self.boxes_to_restore,
+            )
+        )
+
+
+def _element_order(element: Element) -> tuple[str, str]:
+    return (element.name, str(element.id))
+
+
+def _link_order(link: Relationship) -> tuple[str, str]:
+    return (link.relationship_type.value, str(link.id))
+
+
+def plan_restore(
+    snapshot: ModelSnapshot,
+    current: ModelSnapshot,
+    *,
+    keep_new: bool,
+    packages_present: frozenset[UUID],
+    locked: frozenset[UUID] = frozenset(),
+    diagrams_present: frozenset[UUID] = frozenset(),
+) -> RestorePlan:
+    """Make `current` equal `snapshot` — over the elements the snapshot knows.
+
+    `keep_new` keeps what was created since the baseline (and every link that
+    touches it); otherwise it is deleted, and its links go with it by the
+    foreign keys — counted in `cascaded_relationships`, not listed. A link the
+    metamodel no longer allows is a warning and is skipped. An element in
+    `locked` that the plan would change, delete or link blocks it.
+
+    `packages_present` is the set of packages that exist *now*: an element whose
+    package is gone is restored at the root, and the plan says so — a package is
+    never recreated, and a foreign key is never left to fail.
+    """
+    warnings: list[str] = []
+
+    def placed(element: Element) -> Element:
+        gone = element.package_id is not None and element.package_id not in packages_present
+        return replace(element, package_id=None) if gone else element
+
+    snap_el = {e.id: placed(e) for e in sorted(snapshot.elements, key=_element_order)}
+    cur_el = {e.id: e for e in current.elements}
+
+    to_create = tuple(
+        sorted((snap_el[i] for i in snap_el.keys() - cur_el.keys()), key=_element_order)
+    )
+    updates = []
+    for identifier in snap_el.keys() & cur_el.keys():
+        changes = diff_fields(
+            element_content(cur_el[identifier]), element_content(snap_el[identifier])
+        )
+        if changes:
+            updates.append(ElementUpdate(cur_el[identifier], snap_el[identifier], changes))
+    updates.sort(key=lambda u: _element_order(u.restored))
+    to_delete = (
+        ()
+        if keep_new
+        else tuple(sorted((cur_el[i] for i in cur_el.keys() - snap_el.keys()), key=_element_order))
+    )
+    deleted_ids = {e.id for e in to_delete}
+
+    snap_rel = {r.id: r for r in snapshot.relationships}
+    cur_rel = {r.id: r for r in current.relationships}
+    perimeter = snap_el.keys()
+    links_to_delete = [
+        link
+        for identifier, link in cur_rel.items()
+        if (
+            identifier not in snap_rel
+            and link.source_id in perimeter
+            and link.target_id in perimeter
+        )
+        or (
+            identifier in snap_rel
+            and relationship_content(link) != relationship_content(snap_rel[identifier])
+        )
+    ]
+    deleting = {link.id for link in links_to_delete}
+    wanted = [
+        link
+        for identifier, link in snap_rel.items()
+        if identifier not in cur_rel or identifier in deleting
+    ]
+    links_to_create: list[Relationship] = []
+    for wanted_link in sorted(wanted, key=_link_order):
+        try:
+            validate_relationship(
+                wanted_link.relationship_type,
+                wanted_link.source_type,
+                wanted_link.target_type,
+                same_element=wanted_link.source_id == wanted_link.target_id,
+            )
+        except IllegalRelationshipError as refusal:
+            warnings.append(f"relationship {wanted_link.id} skipped: {refusal}")
+        else:
+            links_to_create.append(wanted_link)
+    cascaded = sum(
+        1
+        for identifier, link in cur_rel.items()
+        if identifier not in deleting
+        and (link.source_id in deleted_ids or link.target_id in deleted_ids)
+    )
+
+    present_after = set(snap_el) | (set(cur_el) if keep_new else set())
+    current_boxes = {(b.diagram_id, b.element_id): b for b in current.boxes}
+    boxes = tuple(
+        sorted(
+            (
+                box
+                for box in snapshot.boxes
+                if box.diagram_id in diagrams_present
+                and box.element_id in present_after
+                and current_boxes.get((box.diagram_id, box.element_id)) != box
+            ),
+            key=lambda b: (str(b.diagram_id), str(b.element_id)),
+        )
+    )
+    boxes_lost = sum(1 for box in current.boxes if box.element_id in deleted_ids)
+
+    # Only for what the plan really writes: an element already at the root is not news.
+    asked_for = {e.id: e.package_id for e in snapshot.elements}
+    for written in (*to_create, *(u.restored for u in updates)):
+        asked = asked_for[written.id]
+        if asked is not None and asked not in packages_present:
+            path = snapshot.package_paths.get(asked, str(asked))
+            warnings.append(
+                f"element {written.name!r}: its package {path!r} no longer exists, "
+                "it is restored at the root"
+            )
+    if to_create:
+        warnings.append(
+            f"{len(to_create)} element(s) come back without their documents: "
+            "documents are not part of a baseline"
+        )
+
+    touched = (
+        {u.current.id for u in updates}
+        | deleted_ids
+        | {
+            end
+            for link in (*links_to_delete, *links_to_create)
+            for end in (link.source_id, link.target_id)
+        }
+    )
+    blocked = tuple(
+        sorted((cur_el[i] for i in touched if i in locked and i in cur_el), key=_element_order)
+    )
+
+    return RestorePlan(
+        elements_to_create=to_create,
+        elements_to_update=tuple(updates),
+        elements_to_delete=to_delete,
+        relationships_to_create=tuple(links_to_create),
+        relationships_to_delete=tuple(sorted(links_to_delete, key=_link_order)),
+        cascaded_relationships=cascaded,
+        boxes_to_restore=boxes,
+        boxes_lost=boxes_lost,
+        warnings=tuple(warnings),
+        blocked=blocked,
     )
