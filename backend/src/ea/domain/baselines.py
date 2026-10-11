@@ -581,6 +581,7 @@ def plan_restore(
             for link in (*links_to_delete, *links_to_create, *cascaded_links)
             for end in (link.source_id, link.target_id)
         }
+        | {box.element_id for box in boxes}
         | _taken_by(to_write, [cur_el[i] for i in protected_ids if i in cur_el])
     )
     blocked = tuple(

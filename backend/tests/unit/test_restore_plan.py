@@ -262,6 +262,20 @@ class TestProtectedElements:
         )
         assert [e.id for e in by_address.blocked] == [holder.id]
 
+    def test_g_the_layout_of_its_boxes(self) -> None:
+        a, diagram = node("a"), uuid4()
+        wanted = BoxSnapshot(diagram, a.id, 1, 2, 132, 46)
+        moved = BoxSnapshot(diagram, a.id, 9, 9, 132, 46)
+
+        result = plan(
+            ModelSnapshot((a,), (), (wanted,)),
+            ModelSnapshot((a,), (), (moved,)),
+            diagrams_present=frozenset({diagram}),
+            protected_ids=frozenset({a.id}),
+        )
+
+        assert [e.id for e in result.blocked] == [a.id]
+
     def test_an_untouched_protected_element_does_not_block(self) -> None:
         a = node("a")
 
