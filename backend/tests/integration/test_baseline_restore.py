@@ -224,3 +224,123 @@ async def test_a_concurrent_write_to_a_row_the_plan_touches_is_a_replayable_conf
     )
     left = await model.graph.get_element(model.left.id)
     assert left is not None and left.name == "a"
+
+
+class TestRestoringOverUniqueness:
+    """A restoration is judged by its end state: a name or an address that is free *after*
+    it must not be refused because another element still holds it *during* it."""
+
+    async def three(self, model: Model, names: tuple[str, str, str]) -> list[Element]:
+        return [
+            await model.graph.add_element(
+                Element.create(element_type=E.NODE, name=name, now=NOW), audit=()
+            )
+            for name in names
+        ]
+
+    async def rename(self, model: Model, element: Element, name: str) -> None:
+        await model.graph.update_element(element.id, lambda e: e.rename(name, now=LATER), audit=())
+
+    async def names(self, model: Model, *elements: Element) -> list[str]:
+        found = [await model.graph.get_element(e.id) for e in elements]
+        return [e.name for e in found if e is not None]
+
+    async def test_a_chain_of_renames_that_each_take_the_next_ones_old_name(
+        self, engine_at_head: AsyncEngine
+    ) -> None:
+        model = Model(engine_at_head)
+        elements = await self.three(model, ("Beta", "Gamma", "Other"))
+        a, b = elements[0], elements[1]
+        baseline = await model.baselines.create(a_baseline(), audit=created)
+        await self.rename(model, b, "Beta2")  # free "Beta" for A's new name below
+        await self.rename(model, a, "Alpha")
+        await self.rename(model, b, "Beta")
+
+        await restore(model, baseline.id)
+
+        assert await self.names(model, a, b) == ["Beta", "Gamma"]
+
+    async def test_a_pure_swap_and_a_cycle_of_three(self, engine_at_head: AsyncEngine) -> None:
+        model = Model(engine_at_head)
+        a, b, c = await self.three(model, ("a", "b", "c"))
+        baseline = await model.baselines.create(a_baseline(), audit=created)
+        # b -> a, c -> b, a -> c: every name is taken by the next one.
+        await self.rename(model, a, "tmp")
+        await self.rename(model, b, "a")
+        await self.rename(model, c, "b")
+        await self.rename(model, a, "c")
+
+        await restore(model, baseline.id)
+
+        assert await self.names(model, a, b, c) == ["a", "b", "c"]
+
+    async def test_two_hosts_swap_their_addresses(self, engine_at_head: AsyncEngine) -> None:
+        model = Model(engine_at_head)
+        one = {"vrf": "default", "ip_address": "10.0.0.1"}
+        two = {"vrf": "default", "ip_address": "10.0.0.2"}
+        a = await model.graph.add_element(
+            Element.create(element_type=E.NODE, name="h1", now=NOW, properties=one), audit=()
+        )
+        b = await model.graph.add_element(
+            Element.create(element_type=E.NODE, name="h2", now=NOW, properties=two), audit=()
+        )
+        baseline = await model.baselines.create(a_baseline(), audit=created)
+        spare = {"vrf": "default", "ip_address": "10.0.0.9"}
+        for element, props in ((a, spare), (b, one), (a, two)):
+            await model.graph.update_element(
+                element.id, lambda e, p=props: e.with_properties(p, now=LATER), audit=()
+            )
+
+        await restore(model, baseline.id)
+
+        found = [await model.graph.get_element(e.id) for e in (a, b)]
+        assert [e.properties["ip_address"] for e in found if e] == ["10.0.0.1", "10.0.0.2"]
+
+    async def test_two_networks_swap_their_prefixes(self, engine_at_head: AsyncEngine) -> None:
+        model = Model(engine_at_head)
+        nets = []
+        for name, cidr in (("n1", "10.1.0.0/24"), ("n2", "10.2.0.0/24")):
+            nets.append(
+                await model.graph.add_element(
+                    Element.create(
+                        element_type=E.COMMUNICATION_NETWORK,
+                        name=name,
+                        now=NOW,
+                        properties={"vrf": "default", "cidr": cidr},
+                    ),
+                    audit=(),
+                )
+            )
+        baseline = await model.baselines.create(a_baseline(), audit=created)
+        for element, cidr in (
+            (nets[0], "10.9.0.0/24"),
+            (nets[1], "10.1.0.0/24"),
+            (nets[0], "10.2.0.0/24"),
+        ):
+            await model.graph.update_element(
+                element.id,
+                lambda e, c=cidr: e.with_properties({"vrf": "default", "cidr": c}, now=LATER),
+                audit=(),
+            )
+
+        await restore(model, baseline.id)
+
+        found = [await model.graph.get_element(e.id) for e in nets]
+        assert [e.properties["cidr"] for e in found if e] == ["10.1.0.0/24", "10.2.0.0/24"]
+
+    async def test_a_real_clash_says_that_replaying_the_same_plan_fails_again(
+        self, engine_at_head: AsyncEngine
+    ) -> None:
+        model = Model(engine_at_head)
+        await model.seed()
+        baseline = await model.baselines.create(a_baseline(), audit=created)
+        await model.graph.delete_element(model.right.id, audit=())
+        await model.graph.add_element(
+            Element.create(element_type=E.NODE, name="b", now=LATER), audit=()
+        )
+        plan = await model.baselines.restore_plan(baseline.id, keep_new=True)
+
+        with pytest.raises(RestoreConflictError, match="same way"):
+            await model.baselines.apply_restore(
+                baseline.id, keep_new=True, expected=plan, now=LATER, audit=restored
+            )

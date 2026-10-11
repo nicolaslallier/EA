@@ -50,6 +50,7 @@ from ea.domain.errors import (
     RestoreBlockedError,
     RestoreConflictError,
 )
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import PATH_SEPARATOR
 from ea.repositories.architecture_store import (
@@ -542,7 +543,10 @@ async def _flush_restoring(session: AsyncSession, element: Element) -> None:
         refusal = rejected(element, constraint_of(error))
         if refusal is None:
             raise
-        msg = f"restoring {element.name!r} conflicts with the current catalogue: {refusal}"
+        msg = (
+            f"restoring {element.name!r} conflicts with the current catalogue: {refusal}. "
+            "Resolve the clash first: replaying the same plan fails the same way"
+        )
         raise RestoreConflictError(msg) from error
 
 
@@ -553,11 +557,28 @@ async def _write(session: AsyncSession, plan: RestorePlan, now: datetime) -> Non
         await session.execute(delete(RelationshipRecord).where(RelationshipRecord.id == link.id))
     for element in plan.elements_to_delete:
         await session.execute(delete(ElementRecord).where(ElementRecord.id == element.id))
+    # Two passes. The unique rules (type and name, address, prefix) are immediate,
+    # and a restoration is judged by its end state: element A takes the name element
+    # B holds *now* but gives up in this same plan. So every element to put back first
+    # steps aside under a name nobody can hold (its own id) with no address and no
+    # prefix, then takes its final values. That holds a chain, a swap and a cycle,
+    # whatever the order.
+    rows = []
     for update in plan.elements_to_update:
         row = await session.get(ElementRecord, update.restored.id)
         if row is None:  # pragma: no cover - the plan was just verified in this snapshot
             msg = f"{update.current.name!r} is already gone: read the plan again"
             raise RestoreConflictError(msg)
+        row.name = str(update.restored.id)
+        row.properties = {
+            key: value
+            for key, value in row.properties.items()
+            if key not in (ADDRESS_PROPERTY, PREFIX_PROPERTY)
+        }
+        rows.append(row)
+    if rows:
+        await session.flush()
+    for row, update in zip(rows, plan.elements_to_update, strict=True):
         row.name = update.restored.name
         row.description = update.restored.description
         row.documentation = update.restored.documentation

@@ -60,7 +60,7 @@ class RecordingSession:
         self.calls.append(str(statement).split(" ")[0] + " " + str(statement).split()[2])
 
     async def get(self, model: Any, identifier: Any) -> Any:
-        return SimpleNamespace()  # a row the update assigns to
+        return SimpleNamespace(properties={})  # a row the update assigns to
 
     def add(self, row: Any) -> None:
         self.calls.append(f"add {type(row).__name__}")
@@ -158,7 +158,8 @@ class TestApplyingAPlan:
             "expunge",
             "DELETE relationships",
             "DELETE elements",
-            "flush",  # the update, flushed to name a clash at once
+            "flush",  # every element to put back steps aside under its id...
+            "flush",  # ...then takes its final values, flushed to name a clash at once
             "add ElementRecord",
             "flush",
             "add RelationshipRecord",

@@ -232,7 +232,8 @@ class RestoreBlockedError(DomainError):
 class RestoreConflictError(DomainError):
     """A restoration the catalogue refused, or that no longer matches the plan read.
 
-    A uniqueness clash, a concurrent write, or a model that moved since the dry
-    run. Nothing was written and no event was recorded; reading the plan again
-    and retrying is safe.
+    Nothing was written and no event was recorded. Two causes, told apart by the
+    message: a model that moved since the dry run or a concurrent write (read the
+    plan again and retry), and a uniqueness clash with something the baseline does
+    not cover (retrying the same plan fails the same way until the clash is resolved).
     """
