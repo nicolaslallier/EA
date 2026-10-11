@@ -15,6 +15,7 @@ from fastapi import APIRouter, Query, Response, status
 
 from ea.api.dependencies import Architecture
 from ea.api.schemas import (
+    ApprovalRequest,
     Depth,
     ElementCreate,
     ElementPage,
@@ -131,6 +132,29 @@ async def delete_element(element_id: UUID, service: Architecture) -> Response:
     """Remove an element and every relationship attached to it."""
     await service.delete_element(element_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/elements/{element_id}/approval",
+    response_model=ElementRead,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+    },
+)
+async def transition_element(
+    element_id: UUID, payload: ApprovalRequest, service: Architecture
+) -> ElementRead:
+    """Move an element through review.
+
+    403 without the role the token carries, 409 if the state forbids it or if
+    `expected_revision` is no longer the element's revision.
+    """
+    element = await service.transition_element(
+        element_id, payload.transition, expected_revision=payload.expected_revision
+    )
+    return ElementRead.of(element)
 
 
 # --- Relationships --------------------------------------------------------

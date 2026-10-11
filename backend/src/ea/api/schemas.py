@@ -14,8 +14,9 @@ from itertools import islice
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ea.domain.approval import ApprovalState, Transition, allowed_transitions
 from ea.domain.archimate import (
     AccessType,
     Aspect,
@@ -88,6 +89,7 @@ from ea.domain.saved_queries import (
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 from ea.services.baselines import RestoreOutcome
+from ea.services.caller import current_caller
 
 #: Shared constraints, so every endpoint bounds a payload the same way — and so
 #: does every MCP tool, which imports these rather than restating them. The two
@@ -155,6 +157,15 @@ Against = Annotated[
 #: What a dry run of a restoration hands out (`plan_digest`, a SHA-256) and what
 #: applying must hand back.
 PlanDigest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
+#: The revision of an element an approver read (docs/adr/0046): a positive counter.
+ExpectedRevision = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=2**62,
+        description="The `revision` of the element as you read it: required to approve.",
+    ),
+]
 
 # --- Files in MinIO (docs/adr/0036), and what is known about them (docs/adr/0039) ---
 FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
@@ -177,6 +188,20 @@ class ElementCreate(_Input):
     description: Description = ""
     documentation: Documentation = ""
     properties: Properties = Field(default_factory=dict)
+
+
+class ApprovalRequest(_Input):
+    """One step of review. `approve` must say which revision the approver read."""
+
+    transition: Transition
+    expected_revision: ExpectedRevision | None = None
+
+    @model_validator(mode="after")
+    def _approving_names_a_revision(self) -> ApprovalRequest:
+        if self.transition is Transition.APPROVE and self.expected_revision is None:
+            msg = "approving needs expected_revision, the revision of the element you read"
+            raise ValueError(msg)
+        return self
 
 
 class ElementUpdate(_Input):
@@ -206,9 +231,24 @@ class ElementRead(BaseModel):
     package_id: UUID | None
     created_at: datetime
     updated_at: datetime
+    approval_state: ApprovalState
+    locked: bool
+    approved_by: str | None = Field(description="The Keycloak subject that approved it.")
+    approved_at: datetime | None
+    revision: int = Field(description="Counts the changes to its content; an approval names one.")
+    allowed_transitions: list[Transition] = Field(
+        description="What the caller may do next with this element: the SPA draws a button each."
+    )
 
     @classmethod
     def of(cls, element: Element) -> ElementRead:
+        # Outside a request nobody is calling, and nothing is offered.
+        caller = current_caller.get()
+        offered = (
+            allowed_transitions(element.approval_state, element.locked, caller)
+            if caller is not None
+            else ()
+        )
         return cls(
             id=element.id,
             element_type=element.element_type,
@@ -221,6 +261,12 @@ class ElementRead(BaseModel):
             package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
+            approval_state=element.approval_state,
+            locked=element.locked,
+            approved_by=element.approved_by_sub,
+            approved_at=element.approved_at,
+            revision=element.revision,
+            allowed_transitions=list(offered),
         )
 
 
@@ -612,6 +658,7 @@ class MeRead(BaseModel):
 
     username: str
     can_write: bool
+    can_approve: bool
 
 
 # --- IP address management (docs/adr/0020) --------------------------------

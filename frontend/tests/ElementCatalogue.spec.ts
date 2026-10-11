@@ -324,7 +324,7 @@ describe('ElementCatalogue', () => {
 
   it('offers a reader no write control, only the reads', async () => {
     vi.mocked(useMe).mockReturnValueOnce({
-      me: ref({ username: 'reader', can_write: false }),
+      me: ref({ username: 'reader', can_write: false, can_approve: false }),
       canWrite: computed(() => false),
       error: ref(null),
       load: vi.fn(() => Promise.resolve()),
@@ -477,7 +477,7 @@ describe('ElementCatalogue — the package tree', () => {
 
   it('gives a reader the tree to read, but nothing to move or to drag', async () => {
     const reader = {
-      me: ref({ username: 'reader', can_write: false }),
+      me: ref({ username: 'reader', can_write: false, can_approve: false }),
       canWrite: computed(() => false),
       error: ref(null),
       load: vi.fn(() => Promise.resolve()),

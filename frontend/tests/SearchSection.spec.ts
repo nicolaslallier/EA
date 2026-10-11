@@ -48,7 +48,7 @@ async function open(routes: Route[], query = ''): Promise<{ router: Router; call
 
 function asAReader(): void {
   const reader = {
-    me: ref({ username: 'reader', can_write: false }),
+    me: ref({ username: 'reader', can_write: false, can_approve: false }),
     canWrite: computed(() => false),
     error: ref(null),
     load: vi.fn(() => Promise.resolve()),

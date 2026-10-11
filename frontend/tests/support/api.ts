@@ -153,6 +153,12 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     package_id: null,
     created_at: '2026-09-07T12:00:00Z',
     updated_at: '2026-09-07T12:00:00Z',
+    approval_state: 'draft',
+    locked: false,
+    approved_by: null,
+    approved_at: null,
+    revision: 1,
+    allowed_transitions: [],
     ...overrides,
   }
 }

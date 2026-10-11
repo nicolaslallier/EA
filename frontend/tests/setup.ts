@@ -31,9 +31,10 @@ vi.mock('../src/lib/auth', async (importOriginal) => {
 vi.mock('../src/lib/me', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/lib/me')>()
   const state = {
-    me: ref<{ username: string; can_write: boolean } | null>({
+    me: ref<{ username: string; can_write: boolean; can_approve: boolean } | null>({
       username: 'editor',
       can_write: true,
+      can_approve: false,
     }),
     canWrite: computed(() => true),
     error: ref<string | null>(null),

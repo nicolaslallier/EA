@@ -26,7 +26,7 @@ async function open(query = '', routes: Route[] = [LIST]) {
 
 function asAReader(): void {
   vi.mocked(useMe).mockReturnValueOnce({
-    me: ref({ username: 'reader', can_write: false }),
+    me: ref({ username: 'reader', can_write: false, can_approve: false }),
     canWrite: computed(() => false),
     error: ref(null),
     load: vi.fn(() => Promise.resolve()),

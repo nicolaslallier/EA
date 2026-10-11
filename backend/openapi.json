@@ -130,6 +130,43 @@
         "title": "AddressRead",
         "type": "object"
       },
+      "ApprovalRequest": {
+        "additionalProperties": false,
+        "description": "One step of review. `approve` must say which revision the approver read.",
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "description": "The `revision` of the element as you read it: required to approve.",
+                "maximum": 4.611686018427388e+18,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/Transition"
+          }
+        },
+        "required": [
+          "transition"
+        ],
+        "title": "ApprovalRequest",
+        "type": "object"
+      },
+      "ApprovalState": {
+        "enum": [
+          "draft",
+          "in_review",
+          "approved"
+        ],
+        "title": "ApprovalState",
+        "type": "string"
+      },
       "Aspect": {
         "description": "The aspect an element belongs to \u2014 the column of the ArchiMate framework.",
         "enum": [
@@ -149,6 +186,12 @@
           "element.created",
           "element.updated",
           "element.deleted",
+          "element.submitted",
+          "element.approved",
+          "element.rejected",
+          "element.reopened",
+          "element.locked",
+          "element.unlocked",
           "relationship.created",
           "relationship.deleted",
           "diagram.created",
@@ -1079,6 +1122,41 @@
       "ElementRead": {
         "description": "An element as the API exposes it, layer and aspect resolved for the caller.",
         "properties": {
+          "allowed_transitions": {
+            "description": "What the caller may do next with this element: the SPA draws a button each.",
+            "items": {
+              "$ref": "#/components/schemas/Transition"
+            },
+            "title": "Allowed Transitions",
+            "type": "array"
+          },
+          "approval_state": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Keycloak subject that approved it.",
+            "title": "Approved By"
+          },
           "aspect": {
             "$ref": "#/components/schemas/Aspect"
           },
@@ -1106,6 +1184,10 @@
           "layer": {
             "$ref": "#/components/schemas/Layer"
           },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1129,6 +1211,11 @@
             "title": "Properties",
             "type": "object"
           },
+          "revision": {
+            "description": "Counts the changes to its content; an approval names one.",
+            "title": "Revision",
+            "type": "integer"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1146,7 +1233,13 @@
           "properties",
           "package_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "approval_state",
+          "locked",
+          "approved_by",
+          "approved_at",
+          "revision",
+          "allowed_transitions"
         ],
         "title": "ElementRead",
         "type": "object"
@@ -1643,6 +1736,10 @@
       "MeRead": {
         "description": "The caller, as far as the SPA needs to know it.",
         "properties": {
+          "can_approve": {
+            "title": "Can Approve",
+            "type": "boolean"
+          },
           "can_write": {
             "title": "Can Write",
             "type": "boolean"
@@ -1654,7 +1751,8 @@
         },
         "required": [
           "username",
-          "can_write"
+          "can_write",
+          "can_approve"
         ],
         "title": "MeRead",
         "type": "object"
@@ -2728,6 +2826,18 @@
         ],
         "title": "SubnetRead",
         "type": "object"
+      },
+      "Transition": {
+        "enum": [
+          "submit",
+          "approve",
+          "reject",
+          "reopen",
+          "lock",
+          "unlock"
+        ],
+        "title": "Transition",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -4843,6 +4953,105 @@
           }
         ],
         "summary": "Update Element",
+        "tags": [
+          "architecture"
+        ]
+      }
+    },
+    "/elements/{element_id}/approval": {
+      "post": {
+        "description": "Move an element through review.\n\n403 without the role the token carries, 409 if the state forbids it or if\n`expected_revision` is no longer the element's revision.",
+        "operationId": "transition_element_elements__element_id__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transition Element",
         "tags": [
           "architecture"
         ]

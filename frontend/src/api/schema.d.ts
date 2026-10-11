@@ -300,6 +300,29 @@ export interface paths {
         patch: operations["update_element_elements__element_id__patch"];
         trace?: never;
     };
+    "/elements/{element_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transition Element
+         * @description Move an element through review.
+         *
+         *     403 without the role the token carries, 409 if the state forbids it or if
+         *     `expected_revision` is no longer the element's revision.
+         */
+        post: operations["transition_element_elements__element_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/elements/{element_id}/documents": {
         parameters: {
             query?: never;
@@ -994,6 +1017,20 @@ export interface components {
             vrf: string;
         };
         /**
+         * ApprovalRequest
+         * @description One step of review. `approve` must say which revision the approver read.
+         */
+        ApprovalRequest: {
+            /** Expected Revision */
+            expected_revision?: number | null;
+            transition: components["schemas"]["Transition"];
+        };
+        /**
+         * ApprovalState
+         * @enum {string}
+         */
+        ApprovalState: "draft" | "in_review" | "approved";
+        /**
          * Aspect
          * @description The aspect an element belongs to — the column of the ArchiMate framework.
          * @enum {string}
@@ -1004,7 +1041,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1437,6 +1474,19 @@ export interface components {
          * @description An element as the API exposes it, layer and aspect resolved for the caller.
          */
         ElementRead: {
+            /**
+             * Allowed Transitions
+             * @description What the caller may do next with this element: the SPA draws a button each.
+             */
+            allowed_transitions: components["schemas"]["Transition"][];
+            approval_state: components["schemas"]["ApprovalState"];
+            /** Approved At */
+            approved_at: string | null;
+            /**
+             * Approved By
+             * @description The Keycloak subject that approved it.
+             */
+            approved_by: string | null;
             aspect: components["schemas"]["Aspect"];
             /**
              * Created At
@@ -1454,6 +1504,8 @@ export interface components {
              */
             id: string;
             layer: components["schemas"]["Layer"];
+            /** Locked */
+            locked: boolean;
             /** Name */
             name: string;
             /** Package Id */
@@ -1462,6 +1514,11 @@ export interface components {
             properties: {
                 [key: string]: string;
             };
+            /**
+             * Revision
+             * @description Counts the changes to its content; an approval names one.
+             */
+            revision: number;
             /**
              * Updated At
              * Format: date-time
@@ -1708,6 +1765,8 @@ export interface components {
          * @description The caller, as far as the SPA needs to know it.
          */
         MeRead: {
+            /** Can Approve */
+            can_approve: boolean;
             /** Can Write */
             can_write: boolean;
             /** Username */
@@ -2241,6 +2300,11 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /**
+         * Transition
+         * @enum {string}
+         */
+        Transition: "submit" | "approve" | "reject" | "reopen" | "lock" | "unlock";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3605,6 +3669,77 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_element_elements__element_id__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -137,10 +137,12 @@ async def test_me_says_who_and_whether_they_may_write(client: httpx.AsyncClient)
     assert (await client.get("/me", headers=bearer(READER))).json() == {
         "username": "reader",
         "can_write": False,
+        "can_approve": False,
     }
     assert (await client.get("/me", headers=bearer(EDITOR))).json() == {
         "username": "editor",
         "can_write": True,
+        "can_approve": False,
     }
 
 
@@ -155,6 +157,7 @@ async def test_with_auth_off_the_local_developer_calls(
         assert (await client.get("/me")).json() == {
             "username": "local-developer",
             "can_write": True,
+            "can_approve": True,
         }
 
 
