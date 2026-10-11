@@ -49,6 +49,7 @@ from ea.api.schemas import (
     AxisSelect,
     BaselineDiffRead,
     BaselineRead,
+    Cursor,
     CursorToken,
     Depth,
     Description,
@@ -65,6 +66,7 @@ from ea.api.schemas import (
     FileRead,
     FileTags,
     FileTitle,
+    FindingsLimit,
     GraphRead,
     ImportReportRead,
     Limit,
@@ -80,6 +82,7 @@ from ea.api.schemas import (
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
+    QualityReportRead,
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
@@ -122,11 +125,13 @@ from ea.domain.exchange import (
     ImportContent,
     ImportOptions,
     ScopeKind,
+    Severity,
 )
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
+from ea.domain.quality import RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
     MAX_RELATION_TESTS,
@@ -291,7 +296,12 @@ are not imported over MCP, and a file is at most 1 MB.
 `get_relationship_matrix` answers "which of these elements are linked to which
 of those": a grid, rows as sources and columns as targets, listing only the
 cells that hold a link. Use it to see the links between two groups at once
-instead of calling `read_element_relations` for each element.\
+instead of calling `read_element_relations` for each element.
+
+`check_model` reads the quality of the model itself — elements linked to
+nothing, names that look like duplicates, missing descriptions or required
+properties, links the metamodel would refuse today. Run it before adding to the
+catalogue and after an import, and fix what it reports at the element it names.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -1641,6 +1651,29 @@ def build_mcp_server(
         `permitted_relationships`.
         """
         return MatrixRead.of(await get_analysis().matrix(rows.selection(), cols.selection()))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def check_model(
+        severity: Severity | None = None,
+        code: RuleCode | None = None,
+        limit: FindingsLimit = 100,
+        cursor: Cursor = 0,
+    ) -> QualityReportRead:
+        """Check the model for problems: orphans, probable duplicates, naming, gaps.
+
+        Call it before you write — to avoid creating what already exists under
+        another spelling — and after an import, to see what the import left
+        behind. Each finding names an element, says why, and carries a `fix_hint`
+        route. `counts` describe the whole catalogue; `severity` (`error`,
+        `warning`, `info`) and `code` (`orphan`, `duplicate_probable`, `naming`,
+        `missing_property`, `no_description`, `inconsistent_relationship`) narrow
+        only the findings listed, and `next_cursor` pages through them. It reads
+        and stores nothing: every call recomputes.
+        """
+        return QualityReportRead.of(
+            await get_analysis().check(severity=severity, code=code, limit=limit, cursor=cursor)
+        )
 
     # --- The audit trail (docs/adr/0046) ----------------------------------
 

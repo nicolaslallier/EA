@@ -351,8 +351,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 54
-        )  # fifty-one, the two ways in and out of an exchange file, the matrix
+            len(names) == 55
+        )  # fifty-one, the two exchange tools, the matrix and the quality check
         assert names == {
             "export_model",
             "import_model",
@@ -371,6 +371,7 @@ class TestTheToolset:
             "permitted_relationships",
             "relationship_matrix_row",
             "get_relationship_matrix",
+            "check_model",
             "attach_document",
             "list_documents",
             "read_document",
@@ -1735,6 +1736,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("get_element_history", "limit", "/elements/{element_id}/history", "limit"),
             ("get_element_history", "cursor", "/elements/{element_id}/history", "cursor"),
             ("diff_baselines", "against", "/baselines/{baseline_id}/diff", "against"),
+            ("check_model", "limit", "/quality", "limit"),
+            ("check_model", "cursor", "/quality", "cursor"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -2151,3 +2154,39 @@ class TestTheRelationshipMatrixTool:
 
         assert bounds_of(sent) == bounds_of(served)
         assert bounds_of(sent)["maxItems"] == 500
+
+
+@pytest.mark.asyncio
+class TestCheckModel:
+    async def test_it_reports_what_a_quality_run_finds(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "Loner")
+
+        report = await call(server, "check_model")
+
+        assert "orphan" in {f["rule"] for f in report["findings"]}
+        assert report["total"] == len(report["findings"])
+
+    async def test_it_filters_by_code(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "Loner")
+
+        report = await call(server, "check_model", code="orphan")
+
+        assert {f["rule"] for f in report["findings"]} == {"orphan"}
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "check_model")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is True
+
+    async def test_its_description_says_when_to_call_it(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "check_model")
+
+        assert "after an import" in (tool.description or "")
+
+    async def test_an_unknown_rule_code_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "check_model", code="nope")
+
+    async def test_a_limit_over_the_ceiling_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "check_model", limit=1001)
