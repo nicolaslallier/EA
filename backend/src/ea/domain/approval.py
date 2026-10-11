@@ -37,11 +37,6 @@ class Transition(StrEnum):
     UNLOCK = "unlock"
 
 
-#: Everything but `submit` is the approver's.
-APPROVER_TRANSITIONS: Final = frozenset(
-    {Transition.APPROVE, Transition.REJECT, Transition.REOPEN, Transition.LOCK, Transition.UNLOCK}
-)
-
 #: (state, locked) -> the transitions the state offers, before any role is asked.
 #: A transition not listed here is refused: there is no other way in.
 _OFFERED: Final[dict[tuple[ApprovalState, bool], tuple[Transition, ...]]] = {
@@ -52,8 +47,36 @@ _OFFERED: Final[dict[tuple[ApprovalState, bool], tuple[Transition, ...]]] = {
 }
 
 
+#: The role each transition needs. Written out, and read with no default: a
+#: transition missing here is refused, never granted to whoever can write.
+_NEEDS: Final[dict[Transition, str]] = {
+    Transition.SUBMIT: "ea-editor",
+    Transition.APPROVE: "ea-approver",
+    Transition.REJECT: "ea-approver",
+    Transition.REOPEN: "ea-approver",
+    Transition.LOCK: "ea-approver",
+    Transition.UNLOCK: "ea-approver",
+}
+
+#: The only states a plain editor may change an element in.
+_EDITABLE: Final = frozenset({ApprovalState.DRAFT, ApprovalState.IN_REVIEW})
+
+
+def _needs(transition: Transition) -> str | None:
+    return _NEEDS.get(transition)
+
+
+def needs_approver(transition: Transition) -> bool:
+    return _needs(transition) == "ea-approver"
+
+
 def _may(transition: Transition, caller: Caller) -> bool:
-    return caller.can_approve if transition in APPROVER_TRANSITIONS else caller.can_write
+    needed = _needs(transition)
+    if needed == "ea-editor":
+        return caller.can_write
+    if needed == "ea-approver":
+        return caller.can_approve
+    return False
 
 
 def allowed_transitions(
@@ -82,12 +105,11 @@ def apply_transition(
     `separate_duties=False` (`EA_APPROVAL_SEPARATION`) switches it off.
     """
     if not _may(transition, caller):
-        needed = "ea-approver" if transition in APPROVER_TRANSITIONS else "ea-editor"
-        msg = f"{transition.value} needs the {needed} role"
+        msg = f"{transition} needs the {_needs(transition) or 'a role no one holds'} role"
         raise NotAuthorisedError(msg)
     if transition not in _OFFERED.get((element.approval_state, element.locked), ()):
-        state = "locked" if element.locked else element.approval_state.value.replace("_", " ")
-        msg = f"{element.name!r} is {state}: {transition.value} is not a transition it offers"
+        state = "locked" if element.locked else str(element.approval_state).replace("_", " ")
+        msg = f"{element.name!r} is {state}: {transition} is not a transition it offers"
         raise InvalidTransitionError(msg)
     if transition is Transition.APPROVE and separate_duties:
         if not last_author:
@@ -130,7 +152,7 @@ def apply_transition(
 
 def is_frozen(element: Element) -> bool:
     """Approved or locked: what a bulk operation leaves alone."""
-    return element.locked or element.approval_state is ApprovalState.APPROVED
+    return element.locked or element.approval_state not in _EDITABLE
 
 
 def check_modifiable(element: Element, caller: Caller) -> None:
@@ -138,9 +160,12 @@ def check_modifiable(element: Element, caller: Caller) -> None:
     if element.locked:
         msg = f"{element.name!r} is locked: an approver must unlock it first"
         raise ElementLockedError(msg)
-    if element.approval_state is ApprovalState.APPROVED and not caller.can_approve:
-        msg = f"{element.name!r} is approved: only an approver may change it"
-        raise ElementLockedError(msg)
+    if element.approval_state in _EDITABLE:
+        return
+    if element.approval_state is ApprovalState.APPROVED and caller.can_approve:
+        return
+    msg = f"{element.name!r} is {element.approval_state}: only an approver may change it"
+    raise ElementLockedError(msg)
 
 
 def check_untouched(element: Element) -> None:
@@ -151,7 +176,7 @@ def check_untouched(element: Element) -> None:
     cannot send it back to review in the same transaction.
     """
     if is_frozen(element):
-        state = "locked" if element.locked else "approved"
+        state = "locked" if element.locked else str(element.approval_state)
         msg = f"{element.name!r} is {state}: an approver must reopen it first"
         raise ElementLockedError(msg)
 

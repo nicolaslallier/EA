@@ -226,3 +226,37 @@ class TestWhatReviewForbids:
         assert back.approved_by_sub is None and back.approved_at is None
         draft = an_element(S.DRAFT)
         assert reviewed_after_change(draft) is draft
+
+
+class TestEverythingNotListedIsRefused:
+    """No default is permissive: an unknown state, role or transition is a refusal."""
+
+    def bogus_state(self) -> Element:
+        return replace(an_element(), approval_state="bogus")  # type: ignore[arg-type]
+
+    def test_an_unknown_state_offers_nothing_and_accepts_no_transition(self) -> None:
+        assert allowed_transitions("bogus", False, an_approver()) == ()  # type: ignore[arg-type]
+        for transition in Tr:
+            with pytest.raises((InvalidTransitionError, NotAuthorisedError)):
+                apply_transition(
+                    self.bogus_state(), transition, an_approver(), now=LATER, last_author="x"
+                )
+
+    def test_an_unknown_state_is_not_modifiable_by_anyone(self) -> None:
+        for caller in (an_editor(), an_approver()):
+            with pytest.raises(ElementLockedError):
+                check_modifiable(self.bogus_state(), caller)
+        with pytest.raises(ElementLockedError):
+            check_untouched(self.bogus_state())
+
+    def test_an_unknown_role_or_no_role_may_take_no_transition(self) -> None:
+        stranger = Caller("s", "n", frozenset({"ea-god", "ea-editors"}))
+        for caller in (stranger, Caller("s", "n")):
+            assert allowed_transitions(S.DRAFT, False, caller) == ()
+            for transition in Tr:
+                with pytest.raises(NotAuthorisedError):
+                    apply_transition(an_element(), transition, caller, now=LATER, last_author="x")
+
+    def test_an_unknown_transition_is_refused(self) -> None:
+        with pytest.raises(NotAuthorisedError):
+            apply_transition(an_element(), "teleport", an_approver(), now=LATER)  # type: ignore[arg-type]
