@@ -49,6 +49,7 @@ from ea.domain.errors import (
     DuplicatePackageError,
     DuplicateProfileError,
     DuplicateSavedQueryError,
+    DuplicateTemplateError,
     ElementLockedError,
     ElementNotFoundError,
     ExchangeBodyTimeoutError,
@@ -92,6 +93,7 @@ from ea.domain.errors import (
     StereotypeNotFoundError,
     StoredFileExistsError,
     StoredFileNotFoundError,
+    TemplateNotFoundError,
     TooManyPackagesError,
     TooManyRefusedRowsError,
     UnknownLayoutElementError,
@@ -149,6 +151,9 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DuplicateSavedQueryError: (status.HTTP_409_CONFLICT, "duplicate"),
     UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
     DiagramRevisionConflictError: (status.HTTP_409_CONFLICT, "diagram_revision_conflict"),
+    # --- Diagram templates (docs/adr/0066) ---
+    TemplateNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateTemplateError: (status.HTTP_409_CONFLICT, "duplicate"),
     # --- Generated views (docs/adr/0065) ---
     GeneratedViewTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "generated_view_too_large"),
     GeneratedViewsUnavailableError: (

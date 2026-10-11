@@ -279,7 +279,7 @@ class TestPlanningAnInstantiation:
     def test_an_element_of_another_type_is_refused_naming_both(self) -> None:
         node = an_element(ElementType.NODE)
 
-        with pytest.raises(ValueError, match="application_component.*node"):
+        with pytest.raises(ValueError, match=r"application_component.*node"):
             plan_instantiation(
                 self.body, [Binding("app", element_id=node.id)], {node.id: node.element_type}, {}
             )

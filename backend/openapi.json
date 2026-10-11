@@ -221,6 +221,28 @@
         "title": "ApprovalState",
         "type": "string"
       },
+      "AsTemplateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AsTemplateRequest",
+        "type": "object"
+      },
       "Aspect": {
         "description": "The aspect an element belongs to \u2014 the column of the ArchiMate framework.",
         "enum": [
@@ -250,6 +272,9 @@
           "profile.created",
           "profile.updated",
           "profile.deleted",
+          "template.created",
+          "template.updated",
+          "template.deleted",
           "relationship.created",
           "relationship.deleted",
           "diagram.created",
@@ -902,6 +927,22 @@
         "title": "CountsRead",
         "type": "object"
       },
+      "CreateElementSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateElementSchema",
+        "type": "object"
+      },
       "DiagramCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1436,6 +1477,170 @@
           "updated_at"
         ],
         "title": "DiagramSummaryRead",
+        "type": "object"
+      },
+      "DiagramTemplateCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/TemplateBodySchema"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ],
+        "title": "DiagramTemplateCreate",
+        "type": "object"
+      },
+      "DiagramTemplateRead": {
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/TemplateBodySchema"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DiagramTemplateRead",
+        "type": "object"
+      },
+      "DiagramTemplateSummaryRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "group_count": {
+            "title": "Group Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "link_count": {
+            "title": "Link Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note_count": {
+            "title": "Note Count",
+            "type": "integer"
+          },
+          "slot_count": {
+            "title": "Slot Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "slot_count",
+          "group_count",
+          "note_count",
+          "link_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DiagramTemplateSummaryRead",
+        "type": "object"
+      },
+      "DiagramTemplateUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateBodySchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "DiagramTemplateUpdate",
         "type": "object"
       },
       "DiagramUnfreeze": {
@@ -2128,7 +2333,8 @@
           "diagram",
           "document",
           "baseline",
-          "profile"
+          "profile",
+          "template"
         ],
         "title": "EntityKind",
         "type": "string"
@@ -2774,6 +2980,76 @@
           "duration_ms"
         ],
         "title": "ImportReportRead",
+        "type": "object"
+      },
+      "InstantiateBinding": {
+        "additionalProperties": false,
+        "description": "What fills one slot: an existing element, one to create, or neither (slot left out).",
+        "properties": {
+          "create": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreateElementSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "slot_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Slot Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot_key",
+          "element_id",
+          "create"
+        ],
+        "title": "InstantiateBinding",
+        "type": "object"
+      },
+      "InstantiateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/InstantiateBinding"
+            },
+            "maxItems": 50,
+            "title": "Bindings",
+            "type": "array"
+          },
+          "create_relationships": {
+            "default": false,
+            "title": "Create Relationships",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bindings"
+        ],
+        "title": "InstantiateRequest",
         "type": "object"
       },
       "IssueRead": {
@@ -4810,6 +5086,326 @@
         "title": "SubnetRead",
         "type": "object"
       },
+      "TemplateBodySchema": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateGroupSchema"
+            },
+            "maxItems": 100,
+            "title": "Groups",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateLinkSchema"
+            },
+            "maxItems": 100,
+            "title": "Links",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateNoteSchema"
+            },
+            "maxItems": 100,
+            "title": "Notes",
+            "type": "array"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateSlotSchema"
+            },
+            "maxItems": 50,
+            "title": "Slots",
+            "type": "array"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "slots",
+          "groups",
+          "notes",
+          "links"
+        ],
+        "title": "TemplateBodySchema",
+        "type": "object"
+      },
+      "TemplateGroupSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "text",
+          "x",
+          "y",
+          "width",
+          "height",
+          "colour",
+          "parent_key"
+        ],
+        "title": "TemplateGroupSchema",
+        "type": "object"
+      },
+      "TemplateLinkSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "relationship_type": {
+            "$ref": "#/components/schemas/RelationshipType"
+          },
+          "source_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Source Key",
+            "type": "string"
+          },
+          "target_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Target Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_key",
+          "target_key",
+          "relationship_type"
+        ],
+        "title": "TemplateLinkSchema",
+        "type": "object"
+      },
+      "TemplateNoteSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Key"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "text",
+          "x",
+          "y",
+          "width",
+          "height",
+          "colour",
+          "parent_key",
+          "anchor_key"
+        ],
+        "title": "TemplateNoteSchema",
+        "type": "object"
+      },
+      "TemplateSlotSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "stereotype": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stereotype"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "element_type",
+          "label",
+          "x",
+          "y",
+          "width",
+          "height",
+          "stereotype",
+          "parent_key"
+        ],
+        "title": "TemplateSlotSchema",
+        "type": "object"
+      },
       "Transition": {
         "enum": [
           "submit",
@@ -5867,6 +6463,502 @@
         ]
       }
     },
+    "/diagram-templates": {
+      "get": {
+        "operationId": "list_templates_diagram_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DiagramTemplateSummaryRead"
+                  },
+                  "title": "Response List Templates Diagram Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Templates",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "post": {
+        "operationId": "create_template_diagram_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramTemplateCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
+    "/diagram-templates/{template_id}": {
+      "delete": {
+        "operationId": "delete_template_diagram_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "get": {
+        "operationId": "read_template_diagram_templates__template_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "put": {
+        "operationId": "update_template_diagram_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramTemplateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
+    "/diagram-templates/{template_id}/instantiate": {
+      "post": {
+        "description": "Build a diagram from a template.\n\nEach slot is bound to an existing element of its type, to an element to\ncreate, or left out. Everything refusable is refused before anything is\nwritten; relationships are created only if `create_relationships` is true.",
+        "operationId": "instantiate_template_diagram_templates__template_id__instantiate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstantiateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Instantiate Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
     "/diagrams": {
       "get": {
         "description": "Every saved diagram, sorted by name \u2014 or only those filed in a package.",
@@ -6409,6 +7501,105 @@
         "summary": "Update Diagram",
         "tags": [
           "diagrams"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/as-template": {
+      "post": {
+        "description": "Keep the shape of a diagram: each element becomes a slot of the same type.",
+        "operationId": "save_as_template_diagrams__diagram_id__as_template_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AsTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save As Template",
+        "tags": [
+          "diagram-templates"
         ]
       }
     },

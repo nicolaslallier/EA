@@ -55,6 +55,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from tests.conftest import (
     InMemoryAuditLog,
@@ -67,6 +68,7 @@ from tests.conftest import (
     an_approver,
 )
 from tests.exchange_files import DATA
+from tests.unit.test_template_service import BODY
 
 
 @pytest.fixture
@@ -84,6 +86,7 @@ def server(
     timeline: TimelineService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -100,6 +103,7 @@ def server(
         lambda: timeline,
         lambda: diagram_service,
         lambda: profile_service,
+        lambda: template_service,
     )
 
 
@@ -118,6 +122,7 @@ def server_without_an_index(
     timeline: TimelineService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -134,6 +139,7 @@ def server_without_an_index(
         lambda: timeline,
         lambda: diagram_service,
         lambda: profile_service,
+        lambda: template_service,
     )
 
 
@@ -368,8 +374,10 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert len(names) == 64  # fifty-eight, two that read a diagram, three of the profiles
+        assert len(names) == 66  # fifty-eight, two that read a diagram, three of the profiles
         assert names == {
+            "list_diagram_templates",
+            "instantiate_diagram_template",
             "create_generated_diagram",
             "list_profiles",
             "apply_stereotype",
@@ -2489,3 +2497,42 @@ class TestGeneratedDiagrams:
         tool = next(t for t in await server.list_tools() if t.name == "create_generated_diagram")
 
         assert tool.annotations is not None and tool.annotations.read_only_hint is False
+
+
+@pytest.mark.asyncio
+class TestTemplates:
+    async def test_an_agent_builds_a_diagram_from_a_template_without_any_relationship_by_default(
+        self, server: MCPServer[Any], template_service: TemplateService
+    ) -> None:
+        template = await template_service.create_template(name="Application + hôte", body=BODY)
+
+        listed = await call(server, "list_diagram_templates")
+        built = await call(
+            server,
+            "instantiate_diagram_template",
+            template_id=str(template.id),
+            name="Facturation",
+            bindings=[
+                {"slot_key": "app", "element_id": None, "create": {"name": "Facturation"}},
+                {"slot_key": "host", "element_id": None, "create": {"name": "srv-01"}},
+            ],
+        )
+
+        assert [t["slot_count"] for t in listed["result"]] == [2]
+        assert built["relationships"] == []
+        assert {e["name"] for e in built["elements"]} == {"Facturation", "srv-01"}
+
+    async def test_a_wrong_type_is_refused_in_words_the_model_can_act_on(
+        self, server: MCPServer[Any], template_service: TemplateService
+    ) -> None:
+        template = await template_service.create_template(name="T", body=BODY)
+        node = await an_element(server, "node", "H")
+
+        with pytest.raises(ToolError, match="application_component"):
+            await call(
+                server,
+                "instantiate_diagram_template",
+                template_id=str(template.id),
+                name="X",
+                bindings=[{"slot_key": "app", "element_id": node["id"], "create": None}],
+            )

@@ -83,6 +83,7 @@ class TestCreatingAndListing:
             "name",
             "description",
             "node_count",
+            "generation",
             "package_id",
             "created_at",
             "updated_at",

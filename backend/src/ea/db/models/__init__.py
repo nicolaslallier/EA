@@ -24,6 +24,7 @@ from ea.db.models.diagram import (
     DiagramObjectRecord,
     DiagramRecord,
 )
+from ea.db.models.diagram_template import DiagramTemplateRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
@@ -46,6 +47,7 @@ __all__ = [
     "DiagramNodeRecord",
     "DiagramObjectRecord",
     "DiagramRecord",
+    "DiagramTemplateRecord",
     "DocumentChunk",
     "ElementDocument",
     "ElementRecord",

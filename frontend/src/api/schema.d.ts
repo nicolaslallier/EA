@@ -152,6 +152,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagram-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Templates */
+        get: operations["list_templates_diagram_templates_get"];
+        put?: never;
+        /** Create Template */
+        post: operations["create_template_diagram_templates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagram-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Template */
+        get: operations["read_template_diagram_templates__template_id__get"];
+        /** Update Template */
+        put: operations["update_template_diagram_templates__template_id__put"];
+        post?: never;
+        /** Delete Template */
+        delete: operations["delete_template_diagram_templates__template_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagram-templates/{template_id}/instantiate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Instantiate Template
+         * @description Build a diagram from a template.
+         *
+         *     Each slot is bound to an existing element of its type, to an element to
+         *     create, or left out. Everything refusable is refused before anything is
+         *     written; relationships are created only if `create_relationships` is true.
+         */
+        post: operations["instantiate_template_diagram_templates__template_id__instantiate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams": {
         parameters: {
             query?: never;
@@ -224,6 +285,26 @@ export interface paths {
         head?: never;
         /** Update Diagram */
         patch: operations["update_diagram_diagrams__diagram_id__patch"];
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/as-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save As Template
+         * @description Keep the shape of a diagram: each element becomes a slot of the same type.
+         */
+        post: operations["save_as_template_diagrams__diagram_id__as_template_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/diagrams/{diagram_id}/freeze": {
@@ -1543,6 +1624,16 @@ export interface components {
          * @enum {string}
          */
         ApprovalState: "draft" | "in_review" | "approved";
+        /** AsTemplateRequest */
+        AsTemplateRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
         /**
          * Aspect
          * @description The aspect an element belongs to — the column of the ArchiMate framework.
@@ -1554,7 +1645,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1842,6 +1933,11 @@ export interface components {
             /** Reused */
             reused: number;
         };
+        /** CreateElementSchema */
+        CreateElementSchema: {
+            /** Name */
+            name: string;
+        };
         /** DiagramCreate */
         DiagramCreate: {
             /**
@@ -2045,6 +2141,78 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** DiagramTemplateCreate */
+        DiagramTemplateCreate: {
+            body: components["schemas"]["TemplateBodySchema"];
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /** DiagramTemplateRead */
+        DiagramTemplateRead: {
+            body: components["schemas"]["TemplateBodySchema"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DiagramTemplateSummaryRead */
+        DiagramTemplateSummaryRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /** Group Count */
+            group_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Link Count */
+            link_count: number;
+            /** Name */
+            name: string;
+            /** Note Count */
+            note_count: number;
+            /** Slot Count */
+            slot_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DiagramTemplateUpdate */
+        DiagramTemplateUpdate: {
+            body?: components["schemas"]["TemplateBodySchema"] | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
         };
         /** DiagramUnfreeze */
         DiagramUnfreeze: {
@@ -2348,7 +2516,7 @@ export interface components {
          * EntityKind
          * @enum {string}
          */
-        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline" | "profile";
+        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline" | "profile" | "template";
         /** EntityRefRead */
         EntityRefRead: {
             /**
@@ -2672,6 +2840,29 @@ export interface components {
              * @description True when `issues` was cut at the report ceiling.
              */
             truncated: boolean;
+        };
+        /**
+         * InstantiateBinding
+         * @description What fills one slot: an existing element, one to create, or neither (slot left out).
+         */
+        InstantiateBinding: {
+            create: components["schemas"]["CreateElementSchema"] | null;
+            /** Element Id */
+            element_id: string | null;
+            /** Slot Key */
+            slot_key: string;
+        };
+        /** InstantiateRequest */
+        InstantiateRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["InstantiateBinding"][];
+            /**
+             * Create Relationships
+             * @default false
+             */
+            create_relationships?: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * IssueRead
@@ -3594,6 +3785,90 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /** TemplateBodySchema */
+        TemplateBodySchema: {
+            /** Groups */
+            groups: components["schemas"]["TemplateGroupSchema"][];
+            /** Links */
+            links: components["schemas"]["TemplateLinkSchema"][];
+            /** Notes */
+            notes: components["schemas"]["TemplateNoteSchema"][];
+            /** Slots */
+            slots: components["schemas"]["TemplateSlotSchema"][];
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+        };
+        /** TemplateGroupSchema */
+        TemplateGroupSchema: {
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** TemplateLinkSchema */
+        TemplateLinkSchema: {
+            relationship_type: components["schemas"]["RelationshipType"];
+            /** Source Key */
+            source_key: string;
+            /** Target Key */
+            target_key: string;
+        };
+        /** TemplateNoteSchema */
+        TemplateNoteSchema: {
+            /** Anchor Key */
+            anchor_key: string | null;
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** TemplateSlotSchema */
+        TemplateSlotSchema: {
+            element_type: components["schemas"]["ElementType"];
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Stereotype */
+            stereotype: string | null;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
         /**
          * Transition
          * @enum {string}
@@ -4143,6 +4418,387 @@ export interface operations {
             };
         };
     };
+    list_templates_diagram_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateSummaryRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_template_diagram_templates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_template_diagram_templates__template_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_template_diagram_templates__template_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_template_diagram_templates__template_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    instantiate_template_diagram_templates__template_id__instantiate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstantiateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_diagrams_diagrams_get: {
         parameters: {
             query?: {
@@ -4524,6 +5180,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_as_template_diagrams__diagram_id__as_template_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AsTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

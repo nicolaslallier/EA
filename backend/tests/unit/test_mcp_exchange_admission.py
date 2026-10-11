@@ -30,6 +30,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from tests.conftest import InMemoryAuditLog, InMemoryExchange, InMemoryRepository
 from tests.exchange_files import DATA
@@ -57,6 +58,7 @@ def mcp_over(
     baseline_service: BaselineService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> MCPServer[Any]:
     return build_mcp_server(
         lambda: service,
@@ -72,6 +74,7 @@ def mcp_over(
         lambda: TimelineService(service, InMemoryRepository()),
         lambda: diagram_service,
         lambda: profile_service,
+        lambda: template_service,
     )
 
 
@@ -86,6 +89,7 @@ def parts(
     baseline_service: BaselineService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> tuple[Any, ...]:
     return (
         document_service,
@@ -97,6 +101,7 @@ def parts(
         baseline_service,
         diagram_service,
         profile_service,
+        template_service,
     )
 
 

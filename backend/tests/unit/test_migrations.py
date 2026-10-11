@@ -11,6 +11,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy.dialects.postgresql import JSONB
 
 from ea.db.base import Base
 
@@ -445,3 +446,10 @@ def test_a_source_in_use_cannot_be_deleted() -> None:
 
     for column in ("source_query_id", "source_package_id"):
         assert next(iter(table.c[column].foreign_keys)).ondelete == "RESTRICT"
+
+
+def test_a_template_body_is_one_versioned_jsonb_never_queried_inside() -> None:
+    table = Base.metadata.tables["diagram_templates"]
+
+    assert isinstance(table.c.body.type, JSONB)
+    assert "uq_diagram_templates_name" in {c.name for c in table.constraints}

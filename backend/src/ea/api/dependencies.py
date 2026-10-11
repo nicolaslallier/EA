@@ -24,6 +24,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 
 
@@ -103,6 +104,22 @@ def get_profile_service(request: Request) -> ProfileService:
 
 
 Profiles = Annotated[ProfileService, Depends(get_profile_service)]
+
+
+def template_service_of(app: FastAPI) -> TemplateService:
+    """The template use cases the lifespan attached, or a clear failure (docs/adr/0066)."""
+    service: TemplateService | None = getattr(app.state, "template_service", None)
+    if service is None:
+        msg = "no template service on the application - is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_template_service(request: Request) -> TemplateService:
+    return template_service_of(request.app)
+
+
+Templates = Annotated[TemplateService, Depends(get_template_service)]
 
 
 def package_service_of(app: FastAPI) -> PackageService:

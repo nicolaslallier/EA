@@ -57,6 +57,7 @@ from ea.api.schemas import (
     Description,
     DiagramRead,
     DiagramSummaryRead,
+    DiagramTemplateSummaryRead,
     DimensionParam,
     Documentation,
     DocumentRead,
@@ -74,6 +75,7 @@ from ea.api.schemas import (
     FindingsLimit,
     GraphRead,
     ImportReportRead,
+    InstantiateBinding,
     Limit,
     LinkName,
     MatrixRead,
@@ -164,6 +166,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
@@ -339,7 +342,11 @@ placing boxes: it follows the catalogue by itself.
 An element may carry *stereotypes* - labels from a profile such as "database" or
 "external API", each with the properties expected on such an element. `list_profiles`
 names them; `apply_stereotype` tags an element. A stereotype never changes the
-element's type or what it may be linked to.\
+element's type or what it may be linked to.
+
+For a recurring schema (an application, its host and its database),
+`list_diagram_templates` then `instantiate_diagram_template`: it binds typed slots to
+elements and creates no relationship unless you ask.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -356,6 +363,7 @@ AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
 DiagramProvider = Callable[[], DiagramService]
 ProfileProvider = Callable[[], ProfileService]
+TemplateProvider = Callable[[], TemplateService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -656,16 +664,17 @@ def build_mcp_server(
     get_timeline: TimelineProvider,
     get_diagrams: DiagramProvider,
     get_profiles: ProfileProvider,
+    get_templates: TemplateProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the thirteen services.
+    """Assemble the tool set over the fourteen services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
     queries, the audit trail, the baselines, the exchanges, the analyses, the time, the
-    diagrams and the profiles.
+    diagrams, the profiles and the diagram templates.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -677,8 +686,8 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis`, `get_timeline`, `get_diagrams` and `get_profiles` are required for the
-    same reason.
+    `get_analysis`, `get_timeline`, `get_diagrams`, `get_profiles` and `get_templates` are
+    required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1052,6 +1061,56 @@ def build_mcp_server(
     async def remove_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
         """Take a stereotype's label off an element. Its properties are left untouched."""
         return ElementRead.of(await get_profiles().remove_stereotype(element_id, stereotype_id))
+
+    # --- Diagram templates ----------------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_diagram_templates() -> list[DiagramTemplateSummaryRead]:
+        """The diagram templates: recurring schemas, each a typed skeleton.
+
+        A template holds no element, only slots of an ArchiMate type (an
+        application component, a node…) with the groups and notes around them.
+        Read this to find the `template_id` and the slot keys that
+        `instantiate_diagram_template` binds.
+        """
+        return [DiagramTemplateSummaryRead.of(t) for t in await get_templates().list_templates()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def instantiate_diagram_template(
+        template_id: Annotated[
+            UUID, Field(description="A template, as `list_diagram_templates` reports it.")
+        ],
+        name: Name,
+        bindings: Annotated[
+            list[InstantiateBinding],
+            Field(
+                description=(
+                    "One per slot to fill: an existing `element_id` of the slot's type, "
+                    "or `create` with a name. A slot with neither is left out."
+                )
+            ),
+        ],
+        create_relationships: Annotated[
+            bool,
+            Field(description="Also create the relationships the template draws. Off by default."),
+        ] = False,
+    ) -> DiagramRead:
+        """Build a diagram from a template.
+
+        Elements are created and linked by the same rules as everywhere else,
+        so a slot bound to an element of another type is refused, saying which.
+        Relationships are created **only** when `create_relationships` is true.
+        """
+        return DiagramRead.of(
+            await get_templates().instantiate(
+                template_id,
+                name=name,
+                bindings=[binding.placed() for binding in bindings],
+                create_relationships=create_relationships,
+            )
+        )
 
     @server.tool(annotations=READS)
     @speaking_plainly

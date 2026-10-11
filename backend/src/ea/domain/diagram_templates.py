@@ -27,9 +27,9 @@ from ea.domain.model import Element, Relationship
 
 TEMPLATE_VERSION: Final = 1
 MAX_TEMPLATE_NAME: Final = 200
-MAX_SLOTS: Final = 100
+MAX_SLOTS: Final = 50
 MAX_TEMPLATE_OBJECTS: Final = 100
-MAX_TEMPLATE_LINKS: Final = 300
+MAX_TEMPLATE_LINKS: Final = 100
 _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -439,6 +439,12 @@ def plan_instantiation(
             continue
         binding = wanted
         if binding.create_name is not None:
+            if slot.stereotype:
+                msg = (
+                    f"slot {key!r} wants an element carrying the stereotype {slot.stereotype!r}: "
+                    "bind an existing one, a new element would not carry it"
+                )
+                raise ValueError(msg)
             to_create.append((slot, binding.create_name.strip()))
             continue
         element_id = binding.element_id

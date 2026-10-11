@@ -27,6 +27,7 @@ from ea.domain.query import to_json
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `ports`, which imports this module.
     from ea.domain.diagram_objects import DiagramScene
+    from ea.domain.diagram_templates import DiagramTemplate
     from ea.domain.diagrams import Diagram
     from ea.domain.documents import Document
     from ea.domain.model import StereotypeRef
@@ -50,6 +51,7 @@ class EntityKind(StrEnum):
     DOCUMENT = "document"
     BASELINE = "baseline"
     PROFILE = "profile"
+    TEMPLATE = "template"
 
 
 class AuditChannel(StrEnum):
@@ -76,6 +78,9 @@ class AuditAction(StrEnum):
     PROFILE_CREATED = "profile.created"
     PROFILE_UPDATED = "profile.updated"
     PROFILE_DELETED = "profile.deleted"
+    TEMPLATE_CREATED = "template.created"
+    TEMPLATE_UPDATED = "template.updated"
+    TEMPLATE_DELETED = "template.deleted"
     RELATIONSHIP_CREATED = "relationship.created"
     RELATIONSHIP_DELETED = "relationship.deleted"
     DIAGRAM_CREATED = "diagram.created"
@@ -292,6 +297,20 @@ def profile_view(profile: Profile) -> dict[str, Any]:
             }
             for s in sorted(profile.stereotypes, key=lambda s: s.name)
         ],
+    }
+
+
+def template_view(template: DiagramTemplate) -> dict[str, Any]:
+    """A template by its name and its counts: the text of its notes is the author's."""
+    body = template.body
+    return {
+        "id": str(template.id),
+        "name": template.name,
+        "description": template.description,
+        "slots": len(body.slots),
+        "groups": len(body.groups),
+        "notes": len(body.notes),
+        "links": len(body.links),
     }
 
 

@@ -21,6 +21,9 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'profile.created': 'Profil créé',
   'profile.updated': 'Profil modifié',
   'profile.deleted': 'Profil supprimé',
+  'template.created': 'Modèle créé',
+  'template.updated': 'Modèle modifié',
+  'template.deleted': 'Modèle supprimé',
   'relationship.created': 'Relation créée',
   'relationship.deleted': 'Relation supprimée',
   'diagram.created': 'Diagramme créé',
@@ -54,6 +57,7 @@ export const KIND_LABELS: Record<EntityKind, string> = {
   document: 'Document',
   baseline: 'Baseline',
   profile: 'Profil',
+  template: 'Modèle de diagramme',
 }
 
 /** A hand-written URL may name anything: only what the labels know is a filter. */

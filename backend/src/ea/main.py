@@ -33,8 +33,10 @@ from ea.api.dependencies import (
     package_service_of,
     profile_service_of,
     saved_query_service_of,
+    template_service_of,
     timeline_service_of,
 )
+from ea.api.diagram_templates import router as templates_router
 from ea.api.diagrams import REVISION_HEADER
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
@@ -71,6 +73,7 @@ from ea.domain.ports import (
     PackageRepository,
     ProfileRepository,
     SavedQueryRepository,
+    TemplateRepository,
     TimelineRepository,
     ViewSourceResolver,
 )
@@ -92,6 +95,7 @@ from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.profile_store import PostgresProfileRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
+from ea.repositories.template_store import PostgresTemplateRepository
 from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
@@ -106,6 +110,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from ea.services.view_sources import QueriesAndPackages
 
@@ -230,6 +235,7 @@ def _lifespan(
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
     profiles: ProfileRepository | None = None,
+    templates: TemplateRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -300,6 +306,7 @@ def _lifespan(
             audit_store = audit
             baseline_store = baselines
             profile_store = profiles
+            template_store = templates
             exchange_store: ExchangeRepository | None = None
             if settings.postgres_enabled:
                 engine = create_api_engine(settings)
@@ -322,6 +329,8 @@ def _lifespan(
                     baseline_store = PostgresBaselineRepository(app.state.db_sessions)
                 if profile_store is None:
                     profile_store = PostgresProfileRepository(app.state.db_sessions)
+                if template_store is None:
+                    template_store = PostgresTemplateRepository(app.state.db_sessions)
                 logger.info(
                     "relational store ready at %s:%s/%s",
                     settings.postgres_host,
@@ -402,6 +411,10 @@ def _lifespan(
                         if saved_queries is not None and package_tree is not None
                         else None
                     ),
+                )
+            if template_store is not None and diagram_store is not None:
+                app.state.template_service = TemplateService(
+                    template_store, architecture_service_of(app), app.state.diagram_service
                 )
             if profile_store is not None:
                 app.state.profile_service = ProfileService(
@@ -569,6 +582,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: timeline_service_of(app),
         lambda: diagram_service_of(app),
         lambda: profile_service_of(app),
+        lambda: template_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -617,6 +631,7 @@ def create_app(
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
     profiles: ProfileRepository | None = None,
+    templates: TemplateRepository | None = None,
     view_sources: ViewSourceResolver | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
@@ -671,6 +686,7 @@ def create_app(
             baselines=baselines,
             exchanges=exchanges,
             profiles=profiles,
+            templates=templates,
         ),
     )
     app.state.settings = settings
@@ -720,6 +736,10 @@ def create_app(
             )
         if profiles is not None:
             app.state.profile_service = ProfileService(profiles, architecture_service)
+        if templates is not None and diagrams is not None:
+            app.state.template_service = TemplateService(
+                templates, architecture_service, app.state.diagram_service
+            )
         if exchanges is not None:
             app.state.exchange_service = ExchangeService(
                 exchanges,
@@ -786,6 +806,7 @@ def create_app(
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(profiles_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(templates_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

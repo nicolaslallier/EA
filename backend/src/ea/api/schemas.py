@@ -47,6 +47,14 @@ from ea.domain.diagram_objects import MAX_OBJECT_TEXT, MAX_WAYPOINTS, ObjectKind
 from ea.domain.diagram_objects import DiagramEdge as PlacedEdge
 from ea.domain.diagram_objects import DiagramObject as PlacedObject
 from ea.domain.diagram_objects import Point as PlacedPoint
+from ea.domain.diagram_templates import (
+    MAX_SLOTS,
+    MAX_TEMPLATE_LINKS,
+    MAX_TEMPLATE_OBJECTS,
+    Binding,
+    DiagramTemplate,
+    body_to_json,
+)
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
@@ -2223,3 +2231,157 @@ class ElementStereotypesSet(_Input):
     """The whole set of stereotypes an element carries: it replaces the previous one."""
 
     stereotype_ids: Annotated[list[UUID], Field(max_length=20)]
+
+
+# --- Diagram templates (docs/adr/0066) -----------------------------------------
+# A body is a typed skeleton with no element in it. Every field is required
+# (nullable where it may be empty): the same models serve the request and the
+# answer, so no `-Input`/`-Output` twin.
+
+TemplateKey = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")]
+
+
+class TemplateSlotSchema(_Input):
+    key: TemplateKey
+    element_type: ElementType
+    label: Annotated[str, Field(min_length=1, max_length=100)]
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    stereotype: Annotated[str, Field(min_length=1, max_length=100)] | None
+    parent_key: TemplateKey | None
+
+
+class TemplateGroupSchema(_Input):
+    key: TemplateKey
+    text: ObjectText
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    colour: Colour | None
+    parent_key: TemplateKey | None
+
+
+class TemplateNoteSchema(_Input):
+    key: TemplateKey
+    text: ObjectText
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    colour: Colour | None
+    parent_key: TemplateKey | None
+    anchor_key: TemplateKey | None
+
+
+class TemplateLinkSchema(_Input):
+    source_key: TemplateKey
+    target_key: TemplateKey
+    relationship_type: RelationshipType
+
+
+class TemplateBodySchema(_Input):
+    version: Literal[1]
+    slots: Annotated[list[TemplateSlotSchema], Field(max_length=MAX_SLOTS)]
+    groups: Annotated[list[TemplateGroupSchema], Field(max_length=MAX_TEMPLATE_OBJECTS)]
+    notes: Annotated[list[TemplateNoteSchema], Field(max_length=MAX_TEMPLATE_OBJECTS)]
+    links: Annotated[list[TemplateLinkSchema], Field(max_length=MAX_TEMPLATE_LINKS)]
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> TemplateBodySchema:
+        return cls.model_validate(body_to_json(template.body))
+
+    def raw(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class DiagramTemplateCreate(_Input):
+    name: Name
+    description: Description = ""
+    body: TemplateBodySchema
+
+
+class DiagramTemplateUpdate(_Input):
+    name: Name | None = None
+    description: Description | None = None
+    body: TemplateBodySchema | None = None
+
+
+class DiagramTemplateRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    body: TemplateBodySchema
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> DiagramTemplateRead:
+        return cls(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            body=TemplateBodySchema.of(template),
+            created_at=template.created_at,
+            updated_at=template.updated_at,
+        )
+
+
+class DiagramTemplateSummaryRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    slot_count: int
+    group_count: int
+    note_count: int
+    link_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> DiagramTemplateSummaryRead:
+        body = template.body
+        return cls(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            slot_count=len(body.slots),
+            group_count=len(body.groups),
+            note_count=len(body.notes),
+            link_count=len(body.links),
+            created_at=template.created_at,
+            updated_at=template.updated_at,
+        )
+
+
+class CreateElementSchema(_Input):
+    name: Name
+
+
+class InstantiateBinding(_Input):
+    """What fills one slot: an existing element, one to create, or neither (slot left out)."""
+
+    slot_key: TemplateKey
+    element_id: UUID | None
+    create: CreateElementSchema | None
+
+    def placed(self) -> Binding:
+        return Binding(
+            slot_key=self.slot_key,
+            element_id=self.element_id,
+            create_name=self.create.name if self.create else None,
+        )
+
+
+class InstantiateRequest(_Input):
+    name: Name
+    bindings: Annotated[list[InstantiateBinding], Field(max_length=MAX_SLOTS)]
+    # Off unless asked for: a template's links are what its author drew, not facts nobody decided.
+    create_relationships: bool = False
+
+
+class AsTemplateRequest(_Input):
+    name: Name
+    description: Description = ""

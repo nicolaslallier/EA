@@ -31,7 +31,7 @@ from ea.domain.audit import AuditAction, cascaded_view, element_view, relationsh
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
-from ea.domain.ports import ElementChange, EndsReview, GraphView
+from ea.domain.ports import ElementChange, EndsReview, GraphView, Transaction
 from ea.domain.profiles import validate_stereotype_properties
 from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
@@ -39,6 +39,8 @@ from ea.services.caller import logged, require_approver, require_caller, require
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
@@ -124,6 +126,13 @@ class ArchitectureService:
             )
 
         return EndsReview(change=change, audit=audit)
+
+    def transaction(self, *, commit: bool = True) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases that each call this service (docs/adr/0052).
+
+        Every use case inside still asks who is calling; nothing is written by entering it.
+        """
+        return self._repository.transaction(commit=commit)
 
     # --- Elements ---------------------------------------------------------
 

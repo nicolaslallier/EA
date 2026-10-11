@@ -45,6 +45,7 @@ from ea.domain.audit import (
 from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
+from ea.domain.diagram_templates import DiagramTemplate
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
@@ -62,6 +63,7 @@ from ea.domain.errors import (
     DuplicatePackageError,
     DuplicateProfileError,
     DuplicateSavedQueryError,
+    DuplicateTemplateError,
     ElementNotFoundError,
     ImportInProgressError,
     InvalidQueryError,
@@ -76,6 +78,7 @@ from ea.domain.errors import (
     StereotypeInUseError,
     StereotypeNotFoundError,
     StoredFileNotFoundError,
+    TemplateNotFoundError,
     TooManyRefusedRowsError,
     WriteConflictError,
 )
@@ -133,6 +136,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
@@ -1313,6 +1317,53 @@ class InMemoryProfiles:
         return tuple(known[sid] for sid in self.applied.get(element_id, ()) if sid in known)
 
 
+class InMemoryTemplates:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        self.templates: dict[UUID, DiagramTemplate] = {}
+
+    def _refuse_a_taken_name(self, template: DiagramTemplate) -> None:
+        if any(t.name == template.name and t.id != template.id for t in self.templates.values()):
+            msg = f"a template is already named {template.name!r}"
+            raise DuplicateTemplateError(msg)
+
+    async def list_all(self) -> tuple[DiagramTemplate, ...]:
+        return tuple(sorted(self.templates.values(), key=lambda t: t.name))
+
+    async def get(self, template_id: UUID) -> DiagramTemplate | None:
+        return self.templates.get(template_id)
+
+    async def add(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        self._refuse_a_taken_name(template)
+        events = events_for(audit, template)
+        self.templates[template.id] = template
+        self.audit_log.append(events)
+        return template
+
+    async def save(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        stored = self.templates.get(template.id)
+        if stored is None:
+            raise TemplateNotFoundError(str(template.id))
+        self._refuse_a_taken_name(template)
+        events = events_for(audit, stored)
+        self.templates[template.id] = template
+        self.audit_log.append(events)
+        return template
+
+    async def delete(self, template_id: UUID, *, audit: AuditOf[DiagramTemplate]) -> bool:
+        stored = self.templates.get(template_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
+        del self.templates[template_id]
+        self.audit_log.append(events)
+        return True
+
+
 class InMemoryViewSources:
     """The queries and packages a generated view reads, as a dictionary of answers."""
 
@@ -2227,6 +2278,18 @@ def documents(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> In
 @pytest.fixture
 def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
     return InMemoryDiagrams(audit_log)
+
+
+@pytest.fixture
+def templates(audit_log: InMemoryAuditLog) -> InMemoryTemplates:
+    return InMemoryTemplates(audit_log)
+
+
+@pytest.fixture
+def template_service(
+    templates: InMemoryTemplates, service: ArchitectureService, diagram_service: DiagramService
+) -> TemplateService:
+    return TemplateService(templates, service, diagram_service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

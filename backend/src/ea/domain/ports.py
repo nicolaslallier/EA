@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
+    from ea.domain.diagram_templates import DiagramTemplate
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
     from ea.domain.generated_views import SourceMembers, ViewSource
@@ -341,6 +342,10 @@ class ArchitectureRepository(Protocol):
         """
         ...
 
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases that each call the architecture service."""
+        ...
+
 
 class DocumentRepository(Protocol):
     """Persistence for the markdown attached to elements, and for its index.
@@ -491,6 +496,28 @@ class DiagramRepository(Protocol):
     ) -> tuple[str, ...]:
         """The diagrams that read this query or package."""
         ...
+
+
+class TemplateRepository(Protocol):
+    """Persistence for diagram templates. Every write names its audit, with no default."""
+
+    async def list_all(self) -> tuple[DiagramTemplate, ...]: ...
+
+    async def get(self, template_id: UUID) -> DiagramTemplate | None: ...
+
+    async def add(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        """Store a template, or refuse a name already taken."""
+        ...
+
+    async def save(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        """`audit` is given the template as the transaction read it."""
+        ...
+
+    async def delete(self, template_id: UUID, *, audit: AuditOf[DiagramTemplate]) -> bool: ...
 
 
 class ViewSourceResolver(Protocol):
