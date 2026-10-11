@@ -343,11 +343,12 @@ app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l
 PORTAINER_STACK := scripts/portainer-stack.sh
 APP_COMPOSE     := docker compose -p ea
 
-# Le runner de docs/adr/0044 : son .runner.env ne porte que le PAT, rien d'autre.
+# Le runner de docs/adr/0044 : son .runner.env ne porte que le PAT et le chemin
+# de la CA de l'Infra (docs/adr/0045), rien d'autre.
 RUNNER_COMPOSE := docker compose -f docker-compose.runner.yml --env-file .runner.env
 
 runner-up: ## Démarre le runner GitHub auto-hébergé qui déploie sur un push dans main
-	@test -f .runner.env || { echo "make: .runner.env absent — y mettre GH_RUNNER_TOKEN=<PAT admin des runners du dépôt>" >&2; exit 1; }
+	@test -f .runner.env || { echo "make: .runner.env absent — y mettre GH_RUNNER_TOKEN=<PAT admin des runners du dépôt> et INFRA_CA_CERT=<chemin de infra-ca.crt>" >&2; exit 1; }
 	$(RUNNER_COMPOSE) up -d
 
 runner-down: ## Arrête le runner (pas en plein job : le déploiement en cours serait perdu)

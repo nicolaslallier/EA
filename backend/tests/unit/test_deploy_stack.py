@@ -19,6 +19,7 @@ when broken:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -241,3 +242,146 @@ def test_the_makefile_offers_that_restart() -> None:
     assert re.search(r"^app-restart:.*##", makefile, re.MULTILINE)
     assert "app-up app-down app-restart app-delete" in makefile  # la liste .PHONY
     assert re.search(r"^app-restart:.*\n\t\$\(PORTAINER_STACK\) restart$", makefile, re.MULTILINE)
+
+
+# --- Le runner appelle Portainer par son URL (docs/adr/0045) -----------------
+
+PORTAINER_SCRIPT = REPO_ROOT / "scripts" / "portainer-stack.sh"
+THE_KEY = "ptr_SECRET_KEY_0123"
+THE_URL = "https://portainer.example.test"
+
+needs_tools = pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None, reason="bash ou jq absent"
+)
+
+
+def _run_portainer(
+    tmp_path: Path, *, env: dict[str, str], docker_ok: bool = False
+) -> tuple[subprocess.CompletedProcess[str], list[str], bool]:
+    """Run `delete` with a fake curl and a fake docker first on PATH.
+
+    Returns the process, the arguments of every curl call, and whether docker ran.
+    `$CA` in a value is replaced by a real (dummy) file.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(
+        '#!/bin/sh\necho "$*" >>"$CALLS"\ncat >/dev/null\n'
+        'case "$*" in *"/api/endpoints"*) echo \'[{"Type":1,"Id":1}]\';; *) echo "[]";; esac\n'
+    )
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\ntouch "$DOCKER_RAN"\n' + ("exit 0\n" if docker_ok else "exit 1\n")
+    )
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+    ca = tmp_path / "ca.crt"
+    ca.write_text("x")
+    full = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CALLS": str(tmp_path / "calls"),
+        "DOCKER_RAN": str(tmp_path / "docker-ran"),
+        "PORTAINER_API_KEY": THE_KEY,
+        **{k: v.replace("$CA", str(ca)) for k, v in env.items()},
+    }
+    done = subprocess.run(
+        ["bash", str(PORTAINER_SCRIPT), "delete"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=full,
+    )
+    calls_file = tmp_path / "calls"
+    calls = calls_file.read_text().splitlines() if calls_file.exists() else []
+    return done, calls, (tmp_path / "docker-ran").exists()
+
+
+@needs_tools
+def test_with_a_url_the_script_calls_curl_directly_and_never_docker(tmp_path: Path) -> None:
+    done, calls, docker_ran = _run_portainer(
+        tmp_path, env={"PORTAINER_URL": THE_URL + "/", "PORTAINER_CA_CERT": "$CA"}
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not docker_ran
+    assert calls and all(f"{THE_URL}/api/" in c for c in calls)
+    assert all("--cacert" in c and " -k " not in f" {c} " for c in calls)
+    assert THE_KEY not in "".join(calls) + done.stdout + done.stderr
+
+
+@needs_tools
+def test_without_a_url_the_script_keeps_the_docker_curl(tmp_path: Path) -> None:
+    done, calls, docker_ran = _run_portainer(tmp_path, env={}, docker_ok=True)
+
+    assert docker_ran
+    assert calls == []
+    assert THE_KEY not in done.stdout + done.stderr
+
+
+@needs_tools
+@pytest.mark.parametrize("url", ["http://portainer.example.test", "portainer.example.test"])
+def test_a_url_that_is_not_https_is_refused(tmp_path: Path, url: str) -> None:
+    done, calls, docker_ran = _run_portainer(
+        tmp_path, env={"PORTAINER_URL": url, "PORTAINER_CA_CERT": "$CA"}
+    )
+
+    assert done.returncode != 0 and "https://" in done.stderr
+    assert calls == [] and not docker_ran
+
+
+@needs_tools
+def test_https_without_a_ca_is_refused_unless_insecure_is_explicit(tmp_path: Path) -> None:
+    done, calls, docker_ran = _run_portainer(tmp_path, env={"PORTAINER_URL": THE_URL})
+    assert done.returncode != 0 and "PORTAINER_INSECURE=1" in done.stderr
+    assert calls == [] and not docker_ran
+
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    done, calls, _ = _run_portainer(
+        loose, env={"PORTAINER_URL": THE_URL, "PORTAINER_INSECURE": "1"}
+    )
+    assert done.returncode == 0, done.stderr
+    assert "AVERTISSEMENT" in done.stderr
+    assert calls and all(" -k " in f" {c} " for c in calls)
+    assert THE_KEY not in "".join(calls) + done.stdout + done.stderr
+
+
+@needs_tools
+def test_infra_ca_cert_is_enough_to_verify(tmp_path: Path) -> None:
+    done, calls, _ = _run_portainer(
+        tmp_path, env={"PORTAINER_URL": THE_URL, "INFRA_CA_CERT": "$CA"}
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert calls and all("--cacert" in c for c in calls)
+
+
+def test_the_script_is_valid_bash_and_never_traces() -> None:
+    text = _code(PORTAINER_SCRIPT)
+
+    assert "set -x" not in text and "set -o xtrace" not in text
+    if shutil.which("shellcheck"):
+        cmd = ["shellcheck", "-S", "error", str(PORTAINER_SCRIPT)]
+    elif shutil.which("bash"):
+        cmd = ["bash", "-n", str(PORTAINER_SCRIPT)]
+    else:
+        pytest.skip("ni shellcheck ni bash")
+    done = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def _code(path: Path) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+
+
+def test_the_runner_no_longer_holds_the_docker_socket_and_the_workflow_agrees() -> None:
+    """The socket was there for the curl container only (docs/adr/0045)."""
+    compose = _code(REPO_ROOT / "docker-compose.runner.yml")
+    workflow = _code(REPO_ROOT / ".github" / "workflows" / "deploy.yml")
+
+    assert "docker.sock" not in compose
+    assert "/etc/ea/infra-ca.crt:ro" in compose
+    assert "PORTAINER_URL:" in workflow
+    assert "PORTAINER_CA_CERT: /etc/ea/infra-ca.crt" in workflow
+    assert "docker " not in workflow
+    assert "pull_request" not in workflow

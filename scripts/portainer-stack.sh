@@ -95,14 +95,53 @@ selftest() {
   echo "portainer-stack.sh : selftest ok"
 }
 
-# curl tourne dans un conteneur jetable sur infra-net et parle à portainer:9443
-# directement : le NGINX et l'oauth2-proxy de l'Infra ne sont pas sur le
-# chemin. La clé arrive à curl par -K (un fichier écrit dans le conteneur),
-# jamais en argument, donc jamais dans une liste de processus. Elle entre par
-# la première ligne de stdin, le corps suit — pas par `-e PORTAINER_API_KEY` :
-# depuis WSL, le docker.exe de Windows ne voit pas l'environnement du shell, et
-# une clé vide ne se signale que par « A valid authorization token is missing ».
+# Deux façons de joindre Portainer (docs/adr/0027, docs/adr/0045).
+# - PORTAINER_URL absent : curl tourne dans un conteneur jetable sur infra-net et
+#   parle à portainer:9443 directement (poste qui héberge l'Infra, `make app-up`).
+# - PORTAINER_URL=https://… : curl tourne ici, sans Docker — le cas du runner
+#   GitHub, qui n'est pas sur l'hôte de l'Infra. Le certificat est vérifié contre
+#   PORTAINER_CA_CERT ou INFRA_CA_CERT ; sans CA, seul PORTAINER_INSECURE=1 lève
+#   la vérification, avec un avertissement.
+# Dans les deux cas la clé arrive à curl par -K (un fichier), jamais en argument,
+# donc jamais dans une liste de processus. Ce script ne s'exécute jamais sous
+# `set -x`, qui l'afficherait.
+CURL_CFG=""
+CURL_TLS=()
+direct_setup() {
+  case "$PORTAINER_URL" in
+    https://*) ;;
+    *) die "PORTAINER_URL doit être en https:// (la clé d'API voyagerait en clair)" ;;
+  esac
+  PORTAINER_URL="${PORTAINER_URL%/}"
+  local ca="${PORTAINER_CA_CERT:-${INFRA_CA_CERT:-}}"
+  if [ -n "$ca" ]; then
+    [ -r "$ca" ] || die "certificat d'autorité illisible : $ca"
+    CURL_TLS=(--cacert "$ca")
+  elif [ "${PORTAINER_INSECURE:-}" = 1 ]; then
+    echo "portainer-stack.sh : AVERTISSEMENT — certificat de $PORTAINER_URL NON vérifié (PORTAINER_INSECURE=1)" >&2
+    CURL_TLS=(-k)
+  else
+    die "aucune CA pour vérifier $PORTAINER_URL — PORTAINER_CA_CERT=<infra-ca.crt> (ou INFRA_CA_CERT), ou PORTAINER_INSECURE=1 pour renoncer à la vérification"
+  fi
+}
+direct_key() { # écrit la config curl (mode 600) ; supprimée à la sortie
+  CURL_CFG="$(umask 077 && mktemp)"
+  trap 'rm -f "$CURL_CFG"' EXIT
+  printf 'header = "X-API-Key: %s"\n' "$PORTAINER_API_KEY" >"$CURL_CFG"
+}
+api_direct() { # <méthode> <chemin> [corps-json]
+  local out
+  out="$(printf '%s' "${3:-}" | curl -sS "${CURL_TLS[@]}" -K "$CURL_CFG" --fail-with-body -X "$1" \
+    -H "Content-Type: application/json" --data-binary @- "$PORTAINER_URL/api$2" 2>&1)" \
+    || { printf '%s\n' "${out//$PORTAINER_API_KEY/***}" >&2; die "$1 $2 a échoué (Portainer joignable à $PORTAINER_URL ?)"; }
+  printf '%s' "$out"
+}
+# La clé entre par la première ligne de stdin, le corps suit — pas par
+# `-e PORTAINER_API_KEY` : depuis WSL, le docker.exe de Windows ne voit pas
+# l'environnement du shell, et une clé vide ne se signale que par « A valid
+# authorization token is missing ».
 api() { # <méthode> <chemin> [corps-json]
+  if [ -n "${PORTAINER_URL:-}" ]; then api_direct "$@"; return; fi
   printf '%s\n%s' "$PORTAINER_API_KEY" "${3:-}" | docker run --rm -i --network infra-net \
     --entrypoint sh "$CURL_IMAGE" -c '
       IFS= read -r key
@@ -121,6 +160,9 @@ case "$cmd" in
   up|down|restart|delete) ;;
   *) die "usage : scripts/portainer-stack.sh up|down|restart|delete|selftest" ;;
 esac
+
+# Refus de l'URL ou du TLS avant tout le reste : rien ne part vers Portainer.
+[ -z "${PORTAINER_URL:-}" ] || direct_setup
 
 # Avant tout appel à Portainer : un fichier incomplet se refuse ici, en clair,
 # plutôt que dans une réponse d'API. Les variables marquées `:?` sont lues dans
@@ -152,6 +194,7 @@ if [ -z "${PORTAINER_API_KEY:-}" ]; then
 fi
 [ -n "$PORTAINER_API_KEY" ] || die "PORTAINER_API_KEY vide dans $PORTAINER_ENV"
 export PORTAINER_API_KEY
+[ -z "${PORTAINER_URL:-}" ] || direct_key
 
 eid="${PORTAINER_ENDPOINT_ID:-$(api GET /endpoints | jq -r '[.[] | select(.Type == 1)][0].Id // empty')}"
 [ -n "$eid" ] || die "aucun environnement Docker local dans Portainer"

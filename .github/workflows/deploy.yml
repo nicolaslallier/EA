@@ -1,13 +1,14 @@
 # Redéploie la stack « ea » dans Portainer après un push sur main
 # (docs/adr/0044). Même montage que les dépôts Infra et DarkAngel.
 #
-# runs-on est le runner auto-hébergé de docker-compose.runner.yml : Portainer
-# n'écoute que sur infra-net, un runner GitHub ne peut pas le joindre.
+# runs-on est le runner auto-hébergé de docker-compose.runner.yml : le Portainer
+# de l'Infra est sur le LAN, un runner hébergé par GitHub ne peut pas le joindre.
+# Le runner l'appelle par son URL (docs/adr/0045), sans socket Docker.
 #
 # N'ajoutez JAMAIS de déclencheur pull_request (ni pull_request_target) à un
-# workflow qui tourne sur ce label. Le repo est public, le runner tient le
-# socket Docker, et une PR de fork apporte son propre fichier de workflow :
-# c'est de l'exécution de code arbitraire en root sur l'hôte.
+# workflow qui tourne sur ce label. Le repo est public, le runner
+# tient les secrets de déploiement et une PR de fork apporte son propre fichier
+# de workflow : c'est de l'exécution de code arbitraire avec ces secrets.
 name: Deploy
 
 on:
@@ -39,6 +40,10 @@ jobs:
 
       - name: Redéployer par Portainer
         env:
+          # Publics : l'API de Portainer vue du Mac, et la CA de l'Infra montée
+          # par docker-compose.runner.yml, contre laquelle son certificat est vérifié.
+          PORTAINER_URL: ${{ vars.PORTAINER_URL || 'https://portainer.infra.famillelallier.net' }}
+          PORTAINER_CA_CERT: /etc/ea/infra-ca.crt
           # Secrets du dépôt : la clé (Portainer → My account → Access tokens)
           # et le contenu entier de deploy/ea.env. L'API réécrit toute la liste
           # des variables à chaque déploiement : sans le second, chaque run les
