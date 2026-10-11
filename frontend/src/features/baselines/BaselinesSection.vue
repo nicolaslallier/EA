@@ -6,7 +6,7 @@
 // « précédent ». L'API décide qui écrit ; ici on cache seulement ce qu'un
 // lecteur ne peut pas faire.
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
@@ -158,6 +158,9 @@ function when(iso: string): string {
           {{ when(baseline.created_at) }}
         </span>
         <span v-if="baseline.description" class="description">{{ baseline.description }}</span>
+        <RouterLink :to="{ name: 'history', query: { kind: 'baseline', entity: baseline.id } }">
+          Historique
+        </RouterLink>
         <button
           type="button"
           :aria-describedby="`baseline-${baseline.id}`"

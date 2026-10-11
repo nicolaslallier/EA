@@ -34,6 +34,14 @@ function asAReader(): void {
 }
 
 describe('BaselinesSection', () => {
+  it('links each baseline to its own history', async () => {
+    await open()
+
+    const link = await screen.findByRole('link', { name: 'Historique' })
+    expect(link.getAttribute('href')).toContain('kind=baseline')
+    expect(link.getAttribute('href')).toContain(`entity=${aBaseline().id}`)
+  })
+
   it('lists the baselines with what each holds', async () => {
     await open()
 
