@@ -330,6 +330,7 @@ def _lifespan(
                     packages=getattr(app.state, "package_service", None),
                     queries=getattr(app.state, "saved_query_service", None),
                     max_bytes=settings.exchange_max_bytes,
+                    max_new_folders=settings.exchange_max_new_folders,
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -602,6 +603,7 @@ def create_app(
                 packages=getattr(app.state, "package_service", None),
                 queries=getattr(app.state, "saved_query_service", None),
                 max_bytes=settings.exchange_max_bytes,
+                max_new_folders=settings.exchange_max_new_folders,
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)

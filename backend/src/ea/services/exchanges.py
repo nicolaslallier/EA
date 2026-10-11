@@ -32,6 +32,7 @@ from ea.domain.exchange import (
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
+    MAX_NEW_FOLDERS,
     Category,
     ExchangeBox,
     ExchangeElement,
@@ -131,7 +132,9 @@ class ExchangeService:
         diagrams: DiagramService | None = None,
         packages: PackageService | None = None,
         queries: SavedQueryService | None = None,
+        max_new_folders: int = MAX_NEW_FOLDERS,
     ) -> None:
+        self._max_new_folders = max_new_folders
         self._queries = queries
         self._parse = parser
         self._diagrams = diagrams
@@ -176,6 +179,7 @@ class ExchangeService:
                     options,
                     diagrams=self._diagrams,
                     packages=self._packages,
+                    max_new_folders=self._max_new_folders,
                 ).run(model, report)
             finally:
                 names_in_logs.reset(quiet)

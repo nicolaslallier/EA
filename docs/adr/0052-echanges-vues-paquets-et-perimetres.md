@@ -48,6 +48,24 @@ plafond ; la prévalidation en mémoire n'y compte pas.
   deux se rencontrent dans le même ordre et ne peuvent pas s'interbloquer (test sur PostgreSQL : l'écrivain prend les
   lignes en `NOWAIT` pendant que l'import attend l'arbre).
 
+**Un dossier refusé par la base emporte son sous-arbre.** Si la base refuse un dossier (une course, une collision),
+ses descendants sont rejetés *en mémoire* (ils n'ont plus de parent) : jamais créés à la racine, jamais rangés sous un
+faux chemin. Ce n'est pas un refus de la base : aucun rejeu, aucun point du plafond de 100 ; le dossier refusé a sa
+ligne dans le rapport, ses descendants sont comptés rejetés sans ligne chacun. Test de propriété sur PostgreSQL
+(6 graines, refus à la création et au rangement) : un élément est sous le chemin du fichier ou non rangé.
+
+**La clé des noms frères est le `lower()` de la base.** Les index d'unicité sont sur `lower(name)` de PostgreSQL ; ni
+`casefold()` (qui réunit `ß` et `SS`, que la base distingue) ni `lower()` de Python (`İ` y donne `i̇`, la base `i`)
+ne sont fiables. L'import demande les clés à la base, en un aller-retour pour les noms de l'arbre et du fichier
+(`PackageRepository.fold_names`) : il refuse en mémoire exactement ce que la base refuserait. `name_key` (domaine) est
+la clé de remplacement des doubles et des tests. Limite : un nom créé par une autre session entre la lecture et
+l'écriture reste un refus de la base (typé, sans cascade).
+
+**Les créations sont bornées.** Une création relit et revérifie tout l'arbre, sous les verrous de l'import et de
+l'arbre. Mesuré sur la base jetable : 2 100 dossiers et 2 100 éléments, 62 s avant (2 000 paquets créés, verrous
+tenus), 3 s après. Un import crée au plus `MAX_NEW_FOLDERS` (200, réglage `EA_EXCHANGE_MAX_NEW_FOLDERS`, 0 à 2 000)
+paquets ; les dossiers qui existent déjà ne comptent pas ; l'excédent est rejeté en mémoire (`too_many_folders`).
+
 **Vues.** Des boîtes seulement : jamais une connexion (un lien dessiné n'est pas un fait), conteneurs et étiquettes
 comptés et ignorés ; une vue ne crée jamais d'élément, et ses boîtes ne visent que des éléments qui existent
 (résolus après la première phase). Coordonnées : nombres finis dans `±100 000`, côtés de 20 à 5 000 (les bornes

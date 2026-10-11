@@ -46,6 +46,7 @@ from ea.domain.errors import (
 )
 from ea.domain.exchange import (
     MAX_DESCRIPTION_LENGTH,
+    MAX_NEW_FOLDERS,
     MAX_REFUSED_ROWS,
     MAX_VIEW_BOXES,
     SOURCE_ID,
@@ -297,7 +298,9 @@ class ImportRun:
         *,
         diagrams: DiagramService | None = None,
         packages: PackageService | None = None,
+        max_new_folders: int = MAX_NEW_FOLDERS,
     ) -> None:
+        self._max_new_folders = max_new_folders
         self._packages = packages
         self._package_of: dict[UUID, UUID | None] = {}
         self._keys: dict[str, str] = {}
@@ -735,6 +738,7 @@ class ImportRun:
             base=base,
             existing=list(state.packages),
             key=lambda name: self._keys.get(name, name_key(name)),
+            max_new=self._max_new_folders,
         )
         for note in notes:
             issue = Issue(

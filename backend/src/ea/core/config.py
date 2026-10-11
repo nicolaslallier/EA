@@ -10,7 +10,8 @@ from typing import Annotated
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from ea.domain.exchange import MAX_EXCHANGE_BYTES
+from ea.domain.exchange import MAX_EXCHANGE_BYTES, MAX_NEW_FOLDERS
+from ea.domain.packages import MAX_PACKAGES
 
 
 class Settings(BaseSettings):
@@ -112,6 +113,9 @@ class Settings(BaseSettings):
     # long the whole body may take to arrive (docs/adr/0048). A place is held while the body
     # is read: without these, two slow connections hold every place. They run only during the
     # reception, not during the analysis, and add to the proxy's `client_body_timeout`.
+    # Packages one import may create: each costs a reading of the tree under the locks of the
+    # import and of the tree (docs/adr/0052). Those that already exist do not count.
+    exchange_max_new_folders: int = Field(default=MAX_NEW_FOLDERS, ge=0, le=MAX_PACKAGES)
     exchange_read_timeout_s: float = Field(default=15.0, ge=0.01, le=60.0)
     exchange_read_total_s: float = Field(default=120.0, ge=0.05, le=600.0)
 

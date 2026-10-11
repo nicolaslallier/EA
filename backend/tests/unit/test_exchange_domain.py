@@ -512,3 +512,17 @@ class TestPlanningFolders:
 
         assert [s.identifiers for s in steps] == [("x",), ("y",)]
         assert [r.code for r in refusals] == ["package_duplicate_item"]
+
+
+def test_the_creation_ceiling_is_a_setting_with_the_domains_default() -> None:
+    from pydantic import ValidationError
+
+    from ea.core.config import Settings
+    from ea.domain.exchange import MAX_NEW_FOLDERS
+    from ea.domain.packages import MAX_PACKAGES
+
+    assert Settings(debug=True, auth_enabled=False).exchange_max_new_folders == MAX_NEW_FOLDERS
+    assert Settings(debug=True, auth_enabled=False, exchange_max_new_folders=0)
+    for bad in (-1, MAX_PACKAGES + 1):
+        with pytest.raises(ValidationError):
+            Settings(debug=True, auth_enabled=False, exchange_max_new_folders=bad)

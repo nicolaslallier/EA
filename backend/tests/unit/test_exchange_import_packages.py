@@ -388,3 +388,50 @@ async def test_a_refused_package_leaves_no_trace_in_the_paths_of_the_import(
     assert packaged(repository) == {"A": None, "B": None, "C": None}
     assert report.counts[Category.PACKAGES].rejected == 2
     assert real  # (the real one is not called: the first filing fails)
+
+
+async def test_an_import_creates_at_most_so_many_packages_the_rest_is_rejected_in_memory(
+    exchange_store: InMemoryExchange,
+    service: ArchitectureService,
+    package_service: PackageService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    importer = ExchangeService(
+        exchange_store,
+        service,
+        packages=package_service,
+        max_new_folders=2,
+        clock=lambda: FIXED_NOW,
+    )
+    # No refusal of the database is tolerated: the excess must be told in memory.
+    monkeypatch.setattr("ea.services.exchange_import.MAX_REFUSED_ROWS", 0)
+
+    report = await importer.import_exchange(organized(*[folder(f"F{i}") for i in range(10)]), REAL)
+
+    assert report.counts[Category.PACKAGES].created == 2
+    assert report.counts[Category.PACKAGES].rejected == 8
+    assert {i.code for i in report.issues} == {"too_many_folders"}
+
+
+async def test_a_folder_that_exists_does_not_count_towards_the_creations(
+    exchange_store: InMemoryExchange,
+    service: ArchitectureService,
+    package_service: PackageService,
+) -> None:
+    importer = ExchangeService(
+        exchange_store,
+        service,
+        packages=package_service,
+        max_new_folders=1,
+        clock=lambda: FIXED_NOW,
+    )
+    for name in ("Old1", "Old2", "Old3"):
+        await package_service.create(name=name)
+
+    report = await importer.import_exchange(
+        organized(*[folder(n) for n in ("Old1", "Old2", "Old3", "New")]), REAL
+    )
+
+    assert report.counts[Category.PACKAGES].reused == 3
+    assert report.counts[Category.PACKAGES].created == 1
+    assert report.counts[Category.PACKAGES].rejected == 0

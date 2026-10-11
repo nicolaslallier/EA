@@ -26,6 +26,10 @@ from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, name_key, valida
 from ea.domain.query import ElementQuery
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
+#: Packages one import may create. Each creation reads the whole tree again and checks it,
+#: under the locks of the import and of the tree: past a few hundred, a file holds every package
+#: write of the deployment waiting for minutes. The folders that already exist cost nothing.
+MAX_NEW_FOLDERS: Final = 200
 EXPORT_PAGE_SIZE: Final = 1_000
 EXPORT_TIMEOUT_SECONDS: Final = 300.0
 #: The deployment's language; Exchange wants an `xml:lang` on every text.
@@ -375,6 +379,7 @@ def plan_folders(
     base: tuple[str, ...],
     existing: Collection[tuple[str, ...]],
     key: Callable[[str], str] = name_key,
+    max_new: int = MAX_NEW_FOLDERS,
 ) -> tuple[list[FolderStep], list[FolderNote]]:
     """Judge the folders of a file against the rules of the package tree, in memory.
 
@@ -427,6 +432,15 @@ def plan_folders(
                         FolderNote(
                             "package_too_deep",
                             f"packages nest at most {MAX_PACKAGE_DEPTH} levels deep",
+                            where,
+                        )
+                    )
+                    refused = True
+                elif path not in present and created >= max_new:
+                    notes.append(
+                        FolderNote(
+                            "too_many_folders",
+                            f"an import creates at most {max_new} packages; split the file",
                             where,
                         )
                     )

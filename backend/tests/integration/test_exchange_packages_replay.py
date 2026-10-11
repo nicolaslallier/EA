@@ -105,3 +105,29 @@ async def test_an_element_is_filed_where_the_file_said_or_not_at_all(
     errors = [i for i in report.issues if i.severity.value == "error"]
     assert len(errors) <= len(refused_names)
     assert report.counts[Category.PACKAGES].created == len(stored)
+
+
+async def test_two_thousand_folders_are_bounded_by_the_creation_ceiling_and_stay_quick(
+    whole: Any,  # noqa: F811
+) -> None:
+    import time
+
+    from ea.domain.exchange import MAX_NEW_FOLDERS
+
+    _, _, packages, exchange, _ = whole
+    n = 2_100
+    elements = "".join(el(f"e{i}", "Node", f"n{i}") for i in range(n))
+    organizations = "<organizations>" + folders([(f"f{i}", [f"e{i}"], []) for i in range(n)])
+    organizations += "</organizations>"
+
+    started = time.monotonic()
+    report = await exchange.import_exchange(
+        content(exchange_xml(elements, extra=organizations)), REAL
+    )
+    elapsed = time.monotonic() - started
+
+    assert report.counts[Category.PACKAGES].created == MAX_NEW_FOLDERS
+    assert report.counts[Category.PACKAGES].rejected == n - MAX_NEW_FOLDERS
+    assert len(await packages.list_packages()) == MAX_NEW_FOLDERS
+    # Before the ceiling this took a minute with the locks held; with it, a few seconds.
+    assert elapsed < 30, elapsed
