@@ -29,6 +29,7 @@ from ea.db.postgres import create_session_factory
 from ea.domain.archimate import AccessType
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import ImportInProgressError
 from ea.domain.exchange import (
     NAMESPACE,
@@ -45,9 +46,12 @@ from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
+from ea.services.packages import PackageService
 from tests.conftest import an_editor
 from tests.exchange_files import DATA, el, exchange_xml, rel
+from tests.integration.exchange_support import empty_packages
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
 REAL = ImportOptions(dry_run=False)
@@ -601,3 +605,265 @@ async def test_a_name_quoted_by_the_export_comes_back_changed_if_the_guard_was_o
 
     (element,) = await repository.list_elements(ElementFilter(limit=100))
     assert element.name == "=literal"  # not an identity: the apostrophe was taken for a guard
+
+
+# --- Views and packages ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def whole(
+    engine_at_head: AsyncEngine,
+) -> tuple[ArchitectureService, DiagramService, PackageService, ExchangeService, Any]:
+    from ea.repositories.diagram_store import PostgresDiagramRepository
+    from ea.repositories.package_store import PostgresPackageRepository
+    from ea.repositories.saved_query_store import PostgresSavedQueryRepository
+    from ea.services.saved_queries import SavedQueryService
+
+    sessions = create_session_factory(engine_at_head)
+    architecture = ArchitectureService(PostgresArchitectureRepository(sessions))
+    packages_store = PostgresPackageRepository(sessions)
+    diagrams = DiagramService(
+        PostgresDiagramRepository(sessions), architecture, packages=packages_store
+    )
+    packages = PackageService(packages_store)
+    queries = SavedQueryService(
+        PostgresSavedQueryRepository(sessions), packages_store, architecture
+    )
+    exchange = ExchangeService(
+        PostgresExchangeRepository(sessions),
+        architecture,
+        diagrams=diagrams,
+        packages=packages,
+        queries=queries,
+    )
+    return architecture, diagrams, packages, exchange, (sessions, queries)
+
+
+async def clear_everything(sessions: Any, engine: AsyncEngine) -> None:
+    await empty_the_graph(engine)
+    await empty_packages(sessions)
+
+
+def structure_of(data: bytes) -> dict[str, Any]:
+    """Folders and views of a file, the identifiers that mean nothing named by position."""
+    root = SafeET.fromstring(data, forbid_dtd=True)
+    labels: dict[str, str] = {}
+
+    def label(identifier: str) -> str:
+        return (
+            identifier
+            if not GENERATED.match(identifier)
+            else labels.setdefault(identifier, f"~{len(labels)}")
+        )
+
+    for node in root.findall("x:elements/x:element", NS):
+        label(node.get("identifier"))
+
+    def folder(node: Any) -> Any:
+        return (
+            node.find("x:label", NS).text,
+            sorted(
+                label(i.get("identifierRef")) for i in node.findall("x:item[@identifierRef]", NS)
+            ),
+            [folder(c) for c in node.findall("x:item[x:label]", NS)],
+        )
+
+    folders = [folder(n) for n in root.findall("x:organizations/x:item[x:label]", NS)]
+    views = [
+        (
+            v.find("x:name", NS).text,
+            (
+                v.find("x:documentation", NS).text
+                if v.find("x:documentation", NS) is not None
+                else None
+            ),
+            [
+                (label(b.get("elementRef")), b.get("x"), b.get("y"), b.get("w"), b.get("h"))
+                for b in v.findall("x:node", NS)
+            ],
+        )
+        for v in root.findall("x:views/x:diagrams/x:view", NS)
+    ]
+    return {"folders": folders, "views": views}
+
+
+async def a_filed_catalogue(whole: Any) -> dict[str, Any]:
+    architecture, diagrams, packages, _, _ = whole
+    await reference_model(architecture)
+    elements = {e.name: e for e in await architecture.list_elements(ElementFilter(limit=100))}
+    top = (await packages.create(name="Infra")).package.id
+    sub = (await packages.create(name="Réseau", parent_id=top)).package.id
+    await packages.create(name="Vide")
+    await packages.move_elements([elements["Billing"].id, elements["Invoice run"].id], top)
+    await packages.move_elements([elements["Invoice"].id], sub)
+    view = await diagrams.create(name="Vue d'ensemble", description="La vue\nen deux lignes")
+    await diagrams.replace_layout(
+        view.id,
+        [
+            DiagramNode(elements["Billing"].id, 10.4, 20, 120, 55),
+            DiagramNode(elements["Invoice"].id, -30, 400, 200, 80),
+        ],
+    )
+    await diagrams.create(name="Vue vide")
+    return elements
+
+
+async def test_views_and_packages_survive_export_import_export(
+    whole: Any, engine_at_head: AsyncEngine
+) -> None:
+    architecture, diagrams, _, exchange, (sessions, _) = whole
+    await a_filed_catalogue(whole)
+    first = await exported(exchange)
+
+    await clear_everything(sessions, engine_at_head)
+    for gone in await diagrams.list_diagrams():
+        await diagrams.delete(gone.id)
+    report = await exchange.import_exchange(content(first), REAL)
+
+    assert report.counts[Category.PACKAGES].created == 3
+    assert report.counts[Category.VIEWS].created == 2
+    assert not [i for i in report.issues if i.severity is Severity.ERROR], report.issues
+    second = await exported(exchange)
+    assert structure_of(second) == structure_of(first)
+    assert canonical(second) == canonical(first)
+    filed = {
+        e.name: e.package_id for e in await architecture.list_elements(ElementFilter(limit=100))
+    }
+    assert filed["Alone, no relation at all"] is None  # unfiled stays unfiled
+    assert filed["Billing"] is not None and filed["Invoice"] != filed["Billing"]
+
+
+async def test_importing_an_export_into_the_same_database_creates_and_moves_nothing(
+    whole: Any,
+) -> None:
+    architecture, _, _, exchange, _ = whole
+    await a_filed_catalogue(whole)
+    first = await exported(exchange)
+
+    async def state() -> dict[str, Any]:
+        found = await architecture.list_elements(ElementFilter(limit=100))
+        return {e.name: (e.package_id, e.revision) for e in found}
+
+    before = await state()
+    report = await exchange.import_exchange(content(first), REAL)
+
+    for category in (
+        Category.ELEMENTS,
+        Category.RELATIONSHIPS,
+        Category.PACKAGES,
+        Category.VIEWS,
+    ):
+        assert report.counts[category].created == 0, category
+        assert report.counts[category].rejected == 0, category
+    assert report.counts[Category.PACKAGES].reused == 3
+    assert report.counts[Category.VIEWS].reused == 2
+    after = await state()
+    # No element changed package. The first import of a file does complete an element that had
+    # no `source_id` with the file's identifier (a revision, as in the XML round trip); the
+    # second one is the identity.
+    assert {n: p for n, (p, _) in after.items()} == {n: p for n, (p, _) in before.items()}
+    assert await exported(exchange) == first
+    await exchange.import_exchange(content(first), REAL)
+    assert await state() == after
+
+
+async def test_a_scope_round_trips_through_an_empty_database(
+    whole: Any, engine_at_head: AsyncEngine
+) -> None:
+    from ea.domain.exchange import ExportScope, ScopeKind
+
+    _, diagrams, packages, exchange, (sessions, _) = whole
+    elements = await a_filed_catalogue(whole)
+    top = next(s.package.id for s in await packages.list_packages() if s.package.name == "Infra")
+    scoped = ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=top))
+    export = await exchange.export(scoped)
+    first = b"".join([chunk async for chunk in export.chunks])
+
+    assert export.skipped_views == 0  # the view's two boxes are both in Infra's subtree
+    assert b"Alice" not in first and b"Billing" in first  # nothing from outside the scope
+    await clear_everything(sessions, engine_at_head)
+    for gone in await diagrams.list_diagrams():
+        await diagrams.delete(gone.id)
+    await exchange.import_exchange(content(first), REAL)
+    export_again = await exchange.export(
+        ExportRequest(
+            scope=ExportScope(
+                ScopeKind.PACKAGE,
+                package_id=next(
+                    s.package.id
+                    for s in await packages.list_packages()
+                    if s.package.name == "Infra"
+                ),
+            )
+        )
+    )
+    second = b"".join([chunk async for chunk in export_again.chunks])
+
+    assert canonical(second) == canonical(first)
+    assert structure_of(second) == structure_of(first)
+    assert elements  # (the reference catalogue had more than the scope)
+
+
+async def test_an_element_already_filed_elsewhere_is_not_moved_by_a_folder(
+    whole: Any, engine_at_head: AsyncEngine
+) -> None:
+    architecture, _, packages, exchange, _ = whole
+    elsewhere = (await packages.create(name="Elsewhere")).package.id
+    element = await architecture.create_element(element_type=E.NODE, name="srv")
+    await packages.move_elements([element.id], elsewhere)
+    revision = (await architecture.get_element(element.id)).revision
+    data = exchange_xml(
+        el("n", "Node", "srv"),
+        extra="<organizations><item><label>Infra</label>"
+        '<item identifierRef="n"/></item></organizations>',
+    )
+
+    report = await exchange.import_exchange(content(data), REAL)
+
+    kept = await architecture.get_element(element.id)
+    assert kept.package_id == elsewhere
+    # The only change is the source_id completion, which is a revision of its own kind.
+    assert kept.revision <= revision + 1
+    assert "package_not_applied" in {i.code for i in report.issues}
+
+
+async def test_an_import_takes_the_tree_before_any_element_so_a_package_write_cannot_interlock(
+    whole: Any, engine_at_head: AsyncEngine
+) -> None:
+    from sqlalchemy import func, select, text
+
+    from ea.repositories.package_store import TREE_LOCK
+
+    architecture, _, _, exchange, _ = whole
+    element = await architecture.create_element(
+        element_type=E.NODE, name="srv", properties={SOURCE_ID: "n"}
+    )
+    data = exchange_xml(
+        el("n", "Node", "srv"),
+        extra="<organizations><item><label>Infra</label>"
+        '<item identifierRef="n"/></item></organizations>',
+    )
+
+    async def importing() -> Any:
+        with acting_as(an_editor()):
+            return await exchange.import_exchange(content(data), REAL)
+
+    async with engine_at_head.connect() as writer, writer.begin():
+        # A package write holds the tree...
+        await writer.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
+        task = asyncio.create_task(importing(), context=contextvars.Context())
+        for _ in range(200):  # ...and the import queues behind it
+            waiting = await writer.scalar(
+                text("select count(*) from pg_locks where locktype='advisory' and not granted")
+            )
+            if waiting:
+                break
+            await asyncio.sleep(0.02)
+        assert waiting, "the import should wait for the tree"
+        # ...so it holds no element yet: the writer takes the row without waiting for it.
+        await writer.execute(
+            text("select id from elements where id = :id for update nowait"), {"id": element.id}
+        )
+
+    report = await asyncio.wait_for(task, 20)
+    assert report.applied
