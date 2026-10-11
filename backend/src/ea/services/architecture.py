@@ -240,9 +240,10 @@ class ArchitectureService:
         Whether a field is blank is decided on the row as the repository holds it under
         lock, never on a copy read earlier — a value somebody wrote in between is kept.
         With nothing left to fill, nothing is written: no revision, no event, no return to
-        review. A change goes through the same guard as any change to the content.
+        review. It never reopens a review: an approved or locked element is refused for every
+        role, an approver included (the guard is asked with no caller, which lifts nothing).
         """
-        caller = require_editor()
+        require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
         filling = dict(properties or {})
@@ -254,7 +255,7 @@ class ArchitectureService:
             wants_description = bool(description.strip()) and not stored.description
             if not fill and not wants_description:
                 return stored
-            guard_element_write(stored, WriteKind.CONTENT, caller)
+            guard_element_write(stored, WriteKind.CONTENT)
             now = self._now()
             updated = stored
             if fill:
@@ -262,7 +263,7 @@ class ArchitectureService:
             if wants_description:
                 text = reject_nul(description, "a description").strip()
                 updated = replace(updated, updated_at=now, description=text)
-            return reviewed_after_change(updated)
+            return updated
 
         return await self._write_patch(element_id, patch)
 

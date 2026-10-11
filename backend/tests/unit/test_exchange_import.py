@@ -611,22 +611,28 @@ class TestReview:
             stored.approval_state is ApprovalState.APPROVED and SOURCE_ID not in stored.properties
         )
 
-    async def test_an_approver_completing_an_approved_element_reopens_it_and_says_so(
+    async def test_an_approver_importing_over_ten_approved_elements_changes_none_of_them(
         self,
         exchange_service: ExchangeService,
         service: ArchitectureService,
         repository: InMemoryRepository,
     ) -> None:
-        approved = await service.create_element(element_type=E.NODE, name="srv")
-        self.approve(repository, approved.id)
+        ids = []
+        for number in range(10):
+            element = await service.create_element(element_type=E.NODE, name=f"srv{number}")
+            self.approve(repository, element.id, approved_by_sub="approver-9")
+            ids.append(element.id)
+        before = {uid: repository.elements[uid] for uid in ids}
+        events = len(repository.audit_log.events)
+        rows = "".join(el(f"s{n}", "Node", f"srv{n}") for n in range(10))
 
-        with acting_as(an_approver()):
-            report = await exchange_service.import_exchange(
-                xml(exchange_xml(el("s", "Node", "srv"))), REAL
-            )
+        with acting_as(an_approver()):  # a bulk import never reopens a review, for any role
+            report = await exchange_service.import_exchange(xml(exchange_xml(rows)), REAL)
 
-        assert [i.code for i in report.issues] == ["approved_element_reopened"]
-        assert repository.elements[approved.id].approval_state is ApprovalState.IN_REVIEW
+        assert [i.code for i in report.issues] == ["completion_not_applied"] * 10
+        assert report.counts[Category.ELEMENTS].reused == 10
+        assert {uid: repository.elements[uid] for uid in ids} == before  # not even a revision
+        assert len(repository.audit_log.events) == events
 
     async def test_linking_an_approved_element_reopens_it_and_a_dry_run_leaves_it_approved(
         self,

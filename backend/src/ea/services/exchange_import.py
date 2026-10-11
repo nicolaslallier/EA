@@ -443,9 +443,6 @@ class ImportRun:
         except ElementNotFoundError:
             msg = "this element was deleted while the file was being imported"
             raise RowRefusedError("element_gone", msg) from None
-        if match.id in state.approved and reviewed_after_change(updated) is updated:
-            self._ledger.discard(state.approved, match.id)
-            issues.append(self._reopened(item))
         return updated
 
     @staticmethod
