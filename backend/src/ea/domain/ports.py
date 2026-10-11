@@ -7,6 +7,7 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -16,6 +17,7 @@ from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.exchange import ExportScope
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
@@ -728,3 +730,24 @@ class SavedQueryRepository(Protocol):
         ...
 
     async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool: ...
+
+
+class ExportSnapshot(Protocol):
+    """A consistent, read-only reading of the graph, paged in a stable order.
+
+    Pages rather than the whole graph so an export never holds the model in
+    memory; one snapshot rather than one read per page so a write landing
+    between two pages cannot tear the file (docs/adr/0048).
+    """
+
+    async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]: ...
+
+    async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]: ...
+
+
+class ExchangeRepository(Protocol):
+    """What the import/export of an exchange file needs beyond the graph's own port."""
+
+    def snapshot(self, scope: ExportScope) -> AbstractAsyncContextManager[ExportSnapshot]:
+        """A `REPEATABLE READ`, read-only view of what `scope` selects."""
+        ...
