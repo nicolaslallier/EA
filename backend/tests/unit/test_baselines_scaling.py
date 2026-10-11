@@ -40,11 +40,12 @@ def lines_executed(work: Callable[[], Any]) -> int:
     def global_(frame: FrameType, event: str, arg: object) -> Any:
         return local if frame.f_code.co_filename == target else None
 
+    previous = sys.gettrace()  # the coverage tracer, when there is one: put it back
     sys.settrace(global_)
     try:
         work()
     finally:
-        sys.settrace(None)
+        sys.settrace(previous)
     return count
 
 
