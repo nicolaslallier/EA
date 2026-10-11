@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with nine sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`), showing beside each one what PostgreSQL records about it — who deposited it, when, and the title, description and tags a person wrote (see `docs/adr/0039`). Elements and diagrams are filed in a tree of *packages* — a classification with no ArchiMate meaning, `packages` plus a nullable `package_id` on `elements` and `diagrams` (migration `0009`, see `docs/adr/0042`) — and the *Recherche* section runs one pure `ElementQuery` (types, layers, name, package, attribute tests, relations present or absent) that `POST /elements/search` and the MCP tool `search_elements` share and that `saved_queries` (migration `0010`, see `docs/adr/0043`) keeps under a name, shared by every reader. The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as forty-four tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing, the files of the bucket, the packages and the structured search — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with eleven sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`), showing beside each one what PostgreSQL records about it — who deposited it, when, and the title, description and tags a person wrote (see `docs/adr/0039`). Elements and diagrams are filed in a tree of *packages* — a classification with no ArchiMate meaning, `packages` plus a nullable `package_id` on `elements` and `diagrams` (migration `0009`, see `docs/adr/0042`) — and the *Recherche* section runs one pure `ElementQuery` (types, layers, name, package, attribute tests, relations present or absent) that `POST /elements/search` and the MCP tool `search_elements` share and that `saved_queries` (migration `0010`, see `docs/adr/0043`) keeps under a name, shared by every reader; history, which reads the audit trail of every write, for the whole catalogue or for one element (see `docs/adr/0044`); and baselines, which captures, compares and restores snapshots of the whole model (see `docs/adr/0045`). The sheet of an element carries its review banner — draft, in review, approved, locked — whose buttons are the transitions the API lists (see `docs/adr/0046`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as fifty-one tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing, the files of the bucket, the packages, the structured search, the audit trail, the baselines and the review transitions — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), the documents in **two tables**, and what is known about the files of the bucket in a third, `file_metadata` (migration `0008`, see `docs/adr/0039`). `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots — which is true of Keycloak too, and of nothing else: an unreachable embedder or bucket degrades its own section and `/health` names it (see `docs/adr/0037`).
 
 Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn, where, and at what size (`width`/`height`, migration `0007`, see `docs/adr/0035`), and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` is a foreign key to `elements`, like `element_documents.element_id`, so deleting an element takes its boxes and its documents in the same transaction (migration `0006`, see `docs/adr/0033`). The SPA's *Diagrammes* section builds them; there is no MCP tool for diagrams.
+
+**`audit_events`** (migration `0011`) is the history of every write; **`baselines`** and the `baseline_*` copies (`0012`) freeze the model; the review state is columns of `elements` (`0013`). Their sections below say what is decided.
 
 A second Python project, `pipelines/`, sits beside `backend/` with its own
 lockfile: Prefect 3 and LiteLLM, self-hosted, running one flow,
@@ -19,7 +21,7 @@ repository (see `docs/adr/0028`). **Nothing here has been deployed**: the
 Docker stack (Prefect server, LiteLLM, the worker) has never run against the
 shared cluster, so `docs/adr/0028` is still a *Proposition*.
 
-**Every caller is authenticated by Keycloak**, realm `ea`: the API, `/mcp` and the pipeline's worker each verify or present a bearer token, every read needs a caller and every write the realm role `ea-editor`, decided in `services/` and nowhere else (see `docs/adr/0032`, still a *Proposition* — the realm has not been imported and the stack not redeployed).
+**Every caller is authenticated by Keycloak**, realm `ea`: the API, `/mcp` and the pipeline's worker each verify or present a bearer token, every read needs a caller and every write the realm role `ea-editor`, decided in `services/` and nowhere else (see `docs/adr/0032`, still a *Proposition* — the realm has not been imported and the stack not redeployed). Approving is a second realm role, `ea-approver`, that does **not** imply `ea-editor`: writing still needs `ea-editor` (see `docs/adr/0046`, also a *Proposition* — the realm import, in the Infra repository, must gain the role).
 
 **Not yet scaffolded** (do not assume these exist): Playwright.
 
@@ -70,7 +72,10 @@ backend/
     core/          # config (pydantic-settings), logging
     domain/        # entities, value objects, domain services — NO framework imports
       archimate/   # the ArchiMate 3.2 metamodel: taxonomy, relations, rules
-      auth.py      # Caller, EDITOR_ROLE, LOCAL_DEVELOPER, SYSTEM — no JWT here
+      approval.py  # review states, transitions, the one guard every element write asks — docs/adr/0046
+      audit.py     # AuditEvent, diff_fields, the cursor — docs/adr/0044
+      auth.py      # Caller, EDITOR_ROLE, APPROVER_ROLE, LOCAL_DEVELOPER, SYSTEM — no JWT here
+      baselines.py # Baseline, ModelSnapshot, diff_snapshots, plan_restore — docs/adr/0045
       chunking.py  # where a markdown document is cut, and what is embedded
       diagrams.py  # a saved view: which elements are drawn, and where — no fact of its own
       packages.py  # the classification tree: names, cycles, depth — no ArchiMate meaning
@@ -83,6 +88,7 @@ backend/
     reindex.py     # `python -m ea.reindex` — rebuild the index over the whole corpus
     files_reconcile.py # `python -m ea.files_reconcile` — make the file catalogue
                  #   agree with the bucket (docs/adr/0039)
+    baseline_capture.py # `python -m ea.baseline_capture` — the snapshot before go-live
     graph_import.py # the one-off copy from Neo4j (docs/adr/0033), deleted after the cut-over
     services/      # use cases; orchestrate domain + repositories, own transactions
       caller.py    # current_caller, require_caller, require_editor, acting_as
@@ -192,6 +198,7 @@ uv run pytest tests/unit -q     # fast loop, no DB
 uv run pytest tests/unit/test_ipam.py -x  # one file — without --cov, which would fail the floor
 make docs-reindex               # rebuild the passage index over every stored document
 make files-reconcile            # make the file catalogue agree with the bucket
+make baseline-capture CONFIRM=yes  # writes a baseline into the SHARED database (NAME=, DESCRIPTION= optional)
 uv run alembic upgrade head     # or `make pg-migrate` — targets the SHARED database
 uv run ruff format . && uv run ruff check --fix .
 uv run mypy src migrations
@@ -242,7 +249,7 @@ here: the palette is *asked for* (`describe_metamodel`), exactly as the SPA
 asks for it.
 
 The markdown of `docs/adr/0017` is exposed too, and the IP addressing of
-`docs/adr/0020` with it, so the adapter holds **six** service providers
+`docs/adr/0020` with it, so the adapter holds **eight** service providers
 rather than one — never a repository. An agent has no file to
 upload, so the five document tools take the text itself and land on
 `DocumentService.attach_text` / `revise_text`; the byte-taking entry points the
@@ -647,7 +654,8 @@ an Alembic revision like any other. See `docs/adr/0033`.
 request id: the adapter that knows who is calling sets it — `api/auth.py`'s
 bearer dependency, `speaking_plainly` for `/mcp`, `acting_as(SYSTEM)` in
 `ea.reindex` — and the service reads it. **Every public method of
-`ArchitectureService`, `DocumentService`, `IpamService` and `DiagramService`
+`ArchitectureService`, `DocumentService`, `IpamService`, `DiagramService`,
+`PackageService`, `SavedQueryService`, `AuditService` and `BaselineService`
 starts with `require_caller()` (a read) or `require_editor()` (a write)**, and nobody set
 means `NotAuthenticatedError`: a forgotten wire-up is a 401 in a test, not an
 open door. `tests/unit/test_service_guards.py` reads the source (AST) and fails
@@ -657,6 +665,59 @@ case means choosing which. `NotAuthenticatedError` is a 401 with
 Saved diagrams follow the same rule: any caller lists and opens them, only
 `ea-editor` creates, renames, lays out or deletes one, and the SPA hides the
 palette, the link handle and every such control from a reader.
+
+## Every write leaves a line in the audit trail
+
+`audit_events` (migration `0011`, `docs/adr/0044`) is append-only and written
+by the repository, in the same `begin()` as the write it describes: `services/`
+builds one `AuditEvent` per use case — actor from `current_caller`, never a
+parameter; time from the injected clock; the channel (`http`, `mcp`, `system`)
+from a `ContextVar` like the caller — and hands it to the repository as
+`audit=`. A refused write (404, 409, 403, 422) writes no event; it leaves a
+structured log line instead. The row has no foreign key to the entity, so it
+outlives a deletion, and triggers refuse `UPDATE`, `DELETE` and `TRUNCATE` — the
+`INSERT, SELECT`-only database role is still owed by the Infra. Events carry
+names, sizes and digests, never the text of a document. `GET /audit` and
+`GET /elements/{id}/history` read it (cursor on `(at, id)`, `422 invalid_cursor`
+when forged), the SPA's *Historique* section and the element sheet draw it, and
+two MCP tools read it. **Nothing purges it**: retention is an operator's job,
+`docs/audit-retention.md`.
+
+## Baselines freeze the model, and restoring one is a plan first
+
+A baseline (`docs/adr/0045`) is a normalised copy of the graph and the diagram
+boxes — `baselines`, `baseline_elements`, `baseline_relationships`,
+`baseline_boxes`, with no foreign key to the live tables — captured by
+`INSERT … SELECT` in one `REPEATABLE READ` transaction. **Documents, the package
+tree and the saved queries are not captured.** `GET /baselines/{id}/diff` compares
+two baselines or one with the live model. A restore is `plan_restore` (pure),
+shown with `dry_run` — true by default, in HTTP and in MCP — then applied only
+with `dry_run=false` and the `digest` of the plan that was read, in one
+`SERIALIZABLE` transaction; any other plan is `409 restore_conflict` and nothing
+is written. A restore never touches an approved or locked element: the plan is
+blocked until an approver reopens it. Every capture is bounded, none is
+purged and their number is unlimited (`docs/audit-retention.md`).
+`make baseline-capture CONFIRM=yes` takes the one before go-live: it names the
+shared database it writes to and refuses without the confirmation.
+
+## An element is reviewed before it is trusted, under a role of its own
+
+`approval_state` (`draft` → `in_review` → `approved`), `locked`, `approved_by_sub`,
+`approved_at`, `revision` and `last_modified_by_sub` are columns of `elements`,
+outside `properties` (`docs/adr/0046`). `domain/approval.py` holds the table of
+transitions and **the one guard, `guard_element_write`, that every path writing
+an element asks** — on the row as read under its lock, in the transaction that
+writes; `tests/unit/test_review_guard.py` reads the source and fails on a door
+that does not. `ea-approver` approves, rejects, reopens, locks and unlocks and
+does not imply `ea-editor`. Approving names the `revision` read
+(`expected_revision`, else `409 approval_stale`), and an approver cannot approve
+what they changed last — fail-closed when that is unknown; only
+`EA_APPROVAL_SEPARATION=false` lifts it, and logs `separation_disabled`. On an
+approved element, changing its content is the approver's and sends it back to
+review; adding or removing a link is any editor's and does the same; documents,
+filing in a package and restoring a baseline are nobody's until it is reopened;
+a locked one accepts nothing. The SPA draws one button per entry of
+`allowed_transitions` and decides nothing.
 
 ## What is fatal at boot, and what only degrades
 
