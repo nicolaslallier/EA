@@ -603,6 +603,15 @@ class TestCsvOverHttp:
 
         assert [e.name for e in repository.elements.values()] == ["'=1"]
 
+    async def test_without_the_safe_cells_part_the_guard_is_given_back(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        files = {"elements": ("e.csv", CSV_HEADER + b'"a","Node","\'=x"\r\n', "text/csv")}
+
+        await client.post("/exchanges/imports", files=files, **csv_upload(dry_run="false"))
+
+        assert [e.name for e in repository.elements.values()] == ["=x"]
+
     async def test_a_csv_import_without_elements_is_a_422(self, client: httpx.AsyncClient) -> None:
         response = await client.post(
             "/exchanges/imports",
