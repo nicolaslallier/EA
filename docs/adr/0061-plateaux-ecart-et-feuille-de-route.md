@@ -45,9 +45,10 @@ dates différentes.
 - **Aucune valeur de l'utilisateur dans une erreur ni un journal.** Les refus nomment des clés et des plafonds,
   jamais un nom d'élément ni une valeur de date reçue.
 - **Lectures `require_caller()`, `POST /plateaus/gap` `require_editor()`**, en tête de méthode (garde AST).
-- **MCP** : `list_plateaus` (lecture) et `gap_between(a, b, create_gap=False)`. Le protocole n'a qu'un jeu
-  d'annotations par outil : `gap_between` porte celle d'une écriture, et sa description dit qu'il ne lit que tant
-  que `create_gap` est faux. La frise n'a pas d'outil : un agent lit les dates des éléments avec `list_elements`.
+- **MCP** : `list_plateaus` et `gap_between(a, b)` (lecture seule), et `create_gap(a, b)` (ajout). Le
+  protocole n'a qu'un jeu d'annotations par outil : un seul outil « lit ou écrit » aurait demandé une approbation
+  pour une lecture, d'où deux outils. `create_gap` sur un couple déjà relié n'échoue pas : il renvoie la comparaison
+  avec `already_drawn: true`. La frise n'a pas d'outil : un agent lit les dates des éléments avec `list_elements`.
 - **SPA** : section « Feuille de route » (`/analyse/feuille-de-route`) — frise SVG dessinée à la main par un module pur
   (`lib/roadmapLayout.ts`), panneau « Comparer deux plateaux » (`?a=`, `?b=`), « Créer l'écart » caché à un lecteur
   (l'API décide). Aucune règle de métamodèle ni de calcul d'écart en TypeScript.
