@@ -8,6 +8,7 @@
 import { computed, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { usePackages } from '../packages/usePackages'
 import HeatmapChart from './HeatmapChart.vue'
 import { keyLabel } from './presentation'
 import { useDashboard, type DashboardQuestion, type Metric } from './useDashboard'
@@ -15,6 +16,11 @@ import { useDashboard, type DashboardQuestion, type Metric } from './useDashboar
 const route = useRoute()
 const router = useRouter()
 const dashboard = useDashboard()
+const packages = usePackages()
+/** Package ids as paths: the dimension is the server's, the names come from the tree. */
+const names = computed(
+  () => new Map(packages.packages.value.map((entry) => [entry.id, entry.path])),
+)
 
 function one(value: unknown, fallback: string): string {
   return typeof value === 'string' && value ? value : fallback
@@ -31,6 +37,9 @@ const question = computed<DashboardQuestion>(() => ({
 watch(
   question,
   async (asked) => {
+    if (asked.by === 'package' || asked.cols === 'package') {
+      void packages.load()
+    }
     await dashboard.load(asked)
   },
   { immediate: true },
@@ -61,6 +70,7 @@ const unreadable = computed(() => dashboard.heatmap.value?.unreadable ?? 0)
         <select id="dash-by" :value="question.by" @change="onChange('by', $event)">
           <option value="layer">Couche</option>
           <option value="element_type">Type d'élément</option>
+          <option value="package">Paquet</option>
         </select>
       </div>
       <div class="field">
@@ -107,12 +117,12 @@ const unreadable = computed(() => dashboard.heatmap.value?.unreadable ?? 0)
             <strong>{{ dashboard.tiles.value.total }} éléments</strong>
           </li>
           <li v-for="bucket in dashboard.tiles.value.buckets" :key="bucket.key" class="tile">
-            <span>{{ keyLabel(bucket.key) }}</span>
+            <span>{{ keyLabel(bucket.key, names) }}</span>
             <strong>{{ bucket.count }}</strong>
           </li>
         </ul>
 
-        <HeatmapChart :heatmap="dashboard.heatmap.value" />
+        <HeatmapChart :heatmap="dashboard.heatmap.value" :names="names" />
       </template>
     </template>
   </section>

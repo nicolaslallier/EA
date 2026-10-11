@@ -13,7 +13,7 @@ import { CELL_HEIGHT, CELL_WIDTH, HEADER_HEIGHT, HEADER_WIDTH } from '../../lib/
 import { catalogueQuery, keyLabel, swatchOf } from './presentation'
 import type { HeatmapRead } from './useDashboard'
 
-const props = defineProps<{ heatmap: HeatmapRead }>()
+const props = defineProps<{ heatmap: HeatmapRead; names?: ReadonlyMap<string, string> }>()
 const router = useRouter()
 
 const layout = computed(() => layoutHeatmap(props.heatmap.rows, props.heatmap.cols, props.heatmap.cells))
@@ -27,7 +27,7 @@ function shown(value: number | null, count: number): string {
 }
 
 function tooltip(row: string, col: string, count: number, value: number | null): string {
-  const base = `${keyLabel(row)} × ${keyLabel(col)} : ${count} élément${count > 1 ? 's' : ''}`
+  const base = `${keyLabel(row, props.names)} × ${keyLabel(col, props.names)} : ${count} élément${count > 1 ? 's' : ''}`
   return props.heatmap.metric === 'count' || value === null
     ? base
     : `${base} — ${props.heatmap.metric} = ${shown(value, count)}`
@@ -61,7 +61,7 @@ function go(event: MouseEvent, href: string): void {
         text-anchor="middle"
         class="heatmap__header"
       >
-        {{ keyLabel(header.key) }}
+        {{ keyLabel(header.key, names) }}
       </text>
       <text
         v-for="header in layout.rowHeaders"
@@ -71,7 +71,7 @@ function go(event: MouseEvent, href: string): void {
         text-anchor="end"
         class="heatmap__header"
       >
-        {{ keyLabel(header.key) }}
+        {{ keyLabel(header.key, names) }}
       </text>
       <template v-for="rect in layout.rects" :key="`${rect.row}/${rect.col}`">
         <component

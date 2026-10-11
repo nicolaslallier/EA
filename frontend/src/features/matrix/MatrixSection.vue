@@ -14,6 +14,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
+import { usePackages } from '../packages/usePackages'
+import { useSavedQueries } from '../search/useSavedQueries'
 import { axisToParam, parseAxis } from './axis'
 import { cellToParam, parseCell } from './gridNavigation'
 import MatrixCellPanel from './MatrixCellPanel.vue'
@@ -25,6 +27,8 @@ const router = useRouter()
 const { canWrite } = useMe()
 const metamodel = useMetamodel()
 const matrix = useMatrix()
+const packages = usePackages()
+const savedQueries = useSavedQueries()
 const failure = ref('')
 const busy = ref(false)
 
@@ -45,7 +49,8 @@ const axes = computed(() => [
 ])
 
 onMounted(async () => {
-  await metamodel.load()
+  // Axes by package or saved query: lists only, nothing is decided from them here.
+  await Promise.all([metamodel.load(), packages.load(), savedQueries.load()])
 })
 
 watch(
@@ -146,6 +151,16 @@ const disconnect = (id: string) => act(() => matrix.disconnect(id))
           <option v-if="axis.param.startsWith('ids:')" :value="axis.param">
             Une sélection d'éléments
           </option>
+          <optgroup v-if="packages.packages.value.length > 0" label="Un paquet">
+            <option v-for="entry in packages.packages.value" :key="entry.id" :value="`pkg:${entry.id}`">
+              {{ entry.path }}
+            </option>
+          </optgroup>
+          <optgroup v-if="savedQueries.queries.value.length > 0" label="Une requête enregistrée">
+            <option v-for="entry in savedQueries.queries.value" :key="entry.id" :value="`q:${entry.id}`">
+              {{ entry.name }}
+            </option>
+          </optgroup>
           <optgroup label="Une couche">
             <option v-for="layer in metamodel.layers.value" :key="layer" :value="`layer:${layer}`">
               {{ LAYER_LABELS[layer] }}

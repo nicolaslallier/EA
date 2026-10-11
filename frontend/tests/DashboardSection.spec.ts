@@ -5,7 +5,7 @@ import { createMemoryHistory } from 'vue-router'
 import DashboardSection from '../src/features/dashboard/DashboardSection.vue'
 import { catalogueQuery, keyLabel, swatchOf } from '../src/features/dashboard/presentation'
 import { createAppRouter } from '../src/router'
-import { aHeatmap, anAggregate, stubApi, type Route } from './support/api'
+import { aHeatmap, anAggregate, aPackage, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -35,6 +35,7 @@ describe('the presentation tables', () => {
     expect(keyLabel('__invalid__')).toBe('Valeur illisible')
     expect(keyLabel('business')).toBe('Métier')
     expect(keyLabel('en production')).toBe('en production')
+    expect(keyLabel('p-1', new Map([['p-1', 'Finance']]))).toBe('Finance')
   })
 
   it('links a cell to the catalogue by the dimension the catalogue can filter on', () => {
@@ -113,6 +114,22 @@ describe('DashboardSection', () => {
     await fireEvent.update(screen.getByLabelText(/lignes/i), 'element_type')
 
     await waitFor(() => expect(router.currentRoute.value.query.by).toBe('element_type'))
+  })
+
+  it('names a package by its path rather than by its id', async () => {
+    const id = 'aaaaaaaa-0000-4000-8000-00000000f001'
+    await open(
+      [
+        { path: '/packages', body: [aPackage({ id, path: 'Finance/Facturation' })] },
+        { path: '/analytics/aggregate', body: anAggregate({ by: 'package', buckets: [{ key: id, count: 1, value: 1, level: 0 }], total: 1 }) },
+        { path: '/analytics/heatmap', body: aHeatmap({ rows_by: 'package', rows: [id], cells: [] }) },
+      ],
+      '?by=package',
+    )
+
+    const tiles = within(await screen.findByRole('list', { name: /répartition/i }))
+    expect(tiles.getByText('Finance/Facturation')).toBeInTheDocument()
+    expect(screen.queryByText(id)).toBeNull()
   })
 
   it('says the model is empty rather than drawing an empty grid', async () => {

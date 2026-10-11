@@ -15,6 +15,8 @@ export type AxisChoice =
   | { kind: 'layer'; layer: Layer }
   | { kind: 'type'; type: ElementType }
   | { kind: 'ids'; ids: string[] }
+  | { kind: 'package'; id: string }
+  | { kind: 'query'; id: string }
 
 export function parseAxis(text: string | undefined): AxisChoice {
   if (!text) {
@@ -28,6 +30,12 @@ export function parseAxis(text: string | undefined): AxisChoice {
   }
   if (head === 'type' && rest) {
     return { kind: 'type', type: rest as ElementType }
+  }
+  if (head === 'pkg' && rest) {
+    return { kind: 'package', id: rest }
+  }
+  if (head === 'q' && rest) {
+    return { kind: 'query', id: rest }
   }
   if (head === 'ids') {
     const ids = rest.split(',').filter(Boolean)
@@ -46,6 +54,10 @@ export function axisToParam(choice: AxisChoice): string {
       return `type:${choice.type}`
     case 'ids':
       return `ids:${choice.ids.join(',')}`
+    case 'package':
+      return `pkg:${choice.id}`
+    case 'query':
+      return `q:${choice.id}`
   }
 }
 
@@ -59,5 +71,9 @@ export function axisToBody(choice: AxisChoice): AxisSelect {
       return { element_types: [choice.type] }
     case 'ids':
       return { element_ids: choice.ids }
+    case 'package':
+      return { package_id: choice.id }
+    case 'query':
+      return { query_id: choice.id }
   }
 }

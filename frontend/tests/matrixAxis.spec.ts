@@ -16,6 +16,15 @@ describe('the axis in the URL', () => {
     }
   })
 
+  it('round-trips a package and a saved query, and sends their ids', () => {
+    for (const text of ['pkg:abc', 'q:abc']) {
+      expect(axisToParam(parseAxis(text))).toBe(text)
+    }
+    expect(axisToBody(parseAxis('pkg:abc'))).toEqual({ package_id: 'abc' })
+    expect(axisToBody(parseAxis('q:abc'))).toEqual({ query_id: 'abc' })
+    expect(parseAxis('pkg:')).toEqual({ kind: 'all' })
+  })
+
   it('drops empty ids rather than sending them', () => {
     expect(parseAxis('ids:aaa,,bbb,')).toEqual({ kind: 'ids', ids: ['aaa', 'bbb'] })
     expect(parseAxis('ids:')).toEqual({ kind: 'all' })

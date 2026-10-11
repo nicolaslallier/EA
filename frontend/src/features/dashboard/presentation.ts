@@ -20,15 +20,18 @@ export function swatchOf(level: number | null): { fill: string; ink: string } {
 const UNSET = '__unset__'
 const INVALID = '__invalid__'
 
-/** A bucket key as a person reads it. Layer keys go through the metamodel's labels. */
-export function keyLabel(key: string): string {
+/**
+ * A bucket key as a person reads it. Layer keys go through the metamodel's labels, and `names`
+ * (package id → path) names the keys of a package dimension.
+ */
+export function keyLabel(key: string, names?: ReadonlyMap<string, string>): string {
   if (key === UNSET) {
     return 'Non renseigné'
   }
   if (key === INVALID) {
     return 'Valeur illisible'
   }
-  return (LAYER_LABELS as Record<string, string>)[key] ?? key
+  return names?.get(key) ?? (LAYER_LABELS as Record<string, string>)[key] ?? key
 }
 
 /**

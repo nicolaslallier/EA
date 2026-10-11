@@ -2,7 +2,7 @@
 titre: La matrice de relations, calculée à la demande
 date: 2026-10-10
 statut: Proposition
-affects: backend/src/ea/domain/matrix.py, backend/src/ea/services/analysis.py, backend/src/ea/api/analysis.py, backend/src/ea/api/schemas.py, backend/src/ea/domain/ports.py, backend/src/ea/repositories/architecture_store.py, backend/src/ea/mcp/server.py, frontend/src/features/matrix, frontend/src/router/sections.ts, CLAUDE.md
+affects: backend/src/ea/main.py, backend/src/ea/domain/matrix.py, backend/src/ea/services/analysis.py, backend/src/ea/api/analysis.py, backend/src/ea/api/schemas.py, backend/src/ea/domain/ports.py, backend/src/ea/repositories/architecture_store.py, backend/src/ea/mcp/server.py, frontend/src/features/matrix, frontend/src/router/sections.ts, CLAUDE.md
 ---
 
 # 56. La matrice de relations, calculée à la demande
@@ -62,7 +62,7 @@ deux *types* et ignore que les deux extrémités peuvent être le même élémen
 | Écrire un lien par `PUT /matrix/cell` | un seul appel côté SPA | contourne `connect` : règles à restater | écartée |
 | Matrice complète 61 × 61 côté serveur | simple | 3 721 cases que personne ne lit | écartée |
 | Marquer comme interdites les cases sans type permis | fidèle à Sparx | aucune case n'est interdite en ArchiMate 3.2 (`association`) | remplacée par `blocked` |
-| Axes par paquet / requête enregistrée | usage Sparx | dépend du sous-projet 1 | repoussée, ajoutée sans changer l'API |
+| Axes par paquet / requête enregistrée | usage Sparx | demande un résolveur de périmètre | retenue : `package_id` / `query_id` dans `AxisSelect`, résolus par un `ScopeResolver` injecté (`main.build_scope_resolver`) |
 
 ## Conséquences
 
@@ -71,8 +71,10 @@ deux *types* et ignore que les deux extrémités peuvent être le même élémen
 - Un axe coupé à 50 oblige à affiner ; la pagination d'axes est hors périmètre.
 - Les liens sont ordonnés par `created_at` dans une case : deux appels donnent la
   même grille.
-- Quand les paquets et requêtes enregistrées existeront, `AxisSelection` gagnera
-  deux champs ; le contrat des axes actuel ne change pas.
+- Un axe peut aussi être un paquet (sous-paquets compris) ou une requête enregistrée,
+  jamais les deux ni avec d'autres critères (422 `invalid_analysis`) ; le service ne
+  connaît ni paquets ni requêtes, seulement le résolveur d'ids que `main.py` lui injecte.
+  Le même périmètre s'applique aux contrôles et aux agrégats ; la dimension `package` regroupe par paquet.
 - La suppression d'un lien depuis une case demande une confirmation côté SPA,
   pas côté API (`DELETE` existant).
 

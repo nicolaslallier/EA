@@ -6,7 +6,16 @@ import { createMemoryHistory, type Router } from 'vue-router'
 import MatrixSection from '../src/features/matrix/MatrixSection.vue'
 import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
-import { aCellDetail, aGrid, aRelationship, METAMODEL, stubApi, type Route } from './support/api'
+import {
+  aCellDetail,
+  aGrid,
+  aPackage,
+  aRelationship,
+  aSavedQuerySummary,
+  METAMODEL,
+  stubApi,
+  type Route,
+} from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -17,11 +26,13 @@ const TARGET = 'bbbbbbbb-2222-4222-8222-222222222222'
 
 const PALETTE: Route = { path: '/metamodel', body: METAMODEL }
 const GRID: Route = { method: 'POST', path: '/matrix', body: aGrid() }
+const PACKAGES: Route = { path: '/packages', body: [aPackage({ id: 'pkg-1', path: 'Finance' })] }
+const QUERIES: Route = { path: '/queries', body: [aSavedQuerySummary({ id: 'qry-1' })] }
 const CELL: Route = { path: '/matrix/cell', body: aCellDetail() }
 const CREATE: Route = { method: 'POST', path: '/relationships', status: 201, body: aRelationship() }
 
 async function open(routes: Route[], query = ''): Promise<{ router: Router; calls: ReturnType<typeof stubApi> }> {
-  const calls = stubApi([PALETTE, GRID, ...routes])
+  const calls = stubApi([PALETTE, PACKAGES, QUERIES, GRID, ...routes])
   const router = createAppRouter(createMemoryHistory())
   // A first entry to go back to: the memory history has none of its own.
   await router.push('/')
@@ -91,6 +102,17 @@ describe('MatrixSection', () => {
     router.back()
 
     await waitFor(() => expect(router.currentRoute.value.query.rows).toBe('all'))
+  })
+
+  it('offers the packages and saved queries as axes, and sends their ids', async () => {
+    const { calls } = await open([], '?rows=pkg:pkg-1&cols=q:qry-1')
+
+    await screen.findByRole('grid')
+    const post = calls.find((call) => call.method === 'POST' && call.url.pathname === '/matrix')
+    expect(post?.body).toEqual({ rows: { package_id: 'pkg-1' }, cols: { query_id: 'qry-1' } })
+    const rows = screen.getByLabelText(/lignes/i)
+    expect(within(rows).getByRole('option', { name: 'Finance' })).toBeInTheDocument()
+    expect(within(rows).getByRole('option', { name: 'Les noeuds' })).toBeInTheDocument()
   })
 
   it('creates a link from the open cell through POST /relationships', async () => {
