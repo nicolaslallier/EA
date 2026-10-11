@@ -187,6 +187,42 @@ describe('DiagramsSection — the editor', () => {
   })
 })
 
+describe('DiagramsSection — the toolbar', () => {
+  it('undoes a removal from the toolbar and saves the restored layout', async () => {
+    const calls = stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}&element=${A.id}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retirer du diagramme' }))
+    const canvas = screen.getByRole('group', { name: /zone de dessin/i })
+    expect(within(canvas).queryByRole('button', { name: /Facturation/ })).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+
+    expect(await within(canvas).findByRole('button', { name: /Facturation/ })).toBeInTheDocument()
+    // The removal and its undo fall in one pause: a single save, of the restored layout.
+    await waitFor(() => expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(1), {
+      timeout: 3000,
+    })
+    const saved = calls.find((call) => call.method === 'PUT')?.body as {
+      nodes: { element_id: string }[]
+    }
+    expect(saved.nodes.map((node) => node.element_id)).toEqual([A.id])
+  })
+
+  it('undoes with Ctrl+Z', async () => {
+    stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}&element=${A.id}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retirer du diagramme' }))
+
+    await fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+
+    expect(
+      await within(screen.getByRole('group', { name: /zone de dessin/i })).findByRole('button', {
+        name: /Facturation/,
+      }),
+    ).toBeInTheDocument()
+  })
+})
+
 describe('DiagramsSection — a reader', () => {
   function asAReader(): void {
     vi.mocked(useMe).mockReturnValueOnce({
@@ -220,6 +256,18 @@ describe('DiagramsSection — a reader', () => {
     expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retirer du diagramme' })).toBeNull()
     expect(screen.queryByText('Enregistré automatiquement.')).toBeNull()
+  })
+
+  it('hides the whole editing toolbar, and Ctrl+Z does nothing', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await screen.findByRole('group', { name: /zone de dessin/i })
+
+    expect(screen.queryByRole('button', { name: 'Annuler' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Exporter en SVG' })).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    expect(screen.getByRole('button', { name: /Facturation/ })).toBeInTheDocument()
   })
 })
 

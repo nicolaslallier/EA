@@ -5,12 +5,13 @@
 // (`?diagram=`, `?element=`), so an editor can be linked to and the back button
 // leaves a diagram. Opening a diagram pushes a history entry; selecting an
 // element only replaces one, or every click would bury the list under it.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
-import type { Point } from '../../lib/diagramGeometry'
+import { download, exportSize, rasterize, serializeSvg, type ExportFormat } from '../../lib/diagramExport'
+import type { AlignMode, DistributeAxis, Point } from '../../lib/diagramGeometry'
 import { BOX_HEIGHT } from '../../lib/graphLayout'
 import ElementDetail from '../elements/ElementDetail.vue'
 import { useElementDetail } from '../elements/useElementDetail'
@@ -20,6 +21,9 @@ import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
 import { useAsOf } from '../../lib/asof'
 import DiagramCanvas from './DiagramCanvas.vue'
+import DiagramToolbar from './DiagramToolbar.vue'
+import { buildExportScene } from './exportScene'
+import { useSelection } from './useSelection'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
 import { useDiagram, useElementPalette, type ElementRead } from './useDiagram'
@@ -33,6 +37,8 @@ const editor = useDiagram()
 const palette = useElementPalette()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
+const selection = useSelection()
+const exportError = ref('')
 const packages = usePackages()
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
@@ -91,8 +97,35 @@ const saveState = computed(() => {
 })
 
 onMounted(async () => {
+  window.addEventListener('keydown', onShortcut)
   await Promise.all([metamodel.load(), packages.load()])
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onShortcut)
+})
+
+/** Ctrl/Cmd+Z undoes, +Shift or Y redoes — never while typing in a field, never for a reader. */
+function onShortcut(event: KeyboardEvent): void {
+  if (!canWrite.value || !(event.ctrlKey || event.metaKey)) {
+    return
+  }
+  const target = event.target as HTMLElement | null
+  if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+    return
+  }
+  const key = event.key.toLowerCase()
+  if (key === 'z' && event.shiftKey) {
+    event.preventDefault()
+    editor.redo()
+  } else if (key === 'z') {
+    event.preventDefault()
+    editor.undo()
+  } else if (key === 'y') {
+    event.preventDefault()
+    editor.redo()
+  }
+}
 
 watch([packageParam, withSubpackages], async () => {
   applyFilters()
@@ -105,6 +138,7 @@ watch(
   [diagramId, asOf],
   async ([id]) => {
     link.value = null
+    selection.clear()
     if (!id) {
       editor.close()
       await list.load()
@@ -200,6 +234,49 @@ function onConnect(sourceId: string, targetId: string): void {
   const target = editor.byId.value.get(targetId)
   if (source && target) {
     link.value = { source, target }
+  }
+}
+function onSelect(elementId: string): void {
+  selection.set([elementId])
+  select(elementId)
+}
+
+function onSelectMany(ids: string[]): void {
+  selection.set(ids)
+  if (ids.length === 1) {
+    select(ids[0])
+  } else {
+    deselect()
+  }
+}
+
+function removeSelected(ids: string[]): void {
+  editor.removeMany(ids)
+  selection.clear()
+  deselect()
+}
+
+function arrange(mode: AlignMode): void {
+  editor.align(selection.ids.value, mode)
+}
+
+function spread(axis: DistributeAxis): void {
+  editor.distribute(selection.ids.value, axis)
+}
+
+async function exportAs(format: ExportFormat): Promise<void> {
+  exportError.value = ''
+  const scene = buildExportScene(editor.boxes.value, editor.relationships.value, metamodel.labelOf)
+  const svg = serializeSvg(scene)
+  const name = (editor.diagram.value?.name ?? 'diagramme').replace(/[^\p{L}\p{N}_-]+/gu, '-')
+  try {
+    if (format === 'svg') {
+      download(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${name}.svg`)
+    } else {
+      download(await rasterize(svg, exportSize(scene), format === 'png2' ? 2 : 1), `${name}.png`)
+    }
+  } catch (caught) {
+    exportError.value = messageOf(caught)
   }
 }
 </script>
@@ -320,6 +397,18 @@ function onConnect(sourceId: string, targetId: string): void {
           @done="link = null"
           @cancel="link = null"
         />
+        <DiagramToolbar
+          :can-write="canWrite"
+          :can-undo="editor.canUndo.value"
+          :can-redo="editor.canRedo.value"
+          :selection-count="selection.ids.value.length"
+          @undo="editor.undo"
+          @redo="editor.redo"
+          @align="arrange"
+          @distribute="spread"
+          @export="exportAs"
+        />
+        <p v-if="exportError" class="banner banner--error" role="alert">{{ exportError }}</p>
         <DiagramCanvas
           :boxes="editor.boxes.value"
           :relationships="editor.relationships.value"
@@ -327,11 +416,15 @@ function onConnect(sourceId: string, targetId: string): void {
           :type-label="metamodel.labelOf"
           :readonly="!canWrite"
           :inactive-ids="editor.inactiveIds.value"
+          :selection="selection.ids.value"
           @place="onPlace"
           @move="editor.move"
           @resize="editor.resize"
-          @moved="editor.persist"
-          @select="select"
+          @moved="editor.endGesture"
+          @select="onSelect"
+          @toggle="selection.toggle"
+          @select-many="onSelectMany"
+          @remove-many="removeSelected"
           @remove="removeBox"
           @connect="onConnect"
         />

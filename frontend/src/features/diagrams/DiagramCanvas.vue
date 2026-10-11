@@ -409,11 +409,11 @@ function onCanvasKey(event: KeyboardEvent): void {
         :viewBox="`${view.pan.x} ${view.pan.y} ${extent.width} ${extent.height}`"
         :width="extent.width * view.zoom"
         :height="extent.height * view.zoom"
-        @wheel.prevent="onWheel"
-        @keyup="onCanvasKeyUp"
         tabindex="0"
+        @wheel.prevent="onWheel"
         @pointerdown="startBackground"
         @keydown="onCanvasKey"
+        @keyup="onCanvasKeyUp"
         @dragover.prevent
         @drop.prevent="onDrop"
         @pointermove="drag"
