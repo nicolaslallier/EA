@@ -1461,6 +1461,13 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "ExchangeFormat": {
+        "enum": [
+          "archimate-xml"
+        ],
+        "title": "ExchangeFormat",
+        "type": "string"
+      },
       "FieldChangeRead": {
         "properties": {
           "after": {
@@ -5650,6 +5657,97 @@
         "summary": "Read Element Relations",
         "tags": [
           "architecture"
+        ]
+      }
+    },
+    "/exchanges/export": {
+      "get": {
+        "description": "Download the model as an ArchiMate Exchange XML file (a reader may).",
+        "operationId": "export_model_exchanges_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExchangeFormat",
+              "default": "archimate-xml"
+            }
+          },
+          {
+            "description": "What to export: `model` (the whole catalogue).",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "model",
+              "description": "What to export: `model` (the whole catalogue).",
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_views",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "With Views",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The model as an ArchiMate exchange file, as an attachment."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Model",
+        "tags": [
+          "exchanges"
         ]
       }
     },
