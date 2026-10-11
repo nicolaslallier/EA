@@ -20,6 +20,7 @@ const emit = defineEmits<{
   align: [mode: AlignMode]
   distribute: [axis: DistributeAxis]
   export: [format: ExportFormat]
+  'save-template': []
 }>()
 
 const ALIGNMENTS: { mode: AlignMode; label: string; glyph: string }[] = [
@@ -67,6 +68,10 @@ const ALIGNMENTS: { mode: AlignMode; label: string; glyph: string }[] = [
       >
         ⇕
       </button>
+    </div>
+
+    <div v-if="canWrite" class="toolbar__group" role="group" aria-label="Modèle">
+      <button type="button" @click="emit('save-template')">Enregistrer comme modèle</button>
     </div>
 
     <div class="toolbar__group" role="group" aria-label="Exporter">

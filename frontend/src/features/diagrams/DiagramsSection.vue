@@ -30,9 +30,12 @@ import { buildExportScene } from './exportScene'
 import { useSelection } from './useSelection'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
+import InstantiateWizard from './InstantiateWizard.vue'
 import NewViewForm from './NewViewForm.vue'
+import TemplateLibrary from './TemplateLibrary.vue'
 import { useDiagram, useElementPalette, type ElementRead, type ViewSource } from './useDiagram'
 import { useDiagrams, type DiagramSummaryRead } from './useDiagrams'
+import { useTemplates, type DiagramTemplateRead, type InstantiateRequest } from './useTemplates'
 
 const route = useRoute()
 const { asOf } = useAsOf()
@@ -73,6 +76,11 @@ const creatingView = ref(false)
 const removeGone = ref(false)
 const confirmingThaw = ref(false)
 const viewFailure = ref('')
+const templates = useTemplates()
+const savingTemplate = ref(false)
+const templateName = ref('')
+const wizardTemplate = ref<DiagramTemplateRead | null>(null)
+const wizardFailure = ref('')
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
 const { canWrite } = useMe()
@@ -131,7 +139,12 @@ const saveState = computed(() => {
 
 onMounted(async () => {
   window.addEventListener('keydown', onShortcut)
-  await Promise.all([metamodel.load(), packages.load(), canWrite.value ? savedQueries.load() : undefined])
+  await Promise.all([
+    metamodel.load(),
+    packages.load(),
+    templates.load(),
+    canWrite.value ? savedQueries.load() : undefined,
+  ])
 })
 
 onBeforeUnmount(() => {
@@ -368,6 +381,64 @@ async function follow(): Promise<void> {
   }
 }
 
+async function saveTemplate(): Promise<void> {
+  const current = editor.diagram.value
+  if (!current || !templateName.value.trim()) {
+    return
+  }
+  viewFailure.value = ''
+  try {
+    await editor.flush()
+    await templates.saveFromDiagram(current.id, templateName.value.trim())
+    savingTemplate.value = false
+    templateName.value = ''
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function useTemplate(id: string): Promise<void> {
+  wizardFailure.value = ''
+  try {
+    wizardTemplate.value = await templates.read(id)
+  } catch (caught) {
+    listFailure.value = messageOf(caught)
+  }
+}
+
+async function removeTemplate(id: string): Promise<void> {
+  listFailure.value = ''
+  try {
+    await templates.remove(id)
+  } catch (caught) {
+    listFailure.value = messageOf(caught)
+  }
+}
+
+async function searchByType(term: string, elementType: string): Promise<ElementRead[]> {
+  const page = unwrap(
+    await api.GET('/elements', {
+      params: { query: { search: term, element_type: [elementType as never], limit: 10 } },
+    }),
+  )
+  return page.items
+}
+
+async function instantiate(payload: InstantiateRequest): Promise<void> {
+  const template = wizardTemplate.value
+  if (!template) {
+    return
+  }
+  wizardFailure.value = ''
+  try {
+    const created = await templates.instantiate(template.id, payload)
+    wizardTemplate.value = null
+    await router.push({ query: { diagram: created.id } })
+  } catch (caught) {
+    wizardFailure.value = messageOf(caught)
+  }
+}
+
 async function guarded(action: () => Promise<void>): Promise<void> {
   viewFailure.value = ''
   try {
@@ -456,6 +527,22 @@ async function exportAs(format: ExportFormat): Promise<void> {
         @create="createView"
       />
       <p v-if="viewFailure" class="banner banner--error" role="alert">{{ viewFailure }}</p>
+
+      <TemplateLibrary
+        :templates="templates.templates.value"
+        :can-write="canWrite"
+        @use="useTemplate"
+        @remove="removeTemplate"
+      />
+      <InstantiateWizard
+        v-if="wizardTemplate && canWrite"
+        :template="wizardTemplate"
+        :search="searchByType"
+        :type-label="metamodel.labelOf"
+        :failure="wizardFailure"
+        @submit="instantiate"
+        @cancel="wizardTemplate = null"
+      />
 
       <p v-if="listFailure" class="banner banner--error" role="alert">{{ listFailure }}</p>
       <p v-if="list.status.value === 'error'" class="banner banner--error" role="alert">
@@ -591,7 +678,19 @@ async function exportAs(format: ExportFormat): Promise<void> {
           @align="arrange"
           @distribute="spread"
           @export="exportAs"
+          @save-template="savingTemplate = true"
         />
+        <form
+          v-if="savingTemplate && canWrite"
+          class="create"
+          aria-label="Enregistrer comme modèle"
+          @submit.prevent="saveTemplate"
+        >
+          <label for="template-name">Nom du modèle</label>
+          <input id="template-name" v-model="templateName" maxlength="200" autocomplete="off" />
+          <button type="submit" :disabled="!templateName.trim()">Enregistrer le modèle</button>
+          <button type="button" class="secondary" @click="savingTemplate = false">Renoncer</button>
+        </form>
         <p v-if="exportError" class="banner banner--error" role="alert">{{ exportError }}</p>
         <DiagramCanvas
           :boxes="editor.boxes.value"

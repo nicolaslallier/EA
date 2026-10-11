@@ -53,7 +53,9 @@ const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, sta
 const FINANCE = aPackage({ id: 'f', name: 'Finance', path: 'Finance' })
 const PACKAGES: Route = { path: '/packages', body: [FINANCE] }
 
-const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES]
+const TEMPLATES: Route = { path: '/diagram-templates', body: [] }
+
+const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES, TEMPLATES]
 
 function asAReader(): void {
   vi.mocked(useMe).mockReturnValueOnce({
@@ -456,5 +458,28 @@ describe('DiagramsSection — generated views', () => {
     for (const name of ['Figer', 'Rafraîchir', 'Dégeler']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
+  })
+})
+
+describe('DiagramsSection — templates', () => {
+  it('saves the open diagram as a template under a name', async () => {
+    const calls = stubApi([
+      ...ROUTES,
+      {
+        method: 'POST',
+        path: `/diagrams/${DIAGRAM_ID}/as-template`,
+        status: 201,
+        body: { id: 't1', name: 'Modèle', description: '', body: {}, created_at: '', updated_at: '' },
+      },
+    ])
+    await open(`?diagram=${DIAGRAM_ID}`)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Enregistrer comme modèle' }))
+    await fireEvent.update(screen.getByLabelText('Nom du modèle'), 'Modèle')
+    await fireEvent.click(screen.getByRole('button', { name: 'Enregistrer le modèle' }))
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'Modèle', description: '' }),
+    )
   })
 })

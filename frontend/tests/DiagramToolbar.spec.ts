@@ -45,4 +45,15 @@ describe('DiagramToolbar', () => {
     expect(screen.queryByRole('button', { name: 'Annuler' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Aligner/ })).toBeNull()
   })
+
+  it('offers saving as a template to an editor only', async () => {
+    const rendered = draw()
+    await fireEvent.click(screen.getByRole('button', { name: 'Enregistrer comme modèle' }))
+    expect(rendered.emitted()['save-template']).toHaveLength(1)
+  })
+
+  it('hides saving as a template from a reader', () => {
+    draw({ canWrite: false })
+    expect(screen.queryByRole('button', { name: 'Enregistrer comme modèle' })).toBeNull()
+  })
 })

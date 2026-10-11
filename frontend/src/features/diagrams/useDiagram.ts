@@ -811,6 +811,7 @@ export function useDiagram() {
     distribute,
     undo,
     redo,
+    flush,
     canUndo,
     canRedo,
     connect,
