@@ -78,8 +78,8 @@ def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awa
                 extra={
                     "tool": name,
                     "arguments": {
-                        k: f"<{len(v)} chars>"
-                        if k in FILE_TEXTS and isinstance(v, str)
+                        k: (f"<{len(v)} chars>" if isinstance(v, str) else "<not text>")
+                        if k in FILE_TEXTS
                         else summarise(v)
                         for k, v in kwargs.items()
                     },

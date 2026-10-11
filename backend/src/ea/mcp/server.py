@@ -36,7 +36,7 @@ from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, Strict
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation, Strict
 
 from ea.api.baselines import against_of
 from ea.api.schemas import (
@@ -137,6 +137,7 @@ from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
+from ea.services.caller import require_editor
 from ea.services.documents import DocumentService
 from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
@@ -536,11 +537,14 @@ def _query_schema(
 # A client shows these to the person behind the agent, who decides from them
 # whether to confirm a call. Getting one wrong is how a delete gets waved
 # through, so every tool below carries one.
-#: Characters, not bytes: this only stops a runaway argument. `import_model` measures the
-#: encoded total against `MAX_MCP_UPLOAD_BYTES`.
+#: The schema an agent reads says "at most `MAX_MCP_UPLOAD_BYTES` characters", but the SDK is
+#: told not to validate it (`SkipValidation`): its pydantic message quotes the first characters
+#: of the rejected value, and this value is a file. `import_model` checks the type, the
+#: characters and the encoded bytes itself, in messages that name the rule and never the text.
 ExchangeText = Annotated[
     str | None,
     Field(max_length=MAX_MCP_UPLOAD_BYTES, description="The file's text, UTF-8."),
+    SkipValidation,
 ]
 #: `dry_run` is strict: only a JSON boolean. A string such as "no" is not an answer to "write?".
 DryRun = Annotated[
@@ -578,7 +582,10 @@ def build_mcp_server(
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the eight services of the module docstring.
+    """Assemble the tool set over the nine services.
+
+    They are the graph, the documents, the IP addressing, the files, the packages, the saved
+    queries, the audit trail, the baselines and the exchanges.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -1523,6 +1530,22 @@ def build_mcp_server(
         diagram views are not imported over MCP. The text is at most 1 MB in all; a
         larger file goes through the Échanges screen of the web interface.
         """
+        # Who may write is the first question, before the shape or the size of what is sent.
+        require_editor()
+        texts = {
+            "content": content,
+            "elements": elements,
+            "relations": relations,
+            "properties": properties,
+        }
+        for argument, text in texts.items():
+            if text is not None and not isinstance(text, str):
+                msg = f"`{argument}` must be text"
+                raise ValueError(msg)
+        refusal = (
+            f"an exchange file is at most {MAX_MCP_UPLOAD_BYTES} bytes over MCP; import a larger "
+            "file from the Échanges screen of the web interface instead"
+        )
         if format is ExchangeFormat.CSV:
             if elements is None or content is not None:
                 msg = "a CSV import takes the text of `elements` (and `relations`, `properties`)"
@@ -1533,15 +1556,15 @@ def build_mcp_server(
                 msg = "an XML import takes the file's text in `content`, and nothing else"
                 raise ValueError(msg)
             parts = (content, None, None)
-        refusal = (
-            f"an exchange file is at most {MAX_MCP_UPLOAD_BYTES} bytes over MCP; import a larger "
-            "file from the Échanges screen of the web interface instead"
-        )
         # Characters first: a character is at least a byte, so a text already too long in
         # characters is refused before a byte of it is encoded.
         if sum(len(part) for part in parts if part is not None) > MAX_MCP_UPLOAD_BYTES:
             raise ValueError(refusal)
-        raw = tuple(None if part is None else part.encode() for part in parts)
+        try:
+            raw = tuple(None if part is None else part.encode() for part in parts)
+        except UnicodeEncodeError:
+            msg = "the text is not valid UTF-8 (a lone surrogate, say)"
+            raise ValueError(msg) from None
         if sum(len(part) for part in raw if part is not None) > MAX_MCP_UPLOAD_BYTES:
             raise ValueError(refusal)
         report = await get_exchanges().import_exchange(
