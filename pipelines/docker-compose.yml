@@ -16,7 +16,7 @@ services:
   prefect-server:
     # Le tag suit la version de `prefect` verrouillée dans uv.lock (le client
     # et le serveur doivent parler la même API) ; le digest dit quels octets.
-    image: prefecthq/prefect:3.8.6-python3.12@sha256:ec9e58deaf30002dd65ebb755ca3d9eb5f169902882abf18c79261a4aa95bfe3
+    image: prefecthq/prefect:3.8.8-python3.12@sha256:57e02b3f63d663e02b06d4127362ea48d92d4b361fbd96c8ba8f01e5702755f4
     container_name: ea-pipelines-prefect-server
     command: prefect server start --host 0.0.0.0
     restart: unless-stopped
