@@ -40,6 +40,7 @@ from ea.domain.errors import (
     FileStorageUnavailableError,
     FileTooLargeError,
     IllegalRelationshipError,
+    InvalidCursorError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
     InvalidQueryError,
@@ -86,6 +87,9 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     PackageTooDeepError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "package_too_deep"),
     TooManyPackagesError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_packages"),
     UnknownPackageError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_package"),
+    # --- The audit trail (docs/adr/0044) ---
+    # A cursor travels in a URL and anyone can edit one: a refusal, never a 500.
+    InvalidCursorError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_cursor"),
     # --- Structured search and saved queries ---
     InvalidQueryError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_query"),
     SavedQueryNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
