@@ -1,0 +1,42 @@
+# Le runner GitHub Actions de docs/adr/0044, comme stack Portainer sur le Docker
+# de Portainer lui-même (192.168.2.10) : de là, PORTAINER_URL est joignable sans
+# traverser le réseau de Docker Desktop du Mac, qui n'atteint pas le LAN.
+#
+#   Portainer → Stacks → Add stack → Repository
+#   → Repository URL : https://github.com/nicolaslallier/EA — Reference : refs/heads/main
+#   → Compose path : deploy/runner.stack.yml
+#   → Environment variables : GH_RUNNER_TOKEN (le PAT qui administre les runners du dépôt)
+#   → GitOps updates : NON. Un redéploiement recrée le runner, et un runner recréé
+#     en plein job ne rend jamais son résultat.
+#
+# `deploy/infra-ca.crt` est la CA *publique* de l'Infra (jamais sa clé) : le
+# runner vérifie contre elle le certificat de PORTAINER_URL (docs/adr/0045).
+# Supprimer l'ancien runner du Mac : `make runner-down`.
+name: ea-runner
+
+services:
+  runner:
+    # Tag mobile exprès : GitHub retire les vieilles versions de runner.
+    image: myoung34/github-runner:ubuntu-noble
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      RUNNER_SCOPE: repo
+      REPO_URL: https://github.com/nicolaslallier/EA
+      RUNNER_NAME: ${GH_RUNNER_NAME:-ea-host}
+      # deploy.yml cible ce label.
+      LABELS: ea
+      EPHEMERAL: "true"
+      ACCESS_TOKEN: ${GH_RUNNER_TOKEN:?GH_RUNNER_TOKEN, le PAT des runners du dépôt}
+    configs:
+      - source: infra-ca
+        target: /etc/ea/infra-ca.crt
+    volumes:
+      - runner-work:/_work
+
+configs:
+  infra-ca:
+    file: ./infra-ca.crt
+
+volumes:
+  runner-work:
