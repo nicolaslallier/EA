@@ -2028,6 +2028,7 @@ class TestImportModel:
         for argument in ("content", "elements", "relations", "properties"):
             lengths = [branch.get("maxLength") for branch in properties[argument]["anyOf"]]
             assert MAX_MCP_UPLOAD_BYTES in lengths
+        assert MAX_MCP_UPLOAD_BYTES == 1024 * 1024  # an MCP-only ceiling, no HTTP twin: pinned here
         assert properties["target_package_id"]["anyOf"][0]["format"] == "uuid"
 
     async def test_the_instructions_tell_a_model_to_simulate_first_and_to_show_the_report(
@@ -2050,3 +2051,38 @@ class TestImportModel:
                 await call(server, "import_model", content=xml + "<")
 
         assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
+class TestAnImportsTextIsNeverQuoted:
+    """A refused argument is described by its name and its rule, never by its value."""
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["SECRET-" + "x" * (1024 * 1024 + 1), "SECRET-\ud800-lone-surrogate"],
+        ids=["too-long", "lone-surrogate"],
+    )
+    @pytest.mark.parametrize("argument", ["content", "elements", "relations", "properties"])
+    async def test_neither_the_error_nor_the_logs_quote_the_text(
+        self,
+        server: MCPServer[Any],
+        caplog: pytest.LogCaptureFixture,
+        argument: str,
+        bad: str,
+    ) -> None:
+        import logging
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(ToolError) as refused:
+            await server.call_tool("import_model", {argument: bad})
+
+        assert "SECRET" not in str(refused.value)
+        assert "SECRET" not in caplog.text
+
+    async def test_a_reader_is_refused_before_the_file_is_measured(
+        self, server: MCPServer[Any]
+    ) -> None:
+        # 600 000 characters, 1 200 000 bytes: inside the schema, over the byte ceiling.
+        big = "é" * 600_000
+        with acting_as(a_reader()), pytest.raises(ToolError) as refused:
+            await server.call_tool("import_model", {"content": big})
+        assert "at most" not in str(refused.value)
