@@ -27,6 +27,8 @@ from ea.domain.model import Element, Relationship
 MAX_REPORT_ELEMENTS: Final = 500
 MAX_REPORT_RELATIONSHIPS: Final = 5000
 MAX_REPORT_DIAGRAMS: Final = 20
+#: Boxes drawn in all, over every diagram of a package.
+MAX_REPORT_BOXES: Final = 1000
 MAX_REPORT_DOCUMENT_BYTES: Final = 2 * 1024 * 1024
 REPORT_TIMEOUT_SECONDS: Final = 30.0
 

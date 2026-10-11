@@ -396,6 +396,8 @@ class InMemoryRepository:
         self.last_as_of: date | None = None
         #: The timeline reads made, so a test can show a refusal came before any of them.
         self.reads: list[str] = []
+        #: Set by `InMemoryPackages`: the tree, for a filter on a package's subtree.
+        self.package_tree: InMemoryPackages | None = None
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
@@ -417,11 +419,27 @@ class InMemoryRepository:
     async def get_element(self, element_id: UUID) -> Element | None:
         return self.elements.get(element_id)
 
+    def _in_package(self, element: Element, criteria: ElementFilter) -> bool:
+        wanted = criteria.package_id
+        if wanted is None:
+            return True
+        here = element.package_id
+        if not criteria.include_subpackages:
+            return here == wanted
+        tree = self.package_tree.packages if self.package_tree is not None else {}
+        while here is not None:  # walk up: the element is in the subtree of `wanted`
+            if here == wanted:
+                return True
+            parent = tree.get(here)
+            here = parent.parent_id if parent is not None else None
+        return False
+
     def _matching(self, criteria: ElementFilter) -> list[Element]:
         return [
             element
             for element in self.elements.values()
-            if criteria.as_of is None or Lifespan.read(element.properties).covers(criteria.as_of)
+            if self._in_package(element, criteria)
+            and (criteria.as_of is None or Lifespan.read(element.properties).covers(criteria.as_of))
         ]
 
     async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
@@ -640,18 +658,21 @@ class InMemoryRepository:
         self.last_as_of = as_of
         return GraphView(elements=(self.elements[element_id],), relationships=())
 
-    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+    async def view_of(
+        self, element_ids: Sequence[UUID], *, link_limit: int | None = None
+    ) -> GraphView:
         """The elements that exist among these ids, and the links between them."""
         scope = set(element_ids)
+        links = tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in scope and link.target_id in scope
+        )
         return GraphView(
             elements=tuple(
                 self.elements[element_id] for element_id in scope & self.elements.keys()
             ),
-            relationships=tuple(
-                link
-                for link in self.relationships.values()
-                if link.source_id in scope and link.target_id in scope
-            ),
+            relationships=links if link_limit is None else links[:link_limit],
         )
 
     # --- Analysis: the reads behind the matrix and the checks ---
@@ -1255,6 +1276,7 @@ class InMemoryPackages:
         self.packages: dict[UUID, Package] = {}
         self._graph = graph
         self._diagrams = diagrams
+        graph.package_tree = self
 
     def _refuse_a_taken_name(self, package: Package) -> None:
         if any(
