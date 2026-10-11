@@ -10,9 +10,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function mount() {
+async function mount() {
   const calls = stubApi([{ path: '/audit', body: { items: [anAuditEvent()], next_cursor: null } }])
   const router = createAppRouter(createMemoryHistory())
+  await router.push('/elements')
+  await router.isReady()
   const { container } = render(ElementHistory, {
     props: { elementId: '22222222-2222-4222-8222-222222222222' },
     global: { plugins: [router] },
@@ -31,14 +33,14 @@ async function open(container: Element): Promise<void> {
 }
 
 describe('ElementHistory', () => {
-  it('asks nothing until the panel is opened', () => {
-    const { calls } = mount()
+  it('asks nothing until the panel is opened', async () => {
+    const { calls } = await mount()
 
     expect(calls).toHaveLength(0)
   })
 
   it('then lists the trail of that element and links to the whole of it', async () => {
-    const { calls, container } = mount()
+    const { calls, container } = await mount()
 
     await open(container)
 
@@ -53,6 +55,8 @@ describe('ElementHistory', () => {
   it('says when an element has no history yet', async () => {
     stubApi([{ path: '/audit', body: { items: [], next_cursor: null } }])
     const router = createAppRouter(createMemoryHistory())
+    await router.push('/elements')
+    await router.isReady()
     const { container } = render(ElementHistory, {
       props: { elementId: '22222222-2222-4222-8222-222222222222' },
       global: { plugins: [router] },
@@ -66,6 +70,8 @@ describe('ElementHistory', () => {
   it('shows a failure in words', async () => {
     stubApi([{ path: '/audit', status: 500, body: { error: 'internal_error', detail: 'boom' } }])
     const router = createAppRouter(createMemoryHistory())
+    await router.push('/elements')
+    await router.isReady()
     const { container } = render(ElementHistory, {
       props: { elementId: '22222222-2222-4222-8222-222222222222' },
       global: { plugins: [router] },
