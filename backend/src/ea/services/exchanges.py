@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+import tempfile
 import time
 import weakref
+import zipfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,11 +23,13 @@ from uuid import UUID
 
 from ea.domain.errors import ExchangeFileTooLargeError, ImportInProgressError, UnknownScopeError
 from ea.domain.exchange import (
+    CSV_FILES,
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
     Category,
     ExchangeElement,
+    ExchangeFormat,
     ExchangeModel,
     ExchangeRelationship,
     ExportRequest,
@@ -39,6 +44,7 @@ from ea.domain.exchange import (
     exchange_relationship_of,
 )
 from ea.formats.archimate_xml import buffered, parse_model, render_model
+from ea.formats.csv_files import parse_csv, render_csv
 from ea.services.caller import names_in_logs, require_caller, require_editor
 from ea.services.exchange_import import ImportRun
 
@@ -126,7 +132,7 @@ class ExchangeService:
         if content.size > self._max_bytes:
             msg = f"an exchange file is at most {self._max_bytes} bytes"
             raise ExchangeFileTooLargeError(msg)
-        model = await self._parsed(content.main)
+        model = await self._parsed(lambda: self._read(content, options))
         report = ReportBuilder()
         for issue in model.issues:
             report.add(
@@ -161,8 +167,16 @@ class ExchangeService:
         self._log_import(caller.subject, content, built)
         return built
 
-    async def _parsed(self, data: bytes) -> ExchangeModel:
-        """Parse in a thread (seconds of pure CPU), one file at a time, with a short queue."""
+    def _read(self, content: ImportContent, options: ImportOptions) -> ExchangeModel:
+        """Turn the bytes into an exchange model, whatever the format. Runs in a thread."""
+        if content.format is ExchangeFormat.CSV:
+            return parse_csv(
+                content.main, content.relations, content.properties, safe_cells=options.safe_cells
+            )
+        return self._parse(content.main)
+
+    async def _parsed(self, read: Callable[[], ExchangeModel]) -> ExchangeModel:
+        """Read in a thread (seconds of pure CPU), one file at a time, with a short queue."""
         gate = _gate()
         if gate.queued >= MAX_PARSES_QUEUED:
             msg = "other files are being read: try again in a moment"
@@ -173,7 +187,7 @@ class ExchangeService:
         except BaseException:  # cancelled while waiting: nothing was taken, give the place back
             gate.queued -= 1
             raise
-        work = asyncio.ensure_future(asyncio.to_thread(self._parse, data))
+        work = asyncio.ensure_future(asyncio.to_thread(read))
 
         def finished(done: asyncio.Future[ExchangeModel]) -> None:
             # A thread cannot be stopped: the place is given back when it *ends*, even if
@@ -214,62 +228,110 @@ class ExchangeService:
         if request.scope.package_id is not None or request.scope.query_id is not None:
             msg = "this scope is not available: only the whole model can be exported"
             raise UnknownScopeError(msg)
+        is_csv = request.format is ExchangeFormat.CSV
+        extension = "zip" if is_csv else "xml"
         return Export(
-            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}.xml",
-            media_type="application/xml",
-            chunks=self._xml(request),
+            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}.{extension}",
+            media_type="application/zip" if is_csv else "application/xml",
+            chunks=self._csv(request) if is_csv else self._xml(request),
         )
 
     async def _xml(self, request: ExportRequest) -> AsyncIterator[bytes]:
-        deadline = self._monotonic() + EXPORT_TIMEOUT_SECONDS
-        registry = IdentifierRegistry()
-        identifiers: dict[UUID, str] = {}
-        counts = {"elements": 0, "relationships": 0}
         dropped: dict[str, int] = {}
-
-        def within_budget() -> None:
-            if self._monotonic() > deadline:
-                msg = f"the export ran past its {EXPORT_TIMEOUT_SECONDS:.0f} s budget"
-                raise TimeoutError(msg)
-
         async with self._repository.snapshot(request.scope) as snapshot:
-
-            async def elements() -> AsyncIterator[ExchangeElement]:
-                offset = 0
-                while page := await snapshot.elements_page(offset, EXPORT_PAGE_SIZE):
-                    within_budget()
-                    for element in page:
-                        item = exchange_element_of(element, registry)
-                        identifiers[element.id] = item.identifier
-                        counts["elements"] += 1
-                        yield item
-                    offset += len(page)
-
-            async def relationships() -> AsyncIterator[ExchangeRelationship]:
-                async for item in _relationships(snapshot, identifiers, registry, within_budget):
-                    counts["relationships"] += 1
-                    yield item
-
+            streams = _Streams(snapshot, self._monotonic)
             parts = render_model(
                 "EA catalogue",
-                elements(),
-                relationships(),
+                streams.elements(),
+                streams.relationships(),
                 on_dropped=lambda identifier, count: dropped.__setitem__(identifier, count),
             )
             async for chunk in buffered(parts):
                 yield chunk
-        _report(request, counts, registry, dropped)
+        _report(request, streams, dropped)
+
+    async def _csv(self, request: ExportRequest) -> AsyncIterator[bytes]:
+        # ponytail: three spooled files then one archive, written synchronously on the
+        # loop: fine to the model's size today; stream a zip64 writer if exports outgrow it.
+        spools = {name: tempfile.SpooledTemporaryFile(max_size=1 << 20) for name in CSV_FILES}  # noqa: SIM115
+        archive = tempfile.SpooledTemporaryFile(max_size=1 << 20)  # noqa: SIM115
+        try:
+            async with self._repository.snapshot(request.scope) as snapshot:
+                streams = _Streams(snapshot, self._monotonic)
+                async for name, text in render_csv(
+                    streams.elements(), streams.relationships(), safe_cells=request.safe_cells
+                ):
+                    spools[name].write(text.encode("utf-8"))
+            with zipfile.ZipFile(archive, "w") as bundle:
+                for name in CSV_FILES:  # the names are ours, never a cell's
+                    # A fixed date: the archive is a pure function of the model.
+                    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o644 << 16
+                    spools[name].seek(0)
+                    with bundle.open(info, "w") as entry:
+                        shutil.copyfileobj(spools[name], entry)
+            archive.seek(0)
+            while chunk := archive.read(65_536):
+                yield chunk
+            _report(request, streams, {})
+        finally:
+            archive.close()
+            for spool in spools.values():
+                spool.close()
 
 
-def _report(
-    request: ExportRequest,
-    counts: dict[str, int],
-    registry: IdentifierRegistry,
-    dropped: dict[str, int],
-) -> None:
+class _Streams:
+    """The two paged iterators of one export. The second needs what the first learns:
+    a link is written with the identifiers of its ends, so elements are read first.
+    One registry for both, so that no two objects share an identifier in the file."""
+
+    def __init__(self, snapshot: ExportSnapshot, monotonic: Callable[[], float]) -> None:
+        self._snapshot = snapshot
+        self._monotonic = monotonic
+        self._deadline = monotonic() + EXPORT_TIMEOUT_SECONDS
+        self.registry = IdentifierRegistry()
+        self.identifiers: dict[UUID, str] = {}
+        self.counts = {"elements": 0, "relationships": 0}
+
+    def _within_budget(self) -> None:
+        if self._monotonic() > self._deadline:
+            msg = f"the export ran past its {EXPORT_TIMEOUT_SECONDS:.0f} s budget"
+            raise TimeoutError(msg)
+
+    async def elements(self) -> AsyncIterator[ExchangeElement]:
+        offset = 0
+        while page := await self._snapshot.elements_page(offset, EXPORT_PAGE_SIZE):
+            self._within_budget()
+            for element in page:
+                item = exchange_element_of(element, self.registry)
+                self.identifiers[element.id] = item.identifier
+                self.counts["elements"] += 1
+                yield item
+            offset += len(page)
+
+    async def relationships(self) -> AsyncIterator[ExchangeRelationship]:
+        offset = 0
+        while page := await self._snapshot.relationships_page(offset, EXPORT_PAGE_SIZE):
+            self._within_budget()
+            for link in page:
+                # A link with an end outside the scope is not exported (spec §11).
+                if link.source_id in self.identifiers and link.target_id in self.identifiers:
+                    self.counts["relationships"] += 1
+                    yield exchange_relationship_of(
+                        link,
+                        source=self.identifiers[link.source_id],
+                        target=self.identifiers[link.target_id],
+                        registry=self.registry,
+                    )
+            offset += len(page)
+
+
+def _report(request: ExportRequest, streams: _Streams, dropped: dict[str, int]) -> None:
+    registry = streams.registry
     logger.info(
-        "model exported as ArchiMate XML",
-        extra={"action": "exported", "format": request.format.value, **counts},
+        "model exported",
+        extra={"action": "exported", "format": request.format.value, **streams.counts},
     )
     if registry.replaced or dropped:
         # Never the text itself: only counts and the identifiers to look for.
@@ -283,24 +345,3 @@ def _report(
                 "objects_cleaned": list(dropped)[:WARNED_IDENTIFIERS],
             },
         )
-
-
-async def _relationships(
-    snapshot: ExportSnapshot,
-    identifiers: dict[UUID, str],
-    registry: IdentifierRegistry,
-    within_budget: Callable[[], None],
-) -> AsyncIterator[ExchangeRelationship]:
-    offset = 0
-    while page := await snapshot.relationships_page(offset, EXPORT_PAGE_SIZE):
-        within_budget()
-        for link in page:
-            # A link with an end outside the scope is not exported (spec §11).
-            if link.source_id in identifiers and link.target_id in identifiers:
-                yield exchange_relationship_of(
-                    link,
-                    source=identifiers[link.source_id],
-                    target=identifiers[link.target_id],
-                    registry=registry,
-                )
-        offset += len(page)

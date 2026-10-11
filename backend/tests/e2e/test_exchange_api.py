@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import zipfile
 from collections.abc import AsyncIterator
 
 import httpx
@@ -504,3 +506,231 @@ class TestAuthenticationPrecedesTheBody:
             response = await client.post("/exchanges/imports", **upload(exchange_xml()))
 
         assert response.status_code == 200
+
+
+CSV_HEADER = b'"ID","Type","Name"\r\n'
+
+
+def csv_upload(**form: str) -> dict[str, object]:
+    return {"data": {"format": "csv", **form}}
+
+
+class TestCsvOverHttp:
+    async def test_export_is_a_zip_attachment(
+        self, client: httpx.AsyncClient, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="srv-1")
+
+        response = await client.get("/exchanges/export", params={"format": "csv"})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["content-disposition"].startswith(
+            "attachment; filename*=UTF-8''ea-model-"
+        )
+        assert response.headers["content-disposition"].endswith(".zip")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        assert archive.namelist() == ["elements.csv", "relations.csv", "properties.csv"]
+        assert "srv-1" in archive.read("elements.csv").decode()
+
+    async def test_the_archive_is_the_same_whoever_names_what(
+        self, client: httpx.AsyncClient, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="srv-1")
+
+        response = await client.get(
+            "/exchanges/export", params={"format": "csv", "filename": "../../x.zip"}
+        )
+
+        assert "x.zip" not in response.headers["content-disposition"]
+
+    async def test_a_formula_is_neutralised_unless_the_query_says_otherwise(
+        self, client: httpx.AsyncClient, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="=1+1")
+
+        safe = await client.get("/exchanges/export", params={"format": "csv"})
+        raw = await client.get("/exchanges/export", params={"format": "csv", "safe_cells": "false"})
+
+        assert "'=1+1" in zipfile.ZipFile(io.BytesIO(safe.content)).read("elements.csv").decode()
+        assert '"=1+1"' in zipfile.ZipFile(io.BytesIO(raw.content)).read("elements.csv").decode()
+
+    async def test_a_csv_import_takes_three_parts(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        files = {
+            "elements": ("elements.csv", CSV_HEADER + b'"a","Node","srv"\r\n', "text/csv"),
+            "relations": ("relations.csv", b'"ID","Type","Source","Target"\r\n', "text/csv"),
+        }
+
+        response = await client.post(
+            "/exchanges/imports", files=files, **csv_upload(dry_run="false")
+        )
+
+        assert response.status_code == 200
+        assert response.json()["format"] == "csv"
+        assert [e.name for e in repository.elements.values()] == ["srv"]
+
+    async def test_a_csv_import_is_a_dry_run_unless_said_otherwise(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        files = {"elements": ("e.csv", CSV_HEADER + b'"a","Node","srv"\r\n', "text/csv")}
+
+        response = await client.post("/exchanges/imports", files=files, **csv_upload())
+
+        assert response.json()["dry_run"] is True and repository.elements == {}
+
+    async def test_the_digest_is_the_one_of_the_single_file_when_there_is_only_one(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        data = CSV_HEADER + b'"a","Node","srv"\r\n'
+
+        response = await client.post(
+            "/exchanges/imports", files={"elements": ("e.csv", data, "text/csv")}, **csv_upload()
+        )
+
+        assert response.json()["sha256"] == hashlib.sha256(data).hexdigest()
+
+    async def test_the_safe_cells_part_restores_or_keeps_the_guard(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        files = {"elements": ("e.csv", CSV_HEADER + b'"a","Node","\'=1"\r\n', "text/csv")}
+
+        await client.post(
+            "/exchanges/imports", files=files, **csv_upload(dry_run="false", safe_cells="false")
+        )
+
+        assert [e.name for e in repository.elements.values()] == ["'=1"]
+
+    async def test_a_csv_import_without_elements_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports",
+            files={"relations": ("r.csv", b'"ID","Type","Source","Target"\r\n', "text/csv")},
+            **csv_upload(),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "invalid_exchange_file"
+
+    async def test_an_xml_import_without_its_file_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports",
+            files={"elements": ("e.csv", CSV_HEADER, "text/csv")},
+            data={"format": "archimate-xml"},
+        )
+
+        assert response.status_code == 422
+
+    async def test_each_format_takes_only_its_own_parts(self, client: httpx.AsyncClient) -> None:
+        xml_part = ("file", ("a.xml", exchange_xml(), "application/xml"))
+        csv_part = ("elements", ("e.csv", CSV_HEADER, "text/csv"))
+
+        csv_with_xml = await client.post(
+            "/exchanges/imports", files=[csv_part, xml_part], **csv_upload()
+        )
+        xml_with_csv = await client.post(
+            "/exchanges/imports", files=[xml_part, csv_part], data={"format": "archimate-xml"}
+        )
+        xml_with_cells = await client.post(
+            "/exchanges/imports",
+            files=[xml_part],
+            data={"format": "archimate-xml", "safe_cells": "false"},
+        )
+
+        assert (csv_with_xml.status_code, xml_with_csv.status_code) == (422, 422)
+        assert xml_with_cells.status_code == 422
+
+    @pytest.mark.parametrize("name", ["elements", "relations", "properties"])
+    async def test_a_part_sent_twice_is_refused(self, client: httpx.AsyncClient, name: str) -> None:
+        files = [
+            ("elements", ("e.csv", CSV_HEADER, "text/csv")),
+            (name, ("again.csv", CSV_HEADER, "text/csv")),
+        ]
+
+        response = await client.post("/exchanges/imports", files=files, **csv_upload())
+
+        assert response.status_code == 422
+
+    async def test_a_part_nobody_declared_is_refused(self, client: httpx.AsyncClient) -> None:
+        files = [
+            ("elements", ("e.csv", CSV_HEADER, "text/csv")),
+            ("views", ("v.csv", CSV_HEADER, "text/csv")),
+        ]
+
+        response = await client.post("/exchanges/imports", files=files, **csv_upload())
+
+        assert response.status_code == 422
+
+    async def test_a_bad_file_is_a_typed_422_that_never_quotes_it(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        for data in (CSV_HEADER + b'"a","Node","LEAK\x00"\r\n', b"LEAK\xff\xfe", b'"LEAK'):
+            response = await client.post(
+                "/exchanges/imports",
+                files={"elements": ("e.csv", data, "text/csv")},
+                **csv_upload(),
+            )
+
+            assert response.status_code == 422
+            assert response.json()["error"] == "invalid_exchange_file"
+            assert "LEAK" not in response.text
+
+    async def test_the_names_of_the_files_are_neither_used_nor_echoed(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        evil = "../../etc/passwd\r\n[ERROR] forged.csv"
+
+        response = await client.post(
+            "/exchanges/imports",
+            files={"elements": (evil, CSV_HEADER + b'"a","Node","A"\r\n', "text/x-wrong")},
+            **csv_upload(dry_run="false"),
+        )
+
+        assert response.status_code == 200
+        assert "passwd" not in response.text and "forged" not in response.text
+        assert len(repository.elements) == 1
+
+    async def test_the_ceiling_counts_the_three_files_together(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        part = CSV_HEADER + b" " * 1000  # under the 2048 ceiling alone, over it together
+        files = {
+            "elements": ("e.csv", part, "text/csv"),
+            "relations": ("r.csv", part, "text/csv"),
+            "properties": ("p.csv", part, "text/csv"),
+        }
+        async with await app_client(service, exchange_store, exchange_max_bytes=2048) as client:
+            response = await client.post("/exchanges/imports", files=files, **csv_upload())
+
+        assert response.status_code == 413
+        assert response.json()["error"] == "file_too_large"
+
+    async def test_a_reader_is_refused_before_a_csv_is_read(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        app = create_app(
+            Settings(debug=True, auth_enabled=True),
+            architecture_service=service,
+            exchanges=exchange_store,  # type: ignore[arg-type]
+            verifier=StaticVerifier({"reader": a_reader(), "editor": an_editor()}),
+        )
+        files = {"elements": ("e.csv", CSV_HEADER, "text/csv")}
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            anonymous = await client.post("/exchanges/imports", files=files, **csv_upload())
+            reader = await client.post(
+                "/exchanges/imports",
+                headers={"Authorization": "Bearer reader"},
+                files=files,
+                **csv_upload(),
+            )
+            editor = await client.post(
+                "/exchanges/imports",
+                headers={"Authorization": "Bearer editor"},
+                files=files,
+                **csv_upload(),
+            )
+
+        assert (anonymous.status_code, reader.status_code, editor.status_code) == (401, 403, 200)

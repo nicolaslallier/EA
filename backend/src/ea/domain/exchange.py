@@ -450,7 +450,11 @@ class ImportContent:
 
     @property
     def sha256(self) -> str:
-        return digest_of(*self.parts)
+        """`shasum` of the file when there is only one; otherwise each file in its own slot,
+        so that the same bytes sent as `relations` and as `properties` do not look alike."""
+        if self.relations is None and self.properties is None:
+            return digest_of(self.main)
+        return digest_of(self.main, self.relations or b"", self.properties or b"")
 
 
 @dataclass(frozen=True, slots=True)

@@ -117,3 +117,29 @@ async def test_a_cancellation_while_waiting_gives_the_place_back(
     await first
     await importer.import_exchange(CONTENT, ImportOptions())  # nothing is left taken
     assert parser.peak == 1
+
+
+async def test_a_csv_import_goes_through_the_same_gate(
+    exchange_store: InMemoryExchange,
+    service: ArchitectureService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = SlowParser()
+    monkeypatch.setattr(
+        "ea.services.exchanges.parse_csv", lambda main, relations, properties, **kw: parser(main)
+    )
+    importer = ExchangeService(exchange_store, service)
+    content = ImportContent(ExchangeFormat.CSV, b"x", b"y", b"z")
+    first = asyncio.create_task(importer.import_exchange(content, ImportOptions()))
+    await asyncio.to_thread(parser.entered.wait, 5)
+    second = asyncio.create_task(importer.import_exchange(content, ImportOptions()))
+    await let_the_loop_run()
+
+    with pytest.raises(ImportInProgressError):
+        await importer.import_exchange(content, ImportOptions())
+    assert parser.calls == 1
+
+    parser.release.set()
+    await first
+    await second
+    assert parser.peak == 1
