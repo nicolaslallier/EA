@@ -90,7 +90,10 @@ class TestEveryStateEveryTransitionEveryRole:
             with pytest.raises(InvalidTransitionError):
                 apply_transition(element, transition, caller, now=LATER)
         else:
-            assert apply_transition(element, transition, caller, now=LATER) != element
+            assert (
+                apply_transition(element, transition, caller, now=LATER, last_author="editor-1")
+                != element
+            )
 
     @pytest.mark.parametrize("role", list(ROLES))
     @pytest.mark.parametrize(("state", "locked"), list(OFFERED))
@@ -104,7 +107,9 @@ class TestEveryStateEveryTransitionEveryRole:
 class TestApplyingATransition:
     def test_submit_then_approve_records_who_and_when(self) -> None:
         submitted = apply_transition(an_element(), Tr.SUBMIT, an_editor(), now=LATER)
-        approved = apply_transition(submitted, Tr.APPROVE, an_approver(), now=LATER)
+        approved = apply_transition(
+            submitted, Tr.APPROVE, an_approver(), now=LATER, last_author="editor-1"
+        )
 
         assert submitted.approval_state is S.IN_REVIEW
         assert approved.approval_state is S.APPROVED
@@ -129,49 +134,66 @@ class TestApplyingATransition:
 
 
 class TestSeparationOfDuties:
-    def test_whoever_made_the_last_change_cannot_approve(self) -> None:
-        in_review = an_element(S.IN_REVIEW)
+    """Fail-closed: an unknown last author never lets the rule be skipped."""
 
+    @pytest.mark.parametrize("last_author", [None, "", "approver-1"])
+    def test_an_unknown_or_identical_last_author_refuses_the_approval(
+        self, last_author: str | None
+    ) -> None:
         with pytest.raises(NotAuthorisedError, match="separation"):
             apply_transition(
-                in_review,
+                an_element(S.IN_REVIEW),
                 Tr.APPROVE,
                 an_approver(),
                 now=LATER,
-                last_author="approver-1",
-                separate_duties=True,
+                last_author=last_author,
             )
 
-    def test_someone_else_can_and_the_rule_can_be_switched_off(self) -> None:
-        in_review = an_element(S.IN_REVIEW)
+    def test_forgetting_the_argument_is_a_refusal_not_a_pass(self) -> None:
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            apply_transition(an_element(S.IN_REVIEW), Tr.APPROVE, an_approver(), now=LATER)
 
-        other = apply_transition(
-            in_review,
-            Tr.APPROVE,
-            an_approver(),
-            now=LATER,
-            last_author="editor-1",
-            separate_duties=True,
+    def test_a_different_subject_approves(self) -> None:
+        approved = apply_transition(
+            an_element(S.IN_REVIEW), Tr.APPROVE, an_approver(), now=LATER, last_author="editor-1"
         )
-        off = apply_transition(
-            in_review,
+
+        assert approved.approval_state is S.APPROVED
+
+    def test_only_the_subject_counts_not_the_name_shown(self) -> None:
+        other_name_same_subject = an_approver(username="somebody else")
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            apply_transition(
+                an_element(S.IN_REVIEW),
+                Tr.APPROVE,
+                other_name_same_subject,
+                now=LATER,
+                last_author="approver-1",
+            )
+        same_name_other_subject = an_approver(subject="approver-9")
+        apply_transition(
+            an_element(S.IN_REVIEW),
             Tr.APPROVE,
-            an_approver(),
+            same_name_other_subject,
             now=LATER,
             last_author="approver-1",
-            separate_duties=False,
         )
 
-        assert other.approval_state is off.approval_state is S.APPROVED
+    def test_switching_the_rule_off_is_explicit_and_even_an_unknown_author_passes(self) -> None:
+        for last_author in (None, "approver-1"):
+            approved = apply_transition(
+                an_element(S.IN_REVIEW),
+                Tr.APPROVE,
+                an_approver(),
+                now=LATER,
+                last_author=last_author,
+                separate_duties=False,
+            )
+            assert approved.approval_state is S.APPROVED
 
     def test_it_binds_approval_only(self) -> None:
         rejected = apply_transition(
-            an_element(S.IN_REVIEW),
-            Tr.REJECT,
-            an_approver(),
-            now=LATER,
-            last_author="approver-1",
-            separate_duties=True,
+            an_element(S.IN_REVIEW), Tr.REJECT, an_approver(), now=LATER, last_author=None
         )
 
         assert rejected.approval_state is S.DRAFT

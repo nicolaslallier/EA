@@ -69,14 +69,17 @@ def apply_transition(
     *,
     now: datetime,
     last_author: str | None = None,
-    separate_duties: bool = False,
+    separate_duties: bool = True,
 ) -> Element:
     """The element after the transition.
 
     403 if the role is missing — checked first: whether a state offers a
     transition is not something a caller without the role needs to learn — then
-    409 if the state forbids it. With `separate_duties`, `approve` is refused to
-    `last_author`, the subject that made the element's last change.
+    409 if the state forbids it. With `separate_duties` — the default, so that
+    forgetting it is a refusal — `approve` is refused to `last_author`, the
+    subject that made the element's last change, and equally when that subject is
+    unknown: a missing fact never lets the rule be skipped. Only an explicit
+    `separate_duties=False` (`EA_APPROVAL_SEPARATION`) switches it off.
     """
     if not _may(transition, caller):
         needed = "ea-approver" if transition in APPROVER_TRANSITIONS else "ea-editor"
@@ -86,17 +89,19 @@ def apply_transition(
         state = "locked" if element.locked else element.approval_state.value.replace("_", " ")
         msg = f"{element.name!r} is {state}: {transition.value} is not a transition it offers"
         raise InvalidTransitionError(msg)
-    if (
-        transition is Transition.APPROVE
-        and separate_duties
-        and last_author is not None
-        and last_author == caller.subject
-    ):
-        msg = (
-            "separation of duties: you made the last change to this element, "
-            "someone else must approve it"
-        )
-        raise NotAuthorisedError(msg)
+    if transition is Transition.APPROVE and separate_duties:
+        if not last_author:
+            msg = (
+                "separation of duties: who made the last change to this element is unknown, "
+                "so it cannot be approved"
+            )
+            raise NotAuthorisedError(msg)
+        if last_author == caller.subject:
+            msg = (
+                "separation of duties: you made the last change to this element, "
+                "someone else must approve it"
+            )
+            raise NotAuthorisedError(msg)
     match transition:
         case Transition.SUBMIT:
             return replace(element, approval_state=ApprovalState.IN_REVIEW)
