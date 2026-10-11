@@ -10,10 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ea.db.models.architecture import ElementRecord
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
-from ea.db.models.architecture import ElementRecord
 from ea.domain.errors import ImportInProgressError
 from ea.domain.exchange import SOURCE_ID, ExportScope
 from ea.repositories.exchange_store import PostgresExchangeRepository
