@@ -41,11 +41,14 @@ from ea.domain.errors import (
     DuplicateSavedQueryError,
     ElementLockedError,
     ElementNotFoundError,
+    ExchangeFileTooLargeError,
     FileNotTextError,
     FileStorageUnavailableError,
     FileTooLargeError,
     IllegalRelationshipError,
+    ImportInProgressError,
     InvalidCursorError,
+    InvalidExchangeFileError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
     InvalidQueryError,
@@ -60,6 +63,7 @@ from ea.domain.errors import (
     PackageTooDeepError,
     RestoreBlockedError,
     RestoreConflictError,
+    RowRefusedError,
     SavedQueryNotFoundError,
     SearchUnavailableError,
     StoredFileExistsError,
@@ -67,6 +71,7 @@ from ea.domain.errors import (
     TooManyPackagesError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    UnknownScopeError,
     WriteConflictError,
 )
 
@@ -155,6 +160,15 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     FileTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "file_too_large"),
     FileNotTextError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_text"),
     FileStorageUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "storage_unavailable"),
+    # --- Exchanges (docs/adr/0048) ---
+    InvalidExchangeFileError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_exchange_file"),
+    # 413 literally: the bucket's `FileTooLargeError` above is a 422 and a different class.
+    ExchangeFileTooLargeError: (413, "file_too_large"),
+    ImportInProgressError: (status.HTTP_409_CONFLICT, "import_in_progress"),
+    UnknownScopeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_scope"),
+    # Never sent: a refused row is a line of the import report. The row exists
+    # because every `DomainError` needs one (tests/unit/test_error_statuses.py).
+    RowRefusedError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_row"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

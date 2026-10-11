@@ -257,3 +257,39 @@ class ApprovalStaleError(DomainError):
     An approver certifies what they read: if the element changed since, the
     approval is refused and they read it again.
     """
+
+
+class InvalidExchangeFileError(DomainError):
+    """An exchange file that cannot be read at all: malformed XML, a DTD, an unknown root.
+
+    Its message never repeats the file's content beyond a line number — the file
+    is untrusted, and an error message is the first place it would leak into.
+    """
+
+
+class ExchangeFileTooLargeError(DomainError):
+    """An exchange file beyond `MAX_EXCHANGE_BYTES`; a 413, unlike `FileTooLargeError`.
+
+    Not a subclass of `FileTooLargeError`: `api/errors.py` looks the status up
+    by exact type, and that one is a 422 for the files of the bucket.
+    """
+
+
+class ImportInProgressError(DomainError):
+    """Another import holds the advisory lock; only one runs at a time."""
+
+
+class UnknownScopeError(DomainError):
+    """An export scope that does not name what it needs (a package without an id, say)."""
+
+
+class RowRefusedError(DomainError):
+    """One element, relationship or view of an exchange file refused by a rule.
+
+    Never leaves the service: it becomes a line of the import report, so it has
+    no HTTP status. `code` is the stable machine-readable name of the refusal.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
