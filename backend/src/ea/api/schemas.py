@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ea.domain.analytics import DIMENSION_PATTERN, MAX_BUCKETS, Aggregate, Metric
 from ea.domain.approval import ApprovalState, Transition, allowed_transitions
 from ea.domain.archimate import (
     AccessType,
@@ -72,9 +73,11 @@ from ea.domain.ipam import (
     Subnet,
     SubnetDetail,
 )
+from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.quality import MAX_FINDINGS, Finding, QualityPage, RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
     MAX_PROPERTY_VALUE,
@@ -1473,4 +1476,286 @@ class ImportReportRead(BaseModel):
             truncated=report.truncated,
             issue_count=report.issue_count,
             duration_ms=report.duration_ms,
+        )
+
+
+# --- Model analysis (docs/adr/0056) ---------------------------------
+
+#: How many ids one axis may *submit*. The service refuses more than
+#: `MAX_MATRIX_AXIS` with its own typed error; this only stops a runaway body.
+MAX_SUBMITTED_AXIS_IDS: Final = 10 * MAX_MATRIX_AXIS
+
+
+class AxisSelect(_Input):
+    """What one axis of the matrix is made of. Nothing set means the whole catalogue."""
+
+    element_ids: list[UUID] = Field(
+        default_factory=list,
+        max_length=MAX_SUBMITTED_AXIS_IDS,
+        description=f"Named elements; more than {MAX_MATRIX_AXIS} is refused.",
+    )
+    element_types: list[ElementType] = Field(default_factory=list)
+    layers: list[Layer] = Field(default_factory=list)
+    search: Search | None = None
+    package_id: UUID | None = Field(
+        default=None, description="A package, sub-packages included. Not with `query_id`."
+    )
+    query_id: UUID | None = Field(
+        default=None, description="A saved query, evaluated now. Not with `package_id`."
+    )
+
+    def selection(self) -> AxisSelection:
+        return AxisSelection(
+            element_ids=tuple(self.element_ids),
+            element_types=tuple(self.element_types),
+            layers=tuple(self.layers),
+            search=self.search,
+            package_id=self.package_id,
+            query_id=self.query_id,
+        )
+
+
+class MatrixQuery(_Input):
+    """Both axes. A POST only because they travel in a body: nothing is written."""
+
+    rows: AxisSelect
+    cols: AxisSelect
+
+
+class ElementBrief(BaseModel):
+    """An element abridged to what a header needs."""
+
+    id: UUID
+    name: str
+    element_type: ElementType
+    layer: Layer
+
+    @classmethod
+    def of(cls, element: Element) -> ElementBrief:
+        return cls(
+            id=element.id,
+            name=element.name,
+            element_type=element.element_type,
+            layer=element.element_type.layer,
+        )
+
+
+class MatrixCellRead(BaseModel):
+    """A cell holding at least one link: row = source, column = target."""
+
+    source_id: UUID
+    target_id: UUID
+    links: list[RelationshipRead]
+
+
+class BlockedCellRead(BaseModel):
+    source_id: UUID
+    target_id: UUID
+
+
+class MatrixRead(BaseModel):
+    """The grid: two axes and the cells that hold links."""
+
+    rows: list[ElementBrief]
+    cols: list[ElementBrief]
+    rows_total: int
+    cols_total: int
+    truncated: bool
+    cells: list[MatrixCellRead]
+    blocked: list[BlockedCellRead]
+
+    @classmethod
+    def of(cls, matrix: Matrix) -> MatrixRead:
+        return cls(
+            rows=[ElementBrief.of(element) for element in matrix.rows.elements],
+            cols=[ElementBrief.of(element) for element in matrix.cols.elements],
+            rows_total=matrix.rows.total,
+            cols_total=matrix.cols.total,
+            truncated=matrix.rows.truncated or matrix.cols.truncated,
+            cells=[
+                MatrixCellRead(
+                    source_id=cell.source_id,
+                    target_id=cell.target_id,
+                    links=[RelationshipRead.of(link) for link in cell.links],
+                )
+                for cell in matrix.cells
+            ],
+            blocked=[
+                BlockedCellRead(source_id=source, target_id=target)
+                for source, target in matrix.blocked
+            ],
+        )
+
+
+class MatrixCellDetailRead(BaseModel):
+    """One ordered pair: its links, and the relationships ArchiMate would still allow."""
+
+    source_id: UUID
+    target_id: UUID
+    links: list[RelationshipRead]
+    allowed: list[RelationshipType]
+
+    @classmethod
+    def of(cls, cell: MatrixCell) -> MatrixCellDetailRead:
+        return cls(
+            source_id=cell.source_id,
+            target_id=cell.target_id,
+            links=[RelationshipRead.of(link) for link in cell.links],
+            allowed=list(cell.allowed),
+        )
+
+
+# --- Quality checks (docs/adr/0057) ---------------------------------
+
+FindingsLimit = Annotated[int, Field(ge=1, le=MAX_FINDINGS)]
+Cursor = Annotated[int, Field(ge=0, description="Where the previous page stopped.")]
+
+
+def fix_hint_of(finding: Finding) -> str:
+    """An application link to where the finding is fixed — a route, never code."""
+    if finding.rule is RuleCode.INCONSISTENT_RELATIONSHIP:
+        return f"/analyse/voisinage?element={finding.element_id}"
+    return f"/elements?element={finding.element_id}"
+
+
+class FindingRead(BaseModel):
+    rule: RuleCode
+    severity: Severity
+    element_id: UUID
+    element_name: str
+    related_id: UUID | None
+    related_name: str | None
+    message: str
+    fix_hint: str
+
+    @classmethod
+    def of(cls, finding: Finding) -> FindingRead:
+        return cls(
+            rule=finding.rule,
+            severity=finding.severity,
+            element_id=finding.element_id,
+            element_name=finding.element_name,
+            related_id=finding.related_id,
+            related_name=finding.related_name,
+            message=finding.message,
+            fix_hint=fix_hint_of(finding),
+        )
+
+
+class RuleCountRead(BaseModel):
+    rule: RuleCode
+    severity: Severity
+    count: int
+
+
+class QualityReportRead(BaseModel):
+    """One page of findings, with the counts of the whole run."""
+
+    total: int = Field(description="Findings of the whole run, before any filter.")
+    counts: list[RuleCountRead]
+    findings: list[FindingRead]
+    next_cursor: int | None
+    partial: bool = Field(
+        description="True when a rule stopped at its budget: a short list proves little."
+    )
+
+    @classmethod
+    def of(cls, page: QualityPage) -> QualityReportRead:
+        return cls(
+            total=len(page.report.findings),
+            counts=[
+                RuleCountRead(rule=c.rule, severity=c.severity, count=c.count)
+                for c in page.report.counts
+            ],
+            findings=[FindingRead.of(finding) for finding in page.findings],
+            next_cursor=page.next_cursor,
+            partial=page.report.partial,
+        )
+
+
+# --- Aggregates and heat maps (docs/adr/0058) -------------------------
+
+DimensionParam = Annotated[
+    str,
+    Field(
+        pattern=DIMENSION_PATTERN,
+        description="`element_type`, `layer`, or `property:<key>` for an attribute of the element.",
+    ),
+]
+
+
+class BucketRead(BaseModel):
+    """One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension."""
+
+    key: str
+    count: int
+    value: float | None = Field(
+        description="The metric over the bucket; null if nothing was readable."
+    )
+    level: int | None = Field(description="0 (lowest) to 4, decided by the server; null if none.")
+
+
+class AggregateRead(BaseModel):
+    by: str
+    metric: Metric
+    property_key: str | None
+    total: int
+    unreadable: int = Field(description="Elements whose property is present but not a number.")
+    truncated: bool = Field(description=f"True when more than {MAX_BUCKETS} buckets were cut.")
+    buckets: list[BucketRead]
+
+    @classmethod
+    def of(cls, aggregate: Aggregate) -> AggregateRead:
+        return cls(
+            by=str(aggregate.dimensions[0]),
+            metric=aggregate.metric,
+            property_key=aggregate.property_key,
+            total=aggregate.total,
+            unreadable=aggregate.unreadable,
+            truncated=aggregate.truncated,
+            buckets=[
+                BucketRead(key=b.keys[0], count=b.count, value=b.value, level=b.level)
+                for b in aggregate.buckets
+            ],
+        )
+
+
+class HeatCellRead(BaseModel):
+    row: str
+    col: str
+    count: int
+    value: float | None
+    level: int | None
+
+
+class HeatmapRead(BaseModel):
+    rows_by: str
+    cols_by: str
+    rows: list[str] = Field(description="Row keys, in the order the dimension reads.")
+    cols: list[str]
+    metric: Metric
+    property_key: str | None
+    total: int
+    unreadable: int
+    truncated: bool
+    cells: list[HeatCellRead]
+
+    @classmethod
+    def of(cls, aggregate: Aggregate) -> HeatmapRead:
+        return cls(
+            rows_by=str(aggregate.dimensions[0]),
+            cols_by=str(aggregate.dimensions[1]),
+            rows=list(aggregate.axis_keys(0)),
+            cols=list(aggregate.axis_keys(1)),
+            metric=aggregate.metric,
+            property_key=aggregate.property_key,
+            total=aggregate.total,
+            unreadable=aggregate.unreadable,
+            truncated=aggregate.truncated,
+            cells=[
+                HeatCellRead(
+                    row=b.keys[0], col=b.keys[1], count=b.count, value=b.value, level=b.level
+                )
+                for b in aggregate.buckets
+            ],
         )

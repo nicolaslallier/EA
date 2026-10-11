@@ -4,6 +4,51 @@
  */
 
 export interface paths {
+    "/analytics/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Aggregate
+         * @description Elements grouped by one dimension, each bucket with a count, a metric and a level.
+         *
+         *     `sum`, `avg`, `min` and `max` read `property` as a number (`.` or `,`
+         *     decimal, spaces as thousands separators); a value that does not read is
+         *     counted in `unreadable`, never silently ignored. `level` (0 to 4) is the
+         *     server's colour decision.
+         */
+        get: operations["read_aggregate_analytics_aggregate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Heatmap
+         * @description The same, grouped by two dimensions: a grid of cells with a level each.
+         */
+        get: operations["read_heatmap_analytics_heatmap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -748,6 +793,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Matrix
+         * @description The grid of two axes, with the links between them.
+         *
+         *     Row = source, column = target: a link lives in exactly one cell. An axis
+         *     given as criteria is cut at the first 50 by name and `truncated` says so;
+         *     an axis given as more than 50 element ids is refused.
+         */
+        post: operations["read_matrix_matrix_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/matrix/cell": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Matrix Cell
+         * @description One pair: the links that exist and the relationships still permitted.
+         */
+        get: operations["read_matrix_cell_matrix_cell_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -878,6 +967,29 @@ export interface paths {
          * @description Rename, describe or move. `parent_id: null` puts the package at the root; omit it to keep.
          */
         patch: operations["update_package_packages__package_id__patch"];
+        trace?: never;
+    };
+    "/quality": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Quality
+         * @description Run the quality rules over the catalogue and page through the findings.
+         *
+         *     Computed on every call — nothing is stored. The counts describe the whole
+         *     run; `severity` and `code` narrow the findings only.
+         */
+        get: operations["read_quality_quality_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/queries": {
@@ -1067,6 +1179,28 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /** AggregateRead */
+        AggregateRead: {
+            /** Buckets */
+            buckets: components["schemas"]["BucketRead"][];
+            /** By */
+            by: string;
+            metric: components["schemas"]["Metric"];
+            /** Property Key */
+            property_key: string | null;
+            /** Total */
+            total: number;
+            /**
+             * Truncated
+             * @description True when more than 200 buckets were cut.
+             */
+            truncated: boolean;
+            /**
+             * Unreadable
+             * @description Elements whose property is present but not a number.
+             */
+            unreadable: number;
+        };
         /**
          * ApprovalRequest
          * @description One step of review. `approve` must say which revision the approver read.
@@ -1149,6 +1283,33 @@ export interface components {
              */
             next_cursor: string | null;
         };
+        /**
+         * AxisSelect
+         * @description What one axis of the matrix is made of. Nothing set means the whole catalogue.
+         */
+        AxisSelect: {
+            /**
+             * Element Ids
+             * @description Named elements; more than 50 is refused.
+             */
+            element_ids?: string[];
+            /** Element Types */
+            element_types?: components["schemas"]["ElementType"][];
+            /** Layers */
+            layers?: components["schemas"]["Layer"][];
+            /**
+             * Package Id
+             * @description A package, sub-packages included. Not with `query_id`.
+             */
+            package_id?: string | null;
+            /**
+             * Query Id
+             * @description A saved query, evaluated now. Not with `package_id`.
+             */
+            query_id?: string | null;
+            /** Search */
+            search?: string | null;
+        };
         /** BaselineCreate */
         BaselineCreate: {
             /**
@@ -1198,6 +1359,19 @@ export interface components {
             name: string;
             /** Relationship Count */
             relationship_count: number;
+        };
+        /** BlockedCellRead */
+        BlockedCellRead: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
         };
         /** Body_attach_document_elements__element_id__documents_post */
         Body_attach_document_elements__element_id__documents_post: {
@@ -1303,6 +1477,26 @@ export interface components {
              * @default
              */
             title?: string;
+        };
+        /**
+         * BucketRead
+         * @description One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension.
+         */
+        BucketRead: {
+            /** Count */
+            count: number;
+            /** Key */
+            key: string;
+            /**
+             * Level
+             * @description 0 (lowest) to 4, decided by the server; null if none.
+             */
+            level: number | null;
+            /**
+             * Value
+             * @description The metric over the bucket; null if nothing was readable.
+             */
+            value: number | null;
         };
         /**
          * ConflictPolicy
@@ -1519,6 +1713,21 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ElementBrief
+         * @description An element abridged to what a header needs.
+         */
+        ElementBrief: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            layer: components["schemas"]["Layer"];
+            /** Name */
+            name: string;
         };
         /**
          * ElementCreate
@@ -1850,6 +2059,26 @@ export interface components {
              */
             size: number;
         };
+        /** FindingRead */
+        FindingRead: {
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Element Name */
+            element_name: string;
+            /** Fix Hint */
+            fix_hint: string;
+            /** Message */
+            message: string;
+            /** Related Id */
+            related_id: string | null;
+            /** Related Name */
+            related_name: string | null;
+            rule: components["schemas"]["RuleCode"];
+            severity: components["schemas"]["Severity"];
+        };
         /**
          * GraphRead
          * @description A sub-graph: the nodes and the edges between them, ready to be drawn.
@@ -1881,6 +2110,44 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded";
+        };
+        /** HeatCellRead */
+        HeatCellRead: {
+            /** Col */
+            col: string;
+            /** Count */
+            count: number;
+            /** Level */
+            level: number | null;
+            /** Row */
+            row: string;
+            /** Value */
+            value: number | null;
+        };
+        /** HeatmapRead */
+        HeatmapRead: {
+            /** Cells */
+            cells: components["schemas"]["HeatCellRead"][];
+            /** Cols */
+            cols: string[];
+            /** Cols By */
+            cols_by: string;
+            metric: components["schemas"]["Metric"];
+            /** Property Key */
+            property_key: string | null;
+            /**
+             * Rows
+             * @description Row keys, in the order the dimension reads.
+             */
+            rows: string[];
+            /** Rows By */
+            rows_by: string;
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Unreadable */
+            unreadable: number;
         };
         /** ImportCountsRead */
         ImportCountsRead: {
@@ -1950,6 +2217,72 @@ export interface components {
          */
         Layer: "motivation" | "strategy" | "business" | "application" | "technology" | "physical" | "implementation_migration" | "other";
         /**
+         * MatrixCellDetailRead
+         * @description One ordered pair: its links, and the relationships ArchiMate would still allow.
+         */
+        MatrixCellDetailRead: {
+            /** Allowed */
+            allowed: components["schemas"]["RelationshipType"][];
+            /** Links */
+            links: components["schemas"]["RelationshipRead"][];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /**
+         * MatrixCellRead
+         * @description A cell holding at least one link: row = source, column = target.
+         */
+        MatrixCellRead: {
+            /** Links */
+            links: components["schemas"]["RelationshipRead"][];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /**
+         * MatrixQuery
+         * @description Both axes. A POST only because they travel in a body: nothing is written.
+         */
+        MatrixQuery: {
+            cols: components["schemas"]["AxisSelect"];
+            rows: components["schemas"]["AxisSelect"];
+        };
+        /**
+         * MatrixRead
+         * @description The grid: two axes and the cells that hold links.
+         */
+        MatrixRead: {
+            /** Blocked */
+            blocked: components["schemas"]["BlockedCellRead"][];
+            /** Cells */
+            cells: components["schemas"]["MatrixCellRead"][];
+            /** Cols */
+            cols: components["schemas"]["ElementBrief"][];
+            /** Cols Total */
+            cols_total: number;
+            /** Rows */
+            rows: components["schemas"]["ElementBrief"][];
+            /** Rows Total */
+            rows_total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /**
          * MeRead
          * @description The caller, as far as the SPA needs to know it.
          */
@@ -1973,6 +2306,11 @@ export interface components {
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
         };
+        /**
+         * Metric
+         * @enum {string}
+         */
+        Metric: "count" | "sum" | "avg" | "min" | "max";
         /** ModifiedRead */
         ModifiedRead: {
             /** Changes */
@@ -2094,6 +2432,28 @@ export interface components {
             op: components["schemas"]["PropertyOp"];
             /** Value */
             value: string | null;
+        };
+        /**
+         * QualityReportRead
+         * @description One page of findings, with the counts of the whole run.
+         */
+        QualityReportRead: {
+            /** Counts */
+            counts: components["schemas"]["RuleCountRead"][];
+            /** Findings */
+            findings: components["schemas"]["FindingRead"][];
+            /** Next Cursor */
+            next_cursor: number | null;
+            /**
+             * Partial
+             * @description True when a rule stopped at its budget: a short list proves little.
+             */
+            partial: boolean;
+            /**
+             * Total
+             * @description Findings of the whole run, before any filter.
+             */
+            total: number;
         };
         /**
          * QueryOrder
@@ -2331,6 +2691,18 @@ export interface components {
              */
             keep_new?: boolean | null;
         };
+        /**
+         * RuleCode
+         * @enum {string}
+         */
+        RuleCode: "orphan" | "duplicate_probable" | "naming" | "missing_property" | "no_description" | "inconsistent_relationship" | "unreadable_property";
+        /** RuleCountRead */
+        RuleCountRead: {
+            /** Count */
+            count: number;
+            rule: components["schemas"]["RuleCode"];
+            severity: components["schemas"]["Severity"];
+        };
         /** SavedQueryCreate */
         SavedQueryCreate: {
             /**
@@ -2521,6 +2893,113 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    read_aggregate_analytics_aggregate_get: {
+        parameters: {
+            query: {
+                by: string;
+                metric?: components["schemas"]["Metric"];
+                property?: string | null;
+                package_id?: string | null;
+                query_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_heatmap_analytics_heatmap_get: {
+        parameters: {
+            query: {
+                rows: string;
+                cols: string;
+                metric?: components["schemas"]["Metric"];
+                property?: string | null;
+                package_id?: string | null;
+                query_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeatmapRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_audit_events_audit_get: {
         parameters: {
             query?: {
@@ -5463,6 +5942,127 @@ export interface operations {
             };
         };
     };
+    read_matrix_matrix_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatrixQuery"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_matrix_cell_matrix_cell_get: {
+        parameters: {
+            query: {
+                /** @description The element of the row. */
+                source: string;
+                /** @description The element of the column. */
+                target: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixCellDetailRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_me_me_get: {
         parameters: {
             query?: never;
@@ -5926,6 +6526,60 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_quality_quality_get: {
+        parameters: {
+            query?: {
+                severity?: components["schemas"]["Severity"] | null;
+                code?: components["schemas"]["RuleCode"] | null;
+                limit?: number;
+                cursor?: number;
+                package_id?: string | null;
+                query_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityReportRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

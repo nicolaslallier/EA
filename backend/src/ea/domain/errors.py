@@ -314,3 +314,23 @@ class RowRefusedError(DomainError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class MatrixAxisTooLargeError(DomainError):
+    """An axis of the relationship matrix names more elements than the grid shows."""
+
+
+class ScopeTooLargeError(DomainError):
+    """A calculation was asked of more elements than one run takes."""
+
+
+class AnalysisBusyError(DomainError):
+    """As many analyses are running as the process allows: try again shortly."""
+
+
+class InvalidAnalysisError(DomainError):
+    """A question the analysis cannot answer: a dimension that does not exist, a sum of nothing."""
+
+
+class AnalysisTimeoutError(DomainError):
+    """The database cancelled an analysis for taking too long: narrow the question or the scope."""

@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from ea.db.unit_of_work import BATCH_SIZE, MAX_REFUSED_ROWS
+from ea.domain.analytics import Dimension, RawGroup, group_elements
 from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
@@ -101,6 +102,7 @@ from ea.domain.search import (
     Passage,
 )
 from ea.repositories.architecture_store import author_of
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
@@ -623,6 +625,51 @@ class InMemoryRepository:
                 if link.source_id in scope and link.target_id in scope
             ),
         )
+
+    # --- Analysis: the reads behind the matrix and the checks ---
+
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
+        found = [self.elements[i] for i in dict.fromkeys(element_ids) if i in self.elements]
+        ordered = sorted(found, key=lambda element: (element.name, str(element.id)))
+        return tuple(ordered[:limit] if limit else ordered)
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        sources, targets = set(source_ids), set(target_ids)
+        found = tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in sources and link.target_id in targets
+        )
+        return found[:limit] if limit else found
+
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        ids = set(element_ids)
+        found = tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in ids or link.target_id in ids
+        )
+        return found[:limit] if limit else found
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        inside = (
+            self.elements.values()
+            if scope is None
+            else [self.elements[i] for i in scope if i in self.elements]
+        )
+        return group_elements(inside, dimensions, metric_key)
 
     # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
 
@@ -1859,6 +1906,12 @@ def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamSe
     an attribute of an element, not a second store (docs/adr/0020).
     """
     return IpamService(service, repository)
+
+
+@pytest.fixture
+def analysis(repository: InMemoryRepository, service: ArchitectureService) -> AnalysisService:
+    """The analysis use cases over the same graph double, which answers `AnalysisRepository` too."""
+    return AnalysisService(service, repository)
 
 
 @pytest.fixture

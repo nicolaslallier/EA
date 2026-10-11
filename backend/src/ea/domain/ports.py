@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+from ea.domain.analytics import Dimension, RawGroup
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
@@ -561,6 +562,53 @@ class IpamRepository(Protocol):
         partial unique index `uq_elements_vrf_ip_address` — which is the whole
         reason an element holds a single address rather than a list — see
         `domain/ipam.py`.
+        """
+        ...
+
+
+class AnalysisRepository(Protocol):
+    """The reads the matrix, the quality checks and the dashboards need.
+
+    A fifth port, declared apart from `ArchitectureRepository` for the reason
+    `IpamRepository` is: it is a different use case, satisfied by the same
+    PostgreSQL class. Nothing here writes — an analysis computes, it does not
+    store (docs/adr/0056).
+    """
+
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
+        """The elements among these ids that exist, by name; at most `limit` (a SQL LIMIT).
+
+        Absent ids are missing, not errors.
+        """
+        ...
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        """Every link running from one of `source_ids` to one of `target_ids`; at most `limit`."""
+        ...
+
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        """Every link with at least one end among these ids; at most `limit` (a SQL LIMIT)."""
+        ...
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        """Elements grouped by the raw value of each dimension, with partial sums of `metric_key`.
+
+        Raw groups and not buckets: folding spellings together is
+        `summarise`'s job, once, so this and the in-memory reference cannot
+        disagree. `scope` narrows to those element ids; `None` is the whole
+        catalogue.
         """
         ...
 

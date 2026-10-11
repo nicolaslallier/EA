@@ -21,6 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from ea.api.schemas import (
     AddressAssign,
     ApprovalRequest,
+    AxisSelect,
     BaselineCreate,
     ElementCreate,
     ElementQuerySchema,
@@ -38,6 +39,7 @@ from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -72,6 +74,7 @@ def server(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
+    analysis: AnalysisService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -84,6 +87,7 @@ def server(
         lambda: AuditService(audit_log),
         lambda: baseline_service,
         lambda: exchange_service,
+        lambda: analysis,
     )
 
 
@@ -98,6 +102,7 @@ def server_without_an_index(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
+    analysis: AnalysisService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -110,6 +115,7 @@ def server_without_an_index(
         lambda: AuditService(audit_log),
         lambda: baseline_service,
         lambda: exchange_service,
+        lambda: analysis,
     )
 
 
@@ -344,7 +350,9 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert len(names) == 53  # fifty-one, and the two ways in and out of an exchange file
+        assert (
+            len(names) == 56
+        )  # fifty-one, the two exchange tools, the matrix, the check and the aggregate
         assert names == {
             "export_model",
             "import_model",
@@ -362,6 +370,9 @@ class TestTheToolset:
             "describe_metamodel",
             "permitted_relationships",
             "relationship_matrix_row",
+            "get_relationship_matrix",
+            "check_model",
+            "aggregate_model",
             "attach_document",
             "list_documents",
             "read_document",
@@ -1726,6 +1737,10 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("get_element_history", "limit", "/elements/{element_id}/history", "limit"),
             ("get_element_history", "cursor", "/elements/{element_id}/history", "cursor"),
             ("diff_baselines", "against", "/baselines/{baseline_id}/diff", "against"),
+            ("check_model", "limit", "/quality", "limit"),
+            ("check_model", "cursor", "/quality", "cursor"),
+            ("aggregate_model", "by", "/analytics/aggregate", "by"),
+            ("aggregate_model", "property_key", "/analytics/aggregate", "property"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -2086,3 +2101,136 @@ class TestAnImportsTextIsNeverQuoted:
         with acting_as(a_reader()), pytest.raises(ToolError) as refused:
             await server.call_tool("import_model", {"content": big})
         assert "at most" not in str(refused.value)
+
+
+@pytest.mark.asyncio
+class TestTheRelationshipMatrixTool:
+    async def test_it_answers_with_the_grid_and_the_links(self, server: MCPServer[Any]) -> None:
+        api = await an_element(server, "application_service", "Invoice API")
+        process = await an_element(server, "business_process", "Order to cash")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="serving",
+            source_id=api["id"],
+            target_id=process["id"],
+        )
+
+        grid = await call(
+            server,
+            "get_relationship_matrix",
+            rows={"element_ids": [api["id"]]},
+            cols={"element_ids": [process["id"]]},
+        )
+
+        assert [c["links"][0]["relationship_type"] for c in grid["cells"]] == ["serving"]
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_relationship_matrix")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
+
+    async def test_an_unknown_element_is_a_message_the_model_can_act_on(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="no element with id"):
+            await call(
+                server,
+                "get_relationship_matrix",
+                rows={"element_ids": ["00000000-0000-4000-8000-000000000001"]},
+                cols={},
+            )
+
+    async def test_too_many_named_elements_are_refused_with_the_ceiling(
+        self, server: MCPServer[Any]
+    ) -> None:
+        ids = [f"00000000-0000-4000-8000-{n:012d}" for n in range(51)]
+
+        with pytest.raises(ToolError, match="at most 50"):
+            await call(server, "get_relationship_matrix", rows={"element_ids": ids}, cols={})
+
+    async def test_its_axis_bounds_are_the_http_ones(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_relationship_matrix")
+        sent = tool.input_schema["$defs"]["AxisSelect"]["properties"]["element_ids"]
+        served = AxisSelect.model_json_schema()["properties"]["element_ids"]
+
+        assert bounds_of(sent) == bounds_of(served)
+        assert bounds_of(sent)["maxItems"] == 500
+
+
+@pytest.mark.asyncio
+class TestCheckModel:
+    async def test_it_reports_what_a_quality_run_finds(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "Loner")
+
+        report = await call(server, "check_model")
+
+        assert "orphan" in {f["rule"] for f in report["findings"]}
+        assert report["total"] == len(report["findings"])
+
+    async def test_it_filters_by_code(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "Loner")
+
+        report = await call(server, "check_model", code="orphan")
+
+        assert {f["rule"] for f in report["findings"]} == {"orphan"}
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "check_model")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is True
+
+    async def test_its_description_says_when_to_call_it(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "check_model")
+
+        assert "after an import" in (tool.description or "")
+
+    async def test_an_unknown_rule_code_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "check_model", code="nope")
+
+    async def test_a_limit_over_the_ceiling_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "check_model", limit=1001)
+
+
+@pytest.mark.asyncio
+class TestAggregateModel:
+    async def test_it_counts_by_layer(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "srv-01")
+        await an_element(server, "business_process", "Order")
+
+        result = await call(server, "aggregate_model", by="layer")
+
+        assert {b["key"]: b["count"] for b in result["buckets"]} == {"business": 1, "technology": 1}
+
+    async def test_it_sums_a_property_and_reports_the_unreadable(
+        self, server: MCPServer[Any]
+    ) -> None:
+        for name, cost in (("a", "100"), ("b", "n/a")):
+            await call(
+                server, "create_element", element_type="node", name=name, properties={"cost": cost}
+            )
+
+        result = await call(
+            server, "aggregate_model", by="layer", metric="sum", property_key="cost"
+        )
+
+        assert result["buckets"][0]["value"] == 100.0
+        assert result["unreadable"] == 1
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "aggregate_model")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is True
+
+    async def test_a_sum_without_a_property_says_what_is_missing(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="needs a property"):
+            await call(server, "aggregate_model", by="layer", metric="sum")
+
+    async def test_an_unknown_dimension_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "aggregate_model", by="bogus")

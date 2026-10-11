@@ -5,19 +5,23 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from dataclasses import replace
 from typing import Final
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
+from ea.api.analysis import router as analysis_router
 from ea.api.architecture import router as architecture_router
 from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
 from ea.api.baselines import router as baselines_router
 from ea.api.body_limit import BODY_ENVELOPE_MARGIN, LimitingRequestBodies
 from ea.api.dependencies import (
+    analysis_service_of,
     architecture_service_of,
     audit_service_of,
     baseline_service_of,
@@ -48,10 +52,12 @@ from ea.db.postgres import create_api_engine, create_session_factory
 from ea.domain.auth import Caller
 from ea.domain.ports import (
     AccessTokenVerifier,
+    AnalysisRepository,
     AuditRepository,
     BaselineRepository,
     DiagramRepository,
     DocumentRepository,
+    ElementFilter,
     ExchangeRepository,
     FileMetadataRepository,
     IpamRepository,
@@ -59,6 +65,7 @@ from ea.domain.ports import (
     PackageRepository,
     SavedQueryRepository,
 )
+from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
@@ -75,6 +82,7 @@ from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
+from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -131,6 +139,34 @@ async def _reachable(name: str, probe: Callable[[], Awaitable[None]], degraded: 
         degraded.append(name)
         return False
     return True
+
+
+def build_scope_resolver(app: FastAPI) -> ScopeResolver:
+    """What a package or a saved query stands for, as element ids (docs/adr/0056).
+
+    At most one more element than a run takes: a scope past the ceiling is refused by the
+    service that has the ceiling, not truncated here. The page a query's author chose is
+    not its scope, so `limit` and `offset` are replaced.
+    """
+
+    async def resolve(package_id: UUID | None, query_id: UUID | None) -> tuple[UUID, ...]:
+        if query_id is not None:
+            criteria = ElementFilter.from_query(
+                (await saved_query_service_of(app).get(query_id)).query
+            )
+        else:
+            criteria = ElementFilter(package_id=package_id, include_subpackages=True)
+        found = await architecture_service_of(app).list_elements(
+            replace(criteria, limit=MAX_QUALITY_ELEMENTS + 1, offset=0)
+        )
+        return tuple(element.id for element in found)
+
+    return resolve
+
+
+def build_quality_params(settings: Settings) -> QualityParams:
+    """The quality knobs, validated: a bad `EA_QUALITY_REQUIRED` stops the boot."""
+    return QualityParams.from_settings(settings.quality_similarity, settings.quality_required)
 
 
 def build_embedder(settings: Settings) -> HttpEmbedder:
@@ -290,6 +326,13 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    app.state.analysis_service = AnalysisService(
+                        app.state.architecture_service,
+                        repository,
+                        params=app.state.quality_params,
+                        admission=app.state.analysis_admission,
+                        scope_ids=build_scope_resolver(app),
+                    )
                     exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
@@ -481,6 +524,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: audit_service_of(app),
         lambda: baseline_service_of(app),
         lambda: exchange_service_of(app),
+        lambda: analysis_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -518,6 +562,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    analysis: AnalysisRepository | None = None,
     diagrams: DiagramRepository | None = None,
     packages: PackageRepository | None = None,
     queries: SavedQueryRepository | None = None,
@@ -581,6 +626,10 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    # Validated here, so a wrong `EA_QUALITY_REQUIRED` stops the boot (docs/adr/0057); and one
+    # admission for the analyses that read the whole model, whichever door they come through.
+    app.state.quality_params = build_quality_params(settings)
+    app.state.analysis_admission = analysis_admission()
     # One admission for every door an import comes through: HTTP's (in the middleware below),
     # MCP's and a script's (in the service), so that three doors cannot hold six places.
     admission = Admission(
@@ -599,6 +648,14 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if analysis is not None:
+            app.state.analysis_service = AnalysisService(
+                architecture_service,
+                analysis,
+                params=app.state.quality_params,
+                admission=app.state.analysis_admission,
+                scope_ids=build_scope_resolver(app),
+            )
         if packages is not None:
             app.state.package_service = PackageService(packages)
         if queries is not None:
@@ -676,6 +733,7 @@ def create_app(
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

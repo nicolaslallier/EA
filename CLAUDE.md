@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with twelve sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`), showing beside each one what PostgreSQL records about it — who deposited it, when, and the title, description and tags a person wrote (see `docs/adr/0039`). Elements and diagrams are filed in a tree of *packages* — a classification with no ArchiMate meaning, `packages` plus a nullable `package_id` on `elements` and `diagrams` (migration `0009`, see `docs/adr/0042`) — and the *Recherche* section runs one pure `ElementQuery` (types, layers, name, package, attribute tests, relations present or absent) that `POST /elements/search` and the MCP tool `search_elements` share and that `saved_queries` (migration `0010`, see `docs/adr/0043`) keeps under a name, shared by every reader; history, which reads the audit trail of every write, for the whole catalogue or for one element (see `docs/adr/0046`); and baselines, which captures, compares and restores snapshots of the whole model (see `docs/adr/0047`). The sheet of an element carries its review banner — draft, in review, approved, locked — whose buttons are the transitions the API lists (see `docs/adr/0048`). The *Échanges* section (`/echanges`, tabs and format in the URL) downloads the model as ArchiMate Exchange XML or Archi-style CSV, for the whole model, a package or a saved query, and imports a file in two steps — a simulation, then a confirmation that re-sends the *same* files only if their SHA-256, computed in the browser, equals the one the simulation reported; the import half is hidden from a reader, the API deciding (see `docs/adr/0050` and `docs/adr/0054`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as fifty-three tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing, the files of the bucket, the packages, the structured search, the audit trail, the baselines, the review transitions and the exchange of the model as ArchiMate files (`export_model`, `import_model`) — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
+**Every declared section works end to end.** A root `Makefile` orchestrates local development. `backend/` serves a FastAPI app with the full ArchiMate 3.2 metamodel, an element/relationship catalogue and two graph traversals, stored in PostgreSQL (see `docs/adr/0033`). `frontend/` is a Vue 3 SPA: a routed shell whose section menu is generated from `src/router/sections.ts` (see `docs/adr/0008`), with fifteen sections built — the element catalogue, which browses, creates, edits and deletes elements through the generated OpenAPI client (see `docs/adr/0007`) and opens the full detail of one when its name is clicked, under `?element=` (see `docs/adr/0011`); relations, which lists the links of one element and adds one, offering only what the metamodel permits for the pair (see `docs/adr/0009`; the same panel opens from a catalogue row); neighbourhood, which *draws* the sub-graph around an element on concentric rings, one per hop, and moves the centre when a neighbour is clicked (see `docs/adr/0010`); metamodel, which reads the ArchiMate 3.2 reference itself — the 61 types by layer, the 11 relationships with their family and the way impact travels, and one row of the 61x61 matrix at a time (see `docs/adr/0012`); impact analysis, which draws the same rings around an element and reads them as how far a failure travels, plus the list of what breaks, wave by wave (see `docs/adr/0013`); IP addressing, which lists the declared subnets with how full each one is, hands out the next free address, and answers "10.0.1.12, that is what?" with the machine *and* what it is wired to (see `docs/adr/0020`); diagrams, which composes an ArchiMate view from the catalogue's elements on a canvas and saves it (see `docs/adr/0031`); and files, which uploads, browses, downloads and deletes files of any type in a MinIO bucket, one folder at a time under `?prefix=` (see `docs/adr/0036`), showing beside each one what PostgreSQL records about it — who deposited it, when, and the title, description and tags a person wrote (see `docs/adr/0039`). Elements and diagrams are filed in a tree of *packages* — a classification with no ArchiMate meaning, `packages` plus a nullable `package_id` on `elements` and `diagrams` (migration `0009`, see `docs/adr/0042`) — and the *Recherche* section runs one pure `ElementQuery` (types, layers, name, package, attribute tests, relations present or absent) that `POST /elements/search` and the MCP tool `search_elements` share and that `saved_queries` (migration `0010`, see `docs/adr/0043`) keeps under a name, shared by every reader; history, which reads the audit trail of every write, for the whole catalogue or for one element (see `docs/adr/0046`); and baselines, which captures, compares and restores snapshots of the whole model (see `docs/adr/0047`). The sheet of an element carries its review banner — draft, in review, approved, locked — whose buttons are the transitions the API lists (see `docs/adr/0048`). The *Échanges* section (`/echanges`, tabs and format in the URL) downloads the model as ArchiMate Exchange XML or Archi-style CSV, for the whole model, a package or a saved query, and imports a file in two steps — a simulation, then a confirmation that re-sends the *same* files only if their SHA-256, computed in the browser, equals the one the simulation reported; the import half is hidden from a reader, the API deciding (see `docs/adr/0050` and `docs/adr/0054`). The model is also *analysed*, with no table and no migration: `/analyse/matrice` crosses two sets of elements (a layer, a type, a package, a saved query, named elements) and creates or removes a link per cell through `/relationships` and nothing else (see `docs/adr/0056`); `/analyse/qualite` lists the findings of seven rules with a stable code, computed on request (see `docs/adr/0057`); `/analyse/tableau-de-bord` aggregates the catalogue by layer, type, package or attribute, with a hand-drawn SVG heat map whose colour is a `level` 0..4 decided by the server (see `docs/adr/0058`). The same backend also speaks **MCP**: `/mcp` offers the whole catalogue to an agent as fifty-six tools — the element CRUD, the links, the two traversals, the metamodel, the markdown attached to an element, the IP addressing, the files of the bucket, the packages, the structured search, the audit trail, the baselines, the review transitions and the exchange of the model as ArchiMate files (`export_model`, `import_model`) and the three read-only analyses (`get_relationship_matrix`, `check_model`, `aggregate_model`) — as an adapter *beside* `api/` rather than a client of it, so every ArchiMate rule is enforced for an agent without one line of them being restated (see `docs/adr/0014` and `docs/adr/0018`). This file records the *decisions already made* so that any instance building here converges on the same design instead of inventing its own. When a decision here turns out to be wrong, change this file in the same commit that changes the code, and record the change in `docs/adr/`.
 
 PostgreSQL holds the whole model: the graph in `elements` and `relationships` (migration `0005`, see `docs/adr/0033`), the documents in **two tables**, and what is known about the files of the bucket in a third, `file_metadata` (migration `0008`, see `docs/adr/0039`). `element_documents` stores the markdown files attached to an element — uploaded as `multipart/form-data`, kept as `TEXT`, listed, read and replaced from the catalogue's *Documents* panel (see `docs/adr/0017`), and offered to an agent as text over MCP (see `docs/adr/0018`). `document_chunks` makes those files *findable*: each document is cut at its own headings, every passage is embedded with the trail of headings above it, and the vectors live in the same database under **pgvector** — searchable by an agent through the MCP tool `search_documents` (see `docs/adr/0019`). SQLAlchemy 2 (async), Alembic and the shared PostgreSQL were wired by `docs/adr/0015` — a database that has lived in the `~/OpenCode/Infra` stack on the Mac, not on the cluster, since `docs/adr/0029`; `EA_POSTGRES_ENABLED` is **on** since the first table exists, so a deployment that cannot reach PostgreSQL no longer boots — which is true of Keycloak too, and of nothing else: an unreachable embedder or bucket degrades its own section and `/health` names it (see `docs/adr/0037`).
 
@@ -78,6 +78,9 @@ backend/
       baselines.py # Baseline, ModelSnapshot, diff_snapshots, plan_restore — docs/adr/0047
       chunking.py  # where a markdown document is cut, and what is embedded
       diagrams.py  # a saved view: which elements are drawn, and where — no fact of its own
+      matrix.py    # the relationship matrix: a pure grid of two axes — docs/adr/0056
+      quality.py   # the quality rules, each with a stable code, and `run_checks` — docs/adr/0057
+      analytics.py # property readings, dimensions, aggregates, the colour `level` — docs/adr/0058
       packages.py  # the classification tree: names, cycles, depth — no ArchiMate meaning
       query.py     # ElementQuery: the one structured filter, and its stored JSON
       saved_queries.py # a named, shared ElementQuery
@@ -92,6 +95,7 @@ backend/
     graph_import.py # the one-off copy from Neo4j (docs/adr/0033), deleted after the cut-over
     services/      # use cases; orchestrate domain + repositories, own transactions
       caller.py    # current_caller, require_caller, require_editor, acting_as
+      analysis.py  # AnalysisService: matrix, quality run, aggregates — reads only, admitted
       files.py     # FileService: list/open/read for a reader, upload/delete for an editor
     repositories/  # implementations of the ports declared in domain: SQL,
                  #   file_metadata_store.py — what is known about the files
@@ -108,6 +112,7 @@ frontend/
   src/api/                             # GENERATED ONLY — never hand-write there
   src/router/                          # the section catalogue, the routes it produces, the 404
   src/features/                        # one directory per screen: components + its composables
+                                        #   (matrix/, quality/, dashboard/ — the three analysis screens)
                                         #   (e.g. features/files/ — the bucket browser, docs/adr/0036)
   src/{components,lib}/                # shared components (the shell menu, the graph drawing, `UserBadge`); hand-written glue (the API client, the ring geometry, `latest.ts`, `debounce.ts`, `auth.ts` — the login — and `me.ts`)
   tests/                               # Vitest specs, mirroring src/
@@ -262,7 +267,7 @@ here: the palette is *asked for* (`describe_metamodel`), exactly as the SPA
 asks for it.
 
 The markdown of `docs/adr/0017` is exposed too, and the IP addressing of
-`docs/adr/0020` with it, so the adapter holds **nine** service providers
+`docs/adr/0020` with it, so the adapter holds **ten** service providers
 rather than one — never a repository. An agent has no file to
 upload, so the five document tools take the text itself and land on
 `DocumentService.attach_text` / `revise_text`; the byte-taking entry points the
@@ -337,6 +342,37 @@ The transport's routes are *spliced* onto the FastAPI app rather than mounted,
 because `Mount("/mcp", …)` answers a bare `POST /mcp` with a 307. It is a
 Starlette route, so **`/mcp` never appears in the OpenAPI schema** and no
 client regeneration follows from it. See `docs/adr/0014`.
+
+## The model is analysed on demand, and nothing is stored
+
+`AnalysisService` (`docs/adr/0056` to `0058`) computes the matrix, the quality findings and the
+aggregates from `elements` and `relationships` on every call: a stored result would be a second truth
+every edit made stale. Five decisions hold.
+
+**A link is written by `POST /relationships` or not at all.** The matrix cell reads
+`allowed_between` (`permitted_relationships` filtered by `permits(..., same_element=)`) and the SPA
+offers only that; it has no write path of its own, so no ArchiMate rule is restated.
+
+**Bounds are declared once, in the domain** (`MAX_MATRIX_AXIS`, `MAX_FINDINGS`, `MAX_BUCKETS`,
+`MAX_QUALITY_ELEMENTS`), because a service cannot import `api/`; `api/schemas.py` and `mcp/server.py`
+re-import them. A quality run over more than `MAX_QUALITY_ELEMENTS` is refused (`scope_too_large`),
+never cut: a partial report reads as a clean one.
+
+**What reads the whole model is admitted and runs off the event loop.** `check`, `aggregate` and
+`heatmap` take a place in an `Admission` (the one of `services/exchange_admission.py`: 4 in all, 2 per
+caller, 429 `analysis_busy`) and run their CPU-bound step with `asyncio.to_thread`; the place is held
+until the thread ends (`lease.hold`), so an expired lease whose computation still runs keeps counting.
+
+**`properties` stays strings.** `ANALYTIC_PROPERTIES` says how to read `lifecycle`, `risk` (ordered)
+and `cost` (a number); a value that does not read is counted as `unreadable` and reported by the rule
+`unreadable_property`, never dropped in silence. SQL groups by the *raw* value and `summarise` folds
+the spellings once, so SQL and the pure reference (`group_elements`) cannot disagree. The key is
+validated by `PROPERTY_KEY` and bound as a parameter. The colour is a server `level` 0..4; the SPA only
+maps `level → swatch`. `Severity` is the one of `domain/exchange.py`, reused.
+
+**A scope (a package, sub-packages included, or a saved query) is a `ScopeResolver` injected by
+`main.build_scope_resolver`**: the service knows neither packages nor queries. Two quality knobs,
+`EA_QUALITY_SIMILARITY` and `EA_QUALITY_REQUIRED`, are validated at boot.
 
 ## A pipeline writes through the API and never names a model
 

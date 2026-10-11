@@ -5,6 +5,12 @@ import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type FindingRead = components['schemas']['FindingRead']
+type QualityReportRead = components['schemas']['QualityReportRead']
+type AggregateRead = components['schemas']['AggregateRead']
+type HeatmapRead = components['schemas']['HeatmapRead']
+type MatrixRead = components['schemas']['MatrixRead']
+type MatrixCellDetailRead = components['schemas']['MatrixCellDetailRead']
 type PackageRead = components['schemas']['PackageRead']
 type DocumentSummaryRead = components['schemas']['DocumentSummaryRead']
 type DocumentRead = components['schemas']['DocumentRead']
@@ -509,6 +515,117 @@ export function anIssue(overrides: Partial<ImportReportRead['issues'][number]> =
     source_id: 'r-1',
     line: null,
     path: null,
+    ...overrides,
+  }
+}
+
+/** A grid as `POST /matrix` returns it — two rows, two columns, one link. */
+export function aGrid(overrides: Partial<MatrixRead> = {}): MatrixRead {
+  return {
+    rows: [
+      { id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'Invoice API', element_type: 'application_service', layer: 'application' },
+      { id: 'cccccccc-3333-4333-8333-333333333333', name: 'Billing', element_type: 'application_component', layer: 'application' },
+    ],
+    cols: [
+      { id: 'bbbbbbbb-2222-4222-8222-222222222222', name: 'Order to cash', element_type: 'business_process', layer: 'business' },
+    ],
+    rows_total: 2,
+    cols_total: 1,
+    truncated: false,
+    cells: [
+      {
+        source_id: 'aaaaaaaa-1111-4111-8111-111111111111',
+        target_id: 'bbbbbbbb-2222-4222-8222-222222222222',
+        links: [aRelationship()],
+      },
+    ],
+    blocked: [],
+    ...overrides,
+  }
+}
+
+/** One cell as `GET /matrix/cell` returns it. */
+export function aCellDetail(overrides: Partial<MatrixCellDetailRead> = {}): MatrixCellDetailRead {
+  return {
+    source_id: 'aaaaaaaa-1111-4111-8111-111111111111',
+    target_id: 'bbbbbbbb-2222-4222-8222-222222222222',
+    links: [aRelationship()],
+    allowed: ['serving', 'association'],
+    ...overrides,
+  }
+}
+
+
+/** One finding, as `GET /quality` returns it. */
+export function aFinding(overrides: Partial<FindingRead> = {}): FindingRead {
+  return {
+    rule: 'orphan',
+    severity: 'warning',
+    element_id: '11111111-1111-4111-8111-111111111111',
+    element_name: 'Facturation',
+    related_id: null,
+    related_name: null,
+    message: "« Facturation » n'est relié à aucun élément.",
+    fix_hint: '/elements?element=11111111-1111-4111-8111-111111111111',
+    ...overrides,
+  }
+}
+
+/** A report with a count per rule — zeros included, like the API. */
+export function aQualityReport(
+  findings: FindingRead[] = [aFinding()],
+  overrides: Partial<QualityReportRead> = {},
+): QualityReportRead {
+  const rules = ['orphan', 'duplicate_probable', 'naming', 'missing_property', 'no_description', 'inconsistent_relationship', 'unreadable_property'] as const
+  const severity = { orphan: 'warning', duplicate_probable: 'warning', naming: 'info', missing_property: 'warning', no_description: 'info', inconsistent_relationship: 'error', unreadable_property: 'info' } as const
+  return {
+    total: findings.length,
+    counts: rules.map((rule) => ({
+      rule,
+      severity: severity[rule],
+      count: findings.filter((finding) => finding.rule === rule).length,
+    })),
+    findings,
+    next_cursor: null,
+    partial: false,
+    ...overrides,
+  }
+}
+
+
+/** An aggregate as `GET /analytics/aggregate` returns it. */
+export function anAggregate(overrides: Partial<AggregateRead> = {}): AggregateRead {
+  return {
+    by: 'layer',
+    metric: 'count',
+    property_key: null,
+    total: 3,
+    unreadable: 0,
+    truncated: false,
+    buckets: [
+      { key: 'business', count: 1, value: 1, level: 0 },
+      { key: 'technology', count: 2, value: 2, level: 4 },
+    ],
+    ...overrides,
+  }
+}
+
+/** A heat map as `GET /analytics/heatmap` returns it. */
+export function aHeatmap(overrides: Partial<HeatmapRead> = {}): HeatmapRead {
+  return {
+    rows_by: 'layer',
+    cols_by: 'property:lifecycle',
+    rows: ['business', 'technology'],
+    cols: ['en production', 'retiré', '__unset__'],
+    metric: 'count',
+    property_key: null,
+    total: 3,
+    unreadable: 0,
+    truncated: false,
+    cells: [
+      { row: 'business', col: 'retiré', count: 1, value: 1, level: 0 },
+      { row: 'technology', col: 'en production', count: 2, value: 2, level: 4 },
+    ],
     ...overrides,
   }
 }

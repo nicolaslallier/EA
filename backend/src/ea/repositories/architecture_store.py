@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `ArchitectureRepository` and `IpamRepository`.
+"""The PostgreSQL implementation of the architecture, IPAM and analysis repositories.
 
 The graph is two tables (docs/adr/0033): an element is a row of `elements`, a
 relationship a row of `relationships` whose two ends are foreign keys, so
@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from sqlalchemy import (
     ColumnElement,
     Integer,
+    Numeric,
     Text,
     and_,
     case,
@@ -31,24 +32,35 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
-from ea.db.unit_of_work import reading, work
+from ea.db.unit_of_work import is_query_canceled, reading, work
+from ea.domain.analytics import (
+    MAX_NUMBER_INPUT,
+    NUMBER_PATTERN,
+    RAW_GROUP_CEILING,
+    Dimension,
+    DimensionKind,
+    RawGroup,
+)
 from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
+    AnalysisTimeoutError,
     DomainError,
     DuplicateElementError,
     DuplicateNetworkError,
     ElementNotFoundError,
+    ScopeTooLargeError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -324,6 +336,47 @@ def _has(key: str) -> ColumnElement[bool]:
 def _text_of(key: str) -> ColumnElement[str]:
     """`properties ->> key`, the expression the two unique indexes are built on."""
     return ElementRecord.properties.op("->>", return_type=Text)(key)
+
+
+#: A read-only analysis that runs longer than this is cancelled by PostgreSQL,
+#: local to its transaction. Its cancellation surfaces as a 500 `internal_error`
+#: with the traceback in the logs (docs/adr/0058).
+ANALYSIS_TIMEOUT_MS: Final = 5000
+
+#: What `read_number` tolerates, spelt for PostgreSQL: blanks (space, U+00A0, U+202F)
+#: dropped, `,` read as `.`, then a plain decimal. Both are bound parameters.
+_BLANKS: Final = "[ \u00a0\u202f]"
+_NUMBER: Final = NUMBER_PATTERN
+
+
+def _raw_key(dimension: Dimension) -> Any:
+    match dimension.kind:
+        case DimensionKind.ELEMENT_TYPE:
+            return ElementRecord.element_type
+        case DimensionKind.LAYER:
+            return ElementRecord.layer
+        case DimensionKind.PACKAGE:
+            return func.coalesce(sql_cast(ElementRecord.package_id, Text), "")
+        case DimensionKind.PROPERTY:
+            return func.coalesce(_text_of(dimension.key or ""), "")
+
+
+def _number_of(key: str) -> tuple[ColumnElement[bool], ColumnElement[bool], ColumnElement[Any]]:
+    """(readable, present, the number) for a property read as a decimal.
+
+    The cast sits behind the `CASE`, so an unreadable value is counted as such
+    instead of aborting the whole query with `invalid input syntax`.
+    """
+    raw = func.coalesce(_text_of(key), "")
+    normalised = func.replace(func.regexp_replace(raw, _BLANKS, "", "g"), ",", ".")
+    # Judged on what the python reference judges: a bounded length, then a bounded figure.
+    readable = and_(
+        func.length(raw) <= MAX_NUMBER_INPUT,
+        normalised.op("~", is_comparison=True)(_NUMBER),
+    )
+    present = func.btrim(raw) != ""
+    number = case((readable, sql_cast(normalised, Numeric)), else_=None)
+    return readable, present, number
 
 
 #: The relationships along which dependency runs source → target; every other
@@ -901,6 +954,117 @@ class PostgresArchitectureRepository:
             elements = tuple(element_from_row(row) for row in found)
             links = await _links_within(session, [element.id for element in elements], ())
         return GraphView(elements=elements, relationships=links)
+
+    # --- Analysis: the reads behind the matrix and the checks ---------------
+
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
+        if not element_ids:
+            return ()
+        statement = (
+            select(ElementRecord)
+            .where(ElementRecord.id.in_(list(element_ids)))
+            .order_by(ElementRecord.name, ElementRecord.id)
+        )
+        async with reading(self._sessions) as session:
+            found = await session.scalars(statement.limit(limit) if limit else statement)
+            return tuple(element_from_row(row) for row in found)
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        if not source_ids or not target_ids:
+            return ()
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                RelationshipRecord.source_id.in_(list(source_ids)),
+                RelationshipRecord.target_id.in_(list(target_ids)),
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+        )
+        if limit:
+            statement = statement.limit(limit)
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        if not element_ids:
+            return ()
+        ids = list(element_ids)
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                or_(RelationshipRecord.source_id.in_(ids), RelationshipRecord.target_id.in_(ids))
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+        )
+        if limit:
+            statement = statement.limit(limit)
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        columns: list[Any] = [
+            *(_raw_key(dimension).label(f"k{index}") for index, dimension in enumerate(dimensions)),
+            func.count().label("n"),
+        ]
+        if metric_key is not None:
+            readable, present, number = _number_of(metric_key)
+            columns += [
+                func.count().filter(readable).label("valid"),
+                func.coalesce(func.sum(number), 0).label("total"),
+                func.min(number).label("low"),
+                func.max(number).label("high"),
+                func.count().filter(and_(present, not_(readable))).label("invalid"),
+            ]
+        statement = select(*columns)
+        if scope is not None:
+            statement = statement.where(ElementRecord.id.in_(list(scope)))
+        # GROUP BY by ordinal: the same bound parameter would otherwise appear
+        # twice under two numbers, and PostgreSQL then refuses the select list.
+        statement = statement.group_by(
+            *(literal_column(str(position + 1)) for position in range(len(dimensions)))
+        ).limit(RAW_GROUP_CEILING + 1)
+        async with reading(self._sessions) as session:
+            await session.execute(
+                select(func.set_config("statement_timeout", str(ANALYSIS_TIMEOUT_MS), True))
+            )
+            try:
+                rows = (await session.execute(statement)).all()
+            except DBAPIError as error:
+                if not is_query_canceled(error):
+                    raise
+                msg = "the analysis took too long and was cancelled: narrow the scope"
+                raise AnalysisTimeoutError(msg) from error
+        if len(rows) > RAW_GROUP_CEILING:
+            # Never folded from a cut list: sums over a part would read as the whole.
+            msg = (
+                f"more than {RAW_GROUP_CEILING} distinct values to group by: "
+                "choose a dimension with fewer"
+            )
+            raise ScopeTooLargeError(msg)
+        return tuple(
+            RawGroup(
+                keys=tuple(str(getattr(row, f"k{index}")) for index in range(len(dimensions))),
+                count=int(row.n),
+                valid=int(row.valid) if metric_key is not None else 0,
+                total=float(row.total) if metric_key is not None else 0.0,
+                low=float(row.low) if metric_key is not None and row.low is not None else None,
+                high=float(row.high) if metric_key is not None and row.high is not None else None,
+                invalid=int(row.invalid) if metric_key is not None else 0,
+            )
+            for row in rows
+        )
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Whether `source` is already contained, at any depth, under `target`.

@@ -130,6 +130,60 @@
         "title": "AddressRead",
         "type": "object"
       },
+      "AggregateRead": {
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/BucketRead"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "by": {
+            "title": "By",
+            "type": "string"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "property_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Key"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "True when more than 200 buckets were cut.",
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unreadable": {
+            "description": "Elements whose property is present but not a number.",
+            "title": "Unreadable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by",
+          "metric",
+          "property_key",
+          "total",
+          "unreadable",
+          "truncated",
+          "buckets"
+        ],
+        "title": "AggregateRead",
+        "type": "object"
+      },
       "ApprovalRequest": {
         "additionalProperties": false,
         "description": "One step of review. `approve` must say which revision the approver read.",
@@ -361,6 +415,76 @@
         "title": "AuditPageRead",
         "type": "object"
       },
+      "AxisSelect": {
+        "additionalProperties": false,
+        "description": "What one axis of the matrix is made of. Nothing set means the whole catalogue.",
+        "properties": {
+          "element_ids": {
+            "description": "Named elements; more than 50 is refused.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Element Ids",
+            "type": "array"
+          },
+          "element_types": {
+            "items": {
+              "$ref": "#/components/schemas/ElementType"
+            },
+            "title": "Element Types",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A package, sub-packages included. Not with `query_id`.",
+            "title": "Package Id"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A saved query, evaluated now. Not with `package_id`.",
+            "title": "Query Id"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search"
+          }
+        },
+        "title": "AxisSelect",
+        "type": "object"
+      },
       "BaselineCreate": {
         "additionalProperties": false,
         "properties": {
@@ -487,6 +611,26 @@
           "box_count"
         ],
         "title": "BaselineRead",
+        "type": "object"
+      },
+      "BlockedCellRead": {
+        "properties": {
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "target_id"
+        ],
+        "title": "BlockedCellRead",
         "type": "object"
       },
       "Body_attach_document_elements__element_id__documents_post": {
@@ -668,6 +812,51 @@
           "file"
         ],
         "title": "Body_upload_file_files_post",
+        "type": "object"
+      },
+      "BucketRead": {
+        "description": "One group. `key` is a value, or `__unset__` / `__invalid__` for a property dimension.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "0 (lowest) to 4, decided by the server; null if none.",
+            "title": "Level"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The metric over the bucket; null if nothing was readable.",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "count",
+          "value",
+          "level"
+        ],
+        "title": "BucketRead",
         "type": "object"
       },
       "ConflictPolicy": {
@@ -1078,6 +1267,34 @@
           "updated_at"
         ],
         "title": "DocumentSummaryRead",
+        "type": "object"
+      },
+      "ElementBrief": {
+        "description": "An element abridged to what a header needs.",
+        "properties": {
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/Layer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "element_type",
+          "layer"
+        ],
+        "title": "ElementBrief",
         "type": "object"
       },
       "ElementCreate": {
@@ -1800,6 +2017,68 @@
         "title": "FileRead",
         "type": "object"
       },
+      "FindingRead": {
+        "properties": {
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          },
+          "element_name": {
+            "title": "Element Name",
+            "type": "string"
+          },
+          "fix_hint": {
+            "title": "Fix Hint",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "related_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Id"
+          },
+          "related_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Name"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/RuleCode"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "element_id",
+          "element_name",
+          "related_id",
+          "related_name",
+          "message",
+          "fix_hint"
+        ],
+        "title": "FindingRead",
+        "type": "object"
+      },
       "GraphRead": {
         "description": "A sub-graph: the nodes and the edges between them, ready to be drawn.",
         "properties": {
@@ -1863,6 +2142,127 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HeatCellRead": {
+        "properties": {
+          "col": {
+            "title": "Col",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "row",
+          "col",
+          "count",
+          "value",
+          "level"
+        ],
+        "title": "HeatCellRead",
+        "type": "object"
+      },
+      "HeatmapRead": {
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/HeatCellRead"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "cols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cols",
+            "type": "array"
+          },
+          "cols_by": {
+            "title": "Cols By",
+            "type": "string"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "property_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Property Key"
+          },
+          "rows": {
+            "description": "Row keys, in the order the dimension reads.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_by": {
+            "title": "Rows By",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unreadable": {
+            "title": "Unreadable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_by",
+          "cols_by",
+          "rows",
+          "cols",
+          "metric",
+          "property_key",
+          "total",
+          "unreadable",
+          "truncated",
+          "cells"
+        ],
+        "title": "HeatmapRead",
         "type": "object"
       },
       "ImportCountsRead": {
@@ -2023,6 +2423,146 @@
         "title": "Layer",
         "type": "string"
       },
+      "MatrixCellDetailRead": {
+        "description": "One ordered pair: its links, and the relationships ArchiMate would still allow.",
+        "properties": {
+          "allowed": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipType"
+            },
+            "title": "Allowed",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipRead"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "target_id",
+          "links",
+          "allowed"
+        ],
+        "title": "MatrixCellDetailRead",
+        "type": "object"
+      },
+      "MatrixCellRead": {
+        "description": "A cell holding at least one link: row = source, column = target.",
+        "properties": {
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipRead"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "target_id",
+          "links"
+        ],
+        "title": "MatrixCellRead",
+        "type": "object"
+      },
+      "MatrixQuery": {
+        "additionalProperties": false,
+        "description": "Both axes. A POST only because they travel in a body: nothing is written.",
+        "properties": {
+          "cols": {
+            "$ref": "#/components/schemas/AxisSelect"
+          },
+          "rows": {
+            "$ref": "#/components/schemas/AxisSelect"
+          }
+        },
+        "required": [
+          "rows",
+          "cols"
+        ],
+        "title": "MatrixQuery",
+        "type": "object"
+      },
+      "MatrixRead": {
+        "description": "The grid: two axes and the cells that hold links.",
+        "properties": {
+          "blocked": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedCellRead"
+            },
+            "title": "Blocked",
+            "type": "array"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/MatrixCellRead"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "cols": {
+            "items": {
+              "$ref": "#/components/schemas/ElementBrief"
+            },
+            "title": "Cols",
+            "type": "array"
+          },
+          "cols_total": {
+            "title": "Cols Total",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ElementBrief"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_total": {
+            "title": "Rows Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rows",
+          "cols",
+          "rows_total",
+          "cols_total",
+          "truncated",
+          "cells",
+          "blocked"
+        ],
+        "title": "MatrixRead",
+        "type": "object"
+      },
       "MeRead": {
         "description": "The caller, as far as the SPA needs to know it.",
         "properties": {
@@ -2079,6 +2619,17 @@
         ],
         "title": "MetamodelRead",
         "type": "object"
+      },
+      "Metric": {
+        "enum": [
+          "count",
+          "sum",
+          "avg",
+          "min",
+          "max"
+        ],
+        "title": "Metric",
+        "type": "string"
       },
       "ModifiedRead": {
         "properties": {
@@ -2350,6 +2901,55 @@
           "value"
         ],
         "title": "PropertyTestSchema",
+        "type": "object"
+      },
+      "QualityReportRead": {
+        "description": "One page of findings, with the counts of the whole run.",
+        "properties": {
+          "counts": {
+            "items": {
+              "$ref": "#/components/schemas/RuleCountRead"
+            },
+            "title": "Counts",
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingRead"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "partial": {
+            "description": "True when a rule stopped at its budget: a short list proves little.",
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "total": {
+            "description": "Findings of the whole run, before any filter.",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "counts",
+          "findings",
+          "next_cursor",
+          "partial"
+        ],
+        "title": "QualityReportRead",
         "type": "object"
       },
       "QueryOrder": {
@@ -2815,6 +3415,40 @@
         "title": "RestoreRequest",
         "type": "object"
       },
+      "RuleCode": {
+        "enum": [
+          "orphan",
+          "duplicate_probable",
+          "naming",
+          "missing_property",
+          "no_description",
+          "inconsistent_relationship",
+          "unreadable_property"
+        ],
+        "title": "RuleCode",
+        "type": "string"
+      },
+      "RuleCountRead": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/RuleCode"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "count"
+        ],
+        "title": "RuleCountRead",
+        "type": "object"
+      },
       "SavedQueryCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3193,6 +3827,280 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/analytics/aggregate": {
+      "get": {
+        "description": "Elements grouped by one dimension, each bucket with a count, a metric and a level.\n\n`sum`, `avg`, `min` and `max` read `property` as a number (`.` or `,`\ndecimal, spaces as thousands separators); a value that does not read is\ncounted in `unreadable`, never silently ignored. `level` (0 to 4) is the\nserver's colour decision.",
+        "operationId": "read_aggregate_analytics_aggregate_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "by",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "default": "count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The name of a user-defined attribute: letters, digits, underscores.",
+                  "maxLength": 63,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Property"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Aggregate",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/analytics/heatmap": {
+      "get": {
+        "description": "The same, grouped by two dimensions: a grid of cells with a level each.",
+        "operationId": "read_heatmap_analytics_heatmap_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "rows",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "Rows",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cols",
+            "required": true,
+            "schema": {
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "title": "Cols",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "default": "count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The name of a user-defined attribute: letters, digits, underscores.",
+                  "maxLength": 63,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Property"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeatmapRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Heatmap",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
     "/audit": {
       "get": {
         "description": "Who changed what, and when \u2014 newest first. `since` is inclusive, `until` exclusive.",
@@ -7595,6 +8503,176 @@
         ]
       }
     },
+    "/matrix": {
+      "post": {
+        "description": "The grid of two axes, with the links between them.\n\nRow = source, column = target: a link lives in exactly one cell. An axis\ngiven as criteria is cut at the first 50 by name and `truncated` says so;\nan axis given as more than 50 element ids is refused.",
+        "operationId": "read_matrix_matrix_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatrixQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatrixRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Matrix",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/matrix/cell": {
+      "get": {
+        "description": "One pair: the links that exist and the relationships still permitted.",
+        "operationId": "read_matrix_cell_matrix_cell_get",
+        "parameters": [
+          {
+            "description": "The element of the row.",
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "description": "The element of the row.",
+              "format": "uuid",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The element of the column.",
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "description": "The element of the column.",
+              "format": "uuid",
+              "title": "Target",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatrixCellDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Matrix Cell",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
     "/me": {
       "get": {
         "operationId": "read_me_me_get",
@@ -8246,6 +9324,154 @@
         "summary": "Update Package",
         "tags": [
           "packages"
+        ]
+      }
+    },
+    "/quality": {
+      "get": {
+        "description": "Run the quality rules over the catalogue and page through the findings.\n\nComputed on every call \u2014 nothing is stored. The counts describe the whole\nrun; `severity` and `code` narrow the findings only.",
+        "operationId": "read_quality_quality_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Severity"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RuleCode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cursor",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityReportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Quality",
+        "tags": [
+          "analysis"
         ]
       }
     },

@@ -45,12 +45,16 @@ from ea.api.schemas import (
     AddressLocationRead,
     AddressRead,
     Against,
+    AggregateRead,
     AuditPageRead,
+    AxisSelect,
     BaselineDiffRead,
     BaselineRead,
+    Cursor,
     CursorToken,
     Depth,
     Description,
+    DimensionParam,
     Documentation,
     DocumentRead,
     DocumentSummaryRead,
@@ -64,10 +68,12 @@ from ea.api.schemas import (
     FileRead,
     FileTags,
     FileTitle,
+    FindingsLimit,
     GraphRead,
     ImportReportRead,
     Limit,
     LinkName,
+    MatrixRead,
     MetamodelRead,
     Name,
     Offset,
@@ -78,6 +84,7 @@ from ea.api.schemas import (
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
+    QualityReportRead,
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
@@ -97,6 +104,7 @@ from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
 from ea.api.schemas import PlanDigest as PlanDigestBounds
 from ea.api.schemas import Vrf as VrfBounds
+from ea.domain.analytics import Dimension, Metric
 from ea.domain.approval import Transition
 from ea.domain.archimate import (
     AccessType,
@@ -120,11 +128,13 @@ from ea.domain.exchange import (
     ImportContent,
     ImportOptions,
     ScopeKind,
+    Severity,
 )
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
+from ea.domain.quality import RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
     MAX_RELATION_TESTS,
@@ -134,6 +144,7 @@ from ea.domain.query import (
 )
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -283,7 +294,21 @@ default**: always call it with `dry_run` left true first, read the report (count
 category, and every refused row with its reason), SHOW it to the person you work for, and only
 then call it again with `dry_run=false`. It creates elements and links and deletes nothing: an
 element with the same type and name is reused, not overwritten. Junctions and diagram views
-are not imported over MCP, and a file is at most 1 MB.\
+are not imported over MCP, and a file is at most 1 MB.
+
+`get_relationship_matrix` answers "which of these elements are linked to which
+of those": a grid, rows as sources and columns as targets, listing only the
+cells that hold a link. Use it to see the links between two groups at once
+instead of calling `read_element_relations` for each element.
+
+`check_model` reads the quality of the model itself — elements linked to
+nothing, names that look like duplicates, missing descriptions or required
+properties, links the metamodel would refuse today. Run it before adding to the
+catalogue and after an import, and fix what it reports at the element it names.
+
+`aggregate_model` totals the catalogue by layer, element type or an attribute
+such as `property:lifecycle`, optionally summing a numeric property like `cost`.
+Prefer it to listing elements and adding them up yourself.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -296,6 +321,7 @@ QueryProvider = Callable[[], SavedQueryService]
 AuditProvider = Callable[[], AuditService]
 BaselineProvider = Callable[[], BaselineService]
 ExchangeProvider = Callable[[], ExchangeService]
+AnalysisProvider = Callable[[], AnalysisService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -577,15 +603,16 @@ def build_mcp_server(
     get_audit: AuditProvider,
     get_baselines: BaselineProvider,
     get_exchanges: ExchangeProvider,
+    get_analysis: AnalysisProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the nine services.
+    """Assemble the tool set over the ten services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines and the exchanges.
+    queries, the audit trail, the baselines, the exchanges and the analyses.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -596,8 +623,8 @@ def build_mcp_server(
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
-    `get_packages`, `get_queries`, `get_audit`, `get_baselines` and `get_exchanges` are required for
-    the same reason.
+    `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
+    `get_analysis` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1616,6 +1643,81 @@ def build_mcp_server(
         for a single pair is `permitted_relationships`, and much smaller.
         """
         return RelationshipMatrixRead.for_source(source)
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_relationship_matrix(rows: AxisSelect, cols: AxisSelect) -> MatrixRead:
+        """The grid of links between two sets of elements: rows are sources, columns targets.
+
+        Each axis is either named elements (`element_ids`, at most 50) or the
+        catalogue narrowed by `element_types`, `layers` or `search` (then cut
+        at the first 50 by name, `truncated` says so); an axis with nothing set
+        is the whole catalogue. A cell appears only if it holds a link, and a
+        link lives in exactly one cell — its reverse is the mirrored cell.
+        This reads: to add a link use `connect_elements` after
+        `permitted_relationships`.
+        """
+        return MatrixRead.of(await get_analysis().matrix(rows.selection(), cols.selection()))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def check_model(
+        severity: Severity | None = None,
+        code: RuleCode | None = None,
+        limit: FindingsLimit = 100,
+        cursor: Cursor = 0,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
+    ) -> QualityReportRead:
+        """Check the model for problems: orphans, probable duplicates, naming, gaps.
+
+        Call it before you write — to avoid creating what already exists under
+        another spelling — and after an import, to see what the import left
+        behind. Each finding names an element, says why, and carries a `fix_hint`
+        route. `counts` describe the whole catalogue; `severity` (`error`,
+        `warning`, `info`) and `code` (`orphan`, `duplicate_probable`, `naming`,
+        `missing_property`, `no_description`, `inconsistent_relationship`,
+        `unreadable_property`) narrow
+        only the findings listed, and `next_cursor` pages through them. It reads
+        and stores nothing: every call recomputes. `package_id` or `query_id` (never
+        both) restricts the run to a package or to a saved query.
+        """
+        return QualityReportRead.of(
+            await get_analysis().check(
+                severity=severity,
+                code=code,
+                limit=limit,
+                cursor=cursor,
+                package_id=package_id,
+                query_id=query_id,
+            )
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def aggregate_model(
+        by: DimensionParam,
+        metric: Metric = Metric.COUNT,
+        property_key: PropertyKey | None = None,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
+    ) -> AggregateRead:
+        """Count or total the catalogue by a dimension: how many, how much, how risky.
+
+        `by` is `element_type`, `layer`, or `property:<key>` (for instance
+        `property:lifecycle` or `property:risk`). `metric` is `count`, or
+        `sum` / `avg` / `min` / `max` of the numeric property `property_key`
+        (for instance `cost`). A value that is not a readable number — "1 200 €"
+        — is not ignored in silence: it is counted in `unreadable`. Each bucket
+        carries a `level` from 0 to 4 for how high it ranks. `package_id` or `query_id`
+        (never both) narrows it to a package, sub-packages included, or to a saved
+        query. This reads only.
+        """
+        return AggregateRead.of(
+            await get_analysis().aggregate(
+                Dimension.parse(by), metric, property_key, package_id=package_id, query_id=query_id
+            )
+        )
 
     # --- The audit trail (docs/adr/0046) ----------------------------------
 
