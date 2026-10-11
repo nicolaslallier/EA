@@ -116,3 +116,66 @@ async def test_an_unknown_filter_is_refused_before_anything_is_read(
 
     with pytest.raises(ValueError, match="unknown status"):
         await RequirementService(Unreadable()).coverage(status="banana")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delta", [-1, 0, 1], ids=["below", "at", "above"])
+class TestTheCeilingsToTheUnit:
+    """A set one over its ceiling is refused; at or below it is read whole - never cut."""
+
+    async def test_requirements(
+        self, service: ArchitectureService, repository: InMemoryRepository, delta: int
+    ) -> None:
+        for number in range(3 + delta):
+            await service.create_element(element_type=E.REQUIREMENT, name=f"R{number}")
+        coverage = RequirementService(repository, max_requirements=3)
+
+        if delta > 0:
+            with pytest.raises(ScopeTooLargeError):
+                await coverage.coverage()
+        else:
+            assert (await coverage.coverage()).total == 3 + delta
+
+    async def test_realizations(
+        self, service: ArchitectureService, repository: InMemoryRepository, delta: int
+    ) -> None:
+        requirement = await service.create_element(element_type=E.REQUIREMENT, name="R")
+        for number in range(3 + delta):
+            design = await service.create_element(
+                element_type=E.APPLICATION_COMPONENT, name=f"D{number}"
+            )
+            await service.connect(
+                relationship_type=R.REALIZATION, source_id=design.id, target_id=requirement.id
+            )
+        coverage = RequirementService(repository, max_links=3)
+
+        if delta > 0:
+            with pytest.raises(ScopeTooLargeError):
+                await coverage.coverage()
+        else:
+            (trace,) = (await coverage.coverage()).traces
+            assert len(trace.designed_by) == 3 + delta  # not a design cut short
+
+    async def test_realizations_reached_through_a_junction(
+        self, service: ArchitectureService, repository: InMemoryRepository, delta: int
+    ) -> None:
+        requirement = await service.create_element(element_type=E.REQUIREMENT, name="R")
+        gate = await service.create_element(element_type=E.JUNCTION, name="j")
+        await service.connect(
+            relationship_type=R.REALIZATION, source_id=gate.id, target_id=requirement.id
+        )
+        for number in range(2 + delta):  # the first link plus these make 3 + delta
+            design = await service.create_element(
+                element_type=E.APPLICATION_COMPONENT, name=f"D{number}"
+            )
+            await service.connect(
+                relationship_type=R.REALIZATION, source_id=design.id, target_id=gate.id
+            )
+        coverage = RequirementService(repository, max_links=3)
+
+        if delta > 0:
+            with pytest.raises(ScopeTooLargeError):
+                await coverage.coverage()
+        else:
+            (trace,) = (await coverage.coverage()).traces
+            assert len(trace.designed_by) == 2 + delta

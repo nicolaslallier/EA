@@ -33,6 +33,7 @@ from ea.domain.ipam import validate_ipam_properties
 from ea.domain.junctions import JUNCTION_TYPE_PROPERTY, validate_junction_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview, RelationshipChange
+from ea.domain.requirements import validate_requirement_properties
 from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_approver, require_caller, require_editor
@@ -130,7 +131,10 @@ class ArchitectureService:
         require_editor()
         properties = validate_lifespan_properties(
             validate_junction_properties(
-                element_type, validate_ipam_properties(element_type, properties)
+                element_type,
+                validate_requirement_properties(
+                    element_type, validate_ipam_properties(element_type, properties)
+                ),
             )
         )
         element = Element.create(
@@ -201,7 +205,11 @@ class ArchitectureService:
         names_its_kind = JUNCTION_TYPE_PROPERTY in (properties or {})
         properties = validate_lifespan_properties(
             validate_junction_properties(
-                current.element_type, validate_ipam_properties(current.element_type, properties)
+                current.element_type,
+                validate_requirement_properties(
+                    current.element_type,
+                    validate_ipam_properties(current.element_type, properties),
+                ),
             )
         )
 
@@ -262,7 +270,7 @@ class ArchitectureService:
         require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
-        filling = dict(properties or {})
+        filling = dict(validate_requirement_properties(current.element_type, properties) or {})
         validate_ipam_properties(current.element_type, {**current.properties, **filling})
 
         def patch(stored: Element) -> Element:

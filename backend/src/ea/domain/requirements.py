@@ -21,6 +21,7 @@ from typing import Final
 from uuid import UUID
 
 from ea.domain.archimate import Aspect, ElementType, RelationshipType
+from ea.domain.errors import InvalidRequirementError
 from ea.domain.model import Element, Relationship
 
 IDENTIFIER_PROPERTY: Final = "req_id"
@@ -102,9 +103,48 @@ def is_test(element: Element) -> bool:
     return element.element_type in TEST_TYPES and RESULT_PROPERTY in element.properties
 
 
+def canonical(raw: str, vocabulary: type[StrEnum]) -> str | None:
+    """THE reading of a vocabulary value, shared by the write and the coverage.
+
+    Case and surrounding blanks are not a difference; anything else outside the vocabulary
+    (`ok`, `success`, `PASS`) is `None` - for a result that means *not verified*, never verified.
+    """
+    value = raw.strip().casefold()
+    return value if value in {member.value for member in vocabulary} else None
+
+
 def _read(properties: Mapping[str, str], key: str, vocabulary: type[StrEnum]) -> str:
-    value = properties.get(key, "").strip()
-    return value if value in {member.value for member in vocabulary} else UNSET
+    return canonical(properties.get(key, ""), vocabulary) or UNSET
+
+
+def validate_requirement_properties(
+    element_type: ElementType, properties: Mapping[str, str] | None
+) -> Mapping[str, str] | None:
+    """Refuse a status, priority or test result outside its vocabulary; store it canonical.
+
+    The same convention check as `validate_ipam_properties`, called wherever properties are
+    written, so the write and the coverage cannot disagree about what a value means. A blank
+    value is kept (it reads as unset / unverified). The message names the key, never the value.
+    """
+    if not properties:
+        return properties
+    checked: dict[str, tuple[type[StrEnum], tuple[ElementType, ...]]] = {
+        STATUS_PROPERTY: (Status, REQUIREMENT_TYPES),
+        PRIORITY_PROPERTY: (Priority, REQUIREMENT_TYPES),
+        RESULT_PROPERTY: (VerificationResult, TEST_TYPES),
+    }
+    out = dict(properties)
+    for key, (vocabulary, types) in checked.items():
+        raw = properties.get(key)
+        if raw is None or element_type not in types or not raw.strip():
+            continue
+        value = canonical(raw, vocabulary)
+        if value is None:
+            allowed = ", ".join(member.value for member in vocabulary)
+            msg = f"{key!r} is one of: {allowed}"
+            raise InvalidRequirementError(msg)
+        out[key] = value
+    return out if out != dict(properties) else properties
 
 
 def _by_name(element: Element) -> tuple[str, str]:
@@ -132,7 +172,10 @@ class RequirementTrace:
     @property
     def verification(self) -> Verification:
         """Only a test that *passed* verifies: a red, unrun or blocked one does not."""
-        results = [t.properties.get(RESULT_PROPERTY, "").strip() for t in self.tested_by]
+        results = [
+            canonical(t.properties.get(RESULT_PROPERTY, ""), VerificationResult)
+            for t in self.tested_by
+        ]
         if VerificationResult.FAILED.value in results:
             return Verification.FAILING
         if VerificationResult.PASSED.value in results:

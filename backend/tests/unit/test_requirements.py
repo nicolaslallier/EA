@@ -329,3 +329,55 @@ class TestJunctions:
         )
 
         assert gaps(coverage) == {"R1": Gap.DESIGN}
+
+
+class TestOneDefinitionOfTheVocabulary:
+    @pytest.mark.parametrize("written", ["Passed", " passed ", "PASSED"])
+    def test_a_spelling_the_write_canonicalises_is_read_the_same_way(self, written: str) -> None:
+        from ea.domain.requirements import validate_requirement_properties
+
+        stored = validate_requirement_properties(E.DELIVERABLE, {RESULT_PROPERTY: written})
+        assert stored == {RESULT_PROPERTY: "passed"}
+
+        requirement, design, test = a_requirement(), a_design(), a_test(result=written)
+        coverage = compute_coverage(
+            [requirement, design, test],
+            [realizes(design, requirement), realizes(test, requirement)],
+        )
+        assert coverage.verified == 1  # legacy data written before the rule reads alike
+
+    @pytest.mark.parametrize("synonym", ["PASS", "ok", "success", "green", "1"])
+    def test_a_synonym_is_refused_at_the_write_and_never_verifies(self, synonym: str) -> None:
+        from ea.domain.errors import InvalidRequirementError
+        from ea.domain.requirements import validate_requirement_properties
+
+        with pytest.raises(InvalidRequirementError) as raised:
+            validate_requirement_properties(E.DELIVERABLE, {RESULT_PROPERTY: synonym})
+        assert synonym not in str(raised.value)  # the key is named, not the value
+
+        requirement, design, test = a_requirement(), a_design(), a_test(result=synonym)
+        coverage = compute_coverage(
+            [requirement, design, test],
+            [realizes(design, requirement), realizes(test, requirement)],
+        )
+        assert (coverage.verified, coverage.unverified) == (0, 1)  # fail closed
+
+    def test_status_and_priority_follow_the_same_rule(self) -> None:
+        from ea.domain.errors import InvalidRequirementError
+        from ea.domain.requirements import validate_requirement_properties
+
+        assert validate_requirement_properties(
+            E.REQUIREMENT, {"req_status": " Approved", "req_priority": "MUST"}
+        ) == {"req_status": "approved", "req_priority": "must"}
+        with pytest.raises(InvalidRequirementError):
+            validate_requirement_properties(E.CONSTRAINT, {"req_status": "done"})
+
+    def test_other_elements_and_blank_values_pass_untouched(self) -> None:
+        from ea.domain.requirements import validate_requirement_properties
+
+        node = {RESULT_PROPERTY: "whatever"}
+        assert validate_requirement_properties(E.NODE, node) is node
+        assert validate_requirement_properties(E.REQUIREMENT, None) is None
+        assert validate_requirement_properties(E.REQUIREMENT, {"req_status": ""}) == {
+            "req_status": ""
+        }

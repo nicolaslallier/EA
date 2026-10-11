@@ -350,6 +350,10 @@ class InvalidJunctionError(DomainError):
     """A junction whose `junction_type` is neither `and` nor `or` (docs/adr/0062)."""
 
 
+class InvalidRequirementError(DomainError):
+    """A requirement status, priority or test result outside its vocabulary (docs/adr/0064)."""
+
+
 class InvalidTimelineError(DomainError):
     """A question about time the model cannot answer: a plateau against itself, an element
     that is not a plateau, a roadmap window that ends before it starts or spans too many years."""

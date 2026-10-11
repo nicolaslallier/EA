@@ -25,6 +25,7 @@ from ea.domain.junctions import validate_junction_properties
 from ea.domain.model import Element, Relationship, is_property_key
 from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, name_key, validate_package_name
 from ea.domain.query import ElementQuery
+from ea.domain.requirements import validate_requirement_properties
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
 #: Packages one import may create. Each creation reads the whole tree again and checks it,
@@ -994,6 +995,10 @@ def accept_element(item: ExchangeElement) -> ExchangeElement:
         canonical = validate_junction_properties(item.element_type, canonical)
     except DomainError as refusal:
         raise RowRefusedError("invalid_junction", str(refusal)) from None
+    try:
+        canonical = validate_requirement_properties(item.element_type, canonical)
+    except DomainError as refusal:
+        raise RowRefusedError("invalid_requirement", str(refusal)) from None
     return replace(
         item,
         name=item.name.strip(),

@@ -54,6 +54,33 @@ class TestTraceability:
         assert view.relationships == ()
 
 
+class TestTheLimitsToTheUnit:
+    @pytest.mark.parametrize("limit", [2, 3, 4])
+    async def test_a_limit_one_below_at_and_above_the_rows_returns_exactly_that_many(
+        self,
+        graph_service: ArchitectureService,
+        graph_repository: PostgresArchitectureRepository,
+        limit: int,
+    ) -> None:
+        """3 requirements and 3 realizations, one through a junction: never more than `limit`."""
+        gate = await graph_service.create_element(element_type=E.JUNCTION, name="j")
+        design = await graph_service.create_element(element_type=E.APPLICATION_COMPONENT, name="D")
+        first = await graph_service.create_element(element_type=E.REQUIREMENT, name="R1")
+        await realize(graph_service, gate, first)
+        await realize(graph_service, design, gate)  # reached by the junction hop
+        for number in (2, 3):
+            other = await graph_service.create_element(
+                element_type=E.REQUIREMENT, name=f"R{number}"
+            )
+            await realize(graph_service, design, other)
+
+        view = await graph_repository.traceability(requirement_limit=limit, link_limit=limit)
+
+        assert len(view.relationships) == min(4, limit)  # 4 rows exist: the cut shows as `limit`
+        requirements = [e for e in view.elements if e.element_type is E.REQUIREMENT]
+        assert len(requirements) == min(3, limit)
+
+
 class TestJunctions:
     async def test_a_design_behind_a_junction_chain_is_read_and_a_loop_ends(
         self, graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository

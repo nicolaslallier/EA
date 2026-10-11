@@ -128,3 +128,21 @@ async def test_a_failing_test_does_not_verify(client: httpx.AsyncClient) -> None
     assert body["verification_rate"] == 0.0
     assert body["requirements"][0]["verification"] == "failing"
     assert body["requirements"][0]["gap"] == "verification"
+
+
+@pytest.mark.asyncio
+async def test_the_write_and_the_coverage_agree_on_what_a_result_is(
+    client: httpx.AsyncClient,
+) -> None:
+    bad = await client.post(
+        "/elements",
+        json={"element_type": "deliverable", "name": "T", "properties": {"test_result": "ok"}},
+    )
+    good = await client.post(
+        "/elements",
+        json={"element_type": "deliverable", "name": "T", "properties": {"test_result": " Passed"}},
+    )
+
+    assert bad.status_code == 422 and bad.json()["error"] == "invalid_requirement"
+    assert "ok" not in bad.json()["detail"].replace("one of", "")
+    assert good.status_code == 201 and good.json()["properties"] == {"test_result": "passed"}
