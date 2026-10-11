@@ -245,3 +245,11 @@ class ElementLockedError(DomainError):
 
 class InvalidTransitionError(DomainError):
     """A review transition the element's current state does not offer."""
+
+
+class ApprovalStaleError(DomainError):
+    """An approval names a revision of the element that is no longer the current one.
+
+    An approver certifies what they read: if the element changed since, the
+    approval is refused and they read it again.
+    """

@@ -24,6 +24,7 @@ from ea.domain.errors import (
     AddressAlreadyAssignedError,
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
+    ApprovalStaleError,
     BaselineNotFoundError,
     BaselineTooLargeError,
     CyclicContainmentError,
@@ -105,6 +106,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
     BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
     # --- Review and locking (docs/adr/0046) ---
+    ApprovalStaleError: (status.HTTP_409_CONFLICT, "approval_stale"),
     ElementLockedError: (status.HTTP_409_CONFLICT, "element_locked"),
     InvalidTransitionError: (status.HTTP_409_CONFLICT, "invalid_transition"),
     RestoreBlockedError: (status.HTTP_409_CONFLICT, "restore_blocked"),

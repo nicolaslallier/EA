@@ -13,7 +13,12 @@ from dataclasses import replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
-from ea.domain.errors import ElementLockedError, InvalidTransitionError, NotAuthorisedError
+from ea.domain.errors import (
+    ApprovalStaleError,
+    ElementLockedError,
+    InvalidTransitionError,
+    NotAuthorisedError,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -92,6 +97,7 @@ def apply_transition(
     *,
     now: datetime,
     last_author: str | None = None,
+    expected_revision: int | None = None,
     separate_duties: bool = True,
 ) -> Element:
     """The element after the transition.
@@ -103,6 +109,10 @@ def apply_transition(
     subject that made the element's last change, and equally when that subject is
     unknown: a missing fact never lets the rule be skipped. Only an explicit
     `separate_duties=False` (`EA_APPROVAL_SEPARATION`) switches it off.
+
+    `approve` also needs `expected_revision`, the `revision` of the element the
+    approver read: a different or missing one is a 409 (`ApprovalStaleError`),
+    so nothing is approved that the approver did not see.
     """
     if not _may(transition, caller):
         msg = f"{transition} needs the {_needs(transition) or 'a role no one holds'} role"
@@ -111,6 +121,15 @@ def apply_transition(
         state = "locked" if element.locked else str(element.approval_state).replace("_", " ")
         msg = f"{element.name!r} is {state}: {transition} is not a transition it offers"
         raise InvalidTransitionError(msg)
+    if transition is Transition.APPROVE and expected_revision != element.revision:
+        # Only an approval certifies content: the other transitions say nothing
+        # about what the element holds, so they take no revision.
+        msg = (
+            f"{element.name!r} is at revision {element.revision}"
+            + ("" if expected_revision is None else f", not {expected_revision} as you read it")
+            + ": read it again before approving"
+        )
+        raise ApprovalStaleError(msg)
     if transition is Transition.APPROVE and separate_duties:
         if not last_author:
             msg = (

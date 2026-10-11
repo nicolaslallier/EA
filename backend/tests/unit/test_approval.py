@@ -18,7 +18,12 @@ from ea.domain.approval import (
 )
 from ea.domain.archimate import ElementType as E
 from ea.domain.auth import APPROVER_ROLE, LOCAL_DEVELOPER, SYSTEM, Caller
-from ea.domain.errors import ElementLockedError, InvalidTransitionError, NotAuthorisedError
+from ea.domain.errors import (
+    ApprovalStaleError,
+    ElementLockedError,
+    InvalidTransitionError,
+    NotAuthorisedError,
+)
 from ea.domain.model import Element
 from tests.conftest import a_reader, an_approver, an_editor
 
@@ -91,7 +96,14 @@ class TestEveryStateEveryTransitionEveryRole:
                 apply_transition(element, transition, caller, now=LATER)
         else:
             assert (
-                apply_transition(element, transition, caller, now=LATER, last_author="editor-1")
+                apply_transition(
+                    element,
+                    transition,
+                    caller,
+                    now=LATER,
+                    last_author="editor-1",
+                    expected_revision=element.revision,
+                )
                 != element
             )
 
@@ -108,7 +120,12 @@ class TestApplyingATransition:
     def test_submit_then_approve_records_who_and_when(self) -> None:
         submitted = apply_transition(an_element(), Tr.SUBMIT, an_editor(), now=LATER)
         approved = apply_transition(
-            submitted, Tr.APPROVE, an_approver(), now=LATER, last_author="editor-1"
+            submitted,
+            Tr.APPROVE,
+            an_approver(),
+            now=LATER,
+            last_author="editor-1",
+            expected_revision=submitted.revision,
         )
 
         assert submitted.approval_state is S.IN_REVIEW
@@ -146,16 +163,24 @@ class TestSeparationOfDuties:
                 Tr.APPROVE,
                 an_approver(),
                 now=LATER,
+                expected_revision=1,
                 last_author=last_author,
             )
 
     def test_forgetting_the_argument_is_a_refusal_not_a_pass(self) -> None:
         with pytest.raises(NotAuthorisedError, match="separation"):
-            apply_transition(an_element(S.IN_REVIEW), Tr.APPROVE, an_approver(), now=LATER)
+            apply_transition(
+                an_element(S.IN_REVIEW), Tr.APPROVE, an_approver(), now=LATER, expected_revision=1
+            )
 
     def test_a_different_subject_approves(self) -> None:
         approved = apply_transition(
-            an_element(S.IN_REVIEW), Tr.APPROVE, an_approver(), now=LATER, last_author="editor-1"
+            an_element(S.IN_REVIEW),
+            Tr.APPROVE,
+            an_approver(),
+            now=LATER,
+            expected_revision=1,
+            last_author="editor-1",
         )
 
         assert approved.approval_state is S.APPROVED
@@ -168,6 +193,7 @@ class TestSeparationOfDuties:
                 Tr.APPROVE,
                 other_name_same_subject,
                 now=LATER,
+                expected_revision=1,
                 last_author="approver-1",
             )
         same_name_other_subject = an_approver(subject="approver-9")
@@ -176,6 +202,7 @@ class TestSeparationOfDuties:
             Tr.APPROVE,
             same_name_other_subject,
             now=LATER,
+            expected_revision=1,
             last_author="approver-1",
         )
 
@@ -186,6 +213,7 @@ class TestSeparationOfDuties:
                 Tr.APPROVE,
                 an_approver(),
                 now=LATER,
+                expected_revision=1,
                 last_author=last_author,
                 separate_duties=False,
             )
@@ -260,3 +288,36 @@ class TestEverythingNotListedIsRefused:
     def test_an_unknown_transition_is_refused(self) -> None:
         with pytest.raises(NotAuthorisedError):
             apply_transition(an_element(), "teleport", an_approver(), now=LATER)  # type: ignore[arg-type]
+
+
+class TestApprovalNamesTheRevisionItSaw:
+    def approve(self, element: Element, expected: int | None) -> Element:
+        return apply_transition(
+            element,
+            Tr.APPROVE,
+            an_approver(),
+            now=LATER,
+            last_author="editor-1",
+            expected_revision=expected,
+        )
+
+    def test_the_revision_read_approves(self) -> None:
+        assert self.approve(replace(an_element(S.IN_REVIEW), revision=4), 4).approval_state is (
+            S.APPROVED
+        )
+
+    @pytest.mark.parametrize("expected", [None, 3, 5, 0])
+    def test_another_or_missing_revision_is_stale(self, expected: int | None) -> None:
+        with pytest.raises(ApprovalStaleError):
+            self.approve(replace(an_element(S.IN_REVIEW), revision=4), expected)
+
+    def test_the_other_transitions_certify_no_content_and_ignore_it(self) -> None:
+        stale = replace(an_element(S.APPROVED), revision=4)
+
+        assert apply_transition(stale, Tr.LOCK, an_approver(), now=LATER).locked is True
+        assert (
+            apply_transition(
+                replace(an_element(S.IN_REVIEW), revision=4), Tr.REJECT, an_approver(), now=LATER
+            ).approval_state
+            is S.DRAFT
+        )
