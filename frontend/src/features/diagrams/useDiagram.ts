@@ -61,7 +61,7 @@ export function useDiagram() {
   const saving = ref(false)
   const saveError = ref('')
 
-  // Undo and redo (docs/adr: historique côté SPA). Memory only, per editing
+  // Undo and redo (docs/adr/0062). Memory only, per editing
   // session: `open` and `close` empty it. A command restores the *boxes* and
   // asks for a save; the graph (a relationship created from a link) is not
   // part of it — taking one back is `DELETE /relationships`, offered by hand.
