@@ -169,10 +169,22 @@ class ExchangeService:
             raise ImportInProgressError(msg)
         gate.queued += 1
         try:
-            async with gate.slot:
-                return await asyncio.to_thread(self._parse, data)
-        finally:
+            await gate.slot.acquire()
+        except BaseException:  # cancelled while waiting: nothing was taken, give the place back
             gate.queued -= 1
+            raise
+        work = asyncio.ensure_future(asyncio.to_thread(self._parse, data))
+
+        def finished(done: asyncio.Future[ExchangeModel]) -> None:
+            # A thread cannot be stopped: the place is given back when it *ends*, even if
+            # the request that started it was cancelled, or two big parsings would overlap.
+            gate.slot.release()
+            gate.queued -= 1
+            if not done.cancelled():
+                done.exception()  # seen, so an abandoned failure is not reported as unread
+
+        work.add_done_callback(finished)
+        return await asyncio.shield(work)
 
     @staticmethod
     def _log_import(actor: str, content: ImportContent, report: ImportReport) -> None:

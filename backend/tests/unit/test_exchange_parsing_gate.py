@@ -75,3 +75,45 @@ async def test_the_gate_opens_again_after_a_refusal_or_a_failure(
     for _ in range(4):  # more failures than the queue holds
         with pytest.raises(RuntimeError):
             await importer.import_exchange(CONTENT, ImportOptions())
+
+
+async def test_a_cancelled_import_keeps_its_place_until_its_thread_has_really_finished(
+    exchange_store: InMemoryExchange, service: ArchitectureService
+) -> None:
+    parser = SlowParser()
+    importer = ExchangeService(exchange_store, service, parser=parser)
+    first = asyncio.create_task(importer.import_exchange(CONTENT, ImportOptions()))
+    await asyncio.to_thread(parser.entered.wait, 5)  # the thread is parsing
+
+    first.cancel()  # the client hung up; the thread cannot be stopped
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(importer.import_exchange(CONTENT, ImportOptions()))
+    await let_the_loop_run()
+
+    assert parser.calls == 1 and parser.running == 1  # the second waits for the first thread
+    with pytest.raises(ImportInProgressError):  # and the place is still taken in the queue
+        await importer.import_exchange(CONTENT, ImportOptions())
+
+    parser.release.set()
+    await second
+    assert parser.peak == 1 and parser.calls == 2
+
+
+async def test_a_cancellation_while_waiting_gives_the_place_back(
+    exchange_store: InMemoryExchange, service: ArchitectureService
+) -> None:
+    parser = SlowParser()
+    importer = ExchangeService(exchange_store, service, parser=parser)
+    first = asyncio.create_task(importer.import_exchange(CONTENT, ImportOptions()))
+    await asyncio.to_thread(parser.entered.wait, 5)
+    waiting = asyncio.create_task(importer.import_exchange(CONTENT, ImportOptions()))
+    await let_the_loop_run()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    parser.release.set()
+    await first
+    await importer.import_exchange(CONTENT, ImportOptions())  # nothing is left taken
+    assert parser.peak == 1
