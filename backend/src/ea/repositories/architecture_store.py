@@ -944,19 +944,22 @@ class PostgresArchitectureRepository:
 
     # --- Analysis: the reads behind the matrix and the checks ---------------
 
-    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
         if not element_ids:
             return ()
+        statement = (
+            select(ElementRecord)
+            .where(ElementRecord.id.in_(list(element_ids)))
+            .order_by(ElementRecord.name, ElementRecord.id)
+        )
         async with reading(self._sessions) as session:
-            found = await session.scalars(
-                select(ElementRecord)
-                .where(ElementRecord.id.in_(list(element_ids)))
-                .order_by(ElementRecord.name, ElementRecord.id)
-            )
+            found = await session.scalars(statement.limit(limit) if limit else statement)
             return tuple(element_from_row(row) for row in found)
 
     async def links_between(
-        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
     ) -> tuple[Relationship, ...]:
         if not source_ids or not target_ids:
             return ()
@@ -968,10 +971,14 @@ class PostgresArchitectureRepository:
             )
             .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
         )
+        if limit:
+            statement = statement.limit(limit)
         async with reading(self._sessions) as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
-    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
         if not element_ids:
             return ()
         ids = list(element_ids)
@@ -982,6 +989,8 @@ class PostgresArchitectureRepository:
             )
             .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
         )
+        if limit:
+            statement = statement.limit(limit)
         async with reading(self._sessions) as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 

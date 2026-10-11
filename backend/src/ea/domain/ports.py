@@ -575,18 +575,25 @@ class AnalysisRepository(Protocol):
     store (docs/adr/0056).
     """
 
-    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
-        """The elements among these ids that exist, by name. Absent ids are missing, not errors."""
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
+        """The elements among these ids that exist, by name; at most `limit` (a SQL LIMIT).
+
+        Absent ids are missing, not errors.
+        """
         ...
 
     async def links_between(
-        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
     ) -> tuple[Relationship, ...]:
-        """Every link running from one of `source_ids` to one of `target_ids`."""
+        """Every link running from one of `source_ids` to one of `target_ids`; at most `limit`."""
         ...
 
-    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
-        """Every link with at least one end among these ids."""
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
+        """Every link with at least one end among these ids; at most `limit` (a SQL LIMIT)."""
         ...
 
     async def grouped(

@@ -31,6 +31,8 @@ from ea.domain.model import PROPERTY_KEY, Element, Relationship
 MAX_FINDINGS: Final = 1000
 #: How many elements one run takes; beyond it the scope is "too large" (422).
 MAX_QUALITY_ELEMENTS: Final = 5000
+#: How many links one run takes; the read stops one past it, so the refusal costs no more.
+MAX_QUALITY_LINKS: Final = 50_000
 DEFAULT_SIMILARITY: Final = 0.9
 #: Fewer letters than this is an acronym ("CRM", "SAP"), not shouting.
 _MIN_SHOUTING_LETTERS: Final = 4
@@ -80,6 +82,7 @@ class QualityParams:
     similarity: float = DEFAULT_SIMILARITY
     required_properties: Mapping[ElementType, frozenset[str]] = field(default_factory=dict)
     max_elements: int = MAX_QUALITY_ELEMENTS
+    max_links: int = MAX_QUALITY_LINKS
 
     @classmethod
     def from_settings(

@@ -628,27 +628,34 @@ class InMemoryRepository:
 
     # --- Analysis: the reads behind the matrix and the checks ---
 
-    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
+    async def elements_by_ids(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Element, ...]:
         found = [self.elements[i] for i in dict.fromkeys(element_ids) if i in self.elements]
-        return tuple(sorted(found, key=lambda element: (element.name, str(element.id))))
+        ordered = sorted(found, key=lambda element: (element.name, str(element.id)))
+        return tuple(ordered[:limit] if limit else ordered)
 
     async def links_between(
-        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID], *, limit: int | None = None
     ) -> tuple[Relationship, ...]:
         sources, targets = set(source_ids), set(target_ids)
-        return tuple(
+        found = tuple(
             link
             for link in self.relationships.values()
             if link.source_id in sources and link.target_id in targets
         )
+        return found[:limit] if limit else found
 
-    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
+    async def links_touching(
+        self, element_ids: Sequence[UUID], *, limit: int | None = None
+    ) -> tuple[Relationship, ...]:
         ids = set(element_ids)
-        return tuple(
+        found = tuple(
             link
             for link in self.relationships.values()
             if link.source_id in ids or link.target_id in ids
         )
+        return found[:limit] if limit else found
 
     async def grouped(
         self,

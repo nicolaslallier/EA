@@ -29,6 +29,8 @@ from ea.domain.model import Element, Relationship
 #: How many elements one axis shows. Declared here and imported by
 #: `api/schemas.py` — a service cannot import the API (CLAUDE.md).
 MAX_MATRIX_AXIS: Final = 50
+#: How many links the grid reads: 50 x 50 pairs, a handful of parallel links each, at most.
+MAX_MATRIX_LINKS: Final = 10_000
 
 Allowed = Callable[[Element, Element], tuple[RelationshipType, ...]]
 

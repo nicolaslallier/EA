@@ -30,6 +30,7 @@ from ea.domain.errors import (
 )
 from ea.domain.matrix import (
     MAX_MATRIX_AXIS,
+    MAX_MATRIX_LINKS,
     AxisSelection,
     Matrix,
     MatrixAxis,
@@ -119,7 +120,11 @@ class AnalysisService:
         links = await self._repository.links_between(
             [element.id for element in row_axis.elements],
             [element.id for element in col_axis.elements],
+            limit=MAX_MATRIX_LINKS + 1,
         )
+        if len(links) > MAX_MATRIX_LINKS:
+            msg = f"the grid holds more than {MAX_MATRIX_LINKS} links: narrow the axes"
+            raise ScopeTooLargeError(msg)
         return build_matrix(row_axis, col_axis, links)
 
     async def cell(self, source_id: UUID, target_id: UUID) -> MatrixCell:
@@ -172,11 +177,19 @@ class AnalysisService:
         if scope is None:
             elements = await self._architecture.list_elements(ElementFilter(limit=ceiling + 1))
         else:
-            elements = await self._repository.elements_by_ids(scope[: ceiling + 1])
+            elements = await self._repository.elements_by_ids(
+                scope[: ceiling + 1], limit=ceiling + 1
+            )
         if len(elements) > ceiling:
             msg = f"the catalogue holds more than {ceiling} elements; a run takes at most {ceiling}"
             raise ScopeTooLargeError(msg)
-        links = await self._repository.links_touching([element.id for element in elements])
+        # One past the ceiling is read, never the whole table: a refusal must not cost the read.
+        links = await self._repository.links_touching(
+            [element.id for element in elements], limit=self._params.max_links + 1
+        )
+        if len(links) > self._params.max_links:
+            msg = f"the scope holds more than {self._params.max_links} links; a run takes fewer"
+            raise ScopeTooLargeError(msg)
         # CPU-bound (pairwise name comparison): off the event loop, and the place is held until
         # the thread has really ended, even if the client hangs up or the lease expires.
         report = await _off_the_loop(lease, run_checks, elements, links, self._params)
@@ -263,14 +276,14 @@ class AnalysisService:
         scope = await self._scope(selection.package_id, selection.query_id)
         if scope is not None:
             # Cut at the first 50 by name, `total` says how many the scope held.
-            found = await self._repository.elements_by_ids(scope)
-            return MatrixAxis.of(found, total=len(found))
+            found = await self._repository.elements_by_ids(scope, limit=MAX_MATRIX_AXIS)
+            return MatrixAxis.of(found, total=len(scope))
         if selection.element_ids:
             ids = tuple(dict.fromkeys(selection.element_ids))
             if len(ids) > MAX_MATRIX_AXIS:
                 msg = f"an axis names {len(ids)} elements; the grid shows at most {MAX_MATRIX_AXIS}"
                 raise MatrixAxisTooLargeError(msg)
-            found = await self._repository.elements_by_ids(ids)
+            found = await self._repository.elements_by_ids(ids, limit=MAX_MATRIX_AXIS)
             missing = sorted(str(i) for i in set(ids) - {element.id for element in found})
             if missing:
                 msg = f"no element with id {missing[0]}"

@@ -22,7 +22,7 @@ from ea.domain.quality import QualityParams, QualityReport, RuleCode, Severity
 from ea.services.analysis import AnalysisService, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
-from tests.conftest import InMemoryRepository, a_reader
+from tests.conftest import FIXED_NOW, InMemoryRepository, a_reader
 
 
 async def two_linked(service: ArchitectureService):  # type: ignore[no-untyped-def]
@@ -475,3 +475,74 @@ class TestScopedByPackageOrQuery:
 
         with pytest.raises(InvalidAnalysisError):
             await scoped.check(package_id=uuid4(), query_id=uuid4())
+
+
+class CountingRepository(InMemoryRepository):
+    """Remembers how much each read was allowed to bring back: the bound must be in the read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.element_limits: list[int | None] = []
+        self.link_limits: list[int | None] = []
+
+    async def elements_by_ids(self, element_ids, *, limit=None):  # type: ignore[no-untyped-def]
+        self.element_limits.append(limit)
+        return await super().elements_by_ids(element_ids, limit=limit)
+
+    async def links_touching(self, element_ids, *, limit=None):  # type: ignore[no-untyped-def]
+        self.link_limits.append(limit)
+        return await super().links_touching(element_ids, limit=limit)
+
+
+@pytest.mark.asyncio
+class TestBoundsAreAppliedBeforeTheReadNotAfter:
+    async def test_a_scoped_axis_loads_no_more_than_the_grid_shows(self) -> None:
+        repository = CountingRepository()
+        service = ArchitectureService(repository, clock=lambda: FIXED_NOW)
+        ids = tuple(uuid4() for _ in range(MAX_MATRIX_AXIS * 10))
+
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return ids
+
+        scoped = AnalysisService(service, repository, scope_ids=resolver)
+
+        matrix = await scoped.matrix(AxisSelection(package_id=uuid4()), AxisSelection())
+
+        assert repository.element_limits[0] == MAX_MATRIX_AXIS
+        assert matrix.rows.total == len(ids)
+
+    async def test_a_run_over_the_link_ceiling_is_refused_by_a_read_that_stops_one_past_it(
+        self,
+    ) -> None:
+        repository = CountingRepository()
+        service = ArchitectureService(repository, clock=lambda: FIXED_NOW)
+        small = AnalysisService(service, repository, params=QualityParams(max_links=1))
+        one = await service.create_element(element_type=E.NODE, name="a")
+        two = await service.create_element(element_type=E.NODE, name="b")
+        for kind in (R.ASSOCIATION, R.FLOW):
+            await service.connect(relationship_type=kind, source_id=one.id, target_id=two.id)
+
+        with pytest.raises(ScopeTooLargeError):
+            await small.check()
+
+        assert repository.link_limits == [2]
+
+    async def test_a_catalogue_over_the_ceiling_is_asked_for_one_row_past_it(self) -> None:
+        repository = CountingRepository()
+        asked: list[int] = []
+        real = repository.list_elements
+
+        async def spy(criteria):  # type: ignore[no-untyped-def]
+            asked.append(criteria.limit)
+            return await real(criteria)
+
+        repository.list_elements = spy  # type: ignore[method-assign]
+        service = ArchitectureService(repository, clock=lambda: FIXED_NOW)
+        small = AnalysisService(service, repository, params=QualityParams(max_elements=2))
+        for index in range(4):
+            await service.create_element(element_type=E.NODE, name=f"n{index}")
+
+        with pytest.raises(ScopeTooLargeError):
+            await small.check()
+
+        assert asked == [3]
