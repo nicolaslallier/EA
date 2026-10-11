@@ -39,6 +39,7 @@ from ea.domain.packages import (
 )
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
+from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -218,12 +219,14 @@ class PackageService:
                 ),
             )
 
-        if not await self._repository.delete(
-            package_id,
-            into=into,
-            audit=removed,
-            require_empty=isinstance(move_contents_to, Unset),
-        ):
+        with logged_refusal("lock_refused"):
+            deleted = await self._repository.delete(
+                package_id,
+                into=into,
+                audit=removed,
+                require_empty=isinstance(move_contents_to, Unset),
+            )
+        if not deleted:
             raise _not_found(package_id)
         logger.info(
             "package deleted: %r",
@@ -264,7 +267,8 @@ class PackageService:
                 ),
             )
 
-        await self._repository.move_elements(wanted, package_id, audit=moved)
+        with logged_refusal("lock_refused", wanted):
+            await self._repository.move_elements(wanted, package_id, audit=moved)
         logger.info(
             "%d element(s) filed",
             len(wanted),

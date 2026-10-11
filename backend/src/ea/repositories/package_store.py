@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
+from ea.domain.approval import check_all_untouched
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     CyclicPackageError,
@@ -31,7 +32,7 @@ from ea.domain.errors import (
 )
 from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
 from ea.domain.ports import Held, PackageRemoval
-from ea.repositories.architecture_store import constraint_of
+from ea.repositories.architecture_store import constraint_of, element_from_row, frozen_clause
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
@@ -45,6 +46,8 @@ if TYPE_CHECKING:
 #: Key of the transaction-scoped advisory lock every write to the tree takes
 #: (docs/adr/0042). A constant, not a hash of something: one tree, one lock.
 TREE_LOCK: Final = 0x45415041  # "EAPA"
+#: How many frozen elements a refused deletion spells out (one more is read, to say "others").
+_FROZEN_SAMPLE: Final = 5
 NAME_TAKEN: Final = ("uq_packages_root_name", "uq_packages_child_name")
 #: The three foreign keys that name a package.
 REFERENCES: Final = (
@@ -248,6 +251,17 @@ class PostgresPackageRepository:
                     raise PackageNotEmptyError(msg)
             try:
                 if not require_empty:
+                    # Re-filing an element is a change to it: an approved or locked one
+                    # stays where it is, so the deletion is refused rather than moving it.
+                    sample = await session.scalars(
+                        select(ElementRecord)
+                        .where(ElementRecord.package_id == package_id, frozen_clause())
+                        .order_by(ElementRecord.name, ElementRecord.id)
+                        .limit(_FROZEN_SAMPLE + 1)
+                        .with_for_update()
+                    )
+                    frozen = [element_from_row(found) for found in sample]
+                    check_all_untouched(frozen[:_FROZEN_SAMPLE], more=len(frozen) > _FROZEN_SAMPLE)
                     for table, column in (
                         (PackageRecord, PackageRecord.parent_id),
                         (ElementRecord, ElementRecord.package_id),
@@ -283,16 +297,18 @@ class PostgresPackageRepository:
             # between the origins read below and the update that follows.
             await session.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
             # `FOR UPDATE`: the origins the event names are the ones this move leaves.
-            rows = await session.execute(
-                select(ElementRecord.id, ElementRecord.package_id)
-                .where(ElementRecord.id.in_(wanted))
-                .with_for_update()
-            )
-            origins = dict(rows.tuples().all())
+            found = (
+                await session.scalars(
+                    select(ElementRecord).where(ElementRecord.id.in_(wanted)).with_for_update()
+                )
+            ).all()
+            origins = {row.id: row.package_id for row in found}
             missing = [str(element_id) for element_id in wanted if element_id not in origins]
             if missing:
                 msg = f"no element with id {', '.join(missing)}"
                 raise ElementNotFoundError(msg)
+            # Filing is a change to the element: approved and locked ones stay put (all or none).
+            check_all_untouched([element_from_row(row) for row in found])
             try:
                 await session.execute(
                     update(ElementRecord)

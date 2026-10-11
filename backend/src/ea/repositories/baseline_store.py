@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, or_, select
+from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as upsert
 from sqlalchemy.engine import CursorResult
@@ -60,6 +60,7 @@ from ea.repositories.architecture_store import (
     constraint_of,
     element_from_row,
     element_row,
+    frozen_clause,
     rejected,
     relationship_from_row,
     relationship_row,
@@ -115,9 +116,6 @@ _BOX_COLUMNS = ("diagram_id", "element_id", "x", "y", "width", "height")
 #: applies it (docs/adr/0046).
 ProtectedIds = Callable[["AsyncSession"], Awaitable[frozenset["UUID"]]]
 
-#: The only review states a restoration may write over; any other value is protected.
-_REWRITABLE: Final = ("draft", "in_review")
-
 
 async def approved_or_locked(session: AsyncSession) -> frozenset[UUID]:
     """The elements a restoration must not touch: approved, locked, or in a state it does not know.
@@ -129,12 +127,7 @@ async def approved_or_locked(session: AsyncSession) -> frozenset[UUID]:
     after its snapshot makes the update of that row a serialization failure
     (a replayable conflict) rather than a silent overwrite.
     """
-    found = await session.scalars(
-        select(ElementRecord.id).where(
-            or_(ElementRecord.locked.is_(True), ElementRecord.approval_state.not_in(_REWRITABLE))
-        )
-    )
-    return frozenset(found)
+    return frozenset(await session.scalars(select(ElementRecord.id).where(frozen_clause())))
 
 
 def _paths() -> CTE:

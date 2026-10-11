@@ -13,9 +13,14 @@ from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction
 from ea.domain.auth import APPROVER_ROLE, Caller
+from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import ElementLockedError, NotAuthorisedError
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
+from ea.services.documents import DocumentService
+from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
 from tests.conftest import FIXED_NOW, InMemoryAuditLog, InMemoryRepository, an_approver
 
 pytestmark = pytest.mark.asyncio
@@ -225,3 +230,90 @@ class TestLinking:
         await service.connect(relationship_type=R.ASSOCIATION, source_id=node.id, target_id=node.id)
 
         assert [e.action for e in audit_log.events].count(AuditAction.ELEMENT_UPDATED) == 1
+
+
+class TestTheOtherDoorsIntoAnElement:
+    """Every way to write to an element is protected, or says why it is not (docs/adr/0046)."""
+
+    async def test_documents_are_frozen_with_the_element_for_everyone(
+        self,
+        service: ArchitectureService,
+        document_service: DocumentService,
+        repository: InMemoryRepository,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        element = await service.create_element(element_type=E.NODE, name="db-01")
+        kept = await document_service.attach_text(element.id, filename="a.md", content="# A")
+        put_in_state(repository, element.id, S.IN_REVIEW)
+        await document_service.attach_text(element.id, filename="b.md", content="# B")
+        put_in_state(repository, element.id, S.APPROVED)
+        audit_log.events.clear()
+
+        with acting_as(an_approver()):
+            with pytest.raises(ElementLockedError):
+                await document_service.attach_text(element.id, filename="c.md", content="# C")
+            with pytest.raises(ElementLockedError):
+                await document_service.revise_text(kept.id, filename="a.md", content="# A2")
+            with pytest.raises(ElementLockedError):
+                await document_service.discard(kept.id)
+
+        assert audit_log.events == []
+        assert (await document_service.get(kept.id)).content == "# A"
+        assert await document_service.reindex_all() == 2  # a reindex changes no content
+
+    async def test_filing_and_unfiling_leave_approved_and_locked_elements_where_they_are(
+        self,
+        service: ArchitectureService,
+        package_service: PackageService,
+        repository: InMemoryRepository,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        package = await package_service.create(name="P")
+        free = await service.create_element(element_type=E.NODE, name="free")
+        frozen = await service.create_element(element_type=E.NODE, name="frozen")
+        put_in_state(repository, frozen.id, S.APPROVED, locked=True)
+        audit_log.events.clear()
+
+        with pytest.raises(ElementLockedError, match="frozen"):
+            await package_service.move_elements([free.id, frozen.id], package.package.id)
+        assert repository.elements[free.id].package_id is None
+
+        put_in_state(repository, frozen.id, S.IN_REVIEW)
+        await package_service.move_elements([free.id, frozen.id], package.package.id)
+        put_in_state(repository, frozen.id, S.APPROVED)
+        with pytest.raises(ElementLockedError):
+            await package_service.delete(package.package.id, move_contents_to=None)
+        assert repository.elements[frozen.id].package_id == package.package.id
+
+    async def test_an_address_cannot_be_changed_on_an_approved_element(
+        self,
+        service: ArchitectureService,
+        ipam: IpamService,
+        repository: InMemoryRepository,
+    ) -> None:
+        await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+        host = await service.create_element(element_type=E.NODE, name="srv-01")
+        await ipam.assign_address(host.id, "10.0.1.12")
+        put_in_state(repository, host.id, S.APPROVED)
+
+        with pytest.raises(ElementLockedError):
+            await ipam.release_address(host.id)
+        with pytest.raises(ElementLockedError):
+            await ipam.assign_address(host.id, "10.0.1.13")
+
+        assert repository.elements[host.id].properties["ip_address"] == "10.0.1.12"
+
+    async def test_a_diagram_layout_is_not_a_change_to_the_element(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        repository: InMemoryRepository,
+    ) -> None:
+        """A box on a view owns no fact: placing a locked element changes nothing about it."""
+        locked = await service.create_element(element_type=E.NODE, name="locked")
+        put_in_state(repository, locked.id, S.APPROVED, locked=True)
+        diagram = await diagram_service.create(name="View")
+
+        await diagram_service.replace_layout(diagram.id, [DiagramNode(locked.id, 1.0, 2.0)])
+
+        assert repository.elements[locked.id].locked is True

@@ -437,6 +437,22 @@ async def _held(session: AsyncSession, column: Any, where: ColumnElement[bool]) 
     return Held(count=int(total or 0), ids=tuple(ids))
 
 
+#: The review states an element can be changed in; every other value is frozen.
+_EDITABLE_STATES: Final = ("draft", "in_review")
+
+
+def frozen_clause() -> ColumnElement[bool]:
+    """Approved, locked, or in a state this code does not know — fail closed.
+
+    The same test as `ea.domain.approval.is_frozen`, spelled for SQL: "not draft
+    and not in review" rather than "approved", so a value outside the enumeration
+    protects instead of exposing.
+    """
+    return or_(
+        ElementRecord.locked.is_(True), ElementRecord.approval_state.not_in(_EDITABLE_STATES)
+    )
+
+
 #: The journal entries that say who last changed an element's content.
 _AUTHORSHIP: Final = (AuditAction.ELEMENT_CREATED.value, AuditAction.ELEMENT_UPDATED.value)
 

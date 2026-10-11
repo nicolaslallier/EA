@@ -334,3 +334,124 @@ async def test_an_element_older_than_the_journal_cannot_be_approved_by_anyone_wh
 
     with acting_as(an_approver()), pytest.raises(NotAuthorisedError, match="unknown"):
         await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=revision)
+
+
+# --- The other doors into an element: its documents and its filing ----------
+
+
+def documents_of(world: World, engine: AsyncEngine):  # type: ignore[no-untyped-def]
+    from ea.repositories.document_store import PostgresDocumentRepository
+    from ea.services.documents import DocumentService
+
+    return DocumentService(
+        PostgresDocumentRepository(create_session_factory(engine)),
+        world.graph,
+        clock=lambda: START,
+    )
+
+
+async def test_the_documents_of_an_approved_or_locked_element_are_frozen_with_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.domain.audit import UNAUDITED_REINDEX
+    from ea.repositories.document_store import PostgresDocumentRepository
+
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")
+    kept = await documents.attach_text(element.id, filename="runbook.md", content="# Runbook")
+    doomed = await documents.attach_text(element.id, filename="old.md", content="# Old")
+    await put_in_state(engine_at_head, element.id, "in_review")
+    await documents.attach_text(element.id, filename="notes.md", content="# Fine in review")
+
+    for locked in (False, True):
+        await put_in_state(engine_at_head, element.id, "approved", locked=locked)
+        with acting_as(an_approver()):  # not even an approver: reopen first
+            with pytest.raises(ElementLockedError, match="reopen"):
+                await documents.attach_text(element.id, filename="x.md", content="# X")
+            with pytest.raises(ElementLockedError):
+                await documents.revise_text(kept.id, filename="runbook.md", content="# Changed")
+            with pytest.raises(ElementLockedError):
+                await documents.discard(doomed.id)
+
+    assert {d.filename for d in await documents.list_for_element(element.id)} == {
+        "runbook.md",
+        "old.md",
+        "notes.md",
+    }
+    assert (await documents.get(kept.id)).content == "# Runbook"
+    assert [
+        e
+        for e in await world.events(EntityKind.DOCUMENT)
+        if e.action is AuditAction.DOCUMENT_REVISED
+    ] == []
+    # A reindex rewrites passages, not content: it is not a change.
+    stored = await documents.get(kept.id)
+    await PostgresDocumentRepository(create_session_factory(engine_at_head)).replace(
+        stored, (), audit=UNAUDITED_REINDEX
+    )
+
+
+async def test_a_lock_committed_while_a_document_is_being_attached_still_refuses_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")
+    await put_in_state(engine_at_head, element.id, "approved")
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:
+        await session.execute(
+            text("UPDATE elements SET locked = true WHERE id = :id"), {"id": element.id}
+        )
+        with acting_as(an_approver()):
+            writer = asyncio.create_task(
+                documents.attach_text(element.id, filename="x.md", content="# X")
+            )
+            await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError, match="locked"):
+        await writer
+
+    assert await documents.list_for_element(element.id) == ()
+
+
+async def test_filing_an_approved_or_locked_element_is_refused_whole(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    free = await world.graph.create_element(element_type=E.NODE, name="free")
+    frozen = await world.graph.create_element(element_type=E.NODE, name="frozen")
+    await put_in_state(engine_at_head, frozen.id, "approved")
+    before = len(await world.events(EntityKind.PACKAGE))
+
+    with pytest.raises(ElementLockedError, match="frozen"):
+        await world.packages.move_elements([free.id, frozen.id], package.package.id)
+
+    assert (await world.graph.get_element(free.id)).package_id is None  # none of them moved
+    assert len(await world.events(EntityKind.PACKAGE)) == before
+
+    await put_in_state(engine_at_head, frozen.id, "in_review")
+    await world.packages.move_elements([free.id, frozen.id], package.package.id)
+    assert (await world.graph.get_element(frozen.id)).package_id == package.package.id
+
+
+async def test_deleting_a_package_does_not_re_file_what_is_approved_or_locked(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    element = await world.graph.create_element(element_type=E.NODE, name="n")
+    await world.packages.move_elements([element.id], package.package.id)
+    await put_in_state(engine_at_head, element.id, "approved", locked=True)
+
+    with pytest.raises(ElementLockedError, match="n"):
+        await world.packages.delete(package.package.id, move_contents_to=None)
+
+    assert (await world.graph.get_element(element.id)).package_id == package.package.id
+    assert await world.package_store.get(package.package.id) is not None
+
+    await put_in_state(engine_at_head, element.id, "draft")
+    await world.packages.delete(package.package.id, move_contents_to=None)
+    assert (await world.graph.get_element(element.id)).package_id is None

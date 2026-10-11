@@ -30,6 +30,7 @@ from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
+from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
@@ -103,7 +104,8 @@ class DocumentService:
                 ),
             )
 
-        stored = await self._repository.add(document, passages, audit=created)
+        with logged_refusal("lock_refused", [element_id]):
+            stored = await self._repository.add(document, passages, audit=created)
         logger.info(
             "document %r attached (%d bytes, %d passage(s))",
             stored.filename,
@@ -175,7 +177,8 @@ class DocumentService:
                 ),
             )
 
-        stored = await self._repository.replace(revised, passages, audit=events)
+        with logged_refusal("lock_refused", [current.element_id]):
+            stored = await self._repository.replace(revised, passages, audit=events)
         logger.info(
             "document %r revised (%d bytes, %d passage(s))",
             stored.filename,
@@ -202,7 +205,9 @@ class DocumentService:
                 ),
             )
 
-        if not await self._repository.delete(document_id, audit=events):
+        with logged_refusal("lock_refused"):
+            deleted = await self._repository.delete(document_id, audit=events)
+        if not deleted:
             msg = f"no document with id {document_id}"
             raise DocumentNotFoundError(msg)
         logger.info(

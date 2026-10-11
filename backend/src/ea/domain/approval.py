@@ -21,6 +21,7 @@ from ea.domain.errors import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
     from ea.domain.auth import Caller
@@ -198,6 +199,25 @@ def check_untouched(element: Element) -> None:
         state = "locked" if element.locked else str(element.approval_state)
         msg = f"{element.name!r} is {state}: an approver must reopen it first"
         raise ElementLockedError(msg)
+
+
+def check_all_untouched(elements: Sequence[Element], *, more: bool = False) -> None:
+    """`check_untouched` over a batch: all or none, naming a bounded handful.
+
+    `more` says the batch given is only the first of a longer list of frozen
+    elements.
+    """
+    frozen = [e for e in elements if is_frozen(e)]
+    if not frozen:
+        return
+    shown = ", ".join(repr(e.name[:60]) for e in frozen[:_NAMED])
+    tail = " and others" if more or len(frozen) > _NAMED else ""
+    msg = f"approved or locked, an approver must reopen them first: {shown}{tail}"
+    raise ElementLockedError(msg)
+
+
+#: How many names a refusal over a batch spells out.
+_NAMED: Final = 5
 
 
 def reviewed_after_change(element: Element) -> Element:

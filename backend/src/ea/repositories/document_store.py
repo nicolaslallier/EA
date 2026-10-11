@@ -30,12 +30,15 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
+from ea.db.models.architecture import ElementRecord
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
+from ea.domain.approval import check_untouched
 from ea.domain.audit import events_for
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import DocumentNotFoundError, DuplicateDocumentError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
+from ea.repositories.architecture_store import element_from_row
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
@@ -55,6 +58,22 @@ def _rows_affected(result: object) -> int:
     cast states that rather than letting a `type: ignore` hide it.
     """
     return cast("CursorResult[Any]", result).rowcount
+
+
+async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing: bool) -> None:
+    """Lock the element a document hangs from, and refuse a change to the document of a frozen one.
+
+    `FOR SHARE`: documents of one element do not wait for each other, but a
+    review transition (which updates the row) does wait for them, and they for
+    it — so the state read here is the state at commit. Taken *before* the
+    document's own row, the order a deleted element's cascade also follows.
+    A missing element is left to the foreign key.
+    """
+    row = await session.get(
+        ElementRecord, element_id, with_for_update={"read": True}, populate_existing=True
+    )
+    if row is not None and changing:
+        check_untouched(element_from_row(row))
 
 
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:
@@ -122,6 +141,7 @@ class PostgresDocumentRepository:
             updated_at=document.updated_at,
         )
         async with self._sessions.begin() as session:
+            await _hold_the_element(session, document.element_id, changing=True)
             session.add(row)
             # Flushed before the passages are added, and not left to the unit of
             # work to order: the two mappers are related by a foreign key and by
@@ -195,7 +215,14 @@ class PostgresDocumentRepository:
         revision from ever being searchable under its previous text.
         """
         async with self._sessions.begin() as session:
-            row = await session.get(ElementDocument, document.id, with_for_update=True)
+            known = await session.get(ElementDocument, document.id)
+            if known is not None:
+                await _hold_the_element(
+                    session, known.element_id, changing=known.content != document.content
+                )
+            row = await session.get(
+                ElementDocument, document.id, with_for_update=True, populate_existing=True
+            )
             if row is None:
                 # Only reachable if the document was deleted between the
                 # service reading it and this write — a race, not a bug.
@@ -214,7 +241,13 @@ class PostgresDocumentRepository:
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
-            row = await session.get(ElementDocument, document_id, with_for_update=True)
+            known = await session.get(ElementDocument, document_id)
+            if known is None:
+                return False
+            await _hold_the_element(session, known.element_id, changing=True)
+            row = await session.get(
+                ElementDocument, document_id, with_for_update=True, populate_existing=True
+            )
             if row is None:
                 return False
             events = events_for(audit, _to_document(row))

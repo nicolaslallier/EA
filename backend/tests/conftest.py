@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from ea.domain.approval import is_frozen
+from ea.domain.approval import check_all_untouched, check_untouched, is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
     AuditAction,
@@ -641,10 +641,22 @@ class InMemoryDocuments:
     against PostgreSQL would get.
     """
 
-    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+    def __init__(
+        self,
+        audit_log: InMemoryAuditLog | None = None,
+        graph: InMemoryRepository | None = None,
+    ) -> None:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        #: The graph double the documents hang from: the freeze of an element is read there.
+        self.graph = graph
         self.documents: dict[UUID, Document] = {}
         self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
+
+    def _refuse_a_frozen_element(self, element_id: UUID) -> None:
+        """Stand in for the repository reading the element under its lock (docs/adr/0046)."""
+        element = self.graph.elements.get(element_id) if self.graph is not None else None
+        if element is not None:
+            check_untouched(element)
 
     async def add(
         self,
@@ -653,6 +665,7 @@ class InMemoryDocuments:
         *,
         audit: AuditOf[Document],
     ) -> Document:
+        self._refuse_a_frozen_element(document.element_id)
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
             for stored in self.documents.values()
@@ -686,6 +699,8 @@ class InMemoryDocuments:
     ) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
+        if self.documents[document.id].content != document.content:
+            self._refuse_a_frozen_element(document.element_id)
         events = events_for(audit, self.documents[document.id])
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
@@ -698,6 +713,7 @@ class InMemoryDocuments:
         stored = self.documents.get(document_id)
         if stored is None:
             return False
+        self._refuse_a_frozen_element(stored.element_id)
         events = events_for(audit, stored)
         self.chunks.pop(document_id, None)
         del self.documents[document_id]
@@ -1095,6 +1111,10 @@ class InMemoryPackages:
             if held.elements or held.diagrams or held.children:
                 msg = "the package still holds sub-packages, elements or diagrams"
                 raise PackageNotEmptyError(msg)
+        if not require_empty:
+            check_all_untouched(
+                [e for e in self._graph.elements.values() if e.package_id == package_id]
+            )
         children = [p for p in self.packages.values() if p.parent_id == package_id]
         for child in children:  # checked before anything moves: all or none
             self._refuse_a_taken_name(replace(child, parent_id=into))
@@ -1136,6 +1156,7 @@ class InMemoryPackages:
             raise ElementNotFoundError(f"no element with id {', '.join(missing)}")
         if package_id is not None and package_id not in self.packages:
             raise PackageNotFoundError(str(package_id))
+        check_all_untouched([self._graph.elements[i] for i in dict.fromkeys(element_ids)])
         events = events_for(
             audit, {i: self._graph.elements[i].package_id for i in dict.fromkeys(element_ids)}
         )
@@ -1411,8 +1432,8 @@ def repository(audit_log: InMemoryAuditLog) -> InMemoryRepository:
 
 
 @pytest.fixture
-def documents(audit_log: InMemoryAuditLog) -> InMemoryDocuments:
-    return InMemoryDocuments(audit_log)
+def documents(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> InMemoryDocuments:
+    return InMemoryDocuments(audit_log, repository)
 
 
 @pytest.fixture
