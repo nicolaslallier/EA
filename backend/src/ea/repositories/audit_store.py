@@ -71,6 +71,14 @@ def write_events(session: AsyncSession, events: Sequence[AuditEvent]) -> None:
     No flush here: the caller has already flushed the write itself (that is where
     a refusal surfaces), so an event is only ever added behind a write that held.
     """
+    for event in events:
+        # Fail closed: an event nobody can be held to is worse than none, and the
+        # write behind it must not commit. `AuditTrail` cannot build one (it asks
+        # `require_caller()`); this is the last door, for any other route.
+        for field in ("actor_sub", "actor_name", "request_id"):
+            if not getattr(event, field):
+                msg = f"an audit event needs a non-empty {field}"
+                raise ValueError(msg)
     session.add_all([AuditEventRecord(**event_row(event)) for event in events])
 
 

@@ -39,9 +39,10 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.core.logging import TOOLS_LOGGER, summarise
+from ea.domain.audit import AuditChannel
 from ea.domain.errors import DomainError
 from ea.mcp.auth import caller_of
-from ea.services.caller import acting_as
+from ea.services.caller import acting_as, acting_through
 
 logger = logging.getLogger(TOOLS_LOGGER)
 
@@ -86,7 +87,7 @@ def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awa
             nullcontext() if token is None else acting_as(caller_of(token))
         )
         try:
-            with caller:
+            with caller, acting_through(AuditChannel.MCP):
                 answer = await tool(*args, **kwargs)
         except (DomainError, ValueError) as failure:
             # Anticipated: the agent is being told something it can act on, so
