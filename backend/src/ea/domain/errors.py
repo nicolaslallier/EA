@@ -200,3 +200,10 @@ class SavedQueryNotFoundError(DomainError):
 
 class DuplicateSavedQueryError(DomainError):
     """A saved query name is already taken."""
+
+
+class InvalidCursorError(DomainError):
+    """A pagination cursor this server did not issue — forged, truncated, or from elsewhere.
+
+    A refusal and not a crash: the cursor travels in a URL, and anyone can edit one.
+    """
