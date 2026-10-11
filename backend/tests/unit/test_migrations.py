@@ -353,3 +353,26 @@ def test_the_review_state_sits_beside_the_properties_and_is_constrained() -> Non
     }
     assert not table.c.approval_state.nullable and not table.c.locked.nullable
     assert table.c.approved_by_sub.nullable and table.c.approved_at.nullable
+
+
+def test_revision_0014_follows_0013() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0014")
+
+    assert revision is not None
+    assert revision.down_revision == "0013"
+
+
+def test_the_validity_indexes_are_declared_on_the_models() -> None:
+    """The four expression indexes (docs/adr/0059) are in the metadata: autogenerate keeps them."""
+    declared = {
+        index.name
+        for table in ("elements", "relationships")
+        for index in Base.metadata.tables[table].indexes
+    }
+
+    assert {
+        "ix_elements_valid_from",
+        "ix_elements_valid_until",
+        "ix_relationships_valid_from",
+        "ix_relationships_valid_until",
+    } <= declared

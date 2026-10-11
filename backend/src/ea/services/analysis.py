@@ -82,7 +82,7 @@ def analysis_admission(
     )
 
 
-async def _off_the_loop[**P, R](
+async def off_the_loop[**P, R](
     lease: Lease | None, function: Callable[P, R], *args: P.args, **kwargs: P.kwargs
 ) -> R:
     """Run a CPU-bound function in a thread; the lease is held until the thread ends."""
@@ -192,7 +192,7 @@ class AnalysisService:
             raise ScopeTooLargeError(msg)
         # CPU-bound (pairwise name comparison): off the event loop, and the place is held until
         # the thread has really ended, even if the client hangs up or the lease expires.
-        report = await _off_the_loop(lease, run_checks, elements, links, self._params)
+        report = await off_the_loop(lease, run_checks, elements, links, self._params)
         logger.info(
             "quality run: %d findings over %d elements",
             len(report.findings),
@@ -252,7 +252,7 @@ class AnalysisService:
             scope = await self._scope(package_id, query_id)
             groups = await self._repository.grouped(dimensions, key, scope=scope)
             # Folding up to RAW_GROUP_CEILING groups is CPU: off the loop, place held to its end.
-            return await _off_the_loop(lease, summarise, groups, dimensions, metric, key)
+            return await off_the_loop(lease, summarise, groups, dimensions, metric, key)
 
     async def _scope(
         self, package_id: UUID | None, query_id: UUID | None

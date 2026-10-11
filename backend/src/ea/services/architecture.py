@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -32,6 +32,7 @@ from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview
+from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_approver, require_caller, require_editor
 from ea.services.refusals import logged_refusal
@@ -126,7 +127,9 @@ class ArchitectureService:
         properties: Mapping[str, str] | None = None,
     ) -> Element:
         require_editor()
-        properties = validate_ipam_properties(element_type, properties)
+        properties = validate_lifespan_properties(
+            validate_ipam_properties(element_type, properties)
+        )
         element = Element.create(
             element_type=element_type,
             name=name,
@@ -192,7 +195,9 @@ class ArchitectureService:
         caller = require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
-        properties = validate_ipam_properties(current.element_type, properties)
+        properties = validate_lifespan_properties(
+            validate_ipam_properties(current.element_type, properties)
+        )
 
         def patch(stored: Element) -> Element:
             """Pure; the repository applies it to the row it holds under lock.
@@ -252,6 +257,10 @@ class ArchitectureService:
         def patch(stored: Element) -> Element:
             """Pure; applied to the row under lock. Returns `stored` itself if all is filled."""
             fill = {k: v for k, v in filling.items() if not stored.properties.get(k)}
+            if fill:
+                # Judged on the row under lock, and stored in its canonical spelling.
+                merged = validate_lifespan_properties({**stored.properties, **fill}) or {}
+                fill = {k: merged[k] for k in fill if k in merged}
             wants_description = bool(description.strip()) and not stored.description
             if not fill and not wants_description:
                 return stored
@@ -413,6 +422,7 @@ class ArchitectureService:
     ) -> Relationship:
         """Link two elements, refusing anything the metamodel or the graph forbids."""
         require_editor()
+        properties = validate_lifespan_properties(properties)
         source = await self.get_element(source_id)
         target = await self.get_element(target_id)
 
@@ -481,6 +491,7 @@ class ArchitectureService:
         relationship_types: Sequence[RelationshipType] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
         require_caller()
         return await self._repository.list_relationships(
@@ -488,6 +499,7 @@ class ArchitectureService:
             relationship_types=relationship_types,
             limit=limit,
             offset=offset,
+            as_of=as_of,
         )
 
     async def disconnect(self, relationship_id: UUID) -> None:
@@ -540,12 +552,17 @@ class ArchitectureService:
         *,
         depth: int = 1,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
-        """The sub-graph around an element — what a diagram of it would show."""
+        """The sub-graph around an element — what a diagram of it would show.
+
+        On `as_of`, an element that exists but is not in service that day gives an empty
+        sub-graph (docs/adr/0060), not a 404.
+        """
         require_caller()
         await self.get_element(element_id)
         return await self._repository.neighbourhood(
-            element_id, depth=depth, relationship_types=relationship_types
+            element_id, depth=depth, relationship_types=relationship_types, as_of=as_of
         )
 
     async def impact_of(
@@ -554,10 +571,11 @@ class ArchitectureService:
         *,
         depth: int = 5,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """Everything that would be affected if this element stopped working."""
         require_caller()
         await self.get_element(element_id)
         return await self._repository.impacted_by(
-            element_id, depth=depth, relationship_types=relationship_types
+            element_id, depth=depth, relationship_types=relationship_types, as_of=as_of
         )

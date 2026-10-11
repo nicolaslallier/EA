@@ -46,6 +46,7 @@ from ea.api.schemas import (
     AddressRead,
     Against,
     AggregateRead,
+    AsOf,
     AuditPageRead,
     AxisSelect,
     BaselineDiffRead,
@@ -81,6 +82,8 @@ from ea.api.schemas import (
     PackageRead,
     PackageTarget,
     PassageRead,
+    PlateauGapRead,
+    PlateauRead,
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
@@ -155,6 +158,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
@@ -308,7 +312,16 @@ catalogue and after an import, and fix what it reports at the element it names.
 
 `aggregate_model` totals the catalogue by layer, element type or an attribute
 such as `property:lifecycle`, optionally summing a numeric property like `cost`.
-Prefer it to listing elements and adding them up yourself.\
+Prefer it to listing elements and adding them up yourself.
+
+Elements and links may carry a validity in their properties: `valid_from` and
+`valid_until`, each written `YYYY-MM-DD` (the last day counts; a missing one is
+open) — never `2027-06` or `2027-Q2`. `as_of` on `list_elements`, `neighbourhood`
+and `impact_of` reads the model as it is on a day. A plateau is a state of the
+architecture, containing what it composes or aggregates: `list_plateaus` lists
+them by date, `gap_between` says what leaves, arrives and stays from one to
+another. Never work that out by hand. `create_gap=true` also draws the `gap`
+element — it writes, so ask first.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -322,6 +335,7 @@ AuditProvider = Callable[[], AuditService]
 BaselineProvider = Callable[[], BaselineService]
 ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
+TimelineProvider = Callable[[], TimelineService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -332,6 +346,15 @@ AnalysisProvider = Callable[[], AnalysisService]
 # agent is offered: a document as text, a search, an id described for a model.
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
+]
+AsOfArgument = Annotated[
+    AsOf | None,
+    Field(
+        description=(
+            "A day, YYYY-MM-DD: read the model as it is that day - what is not yet or "
+            "no longer in service is left out. Omit it to see everything."
+        )
+    ),
 ]
 Properties = Annotated[
     dict[str, str] | None,
@@ -604,15 +627,16 @@ def build_mcp_server(
     get_baselines: BaselineProvider,
     get_exchanges: ExchangeProvider,
     get_analysis: AnalysisProvider,
+    get_timeline: TimelineProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the ten services.
+    """Assemble the tool set over the eleven services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines, the exchanges and the analyses.
+    queries, the audit trail, the baselines, the exchanges, the analyses and the time.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -624,7 +648,7 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis` are required for the same reason.
+    `get_analysis` and `get_timeline` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -684,8 +708,12 @@ def build_mcp_server(
         include_subpackages: bool = True,
         limit: Limit = 50,
         offset: Offset = 0,
+        as_of: AsOfArgument = None,
     ) -> ElementPage:
         """Browse the catalogue, narrowed by type, layer, name fragment or package.
+
+        `as_of` reads the catalogue on a day: an element carries `valid_from` /
+        `valid_until` (YYYY-MM-DD) in its properties and is left out outside them.
 
         All the criteria are combined with AND. `total` counts everything the
         criteria match, not the page, so a follow-up call can page through it.
@@ -699,6 +727,7 @@ def build_mcp_server(
             include_subpackages=include_subpackages,
             limit=limit,
             offset=offset,
+            as_of=as_of,
         )
         service = get_service()
         return ElementPage(
@@ -865,6 +894,7 @@ def build_mcp_server(
         element_id: ElementId,
         depth: Depth = 1,
         relationship_types: list[RelationshipType] | None = None,
+        as_of: AsOfArgument = None,
     ) -> GraphRead:
         """What is around an element, within `depth` hops, following links either way.
 
@@ -873,7 +903,10 @@ def build_mcp_server(
         """
         return GraphRead.of(
             await get_service().neighbourhood(
-                element_id, depth=depth, relationship_types=tuple(relationship_types or ())
+                element_id,
+                depth=depth,
+                relationship_types=tuple(relationship_types or ()),
+                as_of=as_of,
             )
         )
 
@@ -883,6 +916,7 @@ def build_mcp_server(
         element_id: ElementId,
         depth: Depth = 5,
         relationship_types: list[RelationshipType] | None = None,
+        as_of: AsOfArgument = None,
     ) -> GraphRead:
         """What depends on an element, transitively — what breaks if it fails.
 
@@ -894,9 +928,47 @@ def build_mcp_server(
         """
         return GraphRead.of(
             await get_service().impact_of(
-                element_id, depth=depth, relationship_types=tuple(relationship_types or ())
+                element_id,
+                depth=depth,
+                relationship_types=tuple(relationship_types or ()),
+                as_of=as_of,
             )
         )
+
+    # --- Time (docs/adr/0061) ---------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_plateaus() -> list[PlateauRead]:
+        """The plateaus of the architecture, earliest first: the states to compare.
+
+        Each carries when it is reached (`valid_from` / `valid_until`) and how many
+        elements it contains. A plateau with no date comes last. Use `gap_between`
+        to compare two of them.
+        """
+        return [PlateauRead.of(summary) for summary in await get_timeline().list_plateaus()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def gap_between(
+        a: Annotated[UUID, Field(description="The id of the plateau to start from.")],
+        b: Annotated[UUID, Field(description="The id of the plateau to reach.")],
+        create_gap: Annotated[
+            bool,
+            Field(description="Also draw the `gap` element between them (writes). Default: no."),
+        ] = False,
+    ) -> PlateauGapRead:
+        """What leaves, arrives and stays from plateau `a` to plateau `b`: compare two states.
+
+        The answer lists the elements `only_in_a` (leaving), `only_in_b` (arriving) and
+        `common`, plus the `gaps` already drawn between the two. It only reads as long as
+        `create_gap` is false; with `create_gap=true` it also creates a `gap` element
+        associated to both plateaus (refused if one already exists) and is a write.
+        """
+        timeline = get_timeline()
+        if create_gap:
+            await timeline.create_gap(a, b)
+        return PlateauGapRead.of(await timeline.plateau_gap(a, b))
 
     # --- Documents --------------------------------------------------------
     # The markdown attached to an element, which lives in PostgreSQL while the

@@ -17,7 +17,7 @@ from collections.abc import (
 )
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -168,6 +168,8 @@ class ElementFilter:
     order: QueryOrder = QueryOrder.NAME
     limit: int = 50
     offset: int = 0
+    #: Read the model as it is on this day (docs/adr/0060); `None` filters nothing.
+    as_of: date | None = None
 
     @classmethod
     def from_query(cls, query: ElementQuery) -> ElementFilter:
@@ -271,6 +273,7 @@ class ArchitectureRepository(Protocol):
         relationship_types: Sequence[RelationshipType] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]: ...
 
     async def delete_relationship(
@@ -301,6 +304,7 @@ class ArchitectureRepository(Protocol):
         *,
         depth: int = 1,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """Everything reachable from an element within `depth` hops, either way."""
         ...
@@ -311,6 +315,7 @@ class ArchitectureRepository(Protocol):
         *,
         depth: int = 5,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """What depends on this element — the answer to "what breaks if it fails".
 
@@ -563,6 +568,52 @@ class IpamRepository(Protocol):
         reason an element holds a single address rather than a list — see
         `domain/ipam.py`.
         """
+        ...
+
+
+class TimelineRepository(Protocol):
+    """The reads behind the plateaus, the gap and the roadmap, and the unit of the gap's write.
+
+    Every read takes a `limit` and applies it in SQL: the service asks for one more than its
+    ceiling and refuses the question when it gets it (docs/adr/0061).
+    """
+
+    async def plateaus(self, *, limit: int) -> tuple[tuple[Element, int], ...]:
+        """Plateaus with the number of elements each composes or aggregates; at most `limit`."""
+        ...
+
+    async def members_of(self, plateau_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        """The elements a plateau composes or aggregates, by name; at most `limit`."""
+        ...
+
+    async def gaps_between(self, a_id: UUID, b_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        """The `gap` elements associated to both plateaus, whichever way; at most `limit`."""
+        ...
+
+    async def roadmap_elements(
+        self,
+        element_types: Sequence[ElementType],
+        start: date | None,
+        end: date | None,
+        *,
+        limit: int,
+    ) -> tuple[Element, ...]:
+        """Elements of those types whose validity overlaps `[start, end]` (open ends are
+        open), undated ones included; at most `limit`."""
+        ...
+
+    async def roadmap_links(
+        self, element_ids: Sequence[UUID], *, limit: int
+    ) -> tuple[Relationship, ...]:
+        """Containment, triggering and realization links with both ends among `element_ids`."""
+        ...
+
+    async def lock_gap_pair(self, a_id: UUID, b_id: UUID) -> None:
+        """Serialise the writers of a gap between these two plateaus until the transaction ends."""
+        ...
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases of the architecture service (docs/adr/0052)."""
         ...
 
 

@@ -39,6 +39,7 @@ from ea.domain.errors import (
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicateElementError,
+    DuplicateGapError,
     DuplicateNetworkError,
     DuplicatePackageError,
     DuplicateSavedQueryError,
@@ -58,7 +59,9 @@ from ea.domain.errors import (
     InvalidExchangeFileError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
+    InvalidLifespanError,
     InvalidQueryError,
+    InvalidTimelineError,
     InvalidTransitionError,
     MatrixAxisTooLargeError,
     NetworkExhaustedError,
@@ -189,6 +192,10 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     InvalidAnalysisError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_analysis"),
     AnalysisBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "analysis_busy"),
     AnalysisTimeoutError: (status.HTTP_503_SERVICE_UNAVAILABLE, "analysis_timeout"),
+    # --- Time in the model (docs/adr/0059, 0060, 0061) ---
+    InvalidLifespanError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifespan"),
+    InvalidTimelineError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_timeline"),
+    DuplicateGapError: (status.HTTP_409_CONFLICT, "duplicate_gap"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

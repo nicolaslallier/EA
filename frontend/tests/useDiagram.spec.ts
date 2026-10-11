@@ -68,6 +68,33 @@ async function opened(routes: Route[] = [READ, SAVE]) {
 }
 
 describe('useDiagram', () => {
+  it('asks the diagram on a day, keeps every box and flags the ones out of period', async () => {
+    const calls = stubApi([
+      {
+        path: `/diagrams/${DIAGRAM_ID}`,
+        body: aDiagram({
+          nodes: [
+            { element_id: A.id, x: 0, y: 0, width: 132, height: 46 },
+            { element_id: B.id, x: 200, y: 0, width: 132, height: 46 },
+          ],
+          elements: [A, B],
+          inactive_element_ids: [B.id],
+          inactive_relationship_ids: [],
+        }),
+      },
+    ])
+    const editor = useDiagram()
+
+    await editor.open(DIAGRAM_ID, '2028-01-01')
+
+    expect(calls.at(-1)?.url.searchParams.get('as_of')).toBe('2028-01-01')
+    expect(editor.boxes.value).toHaveLength(2)
+    expect(editor.inactiveIds.value).toEqual([B.id])
+
+    await editor.open(DIAGRAM_ID)
+    expect(calls.at(-1)?.url.searchParams.has('as_of')).toBe(false)
+  })
+
   it('draws the boxes of the diagram, skipping one whose element is gone', async () => {
     const { calls, editor } = await opened()
 

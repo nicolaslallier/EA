@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, Response, status
 
 from ea.api.dependencies import Diagrams
 from ea.api.schemas import (
+    AsOf,
     DiagramCreate,
     DiagramLayout,
     DiagramRead,
@@ -67,9 +68,14 @@ async def create_diagram(body: DiagramCreate, diagrams: Diagrams) -> DiagramSumm
 
 
 @router.get("/diagrams/{diagram_id}", response_model=DiagramRead, responses=NOT_FOUND)
-async def read_diagram(diagram_id: UUID, diagrams: Diagrams) -> DiagramRead:
-    """A diagram with its boxes, the elements they show and the links between them."""
-    return DiagramRead.of(await diagrams.open(diagram_id))
+async def read_diagram(
+    diagram_id: UUID, diagrams: Diagrams, as_of: Annotated[AsOf | None, Query()] = None
+) -> DiagramRead:
+    """A diagram with its boxes, the elements they show and the links between them.
+
+    `as_of` removes nothing: it lists, in `inactive_*_ids`, what is out of period that day.
+    """
+    return DiagramRead.of(await diagrams.open(diagram_id, as_of=as_of))
 
 
 @router.patch("/diagrams/{diagram_id}", response_model=DiagramSummaryRead, responses=REJECTED)

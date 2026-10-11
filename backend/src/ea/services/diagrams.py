@@ -26,10 +26,12 @@ from ea.domain.errors import (
     UnknownLayoutElementError,
 )
 from ea.domain.packages import UNSET, Unset, descendants_of
+from ea.domain.timeline import Lifespan
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
+    from datetime import date
     from uuid import UUID
 
     from ea.domain.audit import AuditEvent
@@ -119,17 +121,39 @@ class DiagramService:
             raise _not_found(diagram_id)
         return diagram
 
-    async def open(self, diagram_id: UUID) -> DiagramDetail:
-        """A diagram with the part of the graph it shows, stale boxes left out."""
+    async def open(self, diagram_id: UUID, *, as_of: date | None = None) -> DiagramDetail:
+        """A diagram with the part of the graph it shows, stale boxes left out.
+
+        `as_of` removes nothing - a diagram is a view, and a box out of period keeps
+        its place in the layout (docs/adr/0060) - it only says which ones are not in
+        service that day, for the SPA to grey.
+        """
         require_caller()
         diagram = await self.get(diagram_id)
         nodes = await self._repository.nodes_of(diagram_id)
         graph = await self._architecture.view_of([node.element_id for node in nodes])
         present = {element.id for element in graph.elements}
+        inactive_elements: frozenset[UUID] = frozenset()
+        inactive_links: frozenset[UUID] = frozenset()
+        if as_of is not None:
+            inactive_elements = frozenset(
+                e.id
+                for e in graph.elements
+                if not Lifespan.read_tolerant(e.properties).covers(as_of)
+            )
+            inactive_links = frozenset(
+                link.id
+                for link in graph.relationships
+                if not Lifespan.read_tolerant(link.properties).covers(as_of)
+                or link.source_id in inactive_elements
+                or link.target_id in inactive_elements
+            )
         return DiagramDetail(
             diagram=diagram,
             nodes=tuple(node for node in nodes if node.element_id in present),
             graph=graph,
+            inactive_elements=inactive_elements,
+            inactive_relationships=inactive_links,
         )
 
     async def update(

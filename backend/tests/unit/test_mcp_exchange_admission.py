@@ -28,6 +28,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 from tests.conftest import InMemoryAuditLog, InMemoryExchange, InMemoryRepository
 from tests.exchange_files import DATA
 from tests.unit.test_exchange_admission import Parser, Wire, run, settle
@@ -64,6 +65,7 @@ def mcp_over(
         lambda: baseline_service,
         lambda: app.state.exchange_service,
         lambda: AnalysisService(service, InMemoryRepository()),
+        lambda: TimelineService(service, InMemoryRepository()),
     )
 
 

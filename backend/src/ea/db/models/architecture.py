@@ -64,6 +64,18 @@ class ElementRecord(Base):
             unique=True,
             postgresql_where=text("properties ? 'vrf' AND properties ? 'cidr'"),
         ),
+        # The validity dates of docs/adr/0059, as fixed-width ISO strings: the order of
+        # the strings is the order of the days. Partial, so an undated element costs nothing.
+        Index(
+            "ix_elements_valid_from",
+            text("(properties ->> 'valid_from')"),
+            postgresql_where=text("(properties ->> 'valid_from') IS NOT NULL"),
+        ),
+        Index(
+            "ix_elements_valid_until",
+            text("(properties ->> 'valid_until')"),
+            postgresql_where=text("(properties ->> 'valid_until') IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -99,6 +111,19 @@ class RelationshipRecord(Base):
     """One typed, directed link between two elements."""
 
     __tablename__ = "relationships"
+    __table_args__ = (
+        # Static DDL text, no runtime value: the validity indexes, as on `elements`.
+        Index(
+            "ix_relationships_valid_from",
+            text("(properties ->> 'valid_from')"),
+            postgresql_where=text("(properties ->> 'valid_from') IS NOT NULL"),
+        ),
+        Index(
+            "ix_relationships_valid_until",
+            text("(properties ->> 'valid_until')"),
+            postgresql_where=text("(properties ->> 'valid_until') IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     relationship_type: Mapped[str] = mapped_column(Text, nullable=False)

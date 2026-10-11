@@ -20,6 +20,7 @@ import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import GraphDiagram from '../../components/GraphDiagram.vue'
+import { useAsOf } from '../../lib/asof'
 import { useElementCatalogue } from '../elements/useElementCatalogue'
 import { LAYER_COLOURS, LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import { RELATIONSHIP_LABELS } from '../relationships/labels'
@@ -27,6 +28,7 @@ import type { ElementRead, RelationshipType } from './useImpact'
 import { DEFAULT_DEPTH, MAX_DEPTH, useImpact } from './useImpact'
 
 const route = useRoute()
+const { asOf } = useAsOf()
 const router = useRouter()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
@@ -100,10 +102,11 @@ async function load(): Promise<void> {
   await impact.analyse(subjectId.value, {
     depth: depth.value,
     relationshipType: relationshipType.value,
+    asOf: asOf.value,
   })
 }
 
-watch([subjectId, depth, relationshipType], load, { immediate: true })
+watch([subjectId, depth, relationshipType, asOf], load, { immediate: true })
 
 /**
  * Ask a new question by changing the URL.

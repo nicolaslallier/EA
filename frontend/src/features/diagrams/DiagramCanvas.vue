@@ -30,7 +30,11 @@ const props = defineProps<{
   typeLabel: (value: string) => string
   /** A reader's canvas: boxes can be selected, never dropped, moved, linked or removed. */
   readonly?: boolean
+  /** Elements out of period on the day read: their boxes are greyed, not removed. */
+  inactiveIds?: string[]
 }>()
+
+const inactive = computed(() => new Set(props.inactiveIds ?? []))
 
 const emit = defineEmits<{
   place: [elementId: string, at: Point]
@@ -292,11 +296,16 @@ function removeIfSelected(box: Box): void {
           v-for="box in boxes"
           :key="box.element.id"
           class="canvas__node"
-          :class="{ 'canvas__node--selected': box.element.id === selectedId }"
+          :class="{
+            'canvas__node--selected': box.element.id === selectedId,
+            'canvas__node--inactive': inactive.has(box.element.id),
+          }"
           role="button"
           tabindex="0"
           :aria-pressed="box.element.id === selectedId"
-          :aria-label="`${box.element.name} — ${typeLabel(box.element.element_type)}`"
+          :aria-label="`${box.element.name} — ${typeLabel(box.element.element_type)}${
+            inactive.has(box.element.id) ? ' — hors période' : ''
+          }`"
           @pointerdown="grab($event, box)"
           @click="emit('select', box.element.id)"
           @keydown.enter.prevent="emit('select', box.element.id)"
@@ -460,6 +469,9 @@ svg {
 .canvas__node:hover rect {
   stroke: var(--text);
   stroke-width: 2;
+}
+.canvas__node--inactive {
+  opacity: 0.35;
 }
 .canvas__node--selected rect {
   stroke: var(--text);

@@ -10,6 +10,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useAsOf } from '../../lib/asof'
 import { useElementCatalogue } from '../elements/useElementCatalogue'
 import { useMetamodel } from '../metamodel/useMetamodel'
 import { RELATIONSHIP_LABELS } from '../relationships/labels'
@@ -18,6 +19,7 @@ import type { ElementRead, RelationshipType } from './useNeighbourhood'
 import { DEFAULT_DEPTH, MAX_DEPTH, useNeighbourhood } from './useNeighbourhood'
 
 const route = useRoute()
+const { asOf } = useAsOf()
 const router = useRouter()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
@@ -66,10 +68,11 @@ async function load(): Promise<void> {
   await neighbourhood.explore(focusId.value, {
     depth: depth.value,
     relationshipType: relationshipType.value,
+    asOf: asOf.value,
   })
 }
 
-watch([focusId, depth, relationshipType], load, { immediate: true })
+watch([focusId, depth, relationshipType, asOf], load, { immediate: true })
 
 /**
  * Ask a new question by changing the URL.

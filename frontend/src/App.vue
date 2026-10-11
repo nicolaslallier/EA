@@ -2,10 +2,13 @@
 // The shell: a header, the section menu, and whatever the router mounts.
 // It holds no screen of its own — every section lives behind a route.
 import AppNav from './components/AppNav.vue'
+import AsOfPicker from './components/AsOfPicker.vue'
 import BackendStatus from './components/BackendStatus.vue'
 import UserBadge from './components/UserBadge.vue'
-
+import { useAsOf } from './lib/asof'
 import { HOME } from './router/sections'
+
+const { asOf } = useAsOf()
 </script>
 
 <template>
@@ -13,6 +16,7 @@ import { HOME } from './router/sections'
     <header class="app__header">
       <RouterLink class="app__brand" :to="HOME">EA — Enterprise Architecture</RouterLink>
       <div class="app__status">
+        <AsOfPicker />
         <BackendStatus />
         <UserBadge />
       </div>
@@ -21,6 +25,9 @@ import { HOME } from './router/sections'
     <div class="app__body">
       <AppNav />
       <main class="app__main">
+        <p v-if="asOf" class="app__asof" role="status">
+          Vue au {{ asOf }} — le catalogue est filtré à cette date.
+        </p>
         <RouterView />
       </main>
     </div>
@@ -67,6 +74,14 @@ import { HOME } from './router/sections'
 .app__main {
   flex: 1;
   min-width: 0;
+}
+
+.app__asof {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 48rem) {

@@ -57,6 +57,7 @@ from ea.domain.errors import (
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import PATH_SEPARATOR
+from ea.domain.timeline import readable_lifespan_properties
 from ea.repositories.architecture_store import (
     author_of,
     constraint_of,
@@ -184,7 +185,7 @@ def _copied_element(row: BaselineElementRecord) -> Element:
         updated_at=row.updated_at,
         description=row.description,
         documentation=row.documentation,
-        properties=dict(row.properties),
+        properties=readable_lifespan_properties(row.properties),
         package_id=row.package_id,
     )
 
@@ -201,7 +202,7 @@ def _copied_relationship(row: BaselineRelationshipRecord) -> Relationship:
         name=row.name,
         access_type=AccessType(row.access_type) if row.access_type else None,
         directed=row.directed,
-        properties=dict(row.properties),
+        properties=readable_lifespan_properties(row.properties),
     )
 
 

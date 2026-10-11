@@ -41,6 +41,16 @@ function svg(): SVGSVGElement {
 }
 
 describe('DiagramCanvas', () => {
+  it('greys the boxes whose element is out of period without removing them', () => {
+    draw({ inactiveIds: [B.id] })
+
+    const grey = screen.getByRole('button', { name: /Commandes.*hors période/ })
+    expect(grey).toHaveClass('canvas__node--inactive')
+    expect(screen.getByRole('button', { name: /^Facturation/ })).not.toHaveClass(
+      'canvas__node--inactive',
+    )
+  })
+
   it('draws one box per element and each link as its verb', () => {
     draw()
 

@@ -41,7 +41,7 @@ from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
-from ea.db.unit_of_work import is_query_canceled, reading, work
+from ea.db.unit_of_work import is_query_canceled, reading, shared_transaction, work
 from ea.domain.analytics import (
     MAX_NUMBER_INPUT,
     NUMBER_PATTERN,
@@ -74,17 +74,21 @@ from ea.domain.ports import (
     Held,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
+from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
+    from contextlib import AbstractAsyncContextManager
+    from datetime import date
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
 
     from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.ports import Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +323,7 @@ def _matching(criteria: ElementFilter) -> list[ColumnElement[bool]]:
             clauses.append(ElementRecord.package_id == criteria.package_id)
     clauses.extend(_property_clause(test) for test in criteria.properties)
     clauses.extend(_relation_clause(test) for test in criteria.relations)
+    clauses.extend(visible_at(ElementRecord, criteria.as_of))
     return clauses
 
 
@@ -336,6 +341,35 @@ def _has(key: str) -> ColumnElement[bool]:
 def _text_of(key: str) -> ColumnElement[str]:
     """`properties ->> key`, the expression the two unique indexes are built on."""
     return ElementRecord.properties.op("->>", return_type=Text)(key)
+
+
+def _day_of(record: Any, key: str) -> ColumnElement[str]:
+    """`properties ->> 'key'` with the key inlined: a constant of ours, never user input.
+
+    Inlined with `literal_column` and not bound: the expression must read exactly
+    like the one the validity indexes are built on (migration 0014), which a
+    bound parameter would not.
+    """
+    expression: ColumnElement[str] = record.properties.op("->>", return_type=Text)(
+        literal_column("'" + key + "'")
+    )
+    return expression
+
+
+def visible_at(record: Any, as_of: date | None) -> list[ColumnElement[bool]]:
+    """The conditions that make a row visible on `as_of`; none when no day is asked.
+
+    Both ends are inclusive and a missing bound is open (docs/adr/0059). The day
+    is compared as its ISO string, which sorts like the day itself, and is a bound
+    parameter. Called with `ElementRecord`, `RelationshipRecord` or an alias of
+    either; returning a list lets every call site splat it, so `None` adds no
+    condition and no join (docs/adr/0060).
+    """
+    if as_of is None:
+        return []
+    day = as_of.isoformat()
+    starts, ends = _day_of(record, VALID_FROM), _day_of(record, VALID_UNTIL)
+    return [or_(starts.is_(None), starts <= day), or_(ends.is_(None), ends >= day)]
 
 
 #: A read-only analysis that runs longer than this is cancelled by PostgreSQL,
@@ -393,49 +427,65 @@ def _clamp_depth(depth: int) -> int:
     return max(1, min(depth, MAX_TRAVERSAL_DEPTH))
 
 
-def _seed(element_id: UUID) -> CTE:
-    """The start of a walk: the element itself at zero hops, or nothing if absent."""
+def _seed(element_id: UUID, as_of: date | None) -> CTE:
+    """The start of a walk: the element itself at zero hops, or nothing if absent.
+
+    Nothing too when it is not in service on `as_of`: a retired root reaches nothing.
+    """
     return (
         select(ElementRecord.id.label("id"), literal_column("0", Integer).label("hops"))
-        .where(ElementRecord.id == element_id)
+        .where(ElementRecord.id == element_id, *visible_at(ElementRecord, as_of))
         .cte("reached", recursive=True)
     )
 
 
-def _neighbourhood_walk(element_id: UUID, depth: int, types: Sequence[RelationshipType]) -> CTE:
+def _in_service(step: Any, next_id: Any, as_of: date | None) -> Any:
+    """Restrict a recursive term to links and far ends in service on `as_of`.
+
+    The far end is joined only when a day is asked, so without one the term is
+    exactly the one it always was. In the recursive term, so a neighbour out of
+    service *cuts* the path: nothing beyond it is reached through it.
+    """
+    if as_of is None:
+        return step
+    far = aliased(ElementRecord)
+    return step.join(far, far.id == next_id).where(
+        *visible_at(RelationshipRecord, as_of), *visible_at(far, as_of)
+    )
+
+
+def _neighbourhood_walk(
+    element_id: UUID, depth: int, types: Sequence[RelationshipType], as_of: date | None = None
+) -> CTE:
     """Every element within `depth` hops, whichever way each link points."""
-    reached = _seed(element_id)
+    reached = _seed(element_id, as_of)
     link = RelationshipRecord
+    next_id = case((link.source_id == reached.c.id, link.target_id), else_=link.source_id)
     step = (
-        select(
-            case((link.source_id == reached.c.id, link.target_id), else_=link.source_id).label(
-                "id"
-            ),
-            (reached.c.hops + 1).label("hops"),
-        )
+        select(next_id.label("id"), (reached.c.hops + 1).label("hops"))
         .select_from(reached)
         .join(link, or_(link.source_id == reached.c.id, link.target_id == reached.c.id))
         .where(reached.c.hops < depth, *_of_types(types))
     )
-    return reached.union(step)
+    return reached.union(_in_service(step, next_id, as_of))
 
 
-def _impact_walk(element_id: UUID, depth: int, types: Sequence[RelationshipType]) -> CTE:
+def _impact_walk(
+    element_id: UUID, depth: int, types: Sequence[RelationshipType], as_of: date | None = None
+) -> CTE:
     """Everything that depends on an element, each hop taken the way dependency runs.
 
     A hop along a type of `ALONG_THE_ARROW` leaves from its source; any other
-    leaves from its target. That lets one walk mix both — forwards for
-    `serving`, backwards for `composition` — without answering a different
+    leaves from its target. That lets one walk mix both - forwards for
+    `serving`, backwards for `composition` - without answering a different
     question halfway through.
     """
-    reached = _seed(element_id)
+    reached = _seed(element_id, as_of)
     link = RelationshipRecord
     along = link.relationship_type.in_(ALONG_THE_ARROW)
+    next_id = case((along, link.target_id), else_=link.source_id)
     step = (
-        select(
-            case((along, link.target_id), else_=link.source_id).label("id"),
-            (reached.c.hops + 1).label("hops"),
-        )
+        select(next_id.label("id"), (reached.c.hops + 1).label("hops"))
         .select_from(reached)
         .join(
             link,
@@ -446,11 +496,14 @@ def _impact_walk(element_id: UUID, depth: int, types: Sequence[RelationshipType]
         )
         .where(reached.c.hops < depth, *_of_types(types))
     )
-    return reached.union(step)
+    return reached.union(_in_service(step, next_id, as_of))
 
 
 async def _links_within(
-    session: AsyncSession, ids: Sequence[UUID], types: Sequence[RelationshipType]
+    session: AsyncSession,
+    ids: Sequence[UUID],
+    types: Sequence[RelationshipType],
+    as_of: date | None = None,
 ) -> tuple[Relationship, ...]:
     """The relationships whose two ends are both among `ids`: a drawable sub-graph."""
     if not ids:
@@ -461,6 +514,7 @@ async def _links_within(
             RelationshipRecord.source_id.in_(ids),
             RelationshipRecord.target_id.in_(ids),
             *_of_types(types),
+            *visible_at(RelationshipRecord, as_of),
         )
         .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
     )
@@ -833,8 +887,17 @@ class PostgresArchitectureRepository:
         relationship_types: Sequence[RelationshipType] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
-        statement = select(RelationshipRecord).where(*_of_types(relationship_types))
+        statement = select(RelationshipRecord).where(
+            *_of_types(relationship_types), *visible_at(RelationshipRecord, as_of)
+        )
+        if as_of is not None:
+            # A link is visible only if both of its ends are (docs/adr/0060).
+            alive = select(ElementRecord.id).where(*visible_at(ElementRecord, as_of))
+            statement = statement.where(
+                RelationshipRecord.source_id.in_(alive), RelationshipRecord.target_id.in_(alive)
+            )
         if element_id is not None:
             statement = statement.where(
                 or_(
@@ -928,9 +991,10 @@ class PostgresArchitectureRepository:
         *,
         depth: int = 1,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
-        walk = _neighbourhood_walk(element_id, _clamp_depth(depth), relationship_types)
-        return await self._view_of_walk(walk, relationship_types)
+        walk = _neighbourhood_walk(element_id, _clamp_depth(depth), relationship_types, as_of)
+        return await self._view_of_walk(walk, relationship_types, as_of)
 
     async def impacted_by(
         self,
@@ -938,9 +1002,10 @@ class PostgresArchitectureRepository:
         *,
         depth: int = 5,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
-        walk = _impact_walk(element_id, _clamp_depth(depth), relationship_types)
-        return await self._view_of_walk(walk, relationship_types)
+        walk = _impact_walk(element_id, _clamp_depth(depth), relationship_types, as_of)
+        return await self._view_of_walk(walk, relationship_types, as_of)
 
     async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
         if not element_ids:
@@ -1090,7 +1155,7 @@ class PostgresArchitectureRepository:
             return bool((await session.execute(statement)).scalar_one())
 
     async def _view_of_walk(
-        self, walk: CTE, relationship_types: Sequence[RelationshipType]
+        self, walk: CTE, relationship_types: Sequence[RelationshipType], as_of: date | None = None
     ) -> GraphView:
         """The elements a walk reached, nearest first, and the links between them."""
         statement = (
@@ -1102,9 +1167,128 @@ class PostgresArchitectureRepository:
         async with reading(self._sessions) as session:
             elements = tuple(element_from_row(row) for row in await session.scalars(statement))
             links = await _links_within(
-                session, [element.id for element in elements], relationship_types
+                session, [element.id for element in elements], relationship_types, as_of
             )
         return GraphView(elements=elements, relationships=links)
+
+    # --- Time: plateaus, gaps, roadmap (docs/adr/0061) -----------------------
+    # Every read carries its LIMIT in the statement: the service asks for one more than
+    # its ceiling and refuses the question when it gets it.
+
+    async def plateaus(self, *, limit: int) -> tuple[tuple[Element, int], ...]:
+        members = func.count(func.distinct(RelationshipRecord.target_id))
+        statement = (
+            select(ElementRecord, members)
+            .outerjoin(
+                RelationshipRecord,
+                and_(
+                    RelationshipRecord.source_id == ElementRecord.id,
+                    RelationshipRecord.relationship_type.in_([t.value for t in MEMBERSHIP]),
+                ),
+            )
+            .where(ElementRecord.element_type == ElementType.PLATEAU.value)
+            .group_by(ElementRecord.id)
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            rows = (await session.execute(statement)).all()
+        return tuple((element_from_row(row), int(count)) for row, count in rows)
+
+    async def members_of(self, plateau_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        statement = (
+            select(ElementRecord)
+            .join(RelationshipRecord, RelationshipRecord.target_id == ElementRecord.id)
+            .where(
+                RelationshipRecord.source_id == plateau_id,
+                RelationshipRecord.relationship_type.in_([t.value for t in MEMBERSHIP]),
+            )
+            .distinct()
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def gaps_between(self, a_id: UUID, b_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        def touches(plateau_id: UUID) -> ColumnElement[bool]:
+            link = RelationshipRecord
+            return exists().where(
+                link.relationship_type == RelationshipType.ASSOCIATION.value,
+                or_(
+                    and_(link.source_id == ElementRecord.id, link.target_id == plateau_id),
+                    and_(link.target_id == ElementRecord.id, link.source_id == plateau_id),
+                ),
+            )
+
+        statement = (
+            select(ElementRecord)
+            .where(
+                ElementRecord.element_type == ElementType.GAP.value, touches(a_id), touches(b_id)
+            )
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def roadmap_elements(
+        self,
+        element_types: Sequence[ElementType],
+        start: date | None,
+        end: date | None,
+        *,
+        limit: int,
+    ) -> tuple[Element, ...]:
+        clauses: list[ColumnElement[bool]] = [
+            ElementRecord.element_type.in_([t.value for t in element_types])
+        ]
+        # Overlap with [start, end], an open end of a lifespan being open: an undated
+        # element satisfies both and is kept, as the roadmap lists it apart.
+        if end is not None:
+            begins = _day_of(ElementRecord, VALID_FROM)
+            clauses.append(or_(begins.is_(None), begins <= end.isoformat()))
+        if start is not None:
+            ends = _day_of(ElementRecord, VALID_UNTIL)
+            clauses.append(or_(ends.is_(None), ends >= start.isoformat()))
+        statement = (
+            select(ElementRecord)
+            .where(*clauses)
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def roadmap_links(
+        self, element_ids: Sequence[UUID], *, limit: int
+    ) -> tuple[Relationship, ...]:
+        if not element_ids:
+            return ()
+        ids = list(element_ids)
+        kinds = [t.value for t in (*MEMBERSHIP, *ROADMAP_EDGES)]
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                RelationshipRecord.source_id.in_(ids),
+                RelationshipRecord.target_id.in_(ids),
+                RelationshipRecord.relationship_type.in_(kinds),
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def lock_gap_pair(self, a_id: UUID, b_id: UUID) -> None:
+        """A transaction-scoped advisory lock on the unordered pair, released at COMMIT/ROLLBACK."""
+        first, second = sorted((str(a_id), str(b_id)))
+        key = func.hashtextextended(f"ea:gap:{first}:{second}", 0)
+        async with reading(self._sessions) as session:
+            await session.execute(select(func.pg_advisory_xact_lock(key)))
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        return shared_transaction(self._sessions, commit=commit)
 
     # --- IP address management (docs/adr/0020) ----------------------------
     # Deliberately unbounded: an occupancy figure computed from a page of the
