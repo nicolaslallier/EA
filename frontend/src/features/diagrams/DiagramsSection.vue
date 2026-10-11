@@ -18,6 +18,7 @@ import { useMetamodel } from '../metamodel/useMetamodel'
 import PackageTree from '../packages/PackageTree.vue'
 import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
+import { useAsOf } from '../../lib/asof'
 import DiagramCanvas from './DiagramCanvas.vue'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
@@ -25,6 +26,7 @@ import { useDiagram, useElementPalette, type ElementRead } from './useDiagram'
 import { useDiagrams, type DiagramSummaryRead } from './useDiagrams'
 
 const route = useRoute()
+const { asOf } = useAsOf()
 const router = useRouter()
 const list = useDiagrams()
 const editor = useDiagram()
@@ -100,8 +102,8 @@ watch([packageParam, withSubpackages], async () => {
 })
 
 watch(
-  diagramId,
-  async (id) => {
+  [diagramId, asOf],
+  async ([id]) => {
     link.value = null
     if (!id) {
       editor.close()
@@ -109,7 +111,7 @@ watch(
       return
     }
     await Promise.all([
-      editor.open(id),
+      editor.open(id, asOf.value),
       palette.status.value === 'idle' ? palette.search('') : undefined,
     ])
   },
@@ -324,6 +326,7 @@ function onConnect(sourceId: string, targetId: string): void {
           :selected-id="selectedId"
           :type-label="metamodel.labelOf"
           :readonly="!canWrite"
+          :inactive-ids="editor.inactiveIds.value"
           @place="onPlace"
           @move="editor.move"
           @resize="editor.resize"

@@ -35,6 +35,8 @@ export function useDiagram() {
   const nodes = ref<DiagramNode[]>([])
   const elements = ref<ElementRead[]>([])
   const relationships = ref<RelationshipRead[]>([])
+  /** Boxes whose element is out of period on the day asked: greyed, never removed (docs/adr/0060). */
+  const inactiveIds = ref<string[]>([])
   const read = useLatestRequest()
   const { status, error } = read
   const saving = ref(false)
@@ -102,11 +104,16 @@ export function useDiagram() {
     return saveNow()
   }
 
-  async function open(id: string): Promise<void> {
+  async function open(id: string, asOf?: string): Promise<void> {
     await flush()
     await read.run(
       async (signal) =>
-        unwrap(await api.GET('/diagrams/{diagram_id}', { params: { path: { diagram_id: id } }, signal })),
+        unwrap(
+          await api.GET('/diagrams/{diagram_id}', {
+            params: { path: { diagram_id: id }, query: asOf ? { as_of: asOf } : {} },
+            signal,
+          }),
+        ),
       (answer) => {
         // The previous diagram stayed on screen, and editable, while this one
         // loaded: whatever was changed there goes to *that* diagram before its
@@ -116,6 +123,7 @@ export function useDiagram() {
         nodes.value = answer.nodes
         elements.value = answer.elements
         relationships.value = answer.relationships
+        inactiveIds.value = answer.inactive_element_ids ?? []
       },
       () => {
         diagram.value = null
@@ -131,6 +139,7 @@ export function useDiagram() {
     nodes.value = []
     elements.value = []
     relationships.value = []
+    inactiveIds.value = []
   }
 
   function place(element: ElementRead, at: Point): void {
@@ -189,6 +198,7 @@ export function useDiagram() {
     boxes,
     placed,
     relationships,
+    inactiveIds,
     status,
     error,
     saving,
