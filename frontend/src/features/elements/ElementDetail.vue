@@ -8,6 +8,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import ElementHistory from '../history/ElementHistory.vue'
 import { ASPECT_LABELS, LAYER_LABELS } from '../metamodel/useMetamodel'
 import type { ElementRead } from './useElementCatalogue'
 
@@ -86,6 +87,8 @@ function day(iso: string): string {
         </div>
       </dl>
     </section>
+
+    <ElementHistory :element-id="element.id" />
 
     <p class="actions">
       <RouterLink :to="{ name: 'neighbourhood', query: { element: element.id } }">
