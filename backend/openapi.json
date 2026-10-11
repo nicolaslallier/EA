@@ -6073,6 +6073,85 @@
         ]
       }
     },
+    "/documents/{document_id}/html": {
+      "get": {
+        "description": "The document as a safe HTML fragment, for a reader that cannot render markdown.\n\nRaw HTML in the document is shown as text, images are not loaded and `javascript:` / `data:`\nlinks are not links (docs/adr/0062): the SPA inserts the result with `v-html` for exactly\nthat reason.",
+        "operationId": "read_document_html_documents__document_id__html_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Document Html",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
     "/elements": {
       "get": {
         "description": "Browse the catalogue, narrowed by type, by layer, by a name fragment\nor filed in a package (subpackages included unless told otherwise).",
