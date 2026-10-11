@@ -334,3 +334,22 @@ class InvalidAnalysisError(DomainError):
 
 class AnalysisTimeoutError(DomainError):
     """The database cancelled an analysis for taking too long: narrow the question or the scope."""
+
+
+class InvalidLifespanError(DomainError):
+    """A validity date that is not a day written YYYY-MM-DD, or an end before its start.
+
+    The model keeps `valid_from` / `valid_until` as ISO strings of fixed width so
+    that sorting the strings is sorting the days (docs/adr/0059); a partial date
+    such as `2027-06` would break exactly that, so it is refused at the door. The
+    message names the key and never the value it was given.
+    """
+
+
+class InvalidTimelineError(DomainError):
+    """A question about time the model cannot answer: a plateau against itself, an element
+    that is not a plateau, a roadmap window that ends before it starts or spans too many years."""
+
+
+class DuplicateGapError(DomainError):
+    """A gap already stands between those two plateaus."""
