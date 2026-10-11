@@ -152,7 +152,13 @@ def element_exchange_name(element_type: ElementType, properties: Mapping[str, st
 
 def junction_name(identifier: str, kind: str) -> str:
     """A junction has no name in Exchange; the catalogue needs one, stable across re-imports."""
-    return f"{kind.capitalize()} junction {identifier}"
+    name = f"{kind.capitalize()} junction {identifier}"
+    if len(name) <= MAX_NAME_LENGTH:
+        return name
+    # Too long to be a name: keep the head and add a short stable digest of the whole
+    # identifier, so two long identifiers sharing a prefix stay two names.
+    digest = hashlib.sha256(identifier.encode()).hexdigest()[:8]
+    return f"{name[: MAX_NAME_LENGTH - 9]}~{digest}"
 
 
 def element_type_of(name: str) -> ElementType | None:
