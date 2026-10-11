@@ -34,7 +34,7 @@ dépendance.**
 | Durée de vie | Mémoire de la session d'édition ; vidée à l'ouverture d'un diagramme et après un conflit de révision. Un historique rechargé annulerait la disposition d'un collègue |
 | Annuler et enregistrer | Annuler restaure l'état local puis demande l'enregistrement habituel (anti-rebond) : il n'existe pas de « défaire côté serveur » |
 | Export | `serializeSvg` fabrique un SVG autonome (palette claire fixe, styles en ligne, texte échappé, couleurs `#rrggbb` validées, ni `<script>` ni lien externe). Le PNG est ce SVG dessiné sur un `<canvas>` (1x/2x) |
-| Auto-layout | `autoLayout.ts` (lot des vues générées) : rangées par couche ArchiMate, tri par barycentre, déterministe ; il ne partage avec les anneaux du voisinage que `BOX_WIDTH`/`BOX_HEIGHT` |
+| Auto-layout | `autoLayout.ts` (livré avec les vues générées, [`0065`](0065-vues-generees-vivantes-ou-figees.md)) : rangées par couche ArchiMate, tri par barycentre, déterministe ; il ne partage avec les anneaux du voisinage que `BOX_WIDTH`/`BOX_HEIGHT` |
 | Clavier | Chaque geste a un équivalent : flèches ±1 px (Maj ±10), Alt+flèches redimensionnent, Ctrl/Cmd+A, Suppr, Ctrl+Z / Ctrl+Maj+Z |
 
 ## Alternatives envisagées et écartées
@@ -54,6 +54,7 @@ dépendance.**
 - **L'historique est borné à 100 entrées** et perdu au rechargement : c'est voulu.
 - **Un conflit de révision vide l'historique** : l'état local « recollé » repart d'une base neuve.
 - **Pas de Playwright** : les parcours (annuler, exporter) sont couverts par des composants Vitest.
+- L'auto-layout ne sert qu'aux vues générées et à placer les éléments qu'un rafraîchissement ajoute ; il ne range jamais un diagramme dessiné à la main.
 - Les modules de `lib/` n'importent rien de `features/` : la scène d'export est construite côté
   `features/diagrams/exportScene.ts`, qui connaît les couleurs de couche et les verbes de relation.
 
