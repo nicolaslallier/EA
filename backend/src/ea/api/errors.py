@@ -26,6 +26,7 @@ from ea.domain.errors import (
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
     AnalysisBusyError,
+    AnalysisTimeoutError,
     ApprovalStaleError,
     BaselineNotFoundError,
     BaselineTooLargeError,
@@ -187,6 +188,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     ScopeTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "scope_too_large"),
     InvalidAnalysisError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_analysis"),
     AnalysisBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "analysis_busy"),
+    AnalysisTimeoutError: (status.HTTP_503_SERVICE_UNAVAILABLE, "analysis_timeout"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

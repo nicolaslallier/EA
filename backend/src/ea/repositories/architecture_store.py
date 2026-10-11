@@ -34,14 +34,14 @@ from sqlalchemy import (
 )
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
-from ea.db.unit_of_work import reading, work
+from ea.db.unit_of_work import is_query_canceled, reading, work
 from ea.domain.analytics import (
     MAX_NUMBER_INPUT,
     NUMBER_PATTERN,
@@ -55,10 +55,12 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
+    AnalysisTimeoutError,
     DomainError,
     DuplicateElementError,
     DuplicateNetworkError,
     ElementNotFoundError,
+    ScopeTooLargeError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -1032,17 +1034,25 @@ class PostgresArchitectureRepository:
         # twice under two numbers, and PostgreSQL then refuses the select list.
         statement = statement.group_by(
             *(literal_column(str(position + 1)) for position in range(len(dimensions)))
-        ).limit(RAW_GROUP_CEILING)
+        ).limit(RAW_GROUP_CEILING + 1)
         async with reading(self._sessions) as session:
             await session.execute(
                 select(func.set_config("statement_timeout", str(ANALYSIS_TIMEOUT_MS), True))
             )
-            rows = (await session.execute(statement)).all()
-        if len(rows) == RAW_GROUP_CEILING:
-            logger.warning(
-                "analysis grouping reached its ceiling; the result is partial",
-                extra={"action": "analysis_ceiling"},
+            try:
+                rows = (await session.execute(statement)).all()
+            except DBAPIError as error:
+                if not is_query_canceled(error):
+                    raise
+                msg = "the analysis took too long and was cancelled: narrow the scope"
+                raise AnalysisTimeoutError(msg) from error
+        if len(rows) > RAW_GROUP_CEILING:
+            # Never folded from a cut list: sums over a part would read as the whole.
+            msg = (
+                f"more than {RAW_GROUP_CEILING} distinct values to group by: "
+                "choose a dimension with fewer"
             )
+            raise ScopeTooLargeError(msg)
         return tuple(
             RawGroup(
                 keys=tuple(str(getattr(row, f"k{index}")) for index in range(len(dimensions))),

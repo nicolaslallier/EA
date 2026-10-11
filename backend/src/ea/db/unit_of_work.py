@@ -96,6 +96,13 @@ def is_serialization_failure(error: DBAPIError) -> bool:
     return code in ("40001", "40P01", "55P03")
 
 
+def is_query_canceled(error: DBAPIError) -> bool:
+    """SQLSTATE 57014: the statement ran past `statement_timeout` and PostgreSQL cancelled it."""
+    cause = getattr(error.orig, "__cause__", None)
+    code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
+    return code == "57014"
+
+
 def ambient_session() -> AsyncSession | None:
     """The session of the shared transaction open in this context, if any."""
     unit = _current.get()

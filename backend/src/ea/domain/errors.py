@@ -330,3 +330,7 @@ class AnalysisBusyError(DomainError):
 
 class InvalidAnalysisError(DomainError):
     """A question the analysis cannot answer: a dimension that does not exist, a sum of nothing."""
+
+
+class AnalysisTimeoutError(DomainError):
+    """The database cancelled an analysis for taking too long: narrow the question or the scope."""
