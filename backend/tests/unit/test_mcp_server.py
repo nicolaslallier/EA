@@ -356,8 +356,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 58
-        )  # fifty-six, and the two time tools: the plateaus and the gap between two
+            len(names) == 59
+        )  # fifty-six, and the three time tools: the plateaus, the gap, and drawing it
         assert names == {
             "export_model",
             "import_model",
@@ -380,6 +380,7 @@ class TestTheToolset:
             "aggregate_model",
             "list_plateaus",
             "gap_between",
+            "create_gap",
             "attach_document",
             "list_documents",
             "read_document",
@@ -773,9 +774,22 @@ class TestThePlateauTools:
         a = await an_element(server, "plateau", "A")
         b = await an_element(server, "plateau", "B")
 
-        answer = await call(server, "gap_between", a=a["id"], b=b["id"], create_gap=True)
+        answer = await call(server, "create_gap", a=a["id"], b=b["id"])
 
         assert [g["name"] for g in answer["gaps"]] == ["Écart A → B"]
+        assert answer["already_drawn"] is False
+
+    async def test_create_gap_on_a_pair_already_drawn_returns_the_comparison_not_an_error(
+        self, server: MCPServer[Any]
+    ) -> None:
+        a = await an_element(server, "plateau", "A")
+        b = await an_element(server, "plateau", "B")
+        await call(server, "create_gap", a=a["id"], b=b["id"])
+
+        answer = await call(server, "create_gap", a=b["id"], b=a["id"])
+
+        assert answer["already_drawn"] is True
+        assert len(answer["gaps"]) == 1
 
     async def test_a_reader_is_refused_when_asking_to_draw_one(
         self, server: MCPServer[Any]
@@ -784,16 +798,17 @@ class TestThePlateauTools:
         b = await an_element(server, "plateau", "B")
 
         with acting_as(a_reader()), pytest.raises(ToolError):
-            await call(server, "gap_between", a=a["id"], b=b["id"], create_gap=True)
+            await call(server, "create_gap", a=a["id"], b=b["id"])
 
-    async def test_the_tool_is_annotated_as_a_write_because_it_may_write(
+    async def test_reading_is_annotated_as_a_read_and_drawing_as_a_write(
         self, server: MCPServer[Any]
     ) -> None:
         tools = {tool.name: tool for tool in await server.list_tools()}
 
-        assert tools["list_plateaus"].annotations.read_only_hint is True  # type: ignore[union-attr]
-        assert tools["gap_between"].annotations.read_only_hint is False  # type: ignore[union-attr]
-        assert "create_gap" in (tools["gap_between"].description or "")
+        for name in ("list_plateaus", "gap_between"):
+            assert tools[name].annotations.read_only_hint is True  # type: ignore[union-attr]
+        assert tools["create_gap"].annotations.read_only_hint is False  # type: ignore[union-attr]
+        assert "create_gap" not in tools["gap_between"].input_schema["properties"]
 
 
 @pytest.mark.asyncio

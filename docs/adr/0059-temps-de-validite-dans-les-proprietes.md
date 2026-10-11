@@ -79,6 +79,15 @@ le second se composera plus tard (`known_at`, nom réservé, non livré).
 - `downgrade` retire les index ; les dates canonisées et les clés `legacy_*` restent, ce sont des propriétés
   ordinaires.
 
+## Limite connue de la révision `0014`
+
+Si une ligne portait déjà une clé `legacy_valid_from` / `legacy_valid_until` **avant** la `0014`, la `0014` la
+remplace par la valeur illisible qu'elle met de côté. Ces noms sont introduits par cette révision : aucune
+donnée saisie avant elle ne les porte, sauf coïncidence volontaire. La `0014` étant fusionnée et peut-être
+appliquée, elle n'est pas modifiée rétroactivement, et une `0015` ne pourrait pas rendre une valeur déjà écrasée :
+**limite acceptée, consignée ici**. `readable_lifespan_properties` (lecture des baselines) reste, elle, sans perte
+de ce genre : elle ne fait que lire.
+
 ## Références
 
 - ADR liés : [0020](0020-adressage-ip-en-proprietes-du-graphe.md), [0033](0033-postgresql-seul-pour-le-graphe.md),

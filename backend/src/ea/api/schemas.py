@@ -1861,6 +1861,11 @@ class RoadmapRead(BaseModel):
     edges: list[RoadmapEdgeRead]
     window_from: date | None = Field(description="Asked for, else the first date of the data.")
     window_to: date | None
+    window_truncated: bool = Field(
+        description="The default window was cut to 20 years: dated items outside it are not drawn."
+    )
+    data_from: date | None = Field(description="The earliest date of the data, drawn or not.")
+    data_to: date | None = Field(description="The latest date of the data, drawn or not.")
 
     @classmethod
     def of(cls, roadmap: Roadmap) -> RoadmapRead:
@@ -1887,4 +1892,7 @@ class RoadmapRead(BaseModel):
             ],
             window_from=roadmap.window_from,
             window_to=roadmap.window_to,
+            window_truncated=roadmap.window_truncated,
+            data_from=roadmap.data_from,
+            data_to=roadmap.data_to,
         )

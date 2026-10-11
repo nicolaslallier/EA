@@ -123,6 +123,26 @@ class TestReadingWhatWasStoredBeforeTheRule:
         ) == {VALID_FROM: "2027-02-01", "legacy_valid_until": "2027-01-01"}
 
 
+class TestAValueThatIsNotAStringNeverRaisesWhenReadBack:
+    @pytest.mark.parametrize(
+        "value", [20240101, 2024.5, True, None, ["2024-01-01"], {"a": 1}, "9" * 100_000]
+    )
+    def test_it_is_set_aside_not_raised(self, value: object) -> None:
+        stored = readable_lifespan_properties({VALID_FROM: value, "owner": "x"})  # type: ignore[dict-item]
+
+        assert VALID_FROM not in stored
+        assert stored["owner"] == "x"
+        assert f"legacy_{VALID_FROM}" in stored
+        assert Lifespan.read_tolerant({VALID_FROM: value}) == Lifespan()  # type: ignore[dict-item]
+
+    @pytest.mark.parametrize("value", [20240101, True, ["2024-01-01"]])
+    def test_the_strict_reading_refuses_it_in_the_domain_error_not_an_attribute_error(
+        self, value: object
+    ) -> None:
+        with pytest.raises(InvalidLifespanError):
+            Lifespan.read({VALID_FROM: value})  # type: ignore[dict-item]
+
+
 class TestWhatIsRefusedIsNotEchoed:
     def test_the_message_names_the_key_and_never_the_value(self) -> None:
         with pytest.raises(InvalidLifespanError) as raised:
