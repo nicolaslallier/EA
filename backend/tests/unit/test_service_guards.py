@@ -18,6 +18,7 @@ from ea.domain.archimate import ElementType as E
 from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -28,6 +29,7 @@ from ea.services.saved_queries import SavedQueryService
 from tests.conftest import a_reader
 
 WRITES = {
+    AuditService: set(),
     ArchitectureService: {
         "create_element",
         "update_element",

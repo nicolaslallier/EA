@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.audit import AuditEvent, AuditFilter, AuditPage, decode_cursor, encode_cursor
 from ea.domain.auth import EDITOR_ROLE, Caller
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
@@ -265,6 +266,50 @@ def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
         logger.filters[:] = filters
 
 
+class InMemoryAuditLog:
+    """The `audit_events` table: append-only, and written only by a write that succeeded.
+
+    The three repository doubles share one of these (the `audit_log` fixture), so
+    a service test asserts on what a real transaction would have committed: a
+    refused write appends nothing, because the double raises before it does.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def append(self, events: Sequence[AuditEvent]) -> None:
+        self.events.extend(events)
+
+    async def page(self, criteria: AuditFilter) -> AuditPage:
+        def matches(event: AuditEvent) -> bool:
+            return all(
+                [
+                    criteria.entity_kind is None or event.entity_kind == criteria.entity_kind,
+                    criteria.entity_id is None or event.entity_id == criteria.entity_id,
+                    criteria.actor is None or criteria.actor in (event.actor_sub, event.actor_name),
+                    criteria.action is None or event.action == criteria.action,
+                    criteria.since is None or event.at >= criteria.since,
+                    criteria.until is None or event.at < criteria.until,
+                    criteria.request_id is None or event.request_id == criteria.request_id,
+                ]
+            )
+
+        ordered = sorted(
+            (event for event in self.events if matches(event)),
+            key=lambda event: (event.at, event.id.int),
+            reverse=True,
+        )
+        if criteria.cursor is not None:
+            at, event_id = decode_cursor(criteria.cursor)
+            ordered = [e for e in ordered if (e.at, e.id.int) < (at, event_id.int)]
+        shown = ordered[: criteria.limit]
+        more = len(ordered) > criteria.limit
+        return AuditPage(
+            events=tuple(shown),
+            next_cursor=encode_cursor(shown[-1].at, shown[-1].id) if more else None,
+        )
+
+
 class InMemoryRepository:
     """A dictionary pretending to be a graph. Enough for the service's rules.
 
@@ -273,7 +318,8 @@ class InMemoryRepository:
     test must not rely on it — `tests/integration/test_element_cascade.py` does.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
 
@@ -442,7 +488,8 @@ class InMemoryDocuments:
     against PostgreSQL would get.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.documents: dict[UUID, Document] = {}
         self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
 
@@ -528,7 +575,8 @@ class InMemoryDiagrams:
     real table would give.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.diagrams: dict[UUID, Diagram] = {}
         self.nodes: dict[UUID, tuple[DiagramNode, ...]] = {}
 
@@ -920,18 +968,23 @@ def _bag_of_words(text: str) -> tuple[float, ...]:
 
 
 @pytest.fixture
-def repository() -> InMemoryRepository:
-    return InMemoryRepository()
+def audit_log() -> InMemoryAuditLog:
+    return InMemoryAuditLog()
 
 
 @pytest.fixture
-def documents() -> InMemoryDocuments:
-    return InMemoryDocuments()
+def repository(audit_log: InMemoryAuditLog) -> InMemoryRepository:
+    return InMemoryRepository(audit_log)
 
 
 @pytest.fixture
-def diagrams() -> InMemoryDiagrams:
-    return InMemoryDiagrams()
+def documents(audit_log: InMemoryAuditLog) -> InMemoryDocuments:
+    return InMemoryDocuments(audit_log)
+
+
+@pytest.fixture
+def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
+    return InMemoryDiagrams(audit_log)
 
 
 @pytest.fixture
