@@ -453,6 +453,10 @@ export interface paths {
         /**
          * Export Model
          * @description Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).
+         *
+         *     The file is prepared before the first byte is sent, and no database connection is held while
+         *     a client reads it. A client has `EA_EXCHANGE_SEND_TIMEOUT_S` to take it; at most
+         *     `EA_EXCHANGE_MAX_EXPORTS` are prepared or sent at once (429 and `Retry-After` beyond).
          */
         get: operations["export_model_exchanges_export_get"];
         put?: never;

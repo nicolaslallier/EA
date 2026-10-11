@@ -36,7 +36,7 @@ from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, Strict
 
 from ea.api.baselines import against_of
 from ea.api.schemas import (
@@ -65,6 +65,7 @@ from ea.api.schemas import (
     FileTags,
     FileTitle,
     GraphRead,
+    ImportReportRead,
     Limit,
     LinkName,
     MetamodelRead,
@@ -110,6 +111,16 @@ from ea.domain.archimate import (
 )
 from ea.domain.audit import DEFAULT_AUDIT_PAGE, AuditAction, AuditFilter, EntityKind, aware
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
+from ea.domain.errors import ExportTooLargeError
+from ea.domain.exchange import (
+    ConflictPolicy,
+    ExchangeFormat,
+    ExportRequest,
+    ExportScope,
+    ImportContent,
+    ImportOptions,
+    ScopeKind,
+)
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
@@ -127,6 +138,7 @@ from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.documents import DocumentService
+from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
@@ -144,6 +156,12 @@ MCP_PATH: Final = "/mcp"
 #: so 1 MiB decoded is what actually clears both ceilings; a bigger file goes
 #: through the web interface instead, which carries the domain's real 50 MB.
 MAX_MCP_UPLOAD_BYTES: Final = 1024 * 1024
+
+#: What `export_model` hands back at most, in bytes of text, for the same reasons as
+#: `MAX_MCP_UPLOAD_BYTES`: the JSON-RPC envelope and the 2 MB the deployed NGINX allows on
+#: `/api/mcp`. The service stops *rendering* past it (a model too big for the answer is not
+#: built whole to find out); a bigger model is downloaded from the Échanges screen.
+MAX_MCP_EXPORT_BYTES: Final = 1024 * 1024
 
 #: Told to the client once, at initialisation. It is the only place an agent
 #: learns the two rules that would otherwise cost it a failed call each: that
@@ -253,7 +271,18 @@ an element is approved, `update_element`, `delete_element`, its relationships
 and its documents are refused unless you are an approver (and then any change
 sends it back to review), and a locked element refuses everything until it is
 unlocked. `allowed_transitions` on the element lists exactly what your token may
-do next.\
+do next.
+
+The catalogue can also be exchanged with other ArchiMate tools (Sparx EA, Archi).
+`export_model` returns the model as ArchiMate exchange XML, or as the three CSV files
+(`safe_cells` neutralises the cells a spreadsheet would run as a formula), in at most 1 MB
+of text: for more, narrow it to a package or a saved query, or download the file from the
+Échanges screen of the web interface. `import_model` reads such a file and it **simulates by
+default**: always call it with `dry_run` left true first, read the report (counts per
+category, and every refused row with its reason), SHOW it to the person you work for, and only
+then call it again with `dry_run=false`. It creates elements and links and deletes nothing: an
+element with the same type and name is reused, not overwritten. Junctions and diagram views
+are not imported over MCP, and a file is at most 1 MB.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -265,6 +294,7 @@ PackageProvider = Callable[[], PackageService]
 QueryProvider = Callable[[], SavedQueryService]
 AuditProvider = Callable[[], AuditService]
 BaselineProvider = Callable[[], BaselineService]
+ExchangeProvider = Callable[[], ExchangeService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -506,6 +536,21 @@ def _query_schema(
 # A client shows these to the person behind the agent, who decides from them
 # whether to confirm a call. Getting one wrong is how a delete gets waved
 # through, so every tool below carries one.
+#: Characters, not bytes: this only stops a runaway argument. `import_model` measures the
+#: encoded total against `MAX_MCP_UPLOAD_BYTES`.
+ExchangeText = Annotated[
+    str | None,
+    Field(max_length=MAX_MCP_UPLOAD_BYTES, description="The file's text, UTF-8."),
+]
+#: `dry_run` is strict: only a JSON boolean. A string such as "no" is not an answer to "write?".
+DryRun = Annotated[
+    bool,
+    Strict(),
+    Field(
+        description="Simulate and roll back (the default). Writing needs `false`, said outright."
+    ),
+]
+
 READS: Final = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 ADDS: Final = ToolAnnotations(
     read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
@@ -527,6 +572,7 @@ def build_mcp_server(
     get_queries: QueryProvider,
     get_audit: AuditProvider,
     get_baselines: BaselineProvider,
+    get_exchanges: ExchangeProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
@@ -543,7 +589,8 @@ def build_mcp_server(
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
-    `get_packages`, `get_queries`, `get_audit` and `get_baselines` are required for the same reason.
+    `get_packages`, `get_queries`, `get_audit`, `get_baselines` and `get_exchanges` are required for
+    the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1393,6 +1440,122 @@ def build_mcp_server(
         """
         await get_queries().delete(query_id)
         return f"saved query {query_id} was deleted"
+
+    # --- Exchange files (docs/adr/0048 to 0052) -------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def export_model(
+        format: ExchangeFormat = ExchangeFormat.ARCHIMATE_XML,  # noqa: A002 - the name an agent is told
+        scope: ScopeKind = ScopeKind.MODEL,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
+        include_subpackages: bool = True,
+        safe_cells: bool = True,
+    ) -> str:
+        """Export the catalogue as an ArchiMate exchange file, returned as text.
+
+        `format` is `archimate-xml` (the Open Group exchange file Sparx EA and Archi
+        open) or `csv` (three files, labelled `--- elements.csv ---` and so on).
+        `scope` is `model` (everything), `package` (with `package_id`, and its
+        sub-packages unless `include_subpackages` is false) or `query` (with
+        `query_id`, a saved query). Diagram views are not included. The answer is at
+        most 1 MB: for a bigger model, narrow the scope with a package or a saved
+        query, or use the web interface's Échanges screen, which downloads a file.
+        """
+        try:
+            export = await get_exchanges().export_text(
+                ExportRequest(
+                    format=format,
+                    scope=ExportScope(
+                        kind=scope,
+                        package_id=package_id,
+                        query_id=query_id,
+                        include_subpackages=include_subpackages,
+                    ),
+                    with_views=False,
+                    safe_cells=safe_cells,
+                ),
+                ceiling=MAX_MCP_EXPORT_BYTES,
+            )
+        except ExportTooLargeError:
+            msg = (
+                f"the export is over {MAX_MCP_EXPORT_BYTES} bytes, more than an MCP answer can "
+                "carry: narrow the scope with a package or a saved query, or download the file "
+                "from the Échanges screen of the web interface"
+            )
+            raise ValueError(msg) from None
+        try:
+            # The file is complete and the database is out of it: no connection is held while
+            # the message goes out. Read whole, it is at most `MAX_MCP_EXPORT_BYTES`.
+            return b"".join([chunk async for chunk in export.chunks]).decode("utf-8")
+        finally:
+            await export.chunks.aclose()  # type: ignore[attr-defined]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def import_model(
+        format: ExchangeFormat = ExchangeFormat.ARCHIMATE_XML,  # noqa: A002 - the name an agent is told
+        content: ExchangeText = None,
+        elements: ExchangeText = None,
+        relations: ExchangeText = None,
+        properties: ExchangeText = None,
+        dry_run: DryRun = True,
+        on_conflict: ConflictPolicy = ConflictPolicy.REUSE,
+        strict: bool = False,
+        safe_cells: bool = True,
+        target_package_id: UUID | None = None,
+    ) -> ImportReportRead:
+        """Import an ArchiMate exchange file, or simulate it. It creates; it deletes nothing.
+
+        `dry_run` is **true by default**: the call goes through every rule and every
+        constraint, then rolls back, and the report says what it would do. Always
+        simulate first, read the report — counts per category and every refused row
+        with its reason — SHOW it to the person you work for, and only then call again
+        with `dry_run=false`.
+
+        For `archimate-xml`, put the file's text in `content`. For `csv`, put the three
+        files in `elements` (required), `relations` and `properties`. An element with
+        the same type and name is reused, never overwritten, and a refused row (a
+        relationship the metamodel forbids, say) does not stop the others unless
+        `strict` is true. New packages and new elements outside any folder go under
+        `target_package_id`. Junctions and diagram connections are not imported, and
+        diagram views are not imported over MCP. The text is at most 1 MB in all; a
+        larger file goes through the Échanges screen of the web interface.
+        """
+        if format is ExchangeFormat.CSV:
+            if elements is None or content is not None:
+                msg = "a CSV import takes the text of `elements` (and `relations`, `properties`)"
+                raise ValueError(msg)
+            parts = (elements, relations, properties)
+        else:
+            if content is None or any(p is not None for p in (elements, relations, properties)):
+                msg = "an XML import takes the file's text in `content`, and nothing else"
+                raise ValueError(msg)
+            parts = (content, None, None)
+        refusal = (
+            f"an exchange file is at most {MAX_MCP_UPLOAD_BYTES} bytes over MCP; import a larger "
+            "file from the Échanges screen of the web interface instead"
+        )
+        # Characters first: a character is at least a byte, so a text already too long in
+        # characters is refused before a byte of it is encoded.
+        if sum(len(part) for part in parts if part is not None) > MAX_MCP_UPLOAD_BYTES:
+            raise ValueError(refusal)
+        raw = tuple(None if part is None else part.encode() for part in parts)
+        if sum(len(part) for part in raw if part is not None) > MAX_MCP_UPLOAD_BYTES:
+            raise ValueError(refusal)
+        report = await get_exchanges().import_exchange(
+            ImportContent(format, raw[0] or b"", raw[1], raw[2]),
+            ImportOptions(
+                dry_run=dry_run,
+                on_conflict=on_conflict,
+                strict=strict,
+                with_views=False,
+                safe_cells=safe_cells,
+                target_package_id=target_package_id,
+            ),
+        )
+        return ImportReportRead.of(report)
 
     # --- Metamodel --------------------------------------------------------
 

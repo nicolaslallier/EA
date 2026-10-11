@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import re
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from mcp.server.mcpserver import MCPServer
@@ -42,12 +42,23 @@ from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
-from tests.conftest import InMemoryAuditLog, InMemoryObjectStore, a_reader, an_approver
+from tests.conftest import (
+    InMemoryAuditLog,
+    InMemoryDiagrams,
+    InMemoryExchange,
+    InMemoryObjectStore,
+    InMemoryRepository,
+    a_reader,
+    an_approver,
+)
+from tests.exchange_files import DATA
 
 
 @pytest.fixture
@@ -60,6 +71,7 @@ def server(
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
+    exchange_service: ExchangeService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -71,6 +83,7 @@ def server(
         lambda: saved_query_service,
         lambda: AuditService(audit_log),
         lambda: baseline_service,
+        lambda: exchange_service,
     )
 
 
@@ -84,6 +97,7 @@ def server_without_an_index(
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
+    exchange_service: ExchangeService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -95,6 +109,7 @@ def server_without_an_index(
         lambda: saved_query_service,
         lambda: AuditService(audit_log),
         lambda: baseline_service,
+        lambda: exchange_service,
     )
 
 
@@ -329,7 +344,10 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
+        assert len(names) == 53  # fifty-one, and the two ways in and out of an exchange file
         assert names == {
+            "export_model",
+            "import_model",
             "create_element",
             "get_element",
             "list_elements",
@@ -1742,3 +1760,293 @@ class TestTheSameBoundsAsTheHttpAdapter:
         assert bounds_of(sent) == bounds_of(over_http)
         filing = tools["move_elements"].input_schema["properties"]["package_id"]
         assert bounds_of(filing) == bounds_of(over_http)
+
+
+DATA_XML = (DATA / "minimal-model.xml").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+class TestExportModel:
+    async def test_it_returns_the_model_as_xml_text(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "srv-1")
+
+        text = (await call(server, "export_model"))["result"]
+
+        assert text.startswith("<?xml") and "srv-1" in text
+
+    async def test_csv_comes_back_as_three_labelled_files(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "srv-1")
+
+        text = (await call(server, "export_model", format="csv"))["result"]
+
+        assert text.index("--- elements.csv ---") < text.index("--- relations.csv ---")
+        assert text.index("--- relations.csv ---") < text.index("--- properties.csv ---")
+        assert "srv-1" in text and "PK" not in text[:2]  # text, not a zip
+
+    async def test_views_are_never_exported_over_mcp(
+        self, server: MCPServer[Any], diagram_service: DiagramService
+    ) -> None:
+        await diagram_service.create(name="Vue")
+
+        text = (await call(server, "export_model"))["result"]
+
+        assert "<views>" not in text
+
+    async def test_a_model_over_the_ceiling_is_a_tool_error_that_names_the_screen(
+        self, server: MCPServer[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for number in range(30):
+            await an_element(server, "node", f"srv-{number}")
+        monkeypatch.setattr("ea.mcp.server.MAX_MCP_EXPORT_BYTES", 500)
+
+        for fmt in ("archimate-xml", "csv"):
+            with pytest.raises(ToolError, match="Échanges"):
+                await call(server, "export_model", format=fmt)
+
+    async def test_the_ceiling_stops_the_rendering_not_only_the_answer(
+        self,
+        server: MCPServer[Any],
+        exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for number in range(30):
+            await an_element(server, "node", f"srv-{number}")
+        monkeypatch.setattr("ea.mcp.server.MAX_MCP_EXPORT_BYTES", 500)
+        pages: list[int] = []
+        original = exchange_store.snapshot
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def watching(scope):  # type: ignore[no-untyped-def]
+            async with original(scope) as opened:
+                page = opened.elements_page
+
+                async def counted(offset, limit):  # type: ignore[no-untyped-def]
+                    pages.append(offset)
+                    return await page(offset, limit)
+
+                opened.elements_page = counted
+                yield opened
+
+        monkeypatch.setattr(exchange_store, "snapshot", watching)
+
+        with pytest.raises(ToolError):
+            await call(server, "export_model")
+
+        assert len(pages) <= 2  # it did not render a model it would refuse to return
+
+    async def test_a_reader_may_export(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "srv-1")
+
+        with acting_as(a_reader()):
+            assert "srv-1" in (await call(server, "export_model"))["result"]
+
+    async def test_nobody_may_export(self, server: MCPServer[Any], nobody_calling: None) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "export_model")
+
+    async def test_a_scope_without_its_id_is_a_tool_error_one_can_act_on(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="package_id"):
+            await call(server, "export_model", scope="package")
+        with pytest.raises(ToolError, match="query_id"):
+            await call(server, "export_model", scope="query")
+
+    async def test_an_unknown_package_is_an_unknown_scope(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="no such package"):
+            await call(server, "export_model", scope="package", package_id=str(uuid4()))
+
+    async def test_a_package_scope_exports_the_package(
+        self, server: MCPServer[Any], package_service: PackageService
+    ) -> None:
+        made = await call(server, "create_element", element_type="node", name="in")
+        await an_element(server, "node", "out")
+        package = (await package_service.create(name="Top")).package.id
+        await package_service.move_elements([UUID(made["id"])], package)
+
+        text = (await call(server, "export_model", scope="package", package_id=str(package)))[
+            "result"
+        ]
+
+        assert ">in<" in text and ">out<" not in text
+
+    async def test_it_is_a_read(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "export_model")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is True
+
+    async def test_it_holds_no_connection_nor_place_once_it_has_answered(
+        self, server: MCPServer[Any], exchange_service: ExchangeService
+    ) -> None:
+        await an_element(server, "node", "srv-1")
+
+        for _ in range(10):
+            await call(server, "export_model")
+
+        assert exchange_service._exports.in_flight == 0
+
+
+@pytest.mark.asyncio
+class TestImportModel:
+    async def test_the_default_is_a_dry_run_that_writes_nothing(
+        self,
+        server: MCPServer[Any],
+        repository: InMemoryRepository,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        events = len(audit_log.events)
+
+        report = await call(server, "import_model", content=DATA_XML)
+
+        assert report["dry_run"] is True and report["applied"] is False
+        assert report["counts"]["elements"]["created"] == 3
+        assert (repository.elements, repository.relationships) == ({}, {})
+        assert len(audit_log.events) == events
+
+    async def test_the_schema_the_agent_is_sent_says_dry_run_is_true_by_default(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "import_model")
+
+        assert tool.input_schema["properties"]["dry_run"]["default"] is True
+        assert "dry_run" not in tool.input_schema.get("required", [])
+
+    async def test_a_dry_run_value_nobody_can_read_writes_nothing(
+        self, server: MCPServer[Any], repository: InMemoryRepository
+    ) -> None:
+        for bad in ("maybe", "", 2, [], {}):
+            with pytest.raises(ToolError):
+                await call(server, "import_model", content=DATA_XML, dry_run=bad)
+
+        assert repository.elements == {}
+
+    async def test_dry_run_false_writes(
+        self, server: MCPServer[Any], repository: InMemoryRepository
+    ) -> None:
+        report = await call(server, "import_model", content=DATA_XML, dry_run=False)
+
+        assert report["applied"] is True and len(repository.elements) == 3
+
+    async def test_csv_takes_its_three_texts(
+        self, server: MCPServer[Any], repository: InMemoryRepository
+    ) -> None:
+        report = await call(
+            server,
+            "import_model",
+            format="csv",
+            elements='"ID","Type","Name"\r\n"a","Node","srv"\r\n',
+            relations='"ID","Type","Source","Target"\r\n',
+            dry_run=False,
+        )
+
+        assert report["format"] == "csv" and report["counts"]["elements"]["created"] == 1
+
+    async def test_views_are_not_imported_over_mcp(
+        self, server: MCPServer[Any], diagrams: InMemoryDiagrams
+    ) -> None:
+        text = (DATA / "views-model.xml").read_text(encoding="utf-8")
+
+        report = await call(server, "import_model", content=text, dry_run=False)
+
+        assert report["counts"]["views"]["ignored"] == 1 and diagrams.diagrams == {}
+
+    async def test_a_reader_sees_the_tool_and_cannot_even_simulate(
+        self, server: MCPServer[Any], repository: InMemoryRepository
+    ) -> None:
+        assert "import_model" in {t.name for t in await server.list_tools()}
+
+        with acting_as(a_reader()), pytest.raises(ToolError, match="role"):
+            await call(server, "import_model", content=DATA_XML)
+
+        assert repository.elements == {}
+
+    async def test_the_text_a_format_needs_is_required(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="content"):
+            await call(server, "import_model")
+        with pytest.raises(ToolError, match="elements"):
+            await call(server, "import_model", format="csv", content="x")
+
+    async def test_text_over_the_ceiling_is_refused_before_it_is_encoded_or_read(
+        self, server: MCPServer[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.mcp.server.MAX_MCP_UPLOAD_BYTES", 50)
+        encoded: list[str] = []
+        original = str.encode  # (a str method cannot be patched: the refusal is on the length)
+
+        for arguments in (
+            {"content": DATA_XML},
+            {"format": "csv", "elements": "a" * 30, "relations": "b" * 30},  # the sum counts
+        ):
+            with pytest.raises(ToolError, match="50 bytes") as raised:
+                await call(server, "import_model", **arguments)
+            assert "Échanges" in str(raised.value)
+
+        assert encoded == [] and original
+
+    async def test_multibyte_text_is_measured_in_bytes(
+        self, server: MCPServer[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.mcp.server.MAX_MCP_UPLOAD_BYTES", 60)
+        xml = DATA_XML.replace("Customer", "é" * 20)  # few characters, many bytes
+
+        with pytest.raises(ToolError, match="60 bytes"):
+            await call(server, "import_model", content=xml[:30] + "é" * 30)
+
+    async def test_a_malformed_file_is_a_tool_error_with_no_echo(
+        self, server: MCPServer[Any]
+    ) -> None:
+        for content, secret in (("<model><secret-tag>", "secret-tag"), ("\x00LEAK", "LEAK")):
+            with pytest.raises(ToolError) as raised:
+                await call(server, "import_model", content=content)
+            assert secret not in str(raised.value)
+
+    async def test_the_domain_failures_an_agent_can_act_on_have_their_own_words(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="package"):
+            await call(server, "import_model", content=DATA_XML, target_package_id=str(uuid4()))
+
+    async def test_it_writes_but_never_deletes(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "import_model")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        description = tool.description or ""
+        assert "dry_run" in description and "show" in description.lower()
+
+    async def test_the_arguments_are_bounded_by_the_one_ceiling_of_the_module(
+        self, server: MCPServer[Any]
+    ) -> None:
+        from ea.mcp.server import MAX_MCP_UPLOAD_BYTES
+
+        tool = next(t for t in await server.list_tools() if t.name == "import_model")
+        properties = tool.input_schema["properties"]
+
+        for argument in ("content", "elements", "relations", "properties"):
+            lengths = [branch.get("maxLength") for branch in properties[argument]["anyOf"]]
+            assert MAX_MCP_UPLOAD_BYTES in lengths
+        assert properties["target_package_id"]["anyOf"][0]["format"] == "uuid"
+
+    async def test_the_instructions_tell_a_model_to_simulate_first_and_to_show_the_report(
+        self,
+    ) -> None:
+        assert "dry_run" in INSTRUCTIONS and "export_model" in INSTRUCTIONS
+        assert "report" in INSTRUCTIONS and "1 MB" in INSTRUCTIONS and "safe_cells" in INSTRUCTIONS
+
+    async def test_the_names_of_the_file_are_not_in_the_logs(
+        self, server: MCPServer[Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        marker = "SECRET-MARKER-MCP"
+        xml = DATA_XML.replace("Customer", marker)
+
+        with caplog.at_level(logging.DEBUG, logger="ea"):
+            await call(server, "import_model", content=xml, dry_run=False)
+            with pytest.raises(ToolError):
+                await call(server, "import_model", content=xml + "<")
+
+        assert marker not in caplog.text
