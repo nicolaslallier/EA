@@ -256,3 +256,10 @@ def test_switching_separation_off_is_announced_in_the_log(
 
     (record,) = [r for r in caplog.records if getattr(r, "action", "") == "separation_disabled"]
     assert "EA_APPROVAL_SEPARATION" in record.getMessage()
+
+
+def test_the_lock_timeout_of_the_application_is_ten_seconds_and_zero_turns_it_off() -> None:
+    assert Settings(_env_file=None).db_lock_timeout_ms == 10_000  # type: ignore[call-arg]
+    assert Settings(db_lock_timeout_ms=0).db_lock_timeout_ms == 0
+    with pytest.raises(ValidationError):
+        Settings(db_lock_timeout_ms=-1)

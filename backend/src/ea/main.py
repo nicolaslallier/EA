@@ -42,7 +42,7 @@ from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.postgres import check_connectivity as check_relational_store
-from ea.db.postgres import create_engine, create_session_factory
+from ea.db.postgres import create_api_engine, create_session_factory
 from ea.domain.auth import Caller
 from ea.domain.ports import (
     AccessTokenVerifier,
@@ -247,7 +247,7 @@ def _lifespan(
             audit_store = audit
             baseline_store = baselines
             if settings.postgres_enabled:
-                engine = create_engine(settings)
+                engine = create_api_engine(settings)
                 stack.push_async_callback(engine.dispose)
                 await check_relational_store(engine)
                 app.state.db_sessions = create_session_factory(engine)

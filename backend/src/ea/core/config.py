@@ -7,7 +7,7 @@ shape of a local environment.
 import logging
 from typing import Annotated
 
-from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 5
     postgres_max_overflow: int = 5
     postgres_connection_timeout_seconds: float = 5.0
+    # How long a statement of the API waits for a row lock before PostgreSQL gives
+    # up (SQLSTATE 55P03, answered 409 write_conflict). Ten seconds, under NGINX's
+    # 60 s `proxy_read_timeout`: with 5+5 pooled connections, ten writes queued
+    # behind a long import's locks would otherwise freeze every read and `/health`
+    # and end in a 504 for a write that goes through later. 0 turns it off.
+    # Only the API's engine asks for it (`create_api_engine`) — docs/adr/0050.
+    db_lock_timeout_ms: int = Field(default=10_000, ge=0)
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
     # Ollama on the cluster, beside the graph, serving an OpenAI-compatible
