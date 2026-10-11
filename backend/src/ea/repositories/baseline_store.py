@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
 from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import insert as upsert
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.sql import insert
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
@@ -41,13 +42,22 @@ from ea.domain.baselines import (
     ModelSnapshot,
     plan_restore,
 )
-from ea.domain.errors import BaselineNotFoundError, BaselineTooLargeError, DuplicateBaselineError
+from ea.domain.errors import (
+    BaselineNotFoundError,
+    BaselineTooLargeError,
+    DuplicateBaselineError,
+    RestoreBlockedError,
+    RestoreConflictError,
+)
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import PATH_SEPARATOR
 from ea.repositories.architecture_store import (
     constraint_of,
     element_from_row,
+    element_row,
+    rejected,
     relationship_from_row,
+    relationship_row,
 )
 from ea.repositories.audit_store import write_events
 
@@ -433,4 +443,101 @@ class PostgresBaselineRepository:
         now: datetime,
         audit: AuditOf[RestorePlan],
     ) -> None:
-        raise NotImplementedError  # Task 17
+        """One SERIALIZABLE transaction: the plan, its boxes and its events, or nothing.
+
+        The plan the caller confirmed was computed before this transaction
+        opened, so it is computed again here, at the instant the writes will
+        see, and applied only if it is the same plan: a model that moved since
+        the dry run, a protected element (read here, not before) or a clash is
+        a refusal, and a serialization failure is the same replayable
+        `RestoreConflictError` — read the plan again and retry.
+        """
+        try:
+            async with self._sessions.begin() as session:
+                await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+                plan = await self._plan(session, baseline_id, keep_new=keep_new)
+                if plan.is_blocked:
+                    names = ", ".join(repr(e.name) for e in plan.blocked)
+                    msg = f"the restoration would touch protected elements: {names}"
+                    raise RestoreBlockedError(msg)
+                if plan != expected:
+                    msg = "the model changed since the plan was read: read the plan again"
+                    raise RestoreConflictError(msg)
+                # The plan read rows as objects; the writes below are statements.
+                session.expunge_all()
+                await _write(session, plan, now)
+                write_events(session, events_for(audit, plan))
+        except DBAPIError as error:
+            if _is_serialization_failure(error):
+                msg = "the catalogue changed during the restoration: read the plan again"
+                raise RestoreConflictError(msg) from error
+            if isinstance(error, IntegrityError) and (constraint_of(error) or "").startswith("fk_"):
+                msg = "something the plan relies on was removed meanwhile: read the plan again"
+                raise RestoreConflictError(msg) from error
+            raise
+
+
+def _is_serialization_failure(error: DBAPIError) -> bool:
+    """SQLSTATE 40001 (and 40P01, a deadlock) — carried by the driver's own exception."""
+    cause = getattr(error.orig, "__cause__", None)
+    code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
+    return code in ("40001", "40P01")
+
+
+async def _flush_restoring(session: AsyncSession, element: Element) -> None:
+    """Flush, and turn a uniqueness refusal into the sentence that names the element."""
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        refusal = rejected(element, constraint_of(error))
+        if refusal is None:
+            raise
+        msg = f"restoring {element.name!r} conflicts with the current catalogue: {refusal}"
+        raise RestoreConflictError(msg) from error
+
+
+async def _write(session: AsyncSession, plan: RestorePlan, now: datetime) -> None:
+    """Links out, elements out (their documents, boxes and links follow by foreign key),
+    then fields, elements and links back, then boxes."""
+    for link in plan.relationships_to_delete:
+        await session.execute(delete(RelationshipRecord).where(RelationshipRecord.id == link.id))
+    for element in plan.elements_to_delete:
+        await session.execute(delete(ElementRecord).where(ElementRecord.id == element.id))
+    for update in plan.elements_to_update:
+        row = await session.get(ElementRecord, update.restored.id)
+        if row is None:  # pragma: no cover - the plan was just verified in this snapshot
+            msg = f"{update.current.name!r} is already gone: read the plan again"
+            raise RestoreConflictError(msg)
+        row.name = update.restored.name
+        row.description = update.restored.description
+        row.documentation = update.restored.documentation
+        row.properties = dict(update.restored.properties)
+        row.package_id = update.restored.package_id
+        row.updated_at = now
+        await _flush_restoring(session, update.restored)
+    for element in plan.elements_to_create:
+        session.add(ElementRecord(**element_row(element), package_id=element.package_id))
+        await _flush_restoring(session, element)
+    for link in plan.relationships_to_create:
+        session.add(RelationshipRecord(**relationship_row(link)))
+    await session.flush()
+    for box in plan.boxes_to_restore:
+        statement = upsert(DiagramNodeRecord).values(
+            diagram_id=box.diagram_id,
+            element_id=box.element_id,
+            x=box.x,
+            y=box.y,
+            width=box.width,
+            height=box.height,
+        )
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[DiagramNodeRecord.diagram_id, DiagramNodeRecord.element_id],
+                set_={
+                    "x": statement.excluded.x,
+                    "y": statement.excluded.y,
+                    "width": statement.excluded.width,
+                    "height": statement.excluded.height,
+                },
+            )
+        )
