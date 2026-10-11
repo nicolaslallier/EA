@@ -38,6 +38,7 @@ from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.audit import events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     DomainError,
@@ -47,7 +48,7 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import Attachments, ElementFilter, GraphView
+from ea.domain.ports import ElementFilter, ElementRemoval, GraphView
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 from ea.repositories.audit_store import write_events
 
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
 
-    from ea.domain.audit import AuditEvent
+    from ea.domain.audit import AuditEvent, AuditOf
 
 logger = logging.getLogger(__name__)
 
@@ -388,6 +389,26 @@ async def _links_within(
     return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
 
+async def _removal_of(session: AsyncSession, row: ElementRecord) -> ElementRemoval:
+    """What deleting this (locked) element takes along, in the caller's transaction."""
+    link = RelationshipRecord
+    links = await session.scalars(
+        select(link)
+        .where(or_(link.source_id == row.id, link.target_id == row.id))
+        .order_by(link.created_at, link.id)
+    )
+    documents = select(ElementDocument.id).where(ElementDocument.element_id == row.id)
+    diagrams = select(DiagramNodeRecord.diagram_id).where(DiagramNodeRecord.element_id == row.id)
+    return ElementRemoval(
+        element=element_from_row(row),
+        relationships=tuple(relationship_from_row(found) for found in links),
+        document_ids=tuple(await session.scalars(documents.order_by(ElementDocument.id))),
+        diagram_ids=tuple(
+            await session.scalars(diagrams.order_by(DiagramNodeRecord.diagram_id).distinct())
+        ),
+    )
+
+
 # --------------------------------------------------------------------------
 # Repository
 # --------------------------------------------------------------------------
@@ -429,27 +450,38 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
-    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
         async with self._sessions.begin() as session:
-            row = await session.get(ElementRecord, element.id)
+            # `FOR UPDATE`: the row the event calls "before" is the one this
+            # write replaces, and a concurrent writer waits for our commit.
+            row = await session.get(ElementRecord, element.id, with_for_update=True)
             if row is None:
                 msg = f"no element with id {element.id}"
                 raise ElementNotFoundError(msg)
+            before = element_from_row(row)
             for column, value in element_row(element).items():
                 setattr(row, column, value)
             await _flush_refusing(session, element)
-            write_events(session, audit)
+            write_events(session, events_for(audit, before))
         return element
 
-    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
-        """Its relationships follow by the foreign keys."""
+    async def delete_element(
+        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
+    ) -> bool:
+        """Its relationships follow by the foreign keys.
+
+        What they take is read here, under the element's lock: a link or a
+        document filed on it meanwhile waits on the foreign key, so the list the
+        event carries is exactly what the cascade removes.
+        """
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(ElementRecord).where(ElementRecord.id == element_id)
-            )
-            if not _rows_affected(deleted):
+            row = await session.get(ElementRecord, element_id, with_for_update=True)
+            if row is None:
                 return False
-            write_events(session, audit)
+            removal = await _removal_of(session, row)
+            events = events_for(audit, removal)
+            await session.execute(delete(ElementRecord).where(ElementRecord.id == element_id))
+            write_events(session, events)
         return True
 
     # --- Relationships ----------------------------------------------------
@@ -502,29 +534,18 @@ class PostgresArchitectureRepository:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
     ) -> bool:
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
+            row = await session.get(RelationshipRecord, relationship_id, with_for_update=True)
+            if row is None:
+                return False
+            events = events_for(audit, relationship_from_row(row))
+            await session.execute(
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )
-            if not _rows_affected(deleted):
-                return False
-            write_events(session, audit)
+            write_events(session, events)
         return True
-
-    async def attachments_of(self, element_id: UUID) -> Attachments:
-        documents = select(ElementDocument.id).where(ElementDocument.element_id == element_id)
-        diagrams = select(DiagramNodeRecord.diagram_id).where(
-            DiagramNodeRecord.element_id == element_id
-        )
-        async with self._sessions() as session:
-            return Attachments(
-                document_ids=tuple(await session.scalars(documents.order_by(ElementDocument.id))),
-                diagram_ids=tuple(
-                    await session.scalars(diagrams.order_by(DiagramNodeRecord.diagram_id))
-                ),
-            )
 
     # --- Traversals -------------------------------------------------------
 

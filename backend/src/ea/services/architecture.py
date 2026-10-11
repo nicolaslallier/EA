@@ -27,9 +27,11 @@ from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
+    from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
         ElementFilter,
+        ElementRemoval,
         GraphView,
     )
 
@@ -147,13 +149,19 @@ class ArchitectureService:
                     documentation.strip() if documentation is not None else updated.documentation
                 ),
             )
-        event = self._trail.event(
-            AuditAction.ELEMENT_UPDATED,
-            entity_id=current.id,
-            before=element_view(current),
-            after=element_view(updated),
-        )
-        stored = await self._repository.save_element(updated, audit=(event,))
+
+        def events(before: Element) -> tuple[AuditEvent, ...]:
+            # Called by the repository in the transaction, on the row it replaces.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_UPDATED,
+                    entity_id=before.id,
+                    before=element_view(before),
+                    after=element_view(updated),
+                ),
+            )
+
+        stored = await self._repository.save_element(updated, audit=events)
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,
@@ -174,25 +182,32 @@ class ArchitectureService:
         it — see docs/adr/0033.
         """
         require_editor()
-        current = await self.get_element(element_id)
-        links = await self._repository.relations_of(element_id)
-        attached = await self._repository.attachments_of(element_id)
-        event = self._trail.event(
-            AuditAction.ELEMENT_DELETED,
-            entity_id=element_id,
-            before={
-                **element_view(current),
-                "cascaded": {
-                    "relationships": [
-                        {"id": str(link.id), "relationship_type": link.relationship_type.value}
-                        for link in links.relationships
-                    ],
-                    "documents": [str(identifier) for identifier in attached.document_ids],
-                    "diagrams": [str(identifier) for identifier in attached.diagram_ids],
-                },
-            },
-        )
-        if not await self._repository.delete_element(element_id, audit=(event,)):
+
+        def events(removal: ElementRemoval) -> tuple[AuditEvent, ...]:
+            # What went with the element is read by the repository in the same
+            # transaction as the DELETE, so the list is what the cascade removed.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_DELETED,
+                    entity_id=element_id,
+                    before={
+                        **element_view(removal.element),
+                        "cascaded": {
+                            "relationships": [
+                                {
+                                    "id": str(link.id),
+                                    "relationship_type": link.relationship_type.value,
+                                }
+                                for link in removal.relationships
+                            ],
+                            "documents": [str(i) for i in removal.document_ids],
+                            "diagrams": [str(i) for i in removal.diagram_ids],
+                        },
+                    },
+                ),
+            )
+
+        if not await self._repository.delete_element(element_id, audit=events):
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
         logger.info(
@@ -287,13 +302,17 @@ class ArchitectureService:
 
     async def disconnect(self, relationship_id: UUID) -> None:
         require_editor()
-        current = await self.get_relationship(relationship_id)
-        event = self._trail.event(
-            AuditAction.RELATIONSHIP_DELETED,
-            entity_id=relationship_id,
-            before=relationship_view(current),
-        )
-        if not await self._repository.delete_relationship(relationship_id, audit=(event,)):
+
+        def events(before: Relationship) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.RELATIONSHIP_DELETED,
+                    entity_id=relationship_id,
+                    before=relationship_view(before),
+                ),
+            )
+
+        if not await self._repository.delete_relationship(relationship_id, audit=events):
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
         logger.info(

@@ -11,16 +11,17 @@ Every value is bound: SQLAlchemy constructs compile to parameters.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import Select, delete, func, select
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
+from ea.domain.audit import events_for
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError, PackageNotFoundError
 from ea.repositories.architecture_store import constraint_of
+from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from ea.domain.audit import AuditEvent, AuditOf
 
 
 def _summaries() -> Select[tuple[DiagramRecord, int]]:
@@ -108,7 +111,7 @@ class PostgresDiagramRepository:
                 for row in rows
             )
 
-    async def add(self, diagram: Diagram) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
         async with self._sessions.begin() as session:
             session.add(
@@ -125,15 +128,17 @@ class PostgresDiagramRepository:
                 await session.flush()
             except IntegrityError as error:
                 raise _refused(error, diagram) from error
+            write_events(session, audit)
         return diagram
 
-    async def save(self, diagram: Diagram) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
         async with self._sessions.begin() as session:
-            row = await session.get(DiagramRecord, diagram.id)
+            row = await session.get(DiagramRecord, diagram.id, with_for_update=True)
             if row is None:
                 # Deleted between the service reading it and this write.
                 msg = f"no diagram with id {diagram.id}"
                 raise DiagramNotFoundError(msg)
+            before = _to_diagram(row, 0)
             row.name = diagram.name
             row.description = diagram.description
             row.package_id = diagram.package_id
@@ -142,18 +147,27 @@ class PostgresDiagramRepository:
                 await session.flush()
             except IntegrityError as error:
                 raise _refused(error, diagram) from error
+            write_events(session, events_for(audit, before))
         return diagram
 
-    async def delete(self, diagram_id: UUID) -> bool:
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool:
         """Its nodes follow by the foreign key."""
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(DiagramRecord).where(DiagramRecord.id == diagram_id)
-            )
-        return bool(cast("CursorResult[Any]", deleted).rowcount)
+            row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
+            if row is None:
+                return False
+            events = events_for(audit, _to_diagram(row, 0))
+            await session.execute(delete(DiagramRecord).where(DiagramRecord.id == diagram_id))
+            write_events(session, events)
+        return True
 
     async def replace_layout(
-        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        now: datetime,
+        audit: AuditOf[tuple[DiagramNode, ...]] = (),
     ) -> bool:
         async with self._sessions.begin() as session:
             # `FOR UPDATE` queues concurrent saves of one diagram (autosave fires
@@ -164,6 +178,18 @@ class PostgresDiagramRepository:
             row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
             if row is None:
                 return False
+            kept = await session.execute(
+                select(
+                    DiagramNodeRecord.element_id,
+                    DiagramNodeRecord.x,
+                    DiagramNodeRecord.y,
+                    DiagramNodeRecord.width,
+                    DiagramNodeRecord.height,
+                ).where(DiagramNodeRecord.diagram_id == diagram_id)
+            )
+            before = tuple(
+                DiagramNode(element_id=r[0], x=r[1], y=r[2], width=r[3], height=r[4]) for r in kept
+            )
             await session.execute(
                 delete(DiagramNodeRecord).where(DiagramNodeRecord.diagram_id == diagram_id)
             )
@@ -179,4 +205,5 @@ class PostgresDiagramRepository:
                 for n in nodes
             )
             row.updated_at = now
+            write_events(session, events_for(audit, before))
         return True

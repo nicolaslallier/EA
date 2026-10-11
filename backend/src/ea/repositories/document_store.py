@@ -32,15 +32,19 @@ from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
+from ea.domain.audit import events_for
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import DocumentNotFoundError, DuplicateDocumentError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
+from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from ea.domain.audit import AuditEvent, AuditOf
 
 
 def _rows_affected(result: object) -> int:
@@ -92,7 +96,13 @@ class PostgresDocumentRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: Sequence[AuditEvent] = (),
+    ) -> Document:
         """Store a new document and its passages, in one transaction.
 
         The unique constraint is what refuses a name the element already has,
@@ -128,6 +138,7 @@ class PostgresDocumentRepository:
                 msg = f"{document.filename!r} is already attached to this element"
                 raise DuplicateDocumentError(msg) from error
             session.add_all(_chunk_rows(document, chunks))
+            write_events(session, audit)
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -169,7 +180,13 @@ class PostgresDocumentRepository:
                 for row in rows
             )
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document] = (),
+    ) -> Document:
         """Overwrite a stored document, and its passages, with a new revision.
 
         The old passages are deleted rather than updated: a revision cuts into
@@ -178,27 +195,32 @@ class PostgresDocumentRepository:
         revision from ever being searchable under its previous text.
         """
         async with self._sessions.begin() as session:
-            row = await session.get(ElementDocument, document.id)
+            row = await session.get(ElementDocument, document.id, with_for_update=True)
             if row is None:
                 # Only reachable if the document was deleted between the
                 # service reading it and this write — a race, not a bug.
                 msg = f"no document with id {document.id}"
                 raise DocumentNotFoundError(msg)
+            before = _to_document(row)
             row.content = document.content
             row.updated_at = document.updated_at
             await session.execute(
                 delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
             )
             session.add_all(_chunk_rows(document, chunks))
+            write_events(session, events_for(audit, before))
         return document
 
-    async def delete(self, document_id: UUID) -> bool:
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(ElementDocument).where(ElementDocument.id == document_id)
-            )
-        return bool(_rows_affected(deleted))
+            row = await session.get(ElementDocument, document_id, with_for_update=True)
+            if row is None:
+                return False
+            events = events_for(audit, _to_document(row))
+            await session.execute(delete(ElementDocument).where(ElementDocument.id == document_id))
+            write_events(session, events)
+        return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every document in the store, oldest first — the reindex walks these."""

@@ -18,7 +18,15 @@ from uuid import UUID, uuid4
 import pytest
 
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.audit import AuditEvent, AuditFilter, AuditPage, decode_cursor, encode_cursor
+from ea.domain.audit import (
+    AuditEvent,
+    AuditFilter,
+    AuditOf,
+    AuditPage,
+    decode_cursor,
+    encode_cursor,
+    events_for,
+)
 from ea.domain.auth import EDITOR_ROLE, Caller
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
@@ -42,7 +50,7 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
-from ea.domain.ports import Attachments, ElementFilter, GraphView
+from ea.domain.ports import ElementFilter, ElementRemoval, GraphView
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -338,12 +346,13 @@ class InMemoryRepository:
     async def count_elements(self, criteria: ElementFilter) -> int:
         return len(self.elements)
 
-    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
         if element.id not in self.elements:
             raise ElementNotFoundError(str(element.id))
         self._refuse_a_taken_address(element)
+        events = events_for(audit, self.elements[element.id])
         self.elements[element.id] = element
-        self.audit_log.append(audit)
+        self.audit_log.append(events)
         return element
 
     def _refuse_a_taken_address(self, element: Element) -> None:
@@ -372,10 +381,18 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
-        if self.elements.pop(element_id, None) is None:
+    async def delete_element(
+        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
+    ) -> bool:
+        element = self.elements.get(element_id)
+        if element is None:
             return False
-        self.audit_log.append(audit)
+        links = tuple(
+            r for r in self.relationships.values() if element_id in (r.source_id, r.target_id)
+        )
+        events = events_for(audit, ElementRemoval(element=element, relationships=links))
+        del self.elements[element_id]
+        self.audit_log.append(events)
         return True
 
     async def add_relationship(
@@ -384,9 +401,6 @@ class InMemoryRepository:
         self.relationships[relationship.id] = relationship
         self.audit_log.append(audit)
         return relationship
-
-    async def attachments_of(self, element_id: UUID) -> Attachments:
-        return Attachments()
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
         return self.relationships.get(relationship_id)
@@ -402,11 +416,14 @@ class InMemoryRepository:
         return tuple(self.relationships.values())
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
     ) -> bool:
-        if self.relationships.pop(relationship_id, None) is None:
+        stored = self.relationships.get(relationship_id)
+        if stored is None:
             return False
-        self.audit_log.append(audit)
+        events = events_for(audit, stored)
+        del self.relationships[relationship_id]
+        self.audit_log.append(events)
         return True
 
     async def relations_of(
@@ -509,7 +526,13 @@ class InMemoryDocuments:
         self.documents: dict[UUID, Document] = {}
         self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: Sequence[AuditEvent] = (),
+    ) -> Document:
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
             for stored in self.documents.values()
@@ -519,6 +542,7 @@ class InMemoryDocuments:
             raise DuplicateDocumentError(msg)
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
+        self.audit_log.append(audit)
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -533,18 +557,32 @@ class InMemoryDocuments:
             )
         )
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document] = (),
+    ) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
+        events = events_for(audit, self.documents[document.id])
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
+        self.audit_log.append(events)
         return document
 
-    async def delete(self, document_id: UUID) -> bool:
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool:
         """The passages go with the document — here by hand, in PostgreSQL by
         the foreign key from `document_chunks`."""
+        stored = self.documents.get(document_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
         self.chunks.pop(document_id, None)
-        return self.documents.pop(document_id, None) is not None
+        del self.documents[document_id]
+        self.audit_log.append(events)
+        return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         return tuple(
@@ -615,9 +653,10 @@ class InMemoryDiagrams:
         ]
         return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
-    async def add(self, diagram: Diagram) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
         self._refuse_a_taken_name(diagram)
         self.diagrams[diagram.id] = diagram
+        self.audit_log.append(audit)
         return diagram
 
     async def get(self, diagram_id: UUID) -> Diagram | None:
@@ -627,25 +666,40 @@ class InMemoryDiagrams:
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]:
         return self.nodes.get(diagram_id, ())
 
-    async def save(self, diagram: Diagram) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
         if diagram.id not in self.diagrams:
             raise DiagramNotFoundError(str(diagram.id))
         self._refuse_a_taken_name(diagram)
+        events = events_for(audit, self.diagrams[diagram.id])
         self.diagrams[diagram.id] = diagram
+        self.audit_log.append(events)
         return diagram
 
-    async def delete(self, diagram_id: UUID) -> bool:
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
         self.nodes.pop(diagram_id, None)
-        return self.diagrams.pop(diagram_id, None) is not None
+        del self.diagrams[diagram_id]
+        self.audit_log.append(events)
+        return True
 
     async def replace_layout(
-        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        now: datetime,
+        audit: AuditOf[tuple[DiagramNode, ...]] = (),
     ) -> bool:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
             return False
+        events = events_for(audit, self.nodes.get(diagram_id, ()))
         self.nodes[diagram_id] = tuple(nodes)
         self.diagrams[diagram_id] = stored.touched(now)
+        self.audit_log.append(events)
         return True
 
 

@@ -19,6 +19,7 @@ from ea.domain.audit import (
     document_view,
     element_view,
     encode_cursor,
+    events_for,
     layout_view,
 )
 from ea.domain.diagrams import DiagramNode
@@ -126,3 +127,20 @@ class TestTheCursor:
     def test_a_naive_moment_is_read_as_utc(self) -> None:
         assert aware(datetime(2026, 1, 1, 0, 0)) == datetime(2026, 1, 1, tzinfo=UTC)
         assert aware(None) is None
+
+
+class TestEventsFor:
+    def test_ready_made_events_are_returned_as_they_are(self) -> None:
+        events = ()
+
+        assert events_for(events, "any row") is events
+
+    def test_a_function_is_asked_with_the_row_the_write_replaces(self) -> None:
+        asked: list[str] = []
+
+        def build(before: str) -> tuple[()]:
+            asked.append(before)
+            return ()
+
+        assert events_for(build, "the stored row") == ()
+        assert asked == ["the stored row"]

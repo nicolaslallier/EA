@@ -25,7 +25,7 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
-    from ea.domain.audit import AuditEvent
+    from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
@@ -46,9 +46,14 @@ class GraphView:
 
 
 @dataclass(frozen=True, slots=True)
-class Attachments:
-    """What the foreign keys of revision 0006 take with an element, besides its links."""
+class ElementRemoval:
+    """What a deletion takes: the element, its links, and what the foreign keys cascade.
 
+    Read inside the transaction that deletes, so it is exactly what went.
+    """
+
+    element: Element
+    relationships: tuple[Relationship, ...] = ()
     document_ids: tuple[UUID, ...] = ()
     diagram_ids: tuple[UUID, ...] = ()
 
@@ -109,11 +114,16 @@ class ArchitectureRepository(Protocol):
 
     async def count_elements(self, criteria: ElementFilter) -> int: ...
 
-    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
-        """Persist an already-existing element, overwriting its stored form."""
+    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
+        """Persist an already-existing element, overwriting its stored form.
+
+        `audit` may be a function of the stored element, called in the transaction.
+        """
         ...
 
-    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
+    async def delete_element(
+        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
+    ) -> bool:
         """Remove an element and every relationship attached to it.
 
         `audit` is written only if a row was deleted; `False` writes nothing.
@@ -136,12 +146,8 @@ class ArchitectureRepository(Protocol):
     ) -> tuple[Relationship, ...]: ...
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
     ) -> bool: ...
-
-    async def attachments_of(self, element_id: UUID) -> Attachments:
-        """The documents and diagrams that follow this element when it is deleted."""
-        ...
 
     async def relations_of(
         self,
@@ -210,7 +216,13 @@ class DocumentRepository(Protocol):
     true. See docs/adr/0019.
     """
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: Sequence[AuditEvent] = (),
+    ) -> Document:
         """Store a new document and its passages, or refuse a name already taken."""
         ...
 
@@ -220,11 +232,17 @@ class DocumentRepository(Protocol):
         """Every document attached to an element, oldest first, without content."""
         ...
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document] = (),
+    ) -> Document:
         """Overwrite a stored document, and replace its passages with these."""
         ...
 
-    async def delete(self, document_id: UUID) -> bool: ...
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool: ...
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every stored document, for the one job that walks the whole corpus.
@@ -264,7 +282,7 @@ class DiagramRepository(Protocol):
         """
         ...
 
-    async def add(self, diagram: Diagram) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
         """Store a new diagram, or refuse a name already taken."""
         ...
 
@@ -272,14 +290,19 @@ class DiagramRepository(Protocol):
 
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]: ...
 
-    async def save(self, diagram: Diagram) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
         """Overwrite the name, description and update time of a stored diagram."""
         ...
 
-    async def delete(self, diagram_id: UUID) -> bool: ...
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool: ...
 
     async def replace_layout(
-        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        now: datetime,
+        audit: AuditOf[tuple[DiagramNode, ...]] = (),
     ) -> bool:
         """Replace every node of a diagram in one transaction; `False` if it is gone."""
         ...

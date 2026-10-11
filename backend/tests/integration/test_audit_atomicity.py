@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -22,10 +22,10 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 
 
-def event_for(action: AuditAction, entity_id: object) -> AuditEvent:
+def event_for(action: AuditAction, entity_id: object, *, at: datetime = NOW) -> AuditEvent:
     return AuditEvent(
         id=uuid4(),
-        at=NOW,
+        at=at,
         actor_sub="editor-1",
         actor_name="editor",
         action=action,
@@ -69,7 +69,8 @@ async def test_a_refused_write_leaves_no_event_and_a_deletion_leaves_its_trace(
     assert [e.entity_id for e in only_the_first.events] == [first.id]
 
     assert await graph.delete_element(
-        first.id, audit=(event_for(AuditAction.ELEMENT_DELETED, first.id),)
+        first.id,
+        audit=(event_for(AuditAction.ELEMENT_DELETED, first.id, at=NOW + timedelta(seconds=1)),),
     )
     history = await trail.page(AuditFilter(entity_kind=EntityKind.ELEMENT, entity_id=first.id))
     assert [e.action for e in history.events] == [
@@ -105,11 +106,12 @@ async def test_a_save_and_a_link_write_their_events_with_them(engine_at_head: As
     ]
 
 
-async def test_attachments_of_names_what_the_foreign_keys_would_take(
+async def test_a_removal_names_what_the_foreign_keys_take(
     engine_at_head: AsyncEngine,
 ) -> None:
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.documents import Document
+    from ea.domain.ports import ElementRemoval
     from ea.repositories.diagram_store import PostgresDiagramRepository
     from ea.repositories.document_store import PostgresDocumentRepository
 
@@ -122,9 +124,75 @@ async def test_attachments_of_names_what_the_foreign_keys_would_take(
     diagrams = PostgresDiagramRepository(sessions)
     diagram = await diagrams.add(Diagram.create(name="Vue", now=NOW))
     await diagrams.replace_layout(diagram.id, [DiagramNode(element.id, 0, 0)], now=NOW)
+    seen: list[ElementRemoval] = []
 
-    attached = await graph.attachments_of(element.id)
+    def record(removal: ElementRemoval) -> tuple[()]:
+        seen.append(removal)
+        return ()
 
-    assert attached.document_ids == (document.id,)
-    assert attached.diagram_ids == (diagram.id,)
-    assert (await graph.attachments_of(uuid4())).document_ids == ()
+    assert await graph.delete_element(element.id, audit=record)
+
+    (removal,) = seen
+    assert removal.element.id == element.id
+    assert removal.document_ids == (document.id,)
+    assert removal.diagram_ids == (diagram.id,)
+
+
+async def test_a_document_and_its_event_commit_or_fail_together(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.domain.documents import Document
+    from ea.domain.errors import DuplicateDocumentError
+    from ea.repositories.document_store import PostgresDocumentRepository
+
+    sessions = create_session_factory(engine_at_head)
+    graph = PostgresArchitectureRepository(sessions)
+    documents = PostgresDocumentRepository(sessions)
+    trail = PostgresAuditRepository(sessions)
+    element = await graph.add_element(an_element("db-01"))
+    first = Document.create(element_id=element.id, filename="a.md", content="# A\n", now=NOW)
+    second = Document.create(element_id=element.id, filename="a.md", content="# B\n", now=NOW)
+
+    await documents.add(first, audit=(event_for(AuditAction.DOCUMENT_ATTACHED, first.id),))
+    with pytest.raises(DuplicateDocumentError):
+        await documents.add(second, audit=(event_for(AuditAction.DOCUMENT_ATTACHED, second.id),))
+    assert (
+        await documents.delete(uuid4(), audit=(event_for(AuditAction.DOCUMENT_DISCARDED, None),))
+        is False
+    )
+
+    page = await trail.page(AuditFilter(entity_kind=EntityKind.DOCUMENT))
+    assert [e.entity_id for e in page.events] == [first.id]
+
+
+async def test_a_diagram_layout_and_its_event_commit_together(engine_at_head: AsyncEngine) -> None:
+    from ea.domain.diagrams import Diagram, DiagramNode
+    from ea.repositories.diagram_store import PostgresDiagramRepository
+
+    sessions = create_session_factory(engine_at_head)
+    graph = PostgresArchitectureRepository(sessions)
+    diagrams = PostgresDiagramRepository(sessions)
+    trail = PostgresAuditRepository(sessions)
+    element = await graph.add_element(an_element("db-01"))
+    diagram = await diagrams.add(
+        Diagram.create(name="Vue", now=NOW),
+        audit=(event_for(AuditAction.DIAGRAM_CREATED, None),),
+    )
+
+    assert not await diagrams.replace_layout(
+        uuid4(),
+        [DiagramNode(element.id, 0, 0)],
+        now=NOW,
+        audit=(event_for(AuditAction.DIAGRAM_LAYOUT_REPLACED, None),),
+    )
+    assert await diagrams.replace_layout(
+        diagram.id,
+        [DiagramNode(element.id, 0, 0)],
+        now=NOW,
+        audit=(event_for(AuditAction.DIAGRAM_LAYOUT_REPLACED, diagram.id),),
+    )
+
+    actions = [
+        e.action for e in (await trail.page(AuditFilter(entity_kind=EntityKind.DIAGRAM))).events
+    ]
+    assert sorted(a.value for a in actions) == ["diagram.created", "diagram.layout_replaced"]

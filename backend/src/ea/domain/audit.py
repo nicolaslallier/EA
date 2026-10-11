@@ -12,7 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -119,6 +119,20 @@ class AuditEvent:
     def changes(self) -> tuple[FieldChange, ...]:
         # `updated_at` moves on every write: it is noise in a diff.
         return diff_fields(self.before, self.after, ignore=frozenset({"updated_at"}))
+
+
+#: What a repository write takes as `audit`: the events themselves (a creation
+#: has no "before" to read), or a function of the row the write replaces. The
+#: second form is the one that matters: the repository reads that row inside
+#: the transaction of the write, under its lock, and asks the function for the
+#: events then — so the `before` of an event is the row really replaced, and
+#: two concurrent writers cannot both log the same one.
+type AuditOf[Before] = Sequence[AuditEvent] | Callable[[Before], Sequence[AuditEvent]]
+
+
+def events_for[Before](audit: AuditOf[Before], before: Before) -> Sequence[AuditEvent]:
+    """The events of a write, given the row it replaces (read in its transaction)."""
+    return audit if isinstance(audit, Sequence) else audit(before)
 
 
 # --- Read representations: what `before` and `after` hold ------------------
