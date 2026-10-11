@@ -11,11 +11,13 @@ import { computed, ref, useTemplateRef } from 'vue'
 import { BOX_TEXT, LAYER_COLOURS } from '../metamodel/useMetamodel'
 import { verbOf } from '../relationships/labels'
 import {
+  CANVAS_MARGIN,
   canvasExtent,
   centreOf,
   edgeSegment,
   placeCentredAt,
   resizedTo,
+  shorten,
   toCanvasPoint,
   type Point,
   type Size,
@@ -47,12 +49,8 @@ const emit = defineEmits<{
   connect: [sourceId: string, targetId: string]
 }>()
 
-/** Roughly how wide one character of a box's name is drawn. */
-const CHARACTER_WIDTH = 7.5
 const ZOOM_STEP = 0.25
 const ZOOM_RANGE = [0.4, 2] as const
-/** Room kept past the furthest box, so there is always somewhere to drop. */
-const MARGIN = 160
 
 const svg = useTemplateRef<SVGSVGElement>('svg')
 const zoom = ref(1)
@@ -63,7 +61,7 @@ type Gesture =
   | { kind: 'link'; sourceId: string; to: Point }
 const gesture = ref<Gesture | null>(null)
 
-const extent = computed(() => canvasExtent(props.boxes, MARGIN))
+const extent = computed(() => canvasExtent(props.boxes, CANVAS_MARGIN))
 const byId = computed(() => new Map(props.boxes.map((box) => [box.element.id, box])))
 const selected = computed(() => byId.value.get(props.selectedId))
 
@@ -82,12 +80,6 @@ const summary = computed(() => {
   const links = edges.value.length
   return `${boxes} élément${boxes > 1 ? 's' : ''}, ${links} relation${links > 1 ? 's' : ''}`
 })
-
-/** As much of `name` as a box `width` wide holds: a wider box shows more of it. */
-function shorten(name: string, width: number): string {
-  const limit = Math.max(4, Math.floor(width / CHARACTER_WIDTH))
-  return name.length > limit ? `${name.slice(0, limit - 1)}…` : name
-}
 
 function step(by: number): void {
   zoom.value = Math.min(ZOOM_RANGE[1], Math.max(ZOOM_RANGE[0], zoom.value + by))

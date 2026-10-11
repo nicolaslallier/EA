@@ -44,6 +44,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # Les tests PDF chargent WeasyPrint, donc Pango (docs/adr/0062).
+      - name: Bibliothèques de WeasyPrint
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core
       - run: make install
       - run: make lint-check
       - run: make typecheck-be

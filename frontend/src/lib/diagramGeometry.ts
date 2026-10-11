@@ -27,6 +27,18 @@ export const DEFAULT_BOX: Size = { width: BOX_WIDTH, height: BOX_HEIGHT }
 /** The smallest a box can be dragged to, still holding one short line of name. */
 export const MIN_BOX: Size = { width: 60, height: 30 }
 
+/** Room kept past the furthest box, so there is always somewhere to drop. */
+export const CANVAS_MARGIN = 160
+
+/** Roughly how wide one character of a box's name is drawn. */
+export const CHARACTER_WIDTH = 7.5
+
+/** As much of `name` as a box `width` wide holds: a wider box shows more of it. */
+export function shorten(name: string, width: number): string {
+  const limit = Math.max(4, Math.floor(width / CHARACTER_WIDTH))
+  return name.length > limit ? `${name.slice(0, limit - 1)}…` : name
+}
+
 /** A pointer in client pixels to canvas units; `origin` is the canvas's client top-left. */
 export function toCanvasPoint(client: Point, origin: Point, zoom: number): Point {
   return { x: (client.x - origin.x) / zoom, y: (client.y - origin.y) / zoom }

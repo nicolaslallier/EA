@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from typing import Final
@@ -30,6 +30,7 @@ from ea.api.dependencies import (
     file_service_of,
     ipam_service_of,
     package_service_of,
+    report_service_of,
     saved_query_service_of,
     timeline_service_of,
 )
@@ -45,6 +46,7 @@ from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.packages import router as packages_router
 from ea.api.queries import router as queries_router
+from ea.api.reports import router as reports_router
 from ea.api.schemas import ErrorResponse
 from ea.api.timeline import router as timeline_router
 from ea.core.config import Settings, get_settings
@@ -69,6 +71,7 @@ from ea.domain.ports import (
     TimelineRepository,
 )
 from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
+from ea.domain.reports import Renderer, ReportFormat
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
@@ -84,6 +87,7 @@ from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.repositories.report_renderers import available_renderers
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
 from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
@@ -97,6 +101,7 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.reports import ReportService, report_admission
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -412,6 +417,7 @@ def _lifespan(
                 # there whenever the store is — and `None` only on the test
                 # seam that builds an app without PostgreSQL at all.
                 app.state.file_service = FileService(store, metadata=metadata_store)
+            _attach_reports(app, detect_engines=True)
             # Published once every probe has run: `/health` reads it, and it is
             # the only place an operator is told which store is missing without
             # opening the logs — see docs/adr/0037.
@@ -447,6 +453,41 @@ def _lifespan(
             logger.info("shutting down")
 
     return lifespan
+
+
+def _attach_reports(app: FastAPI, *, detect_engines: bool = False) -> None:
+    """The report use cases, once the services they read and write through exist.
+
+    Called wherever the last of those can appear: `create_app` for the injected test seams, the
+    lifespan for the real stores. Idempotent. One admission serves every door (HTTP and MCP), so
+    that two doors cannot hold twice the places (docs/adr/0062).
+
+    The PDF engine loads native libraries, so it is looked for only where a deployment really
+    starts (`detect_engines`, the lifespan) and when a test did not impose its own table.
+    """
+    diagrams = getattr(app.state, "diagram_service", None)
+    files = getattr(app.state, "file_service", None)
+    architecture = getattr(app.state, "architecture_service", None)
+    if (
+        diagrams is None
+        or files is None
+        or architecture is None
+        or getattr(app.state, "report_service", None) is not None
+    ):
+        return
+    renderers = getattr(app.state, "report_renderers", None)
+    if renderers is None and detect_engines:
+        renderers = available_renderers()
+    app.state.report_service = ReportService(
+        diagrams,
+        architecture,
+        getattr(app.state, "document_service", None),
+        files,
+        packages=getattr(app.state, "package_service", None),
+        admission=app.state.report_admission,
+        extra_renderers=renderers,
+        app_version=app.version,
+    )
 
 
 def _transport_security(settings: Settings) -> TransportSecuritySettings:
@@ -535,6 +576,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: exchange_service_of(app),
         lambda: analysis_service_of(app),
         lambda: timeline_service_of(app),
+        lambda: report_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -583,6 +625,7 @@ def create_app(
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
+    report_renderers: Mapping[ReportFormat, Renderer] | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -637,6 +680,8 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    app.state.report_renderers = report_renderers
+    app.state.report_admission = report_admission()
     # Validated here, so a wrong `EA_QUALITY_REQUIRED` stops the boot (docs/adr/0057); and one
     # admission for the analyses that read the whole model, whichever door they come through.
     app.state.quality_params = build_quality_params(settings)
@@ -697,6 +742,7 @@ def create_app(
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
+    _attach_reports(app)
     if audit is not None:
         app.state.audit_service = AuditService(audit)
     if baselines is not None:
@@ -751,6 +797,7 @@ def create_app(
     app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(timeline_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(reports_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(baselines_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

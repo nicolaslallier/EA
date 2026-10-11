@@ -20,12 +20,17 @@ export type Gate = {
 
 export const routes: RouteRecordRaw[] = [
   { path: '/', redirect: HOME },
-  ...SECTIONS.filter(isBuilt).map((section) => ({
-    path: section.path,
-    name: section.name,
-    component: section.view,
-    meta: { label: section.label },
-  })),
+  ...SECTIONS.filter(isBuilt).map(
+    (section) =>
+      ({
+        path: section.path,
+        name: section.name,
+        component: section.view,
+        // A section with screens nested inside it (the reader mode) mounts them here.
+        children: section.children,
+        meta: { label: section.label, reader: section.reader === true },
+      }) as RouteRecordRaw,
+  ),
   {
     path: CALLBACK_PATH,
     name: 'auth-callback',

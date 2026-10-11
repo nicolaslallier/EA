@@ -353,3 +353,27 @@ class InvalidTimelineError(DomainError):
 
 class DuplicateGapError(DomainError):
     """A gap already stands between those two plateaus."""
+
+
+class ReportTooLargeError(DomainError):
+    """A report would pass a ceiling: elements, diagrams, document bytes or time.
+
+    The message names the ceiling and how to narrow the scope. A silent truncation would hand
+    over a report that looks complete and is not (docs/adr/0062).
+    """
+
+
+class ReportFormatUnavailableError(DomainError):
+    """The format needs a native library this deployment does not carry."""
+
+
+class ReportBusyError(DomainError):
+    """As many reports are being built as the process allows (globally, or for this caller)."""
+
+
+class UnknownReportTemplateError(DomainError):
+    """No built-in template has this id."""
+
+
+class UnsupportedReportSubjectError(DomainError):
+    """This template does not take this kind of subject."""

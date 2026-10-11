@@ -13,6 +13,7 @@ dependencies = [
     # The embedding service is reached over HTTP, and it is the only outbound
     # call this process makes — see docs/adr/0019.
     "httpx>=0.27",
+    "markdown-it-py>=3.0",
     "mcp>=2.3.0",
     # Files in the Infra's MinIO — see docs/adr/0036. Same SDK as pipelines/.
     "minio>=7.2.20",
@@ -28,9 +29,13 @@ dependencies = [
     "pyjwt[crypto]>=2.15.1",
     # Uploading a markdown file is multipart/form-data, which Starlette
     # parses only when this is installed — see docs/adr/0017.
+    # DOCX reports; pure Python on top of lxml — see docs/adr/0062.
+    "python-docx>=1.1",
     "python-multipart>=0.0.18",
     "sqlalchemy[asyncio]>=2.1.4",
     "uvicorn[standard]>=0.54.0",
+    # PDF from the self-contained HTML report — needs Pango at run time; see docs/adr/0062.
+    "weasyprint>=66.0",
 ]
 
 [project.optional-dependencies]
@@ -83,6 +88,10 @@ python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["ea"]
+
+[[tool.mypy.overrides]]
+module = ["weasyprint", "weasyprint.*", "docx", "docx.*"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["src/ea"]

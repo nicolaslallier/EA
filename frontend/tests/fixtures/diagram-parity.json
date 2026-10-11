@@ -1,0 +1,94 @@
+{
+  "name": "Parité",
+  "layer_colours": {
+    "motivation": "#ccccff",
+    "strategy": "#f5deaa",
+    "business": "#ffffb5",
+    "application": "#b5ffff",
+    "technology": "#c9e7b7",
+    "physical": "#afdfa0",
+    "implementation_migration": "#ffe0e0",
+    "other": "#e8e6ec"
+  },
+  "box_ink": "#24202b",
+  "nodes": [
+    {
+      "element_id": "10000000-0000-4000-8000-000000000001",
+      "x": 40,
+      "y": 40,
+      "width": 132,
+      "height": 46
+    },
+    {
+      "element_id": "10000000-0000-4000-8000-000000000002",
+      "x": 400,
+      "y": 60,
+      "width": 220,
+      "height": 80
+    },
+    {
+      "element_id": "10000000-0000-4000-8000-000000000003",
+      "x": 60,
+      "y": 300,
+      "width": 132,
+      "height": 46
+    },
+    {
+      "element_id": "10000000-0000-4000-8000-000000000004",
+      "x": 80,
+      "y": 60,
+      "width": 132,
+      "height": 46
+    }
+  ],
+  "elements": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "element_type": "application_component",
+      "layer": "application",
+      "name": "Facturation"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "element_type": "business_process",
+      "layer": "business",
+      "name": "Order to cash : traitement complet des commandes"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000003",
+      "element_type": "node",
+      "layer": "technology",
+      "name": "Serveur A"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000004",
+      "element_type": "application_component",
+      "layer": "application",
+      "name": "Catalogue"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "relationship_type": "association",
+      "source_id": "10000000-0000-4000-8000-000000000001",
+      "target_id": "10000000-0000-4000-8000-000000000002",
+      "access_type": null
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000002",
+      "relationship_type": "association",
+      "source_id": "10000000-0000-4000-8000-000000000003",
+      "target_id": "10000000-0000-4000-8000-000000000001",
+      "access_type": null
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000003",
+      "relationship_type": "association",
+      "source_id": "10000000-0000-4000-8000-000000000001",
+      "target_id": "10000000-0000-4000-8000-000000000004",
+      "access_type": null
+    }
+  ],
+  "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 800 600\" width=\"800\" height=\"600\" role=\"img\" aria-label=\"Parité\">\n<title>Parité</title>\n<defs><marker id=\"ea-diagram-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#4a4455\"/></marker></defs>\n<g class=\"edge\" data-relationship-id=\"20000000-0000-4000-8000-000000000001\">\n<line x1=\"172\" y1=\"69.04\" x2=\"400\" y2=\"89.93\" stroke=\"#4a4455\" stroke-width=\"1.5\" marker-end=\"url(#ea-diagram-arrow)\"/>\n<text x=\"286\" y=\"75.49\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"11\" fill=\"#4a4455\">est associé à</text>\n</g>\n<g class=\"edge\" data-relationship-id=\"20000000-0000-4000-8000-000000000002\">\n<line x1=\"124.23\" y1=\"300\" x2=\"107.77\" y2=\"86\" stroke=\"#4a4455\" stroke-width=\"1.5\" marker-end=\"url(#ea-diagram-arrow)\"/>\n<text x=\"116\" y=\"189\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"11\" fill=\"#4a4455\">est associé à</text>\n</g>\n<g class=\"node\" data-element-id=\"10000000-0000-4000-8000-000000000001\">\n<title>Facturation — Application Component</title>\n<rect x=\"40\" y=\"40\" width=\"132\" height=\"46\" rx=\"6\" fill=\"#b5ffff\" stroke=\"#24202b\" stroke-opacity=\"0.35\"/>\n<text class=\"name\" x=\"106\" y=\"61\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"13\" fill=\"#24202b\">Facturation</text>\n<text class=\"type\" x=\"106\" y=\"76\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"10\" fill=\"#24202b\">Application Comp…</text>\n</g>\n<g class=\"node\" data-element-id=\"10000000-0000-4000-8000-000000000002\">\n<title>Order to cash : traitement complet des commandes — Business Process</title>\n<rect x=\"400\" y=\"60\" width=\"220\" height=\"80\" rx=\"6\" fill=\"#ffffb5\" stroke=\"#24202b\" stroke-opacity=\"0.35\"/>\n<text class=\"name\" x=\"510\" y=\"98\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"13\" fill=\"#24202b\">Order to cash : traitement c…</text>\n<text class=\"type\" x=\"510\" y=\"113\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"10\" fill=\"#24202b\">Business Process</text>\n</g>\n<g class=\"node\" data-element-id=\"10000000-0000-4000-8000-000000000003\">\n<title>Serveur A — Node</title>\n<rect x=\"60\" y=\"300\" width=\"132\" height=\"46\" rx=\"6\" fill=\"#c9e7b7\" stroke=\"#24202b\" stroke-opacity=\"0.35\"/>\n<text class=\"name\" x=\"126\" y=\"321\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"13\" fill=\"#24202b\">Serveur A</text>\n<text class=\"type\" x=\"126\" y=\"336\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"10\" fill=\"#24202b\">Node</text>\n</g>\n<g class=\"node\" data-element-id=\"10000000-0000-4000-8000-000000000004\">\n<title>Catalogue — Application Component</title>\n<rect x=\"80\" y=\"60\" width=\"132\" height=\"46\" rx=\"6\" fill=\"#b5ffff\" stroke=\"#24202b\" stroke-opacity=\"0.35\"/>\n<text class=\"name\" x=\"146\" y=\"81\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"13\" fill=\"#24202b\">Catalogue</text>\n<text class=\"type\" x=\"146\" y=\"96\" text-anchor=\"middle\" font-family=\"DejaVu Sans, sans-serif\" font-size=\"10\" fill=\"#24202b\">Application Comp…</text>\n</g>\n</svg>"
+}
