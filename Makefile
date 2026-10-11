@@ -192,6 +192,7 @@ NC    := \033[0m
 .PHONY: help install install-be install-fe run run-be run-fe clean \
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
+        runner-up runner-down runner-logs runner-pull \
         app-up app-down app-restart app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
         embed-ping embed-models docs-reindex files-reconcile openapi openapi-check \
@@ -341,6 +342,23 @@ app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l
 # projet `ea` par ses étiquettes, sans fichier. Voir docs/adr/0027.
 PORTAINER_STACK := scripts/portainer-stack.sh
 APP_COMPOSE     := docker compose -p ea
+
+# Le runner de docs/adr/0044 : son .runner.env ne porte que le PAT, rien d'autre.
+RUNNER_COMPOSE := docker compose -f docker-compose.runner.yml --env-file .runner.env
+
+runner-up: ## Démarre le runner GitHub auto-hébergé qui déploie sur un push dans main
+	@test -f .runner.env || { echo "make: .runner.env absent — y mettre GH_RUNNER_TOKEN=<PAT admin des runners du dépôt>" >&2; exit 1; }
+	$(RUNNER_COMPOSE) up -d
+
+runner-down: ## Arrête le runner (pas en plein job : le déploiement en cours serait perdu)
+	$(RUNNER_COMPOSE) down
+
+runner-logs: ## Suit les journaux du runner
+	$(RUNNER_COMPOSE) logs -f
+
+runner-pull: ## Retire l'image du runner et le recrée (GitHub refuse les vieilles versions)
+	$(RUNNER_COMPOSE) pull
+	$(RUNNER_COMPOSE) up -d
 
 app-up: ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
 	$(PORTAINER_STACK) up
