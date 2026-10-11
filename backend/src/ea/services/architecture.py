@@ -388,7 +388,7 @@ class ArchitectureService:
             stored = await self._repository.transition_element(element_id, change, audit=events)
         logger.info(
             "element %r: %s",
-            stored.name,
+            logged(stored.name),
             transition.value,
             extra={
                 "action": f"element_{transition.value}",

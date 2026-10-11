@@ -27,7 +27,7 @@ from ea.domain.errors import (
 )
 from ea.domain.packages import UNSET, Unset, descendants_of
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -213,7 +213,7 @@ class DiagramService:
             raise _not_found(diagram_id)  # deleted between the read and the write
         logger.info(
             "diagram %r laid out with %d box(es)",
-            diagram.name,
+            logged(diagram.name),
             len(layout),
             extra={
                 "action": "diagram_layout_replaced",
@@ -224,4 +224,6 @@ class DiagramService:
 
     @staticmethod
     def _audit(message: str, diagram: Diagram, action: str) -> None:
-        logger.info(message, diagram.name, extra={"action": action, "diagram_id": str(diagram.id)})
+        logger.info(
+            message, logged(diagram.name), extra={"action": action, "diagram_id": str(diagram.id)}
+        )

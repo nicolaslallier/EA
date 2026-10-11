@@ -29,7 +29,7 @@ from ea.domain.documents import Document, DocumentSummary, clean_filename, decod
 from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ class DocumentService:
             stored = await self._repository.add(document, passages, audit=created)
         logger.info(
             "document %r attached (%d bytes, %d passage(s))",
-            stored.filename,
+            logged(stored.filename),
             len(stored.content.encode()),
             len(passages),
             extra={
@@ -181,7 +181,7 @@ class DocumentService:
             stored = await self._repository.replace(revised, passages, audit=events)
         logger.info(
             "document %r revised (%d bytes, %d passage(s))",
-            stored.filename,
+            logged(stored.filename),
             len(stored.content.encode()),
             len(passages),
             extra={

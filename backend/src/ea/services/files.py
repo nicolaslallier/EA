@@ -51,7 +51,7 @@ from ea.domain.files import (
     clean_prefix,
     sha256_of,
 )
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.auth import Caller
@@ -218,8 +218,8 @@ class FileService:
             described = await self._metadata.describe(path, wanted, now=now)
         logger.info(
             "file %r described",
-            path,
-            extra={"action": "file_described", "key": path},
+            logged(path),
+            extra={"action": "file_described", "key": logged(path)},
         )
         return CatalogedFile(stored=stored, metadata=described)
 
@@ -234,7 +234,9 @@ class FileService:
         await store.delete(path)
         if self._metadata is not None:
             await self._metadata.forget(path)
-        logger.info("file %r deleted", path, extra={"action": "file_deleted", "key": path})
+        logger.info(
+            "file %r deleted", logged(path), extra={"action": "file_deleted", "key": logged(path)}
+        )
 
     async def copies_of(self, key: str) -> tuple[FileMetadata, ...]:
         """Every *other* file whose bytes are these exact bytes.

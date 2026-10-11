@@ -38,7 +38,7 @@ from ea.domain.packages import (
     path_of,
 )
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -230,7 +230,7 @@ class PackageService:
             raise _not_found(package_id)
         logger.info(
             "package deleted: %r",
-            current.name,
+            logged(current.name),
             extra={
                 "action": "package_deleted",
                 "package_id": str(package_id),
@@ -282,4 +282,6 @@ class PackageService:
 
     @staticmethod
     def _audit(message: str, package: Package, action: str) -> None:
-        logger.info(message, package.name, extra={"action": action, "package_id": str(package.id)})
+        logger.info(
+            message, logged(package.name), extra={"action": action, "package_id": str(package.id)}
+        )
