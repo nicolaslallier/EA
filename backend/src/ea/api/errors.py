@@ -254,6 +254,32 @@ async def _handle_unexpected_error(_: Request, error: Exception) -> JSONResponse
     return _internal_error()
 
 
+_DRIVERS = ("sqlalchemy", "asyncpg", "psycopg")
+
+
+def without_database_detail(error: BaseException) -> BaseException:
+    """The error to put in a log: itself, unless the database spoke in it.
+
+    A driver's message quotes the value it refused (`DETAIL: Key (name)=(...) already exists`)
+    and SQLAlchemy's carries the statement and its parameters: during an import those are the
+    file's content, in a traceback that goes to a collector. Whoever reads the log needs the kind
+    of failure and where it happened, not the row. So a failure with a driver's exception in its
+    chain is logged as a stand-in naming the type and keeping the traceback's frames.
+    """
+    link: BaseException | None = error
+    for _ in range(10):  # a chain is short; a cycle is not worth following
+        if link is None:
+            return error
+        if type(link).__module__.startswith(_DRIVERS):
+            stand_in = RuntimeError(
+                f"{type(link).__name__}: the database refused a statement (detail withheld)"
+            )
+            stand_in.__suppress_context__ = True
+            return stand_in.with_traceback(error.__traceback__)
+        link = link.__cause__ or link.__context__
+    return error
+
+
 class AnsweringUnexpectedFailures:
     """The `internal_error` envelope, sent from *inside* the middleware stack.
 
@@ -307,7 +333,9 @@ class AnsweringUnexpectedFailures:
                 "path": scope.get("path", ""),
             }
             logger.exception(
-                "the request failed with no handler for it", exc_info=error, extra=fields
+                "the request failed with no handler for it",
+                exc_info=without_database_detail(error),
+                extra=fields,
             )
             await _internal_error()(scope, receive, send)
 

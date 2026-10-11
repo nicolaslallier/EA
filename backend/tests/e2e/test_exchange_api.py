@@ -922,3 +922,53 @@ class TestScopesOverHttp:
         assert response.status_code == 422
         assert response.json()["error"] == "unknown_scope"
         assert "version" not in response.text
+
+
+class TestADatabaseFailureNeverQuotesTheFile:
+    async def test_an_integrity_error_that_escapes_an_import_is_logged_without_its_detail(
+        self,
+        service: ArchitectureService,
+        exchange_store: InMemoryExchange,
+        diagrams: InMemoryDiagrams,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The detail of a unique violation is `Key (name)=(<the value>)`, and the statement
+        carries its parameters: both are the file's content, and neither belongs in a log."""
+        import logging
+
+        from sqlalchemy.exc import IntegrityError
+
+        marker = "SECRET-MARKER-ROW"
+
+        async def failing() -> object:
+            try:
+                raise ValueError(f"DETAIL: Key (name)=({marker}) already exists.")
+            except ValueError as detail:
+                raise IntegrityError(
+                    "INSERT INTO elements (name) VALUES ($1)", {"name": marker}, detail
+                ) from detail
+
+        monkeypatch.setattr(exchange_store, "known_elements", failing)
+        app = create_app(
+            Settings(debug=True, auth_enabled=False),
+            architecture_service=service,
+            exchanges=exchange_store,  # type: ignore[arg-type]
+        )
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with caplog.at_level(logging.DEBUG, logger="ea"):
+                response = await client.post(
+                    "/exchanges/imports", **upload(exchange_xml(el("a", "Node", marker)))
+                )
+
+        assert response.status_code == 500
+        assert marker not in response.text
+        assert marker not in caplog.text
+        for record in caplog.records:
+            assert marker not in str(vars(record))
+            if record.exc_info:
+                import traceback
+
+                assert marker not in "".join(traceback.format_exception(*record.exc_info))
+        assert "IntegrityError" in caplog.text  # the kind of failure is still said

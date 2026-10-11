@@ -186,9 +186,9 @@ class FileService:
         stored = await store.put(path, raw, content_type=content_type)
         logger.info(
             "file %r stored (%d bytes)",
-            stored.key,
+            logged(stored.key),
             stored.size,
-            extra={"action": "file_stored", "key": stored.key},
+            extra={"action": "file_stored", "key": logged(stored.key)},
         )
         return CatalogedFile(
             stored=stored,
