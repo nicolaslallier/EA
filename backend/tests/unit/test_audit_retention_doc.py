@@ -32,3 +32,11 @@ def test_every_make_target_the_doc_runs_exists() -> None:
     for target in ("pg-backup", "baseline-capture"):
         assert f"make {target}" in DOC
         assert f"\n{target}:" in MAKEFILE
+
+
+def test_the_doc_is_honest_about_what_the_purge_costs_and_leaves_untraced() -> None:
+    assert "ACCESS EXCLUSIVE" in DOC
+    assert "hors heures d'usage" in DOC
+    assert "n'est pas tracée" in DOC
+    assert "registre d'exploitation" in DOC
+    assert "ne prouve rien" in DOC

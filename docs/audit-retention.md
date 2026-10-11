@@ -46,7 +46,9 @@ l'autre, ni aucune restauration.
    (la table y est), relu avant d'être renommé (`docs/adr/0025`). Un dump qui n'a
    pas quitté l'hôte n'est pas une sauvegarde : le copier ailleurs avant de
    continuer.
-2. **Purger**, avec le rôle propriétaire de la base, en une transaction :
+2. **Purger**, avec le rôle propriétaire de la base — **vérifier d'abord quel
+   rôle la session utilise** (`SELECT current_user;`), car seul le propriétaire
+   peut désactiver un trigger — **hors heures d'usage**, en une transaction :
 
    ```sql
    BEGIN;
@@ -55,6 +57,17 @@ l'autre, ni aucune restauration.
    ALTER TABLE audit_events ENABLE TRIGGER audit_events_no_update_delete;
    COMMIT;
    ```
+
+   Deux choses à savoir avant de lancer :
+
+   - `DISABLE TRIGGER` prend un verrou `ACCESS EXCLUSIVE` sur `audit_events`
+     jusqu'au `COMMIT`. Chaque écriture du modèle (éléments, liens, documents,
+     baselines…) insère un événement : pendant ce temps, **toutes ces écritures
+     attendent**. D'où l'heure creuse, et une plage de suppression bornée.
+   - **Cette purge n'est pas tracée dans l'audit** : elle contourne justement ce
+     qui l'aurait écrite. Consigner qui l'a faite, quand, les bornes
+     (`at < …`) et le nombre de lignes supprimées dans un
+     registre d'exploitation hors base (ticket, journal de l'opérateur).
 
    Le trigger `audit_events_no_truncate` reste actif : ne jamais vider la table
    d'un coup.
@@ -75,8 +88,11 @@ l'autre, ni aucune restauration.
 
 ## Limites
 
-- Aucune chaîne de hachage : un opérateur de la base peut réécrire le journal.
-  Un `pg_dump` régulier suffit à détecter une divergence (`docs/adr/0044`).
+- Aucune chaîne de hachage : un opérateur de la base peut réécrire le journal, et
+  rien dans la base ne le montre. Comparer deux `pg_dump` détecte une divergence
+  *seulement* si la sauvegarde la plus ancienne est sortie de l'hôte avant
+  l'altération et reste intacte ; un dump pris après, ou stocké au même endroit
+  que la base, ne prouve rien.
 - Le rétro-remplissage de la migration `0011` est purgé comme le reste.
 - Si un rôle PostgreSQL d'écriture `INSERT, SELECT` seul est provisionné (à faire
   hors de ce repo), l'application ne pourra même plus désactiver un trigger ; la
