@@ -108,6 +108,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/matrix/MatrixSection.vue'),
   },
   {
+    path: '/analyse/qualite',
+    name: 'quality',
+    label: 'Qualité',
+    summary: 'Orphelins, doublons, nommage, données manquantes : ce qui cloche dans le modèle.',
+    group: 'analysis',
+    view: () => import('../features/quality/QualitySection.vue'),
+  },
+  {
     path: '/recherche',
     name: 'search',
     label: 'Recherche',

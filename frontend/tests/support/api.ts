@@ -5,6 +5,8 @@ import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type FindingRead = components['schemas']['FindingRead']
+type QualityReportRead = components['schemas']['QualityReportRead']
 type MatrixRead = components['schemas']['MatrixRead']
 type MatrixCellDetailRead = components['schemas']['MatrixCellDetailRead']
 type PackageRead = components['schemas']['PackageRead']
@@ -547,6 +549,42 @@ export function aCellDetail(overrides: Partial<MatrixCellDetailRead> = {}): Matr
     target_id: 'bbbbbbbb-2222-4222-8222-222222222222',
     links: [aRelationship()],
     allowed: ['serving', 'association'],
+    ...overrides,
+  }
+}
+
+
+/** One finding, as `GET /quality` returns it. */
+export function aFinding(overrides: Partial<FindingRead> = {}): FindingRead {
+  return {
+    rule: 'orphan',
+    severity: 'warning',
+    element_id: '11111111-1111-4111-8111-111111111111',
+    element_name: 'Facturation',
+    related_id: null,
+    related_name: null,
+    message: "« Facturation » n'est relié à aucun élément.",
+    fix_hint: '/elements?element=11111111-1111-4111-8111-111111111111',
+    ...overrides,
+  }
+}
+
+/** A report with a count per rule — zeros included, like the API. */
+export function aQualityReport(
+  findings: FindingRead[] = [aFinding()],
+  overrides: Partial<QualityReportRead> = {},
+): QualityReportRead {
+  const rules = ['orphan', 'duplicate_probable', 'naming', 'missing_property', 'no_description', 'inconsistent_relationship'] as const
+  const severity = { orphan: 'warning', duplicate_probable: 'warning', naming: 'info', missing_property: 'warning', no_description: 'info', inconsistent_relationship: 'error' } as const
+  return {
+    total: findings.length,
+    counts: rules.map((rule) => ({
+      rule,
+      severity: severity[rule],
+      count: findings.filter((finding) => finding.rule === rule).length,
+    })),
+    findings,
+    next_cursor: null,
     ...overrides,
   }
 }
