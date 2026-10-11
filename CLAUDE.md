@@ -648,6 +648,17 @@ is translated by the **name** of the constraint (`constraint_of`), never by its
 message. Renaming a stored value — an element type, say — is a data migration:
 an Alembic revision like any other. See `docs/adr/0033`.
 
+## A repository opens its session through `ea.db.unit_of_work`, and an import shares one
+
+`work(self._sessions)` for a write, `reading(self._sessions)` for a read — never
+`self._sessions.begin()` or `self._sessions()` in a model store (an AST test,
+`test_one_way_to_open_a_unit.py`, fails on it). Outside an import they behave
+exactly as before; inside `shared_transaction(...)` (a `ContextVar`, like the
+caller) every write is a `SAVEPOINT` of one shared session, `savepoint()` wraps
+a row, `commit=False` is the dry run, `exclusive=True` takes the one-import-at-a-time
+lock, and a 40001/40P01 condemns the whole import (nothing is written). A call that
+sets its own isolation level passes `alone=True`. See `docs/adr/0050`.
+
 ## Who is calling is decided once, in `services/`
 
 `services/caller.py` holds `current_caller`, a `ContextVar` exactly like the

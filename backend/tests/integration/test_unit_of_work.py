@@ -377,7 +377,10 @@ async def test_a_read_after_a_lock_sees_what_another_transaction_committed(
     element = await bench.graph.create_element(element_type=E.NODE, name="old")
 
     async with bench.unit(commit=False):
-        assert (await bench.graph.get_element(element.id)).name == "old"  # now cached
+        session = ambient_session()
+        assert session is not None
+        held = await session.get(ElementRecord, element.id)  # cached, and kept alive
+        assert held is not None and held.name == "old"
         async with engine_at_head.begin() as connection:
             await connection.execute(
                 text("UPDATE elements SET name = 'new' WHERE id = :id"), {"id": element.id}
