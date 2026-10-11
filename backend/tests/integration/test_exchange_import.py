@@ -24,24 +24,10 @@ from tests.integration.test_element_review import put_in_state, state_of
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
 REAL = ImportOptions(dry_run=False)
-IP = (
-    '<propertyDefinitions><propertyDefinition identifier="ip" type="string">'
-    "<name>ip_address</name></propertyDefinition></propertyDefinitions>"
-)
 
 
 def content(data: bytes) -> ImportContent:
     return ImportContent(ExchangeFormat.ARCHIMATE_XML, data)
-
-
-def host(identifier: str, name: str) -> str:
-    return el(
-        identifier,
-        "Node",
-        name,
-        '<properties><property propertyDefinitionRef="ip"><value>10.0.0.5</value>'
-        "</property></properties>",
-    )
 
 
 @pytest.fixture
@@ -55,19 +41,26 @@ async def count(engine: AsyncEngine, table: str) -> int:
         return int((await connection.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one())
 
 
+RIVAL_D = (
+    "INSERT INTO elements (id, element_type, layer, aspect, name, properties, created_at, updated_at) VALUES "
+    "(gen_random_uuid(), 'node', 'technology', 'active_structure', 'D', '{}', now(), now())"
+)
+
+
 async def test_a_refusal_in_the_middle_of_a_batch_leaves_links_between_the_rows_replayed(
-    importer: ExchangeService, engine_at_head: AsyncEngine
+    graph_service: ArchitectureService, engine_at_head: AsyncEngine
 ) -> None:
+    # "D" is created by somebody else after the catalogue was read: the unique index refuses it
+    importer = with_a_rival(engine_at_head, graph_service, RIVAL_D)
     data = exchange_xml(
         el("a", "Node", "A")
         + el("a-again", "Node", "A")
         + el("b", "Node", "B")
-        + host("c", "C")
-        + host("d", "D"),  # refused by the unique index, after A, B and C were created
+        + el("c", "Node", "C")
+        + el("d", "Node", "D"),  # refused by the database, after A, B and C were created
         rel("r1", "Association", "a", "b")
         + rel("r2", "Association", "c", "a-again")
         + rel("r3", "Association", "d", "a"),
-        extra=IP,
     )
 
     report = await importer.import_exchange(content(data), REAL)
@@ -85,8 +78,8 @@ async def test_a_refusal_in_the_middle_of_a_batch_leaves_links_between_the_rows_
             )
         )
         assert {tuple(row) for row in rows} == {("A", "B"), ("C", "A")}
-    assert await count(engine_at_head, "elements") == 3
-    # one creation event per element kept and per link: nothing orphaned by the rollback
+    assert await count(engine_at_head, "elements") == 4  # A, B, C and the rival's D
+    # one creation event per element and link kept (the rival wrote none): nothing orphaned
     assert await count(engine_at_head, "audit_events") == 3 + 2
 
 
@@ -94,9 +87,7 @@ async def test_a_dry_run_leaves_neither_the_model_nor_the_trail(
     importer: ExchangeService, engine_at_head: AsyncEngine
 ) -> None:
     data = exchange_xml(
-        el("a", "Node", "A") + host("c", "C") + host("d", "D"),
-        rel("r", "Association", "a", "c"),
-        extra=IP,
+        el("a", "Node", "A") + el("c", "Node", "C"), rel("r", "Association", "a", "c")
     )
 
     report = await importer.import_exchange(content(data), ImportOptions())

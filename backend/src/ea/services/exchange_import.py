@@ -53,6 +53,7 @@ from ea.domain.exchange import (
     accept_element,
     accept_link,
 )
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element
 
 if TYPE_CHECKING:
@@ -77,6 +78,10 @@ _ADDED: Final = object()
 _REMOVED: Final = object()
 
 ElementKey = tuple[ElementType, str]
+_UNIQUE_PROPERTIES: Final = (
+    ("address", ADDRESS_PROPERTY),
+    ("prefix", PREFIX_PROPERTY),
+)
 LinkKey = tuple[RelationshipType, UUID, UUID]
 
 
@@ -187,6 +192,35 @@ def _located(issue: Issue, item: ExchangeElement | ExchangeRelationship) -> Issu
     return Issue(issue.severity, issue.code, issue.message, item.identifier, item.line, item.path)
 
 
+def _held_by_the_catalogue(state: _State) -> set[tuple[str, str, str]]:
+    """`(kind, vrf, value)` of every address and prefix the catalogue already holds."""
+    held: set[tuple[str, str, str]] = set()
+    for element in state.by_key.values():
+        for kind, key in _UNIQUE_PROPERTIES:
+            if element.properties.get(key):
+                held.add((kind, read_vrf(element.properties), element.properties[key]))
+    return held
+
+
+def _clash(item: ExchangeElement, held: set[tuple[str, str, str]]) -> RowRefusedError | None:
+    """Claim the address and prefix of a row that will create, or say which one is taken.
+
+    The properties are already canonical (`accept_element`), so equal strings are equal
+    addresses; the database enforces the same pair `(vrf, value)` with a unique index.
+    """
+    wanted = [
+        (kind, read_vrf(item.properties), item.properties[key])
+        for kind, key in _UNIQUE_PROPERTIES
+        if item.properties.get(key)
+    ]
+    for entry in wanted:
+        if entry in held:
+            code = "address_taken" if entry[0] == "address" else "cidr_taken"
+            return RowRefusedError(code, f"this {entry[0]} is already in use in its VRF")
+    held.update(wanted)
+    return None
+
+
 class ImportRun:
     """One import: the plan, the rows, the report. Lives for one call of the service."""
 
@@ -245,6 +279,8 @@ class ImportRun:
         rows: list[_Row] = []
         index = 0
         ends: dict[str, tuple[ElementType, object]] = {}
+        held = _held_by_the_catalogue(state)
+        creating: set[ElementKey] = set()
         for element in model.elements:
             try:
                 accepted = accept_element(element)  # the only door to the services below
@@ -252,6 +288,21 @@ class ImportRun:
                 state.refused.add(element.identifier)
                 self._reject(index, Category.ELEMENTS, refusal_issue(refusal, ""), element)
             else:
+                key = (accepted.element_type, accepted.name)
+                # Only a row that will *create* writes its address; a merged one writes none.
+                # Limit: a first holder later refused by the database still blocks its
+                # followers (they stay rejected here, conservatively).
+                clash = (
+                    _clash(accepted, held)
+                    if key not in state.by_key and key not in creating
+                    else None
+                )
+                if clash is not None:
+                    state.refused.add(element.identifier)
+                    self._reject(index, Category.ELEMENTS, refusal_issue(clash, ""), element)
+                    index += 1
+                    continue
+                creating.add(key)
                 ends[accepted.identifier] = (
                     accepted.element_type,
                     (accepted.element_type, accepted.name),

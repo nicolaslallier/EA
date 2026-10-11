@@ -14,6 +14,7 @@ from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.archimate import permits
 from ea.domain.errors import (
+    DuplicateElementError,
     ExchangeFileTooLargeError,
     ImportInProgressError,
     InvalidExchangeFileError,
@@ -60,6 +61,23 @@ IP_DEFINITION = (
     '<propertyDefinitions><propertyDefinition identifier="ip" type="string">'
     "<name>ip_address</name></propertyDefinition></propertyDefinitions>"
 )
+
+
+def refusing_on_write(
+    monkeypatch: pytest.MonkeyPatch, service: ArchitectureService, *names: str
+) -> None:
+    """The database refuses these names at write time, as a concurrent duplicate would.
+
+    Nothing in the file says so, so the plan cannot know: this is what spends the budget.
+    """
+    real = service.create_element
+
+    async def refuse(**kwargs: object) -> object:
+        if kwargs["name"] in names:
+            raise DuplicateElementError("somebody created it meanwhile")
+        return await real(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service, "create_element", refuse)
 
 
 def names_of(repository: InMemoryRepository) -> dict[UUID, str]:
@@ -423,25 +441,31 @@ class TestWhatTheDomainJudgesAloneNeverSpendsTheBudget:
         assert exchange_store.applied == 45  # the 500 links were judged in memory
 
     async def test_more_than_a_hundred_refusals_by_the_database_reject_the_whole_file(
-        self, exchange_service: ExchangeService, repository: InMemoryRepository
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        rows = "".join(host(f"h{i}", f"host{i}") for i in range(102))  # 1 wins, 101 clash
+        refusing_on_write(monkeypatch, service, *(f"host{i}" for i in range(1, 102)))
+        rows = "".join(el(f"h{i}", "Node", f"host{i}") for i in range(102))  # 1 wins, 101 refused
 
         with pytest.raises(TooManyRefusedRowsError):
-            await exchange_service.import_exchange(
-                xml(exchange_xml(rows, extra=IP_DEFINITION)), REAL
-            )
+            await exchange_service.import_exchange(xml(exchange_xml(rows)), REAL)
 
         assert repository.elements == {} and repository.audit_log.events == []
 
     async def test_exactly_a_hundred_refusals_by_the_database_are_tolerated(
-        self, exchange_service: ExchangeService, repository: InMemoryRepository
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        rows = "".join(host(f"h{i}", f"host{i}") for i in range(101))
+        refusing_on_write(monkeypatch, service, *(f"host{i}" for i in range(1, 101)))
+        rows = "".join(el(f"h{i}", "Node", f"host{i}") for i in range(101))
 
-        report = await exchange_service.import_exchange(
-            xml(exchange_xml(rows, extra=IP_DEFINITION)), REAL
-        )
+        report = await exchange_service.import_exchange(xml(exchange_xml(rows)), REAL)
 
         assert report.counts[Category.ELEMENTS].rejected == 100
         assert len(repository.elements) == 1
@@ -480,20 +504,22 @@ class TestTheReplayOfRows:
     async def test_links_follow_the_elements_created_again_by_the_replay(
         self,
         exchange_service: ExchangeService,
+        service: ArchitectureService,
         repository: InMemoryRepository,
         exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        refusing_on_write(monkeypatch, service, "D")
         content = xml(
             exchange_xml(
                 el("a", "Node", "A")
                 + el("a-again", "Node", "A")
                 + el("b", "Node", "B")
-                + host("c", "C")
-                + host("d", "D"),  # refused by the database, after A, B and C were created
+                + el("c", "Node", "C")
+                + el("d", "Node", "D"),  # refused by the database, after A, B and C were created
                 rel("r1", "Association", "a", "b")
                 + rel("r2", "Association", "c", "a-again")
                 + rel("r3", "Association", "d", "a"),
-                extra=IP_DEFINITION,
             )
         )
 
@@ -520,13 +546,13 @@ class TestTheReplayOfRows:
         exchange_service: ExchangeService,
         service: ArchitectureService,
         repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         existing = await service.create_element(element_type=E.NODE, name="old")
         events_before = len(repository.audit_log.events)
+        refusing_on_write(monkeypatch, service, "D")
         content = xml(
-            exchange_xml(
-                el("o", "Node", "old") + host("c", "C") + host("d", "D"), extra=IP_DEFINITION
-            )
+            exchange_xml(el("o", "Node", "old") + el("c", "Node", "C") + el("d", "Node", "D"))
         )
 
         await exchange_service.import_exchange(content, REAL)
@@ -540,18 +566,20 @@ class TestTheReplayOfRows:
     async def test_rows_of_an_earlier_batch_keep_their_ids_through_a_later_replay(
         self,
         exchange_service: ExchangeService,
+        service: ArchitectureService,
         repository: InMemoryRepository,
         exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        refusing_on_write(monkeypatch, service, "E")
         exchange_store.batch_size = 2
         content = xml(
             exchange_xml(
                 el("a", "Node", "A")
                 + el("b", "Node", "B")  # batch 1: complete
-                + host("d", "D")
-                + host("e", "E"),  # batch 2: E is refused, D is applied again
+                + el("d", "Node", "D")
+                + el("e", "Node", "E"),  # batch 2: E is refused, D is applied again
                 rel("r1", "Association", "a", "b") + rel("r2", "Association", "d", "a"),
-                extra=IP_DEFINITION,
             )
         )
 
@@ -566,13 +594,17 @@ class TestTheReplayOfRows:
         assert exchange_store.replayed == 1
 
     async def test_a_dry_run_replays_just_the_same(
-        self, exchange_service: ExchangeService, repository: InMemoryRepository
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        refusing_on_write(monkeypatch, service, "D")
         content = xml(
             exchange_xml(
-                el("a", "Node", "A") + host("c", "C") + host("d", "D"),
+                el("a", "Node", "A") + el("c", "Node", "C") + el("d", "Node", "D"),
                 rel("r", "Association", "a", "c"),
-                extra=IP_DEFINITION,
             )
         )
 
@@ -879,9 +911,7 @@ class TestAHostileFile:
             "Owner\nname" not in stored["good"].properties and "k" not in stored["good"].properties
         )
         assert str(stored["extra"].id).startswith("00000000-0000-0000-0000-00000000000") is False
-        assert (
-            exchange_store.applied == 3
-        )  # the duplicate address, good and extra: only the rest was judged alone
+        assert exchange_store.applied == 2  # good and extra: the duplicate never got there
 
     async def test_a_key_with_a_trailing_newline_is_not_trimmed_into_a_valid_one(
         self, exchange_service: ExchangeService, repository: InMemoryRepository
@@ -930,3 +960,124 @@ class TestAHostileFile:
         (call,) = seen
         assert call["name"] == "padded"  # already clean when it arrives
         assert call["properties"] == {"ip_address": "2001:db8::1", "vrf": "default", SOURCE_ID: "a"}
+
+
+class TestAddressesAndPrefixesClashingInsideTheFile:
+    """Judged in the plan, so they never spend the budget of refusals by the database."""
+
+    def hosts(self, count: int, ip: str, *, vrf: str | None = None) -> str:
+        def one(number: int) -> str:
+            props = f'<property propertyDefinitionRef="ip"><value>{ip}</value></property>'
+            if vrf is not None:
+                props += f'<property propertyDefinitionRef="vrf"><value>{vrf}</value></property>'
+            return el(f"h{number}", "Node", f"host{number}", f"<properties>{props}</properties>")
+
+        return "".join(one(n) for n in range(count))
+
+    DEFINITIONS = (
+        '<propertyDefinitions><propertyDefinition identifier="ip" type="string">'
+        "<name>ip_address</name></propertyDefinition>"
+        '<propertyDefinition identifier="vrf" type="string"><name>vrf</name>'
+        '</propertyDefinition><propertyDefinition identifier="net" type="string">'
+        "<name>cidr</name></propertyDefinition></propertyDefinitions>"
+    )
+
+    async def test_a_hundred_and_fifty_hosts_on_one_address_do_not_reject_the_file(
+        self, exchange_service: ExchangeService, exchange_store: InMemoryExchange
+    ) -> None:
+        data = exchange_xml(self.hosts(150, "10.0.0.5"), extra=self.DEFINITIONS)
+
+        report = await exchange_service.import_exchange(xml(data), REAL)
+
+        assert report.counts[Category.ELEMENTS].created == 1
+        assert report.counts[Category.ELEMENTS].rejected == 149
+        assert {i.code for i in report.issues} == {"address_taken"}
+        assert exchange_store.applied == 1  # the 149 were judged without the database
+
+    async def test_two_spellings_of_one_ipv6_address_are_one_address(
+        self, exchange_service: ExchangeService
+    ) -> None:
+        rows = self.hosts(1, "::1") + el(
+            "h9",
+            "Node",
+            "other",
+            '<properties><property propertyDefinitionRef="ip"><value>0:0:0:0:0:0:0:1</value>'
+            "</property></properties>",
+        )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(rows, extra=self.DEFINITIONS)), REAL
+        )
+
+        assert [i.code for i in report.issues] == ["address_taken"]
+
+    async def test_the_same_address_in_two_vrfs_is_two_addresses(
+        self, exchange_service: ExchangeService, repository: InMemoryRepository
+    ) -> None:
+        rows = self.hosts(1, "10.0.0.5", vrf="a") + el(
+            "h9",
+            "Node",
+            "other",
+            '<properties><property propertyDefinitionRef="ip"><value>10.0.0.5</value></property>'
+            '<property propertyDefinitionRef="vrf"><value>b</value></property></properties>',
+        )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(rows, extra=self.DEFINITIONS)), REAL
+        )
+
+        assert report.issues == () and len(repository.elements) == 2
+
+    async def test_an_address_already_in_the_catalogue_is_refused_in_the_plan(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        exchange_store: InMemoryExchange,
+    ) -> None:
+        await service.create_element(
+            element_type=E.NODE, name="taken", properties={"ip_address": "10.0.0.5"}
+        )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(self.hosts(3, "10.0.0.5"), extra=self.DEFINITIONS)), REAL
+        )
+
+        assert report.counts[Category.ELEMENTS].rejected == 3
+        assert exchange_store.applied == 0
+
+    async def test_a_merged_element_writes_no_address_so_it_holds_none(
+        self, exchange_service: ExchangeService, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="host0")  # reused, never written
+        rows = self.hosts(1, "10.0.0.5") + el(
+            "h9",
+            "Node",
+            "newcomer",
+            '<properties><property propertyDefinitionRef="ip"><value>10.0.0.5</value>'
+            "</property></properties>",
+        )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(rows, extra=self.DEFINITIONS)), REAL
+        )
+
+        assert report.counts[Category.ELEMENTS].created == 1 and report.issues == ()
+
+    async def test_two_networks_with_one_prefix_clash_in_the_plan(
+        self, exchange_service: ExchangeService, exchange_store: InMemoryExchange
+    ) -> None:
+        def network(number: int) -> str:
+            return el(
+                f"n{number}",
+                "CommunicationNetwork",
+                f"lan{number}",
+                '<properties><property propertyDefinitionRef="net"><value>10.1.0.0/24</value>'
+                "</property></properties>",
+            )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(network(1) + network(2), extra=self.DEFINITIONS)), REAL
+        )
+
+        assert [i.code for i in report.issues] == ["cidr_taken"]
+        assert exchange_store.applied == 1
