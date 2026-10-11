@@ -55,6 +55,8 @@ sont agnostiques) ; la colonne `element_type` est un `Text` sans contrainte, don
 **aucune migration** ; le SPA tire sa palette de `/metamodel`, où `junction` figure
 déjà (ADR 0012) ; aucune copie de règle en TypeScript.
 
+**Ce que la jonction hérite, et ce qui n'est pas vérifié.** `permits()` laisse passer tout type de relation de ou vers une jonction sauf la spécialisation (ADR 0005 : « du côté permissif quand la spécification est ambiguë »). On soupçonne que la norme ArchiMate 3.2 est plus stricte (même type de relation de chaque côté d'une jonction, composition et agrégation exclues). Le texte de la norme n'est nulle part dans le dépôt, l'ADR 0005 ne le cite pas, et on ne se fie pas à la mémoire : **aucune règle n'est ajoutée**, la jonction reste permissive, et la vérification contre le texte officiel est à faire avant de resserrer. La resserrer ne s'appliquerait qu'à l'écriture (`connect`) et ne casserait aucune donnée stockée. La ligne « une jonction n'est pas un élément catalogable » de l'ADR 0005 est caduque pour ce qui est de la création ; le reste de cet ADR tient.
+
 ## Alternatives envisagées et écartées
 
 | Option | Pour | Contre | Verdict |
