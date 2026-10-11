@@ -131,7 +131,7 @@ describe('FilesSection', () => {
 
   it('offers no upload and no delete to a reader', async () => {
     vi.mocked(useMe).mockReturnValueOnce({
-      me: ref({ username: 'reader', can_write: false }),
+      me: ref({ username: 'reader', can_write: false, can_approve: false }),
       canWrite: computed(() => false),
       error: ref(null),
       load: vi.fn(() => Promise.resolve()),

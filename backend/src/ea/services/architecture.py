@@ -18,16 +18,30 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.approval import (
+    Transition,
+    WriteKind,
+    apply_transition,
+    guard_element_write,
+    needs_approver,
+    reviewed_after_change,
+)
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
-from ea.domain.model import Element, Relationship
-from ea.services.caller import require_caller, require_editor
+from ea.domain.model import Element, Relationship, reject_nul
+from ea.domain.ports import ElementChange, EndsReview
+from ea.services.audit import AuditTrail
+from ea.services.caller import require_approver, require_caller, require_editor
+from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
+    from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
         ElementFilter,
+        ElementRemoval,
         GraphView,
     )
 
@@ -37,6 +51,16 @@ Clock = Callable[[], datetime]
 
 #: Relationships that build the containment tree, and so must stay acyclic.
 _CONTAINMENT = frozenset({RelationshipType.COMPOSITION, RelationshipType.AGGREGATION})
+
+#: The journal action of each review transition.
+_ACTION_OF = {
+    Transition.SUBMIT: AuditAction.ELEMENT_SUBMITTED,
+    Transition.APPROVE: AuditAction.ELEMENT_APPROVED,
+    Transition.REJECT: AuditAction.ELEMENT_REJECTED,
+    Transition.REOPEN: AuditAction.ELEMENT_REOPENED,
+    Transition.LOCK: AuditAction.ELEMENT_LOCKED,
+    Transition.UNLOCK: AuditAction.ELEMENT_UNLOCKED,
+}
 
 
 def _utc_now() -> datetime:
@@ -51,9 +75,44 @@ class ArchitectureService:
         repository: ArchitectureRepository,
         *,
         clock: Clock = _utc_now,
+        separate_duties: bool = True,
     ) -> None:
         self._repository = repository
         self._now = clock
+        self._trail = AuditTrail(clock)
+        self._separate_duties = separate_duties
+        if not separate_duties:
+            logger.warning(
+                "separation of duties is OFF (EA_APPROVAL_SEPARATION=false): an approver "
+                "may approve what they changed last",
+                extra={"action": "separation_disabled"},
+            )
+
+    def _review_of_ends(self) -> EndsReview:
+        """What a link change does to its two ends, applied by the repository under their locks.
+
+        A locked end refuses the change outright; an approved one is allowed and
+        goes back to `in_review` — saved in the same transaction as the link,
+        never approved in silence.
+        """
+
+        def change(end: Element) -> Element:
+            guard_element_write(end, WriteKind.LINK)
+            return reviewed_after_change(end)
+
+        def audit(changed: ElementChange) -> tuple[AuditEvent, ...]:
+            if changed.before.approval_state is changed.after.approval_state:
+                return ()  # only the revision moved: the link's own event says it all
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_UPDATED,
+                    entity_id=changed.before.id,
+                    before=element_view(changed.before),
+                    after=element_view(changed.after),
+                ),
+            )
+
+        return EndsReview(change=change, audit=audit)
 
     # --- Elements ---------------------------------------------------------
 
@@ -76,7 +135,16 @@ class ArchitectureService:
             properties=properties,
             now=self._now(),
         )
-        stored = await self._repository.add_element(element)
+
+        def created(stored: Element) -> tuple[AuditEvent, ...]:
+            # Built by the repository inside the write, so the moment is the write's.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_CREATED, entity_id=stored.id, after=element_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add_element(element, audit=created)
         logger.info(
             "element created: %s %r",
             stored.element_type.value,
@@ -121,27 +189,56 @@ class ArchitectureService:
         relationships that are already stored illegal, which is a migration, not
         an edit.
         """
-        require_editor()
+        caller = require_editor()
+        # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
         properties = validate_ipam_properties(current.element_type, properties)
-        now = self._now()
-        updated = current
-        if name is not None:
-            updated = updated.rename(name, now=now)
-        if properties is not None:
-            updated = updated.with_properties(properties, now=now)
-        if description is not None or documentation is not None:
-            updated = replace(
-                updated,
-                updated_at=now,
-                description=(
-                    description.strip() if description is not None else updated.description
-                ),
-                documentation=(
-                    documentation.strip() if documentation is not None else updated.documentation
+
+        def patch(stored: Element) -> Element:
+            """Pure; the repository applies it to the row it holds under lock.
+
+            Review and locking are decided here, on that row and not on the
+            copy read above: a lock put on the element meanwhile still refuses.
+            """
+            guard_element_write(stored, WriteKind.CONTENT, caller)
+            now = self._now()
+            updated = stored
+            if name is not None:
+                updated = updated.rename(name, now=now)
+            if properties is not None:
+                updated = updated.with_properties(properties, now=now)
+            if description is not None or documentation is not None:
+                updated = replace(
+                    updated,
+                    updated_at=now,
+                    description=(
+                        reject_nul(description, "a description").strip()
+                        if description is not None
+                        else updated.description
+                    ),
+                    documentation=(
+                        reject_nul(documentation, "a documentation").strip()
+                        if documentation is not None
+                        else updated.documentation
+                    ),
+                )
+            if replace(updated, updated_at=stored.updated_at) != stored:
+                updated = reviewed_after_change(updated)
+            return updated
+
+        def events(change: ElementChange) -> tuple[AuditEvent, ...]:
+            # Called by the repository in the transaction, on the row it patched.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_UPDATED,
+                    entity_id=change.before.id,
+                    before=element_view(change.before),
+                    after=element_view(change.after),
                 ),
             )
-        stored = await self._repository.save_element(updated)
+
+        with logged_refusal("lock_refused", [element_id]):
+            stored = await self._repository.update_element(element_id, patch, audit=events)
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,
@@ -161,14 +258,103 @@ class ArchitectureService:
         diagrams follow by foreign keys, in the one transaction that deletes
         it — see docs/adr/0033.
         """
-        require_editor()
-        if not await self._repository.delete_element(element_id):
+        caller = require_editor()
+
+        def events(removal: ElementRemoval) -> tuple[AuditEvent, ...]:
+            # What went with the element is read by the repository in the same
+            # transaction as the DELETE, so the list is what the cascade removed.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_DELETED,
+                    entity_id=element_id,
+                    before={
+                        **element_view(removal.element),
+                        "cascaded": cascaded_view(
+                            relationship_count=removal.relationship_count,
+                            relationships=[
+                                (link.id, link.relationship_type.value)
+                                for link in removal.relationships
+                            ],
+                            document_count=removal.documents.count,
+                            document_ids=removal.documents.ids,
+                            diagram_count=removal.diagrams.count,
+                            diagram_ids=removal.diagrams.ids,
+                        ),
+                    },
+                ),
+            )
+
+        def guard(stored: Element) -> None:
+            guard_element_write(stored, WriteKind.CONTENT, caller)
+
+        with logged_refusal("lock_refused", [element_id]):
+            deleted = await self._repository.delete_element(
+                element_id, audit=events, guard=guard, ends=self._review_of_ends()
+            )
+        if not deleted:
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
         logger.info(
             "element deleted, with everything attached to it",
             extra={"action": "deleted", "element_id": str(element_id)},
         )
+
+    async def transition_element(
+        self,
+        element_id: UUID,
+        transition: Transition,
+        *,
+        expected_revision: int | None = None,
+    ) -> Element:
+        """Move an element through review: submit, approve, reject, reopen, lock, unlock.
+
+        The caller is the one the adapter proved (the token's roles), never a
+        field of the request. Everything is decided by the repository on the row
+        it holds locked, in the transaction that also writes the one event:
+        the role, the state, the revision (`approve` needs the `expected_revision`
+        the approver read — the others certify no content and ignore it) and the
+        separation of duties.
+        """
+        caller = require_caller()
+        if needs_approver(transition):
+            require_approver()
+        else:
+            require_editor()
+
+        def change(stored: Element) -> Element:
+            return apply_transition(
+                stored,
+                transition,
+                caller,
+                now=self._now(),
+                last_author=stored.last_modified_by_sub,
+                expected_revision=expected_revision,
+                separate_duties=self._separate_duties,
+            )
+
+        def events(changed: ElementChange) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    _ACTION_OF[transition],
+                    entity_id=element_id,
+                    before=element_view(changed.before),
+                    after=element_view(changed.after),
+                ),
+            )
+
+        with logged_refusal("transition_refused", [element_id]):
+            stored = await self._repository.transition_element(element_id, change, audit=events)
+        logger.info(
+            "element %r: %s",
+            stored.name,
+            transition.value,
+            extra={
+                "action": f"element_{transition.value}",
+                "element_id": str(element_id),
+                "transition": transition.value,
+            },
+        )
+        return stored
 
     # --- Relationships ----------------------------------------------------
 
@@ -210,7 +396,19 @@ class ArchitectureService:
             )
             raise CyclicContainmentError(msg)
 
-        stored = await self._repository.add_relationship(relationship)
+        def created(stored: Relationship) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.RELATIONSHIP_CREATED,
+                    entity_id=stored.id,
+                    after=relationship_view(stored),
+                ),
+            )
+
+        with logged_refusal("lock_refused", [source_id, target_id]):
+            stored = await self._repository.add_relationship(
+                relationship, audit=created, ends=self._review_of_ends()
+            )
         logger.info(
             "%r --%s--> %r",
             source.name,
@@ -252,7 +450,21 @@ class ArchitectureService:
 
     async def disconnect(self, relationship_id: UUID) -> None:
         require_editor()
-        if not await self._repository.delete_relationship(relationship_id):
+
+        def events(before: Relationship) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.RELATIONSHIP_DELETED,
+                    entity_id=relationship_id,
+                    before=relationship_view(before),
+                ),
+            )
+
+        with logged_refusal("lock_refused"):
+            deleted = await self._repository.delete_relationship(
+                relationship_id, audit=events, ends=self._review_of_ends()
+            )
+        if not deleted:
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
         logger.info(

@@ -30,17 +30,25 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
+from ea.db.models.architecture import ElementRecord
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
+from ea.domain.approval import WriteKind, guard_element_write
+from ea.domain.audit import events_for
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import DocumentNotFoundError, DuplicateDocumentError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
+from ea.repositories.architecture_store import author_of, element_from_row, touch
+from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from ea.domain.audit import AuditOf
 
 
 def _rows_affected(result: object) -> int:
@@ -51,6 +59,46 @@ def _rows_affected(result: object) -> int:
     cast states that rather than letting a `type: ignore` hide it.
     """
     return cast("CursorResult[Any]", result).rowcount
+
+
+async def _hold_the_element(session: AsyncSession, element_id: UUID) -> ElementRecord | None:
+    """Lock the element a document hangs from, in the document's own transaction, before writing.
+
+    A change to a document is a change to its element (docs/adr/0048): the
+    element's row is locked here — `FOR NO KEY UPDATE`, which a review
+    transition's `UPDATE` waits for and waits on. The caller then reads the
+    document's row, *knows whether the write changes anything*, and if it does
+    puts the locked element to the one guard every way into an element asks
+    (`_guard_the_element`), and `touch`es it in this same transaction: a new
+    revision, so an approval read before this write is stale after it, and the
+    author, so they cannot approve what they changed. The element is locked
+    before the document row, the order a deleted element's cascade follows too.
+    A missing element is left to the foreign key.
+    """
+    return await session.get(
+        ElementRecord, element_id, with_for_update={"key_share": True}, populate_existing=True
+    )
+
+
+def _guard_the_element(element: ElementRecord | None) -> None:
+    """`guard_element_write` for a document write. No document is written without it:
+    `tests/unit/test_review_guard.py` fails on a writer that does not call it."""
+    if element is not None:
+        guard_element_write(element_from_row(element), WriteKind.DOCUMENT)
+
+
+async def _lock_document(
+    session: AsyncSession, document_id: UUID
+) -> tuple[ElementDocument, ElementRecord | None] | None:
+    """The document row, locked after its element's, with that element; `None` if it is gone."""
+    known = await session.get(ElementDocument, document_id)  # only to learn the element
+    if known is None:
+        return None
+    element = await _hold_the_element(session, known.element_id)
+    row = await session.get(
+        ElementDocument, document_id, with_for_update=True, populate_existing=True
+    )
+    return None if row is None else (row, element)
 
 
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:
@@ -92,7 +140,14 @@ class PostgresDocumentRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    @replayable
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
         """Store a new document and its passages, in one transaction.
 
         The unique constraint is what refuses a name the element already has,
@@ -111,7 +166,9 @@ class PostgresDocumentRepository:
             created_at=document.created_at,
             updated_at=document.updated_at,
         )
+        events = events_for(audit, document)
         async with self._sessions.begin() as session:
+            _guard_the_element(await _hold_the_element(session, document.element_id))
             session.add(row)
             # Flushed before the passages are added, and not left to the unit of
             # work to order: the two mappers are related by a foreign key and by
@@ -128,6 +185,8 @@ class PostgresDocumentRepository:
                 msg = f"{document.filename!r} is already attached to this element"
                 raise DuplicateDocumentError(msg) from error
             session.add_all(_chunk_rows(document, chunks))
+            write_events(session, events)
+            await touch(session, [document.element_id], author_of(events))
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -169,7 +228,14 @@ class PostgresDocumentRepository:
                 for row in rows
             )
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    @replayable
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
         """Overwrite a stored document, and its passages, with a new revision.
 
         The old passages are deleted rather than updated: a revision cuts into
@@ -178,27 +244,44 @@ class PostgresDocumentRepository:
         revision from ever being searchable under its previous text.
         """
         async with self._sessions.begin() as session:
-            row = await session.get(ElementDocument, document.id)
-            if row is None:
+            locked = await _lock_document(session, document.id)
+            if locked is None:
                 # Only reachable if the document was deleted between the
                 # service reading it and this write — a race, not a bug.
                 msg = f"no document with id {document.id}"
                 raise DocumentNotFoundError(msg)
+            row, element = locked
+            before = _to_document(row)
+            events = events_for(audit, before)
+            # Judged on the row we hold locked, not on a read taken before the lock.
+            changing = row.content != document.content
+            if changing:
+                _guard_the_element(element)
             row.content = document.content
             row.updated_at = document.updated_at
             await session.execute(
                 delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
             )
             session.add_all(_chunk_rows(document, chunks))
+            write_events(session, events)
+            if changing:
+                await touch(session, [row.element_id], author_of(events))
         return document
 
-    async def delete(self, document_id: UUID) -> bool:
+    @replayable
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(ElementDocument).where(ElementDocument.id == document_id)
-            )
-        return bool(_rows_affected(deleted))
+            locked = await _lock_document(session, document_id)
+            if locked is None:
+                return False
+            row, element = locked
+            _guard_the_element(element)
+            events = events_for(audit, _to_document(row))
+            await session.execute(delete(ElementDocument).where(ElementDocument.id == document_id))
+            write_events(session, events)
+            await touch(session, [row.element_id], author_of(events))
+        return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every document in the store, oldest first — the reindex walks these."""

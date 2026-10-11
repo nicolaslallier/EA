@@ -18,6 +18,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ea.domain.audit import AuditAction, diagram_view, layout_view
 from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
 from ea.domain.errors import (
     DiagramNotFoundError,
@@ -25,11 +26,13 @@ from ea.domain.errors import (
     UnknownLayoutElementError,
 )
 from ea.domain.packages import UNSET, Unset, descendants_of
+from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from uuid import UUID
 
+    from ea.domain.audit import AuditEvent
     from ea.domain.ports import DiagramRepository, PackageRepository
     from ea.services.architecture import ArchitectureService
 
@@ -61,6 +64,7 @@ class DiagramService:
         self._architecture = architecture
         self._packages = packages
         self._now = clock
+        self._trail = AuditTrail(clock)
 
     async def list_diagrams(
         self,
@@ -93,11 +97,18 @@ class DiagramService:
     ) -> Diagram:
         require_editor()
         await self._require_package(package_id)
-        stored = await self._repository.add(
-            Diagram.create(
-                name=name, description=description, now=self._now(), package_id=package_id
-            )
+        diagram = Diagram.create(
+            name=name, description=description, now=self._now(), package_id=package_id
         )
+
+        def created(stored: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_CREATED, entity_id=stored.id, after=diagram_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add(diagram, audit=created)
         self._audit("diagram created: %r", stored, "diagram_created")
         return stored
 
@@ -133,17 +144,37 @@ class DiagramService:
         current = await self.get(diagram_id)
         if not isinstance(package_id, Unset):
             await self._require_package(package_id)
-        stored = await self._repository.save(
-            current.revise(
-                name=name, description=description, package_id=package_id, now=self._now()
-            )
+        revised = current.revise(
+            name=name, description=description, package_id=package_id, now=self._now()
         )
+
+        def events(before: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_UPDATED,
+                    entity_id=diagram_id,
+                    before=diagram_view(before),
+                    after=diagram_view(revised),
+                ),
+            )
+
+        stored = await self._repository.save(revised, audit=events)
         self._audit("diagram updated: %r", stored, "diagram_updated")
         return stored
 
     async def delete(self, diagram_id: UUID) -> None:
         require_editor()
-        if not await self._repository.delete(diagram_id):
+
+        def events(before: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_DELETED,
+                    entity_id=diagram_id,
+                    before=diagram_view(before),
+                ),
+            )
+
+        if not await self._repository.delete(diagram_id, audit=events):
             raise _not_found(diagram_id)
         logger.info(
             "diagram deleted", extra={"action": "diagram_deleted", "diagram_id": str(diagram_id)}
@@ -165,7 +196,20 @@ class DiagramService:
         if missing:
             msg = f"no element with id {', '.join(missing)}"
             raise UnknownLayoutElementError(msg)
-        if not await self._repository.replace_layout(diagram_id, layout, now=self._now()):
+
+        def events(before: tuple[DiagramNode, ...]) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_LAYOUT_REPLACED,
+                    entity_id=diagram_id,
+                    before=layout_view(before),
+                    after=layout_view(layout),
+                ),
+            )
+
+        if not await self._repository.replace_layout(
+            diagram_id, layout, now=self._now(), audit=events
+        ):
             raise _not_found(diagram_id)  # deleted between the read and the write
         logger.info(
             "diagram %r laid out with %d box(es)",

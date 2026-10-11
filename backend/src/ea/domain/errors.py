@@ -200,3 +200,60 @@ class SavedQueryNotFoundError(DomainError):
 
 class DuplicateSavedQueryError(DomainError):
     """A saved query name is already taken."""
+
+
+class InvalidCursorError(DomainError):
+    """A pagination cursor this server did not issue — forged, truncated, or from elsewhere.
+
+    A refusal and not a crash: the cursor travels in a URL, and anyone can edit one.
+    """
+
+
+class BaselineNotFoundError(DomainError):
+    """A baseline referenced by id is absent from the store."""
+
+
+class DuplicateBaselineError(DomainError):
+    """A baseline name is already taken."""
+
+
+class BaselineTooLargeError(DomainError):
+    """The model is larger than a baseline accepts to copy (elements, or bytes of text).
+
+    Refused before anything is written: a copy that size would be a second
+    database, and the limit is declared once in `domain/baselines.py`.
+    """
+
+
+class RestoreBlockedError(DomainError):
+    """A restoration would change an element that is locked — unlock it first."""
+
+
+class WriteConflictError(DomainError):
+    """The database aborted this write because another one got in its way: replay it."""
+
+
+class RestoreConflictError(DomainError):
+    """A restoration the catalogue refused, or that no longer matches the plan read.
+
+    Nothing was written and no event was recorded. Two causes, told apart by the
+    message: a model that moved since the dry run or a concurrent write (read the
+    plan again and retry), and a uniqueness clash with something the baseline does
+    not cover (retrying the same plan fails the same way until the clash is resolved).
+    """
+
+
+class ElementLockedError(DomainError):
+    """An element in review's last stage — approved, or locked — refuses this change."""
+
+
+class InvalidTransitionError(DomainError):
+    """A review transition the element's current state does not offer."""
+
+
+class ApprovalStaleError(DomainError):
+    """An approval names a revision of the element that is no longer the current one.
+
+    An approver certifies what they read: if the element changed since, the
+    approval is refused and they read it again.
+    """

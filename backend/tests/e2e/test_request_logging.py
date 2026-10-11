@@ -118,11 +118,17 @@ class TestTheRequestId:
 
         assert response.headers[REQUEST_ID_HEADER]
 
-    async def test_an_id_the_caller_brought_is_kept(self, client: httpx.AsyncClient) -> None:
-        """A caller correlating its own trace with ours must not be renamed."""
-        response = await client.get("/elements", headers={REQUEST_ID_HEADER: "caller-42"})
+    async def test_an_id_the_caller_brought_is_logged_apart_never_adopted(
+        self, client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The request id is the server's (the audit trail records it); the caller's own
+        trace id is kept on the access line as `client_request_id`, for correlation only."""
+        with caplog.at_level(logging.INFO, logger=REQUESTS_LOGGER):
+            response = await client.get("/elements", headers={REQUEST_ID_HEADER: "caller-42"})
 
-        assert response.headers[REQUEST_ID_HEADER] == "caller-42"
+        assert response.headers[REQUEST_ID_HEADER] != "caller-42"
+        (line,) = lines(caplog)
+        assert line.client_request_id == "caller-42"  # type: ignore[attr-defined]
 
     async def test_a_forged_id_is_not_echoed_back(self, client: httpx.AsyncClient) -> None:
         """It lands in a log line, so it is bounded and it is not free text."""
@@ -137,7 +143,7 @@ class TestTheRequestId:
         response = await client.get("/elements", headers={REQUEST_ID_HEADER: "caller-42"})
 
         assert response.status_code == 200
-        assert served == ["caller-42"]
+        assert served == [response.headers[REQUEST_ID_HEADER]]
 
     async def test_the_id_does_not_leak_out_of_the_request(self, client: httpx.AsyncClient) -> None:
         await client.get("/elements")

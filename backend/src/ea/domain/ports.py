@@ -6,13 +6,14 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
+from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
@@ -24,6 +25,8 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
+    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
@@ -41,6 +44,82 @@ class GraphView:
     @property
     def is_empty(self) -> bool:
         return not self.elements
+
+
+@dataclass(frozen=True, slots=True)
+class Held:
+    """How many things a package holds, and the first few of them (`AUDIT_LISTED_IDS`)."""
+
+    count: int = 0
+    ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ElementChange:
+    """An element as the repository found it under its lock, and as the patch left it."""
+
+    before: Element
+    after: Element
+
+
+#: A rule the repository applies to an element it holds locked, in the writing
+#: transaction; it raises to refuse. A decision taken on a copy read earlier
+#: would miss a lock put on the element in between.
+ElementGuard = Callable[[Element], None]
+
+
+@dataclass(frozen=True, slots=True)
+class EndsReview:
+    """What a link change does to the elements at its two ends (docs/adr/0048).
+
+    `change` is applied to each end read under its row lock — it raises to refuse
+    and returns the element as it must be stored — and `audit` says what the
+    journal records for an end it really changed. Both are pure and run in the
+    transaction that writes the link.
+    """
+
+    change: Callable[[Element], Element]
+    audit: Callable[[ElementChange], Sequence[AuditEvent]]
+
+    def apply(self, ends: Iterable[Element]) -> list[ElementChange]:
+        """Every end, in id order, once each, as it must be stored.
+
+        `ends` are the elements as read under their locks. A link is a change to
+        both of its ends: each gets a new revision, and `change` decides what
+        else (an approved end goes back to review). `change` raising refuses the
+        whole link.
+        """
+        return [
+            ElementChange(before, replace(self.change(before), revision=before.revision + 1))
+            for before in sorted({e.id: e for e in ends}.values(), key=lambda e: e.id)
+        ]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementRemoval:
+    """What a deletion takes: the element, its links, and what the foreign keys cascade.
+
+    Read inside the transaction that deletes, so it is exactly what went.
+    """
+
+    element: Element
+    #: Exact, while `relationships` holds only the first `AUDIT_LISTED_IDS`: an
+    #: event about a hub of ten thousand links must not weigh megabytes.
+    relationship_count: int = 0
+    relationships: tuple[Relationship, ...] = ()
+    documents: Held = Held()
+    diagrams: Held = Held()
+
+
+@dataclass(frozen=True, slots=True)
+class PackageRemoval:
+    """What deleting a package moves, read in the transaction that deletes it."""
+
+    package: Package
+    into: UUID | None
+    sub_packages: Held = Held()
+    elements: Held = Held()
+    diagrams: Held = Held()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +168,9 @@ class ArchitectureRepository(Protocol):
     have to declare `async def`.
     """
 
-    async def add_element(self, element: Element) -> Element: ...
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+        """Store a new element; `audit` is inserted in the same transaction."""
+        ...
 
     async def get_element(self, element_id: UUID) -> Element | None: ...
 
@@ -97,15 +178,63 @@ class ArchitectureRepository(Protocol):
 
     async def count_elements(self, criteria: ElementFilter) -> int: ...
 
-    async def save_element(self, element: Element) -> Element:
-        """Persist an already-existing element, overwriting its stored form."""
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        """Apply `change` — a pure function — to the element read under its lock.
+
+        Applied in the writer's own transaction, so a concurrent writer's change to
+        another field is never undone by a copy read earlier. Only the columns the
+        patch really changes are written; a patch that changes nothing writes
+        nothing, not even an event (`audit` is not called). `audit` may be a
+        function of the `ElementChange`, called in the transaction.
+        """
         ...
 
-    async def delete_element(self, element_id: UUID) -> bool:
-        """Remove an element and every relationship attached to it."""
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        """Move an element through review, deciding on the row read under its lock.
+
+        `change` receives that row — with its state, its revision and the subject
+        that last changed it — and returns the element after the transition, or
+        raises to refuse. Only the review columns are written.
+        """
         ...
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship: ...
+    async def delete_element(
+        self,
+        element_id: UUID,
+        *,
+        audit: AuditOf[ElementRemoval],
+        guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
+    ) -> bool:
+        """Remove an element and every relationship attached to it.
+
+        `audit` is written only if a row was deleted; `False` writes nothing.
+        `guard` sees the element under its lock, before anything is removed; `ends`
+        reviews the elements at the other ends of the links that go with it.
+        """
+        ...
+
+    async def add_relationship(
+        self,
+        relationship: Relationship,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> Relationship:
+        """Store a link; `ends` reviews its two elements in the same transaction."""
+        ...
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None: ...
 
@@ -118,7 +247,13 @@ class ArchitectureRepository(Protocol):
         offset: int = 0,
     ) -> tuple[Relationship, ...]: ...
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool: ...
+    async def delete_relationship(
+        self,
+        relationship_id: UUID,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> bool: ...
 
     async def relations_of(
         self,
@@ -187,7 +322,13 @@ class DocumentRepository(Protocol):
     true. See docs/adr/0019.
     """
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
         """Store a new document and its passages, or refuse a name already taken."""
         ...
 
@@ -197,11 +338,17 @@ class DocumentRepository(Protocol):
         """Every document attached to an element, oldest first, without content."""
         ...
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
         """Overwrite a stored document, and replace its passages with these."""
         ...
 
-    async def delete(self, document_id: UUID) -> bool: ...
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool: ...
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every stored document, for the one job that walks the whole corpus.
@@ -241,7 +388,7 @@ class DiagramRepository(Protocol):
         """
         ...
 
-    async def add(self, diagram: Diagram) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """Store a new diagram, or refuse a name already taken."""
         ...
 
@@ -249,16 +396,86 @@ class DiagramRepository(Protocol):
 
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]: ...
 
-    async def save(self, diagram: Diagram) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """Overwrite the name, description and update time of a stored diagram."""
         ...
 
-    async def delete(self, diagram_id: UUID) -> bool: ...
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool: ...
 
     async def replace_layout(
-        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        now: datetime,
+        audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
         """Replace every node of a diagram in one transaction; `False` if it is gone."""
+        ...
+
+
+class AuditRepository(Protocol):
+    """Reads the audit trail. Writing is not here: an event is inserted by the
+    repository that makes the write it describes, in the same transaction
+    (docs/adr/0046)."""
+
+    async def page(self, criteria: AuditFilter) -> AuditPage:
+        """Newest first (`at`, then `id`), at most `criteria.limit` events and a cursor."""
+        ...
+
+
+class BaselineRepository(Protocol):
+    """Persistence for baselines — docs/adr/0047.
+
+    Every write names its audit, with no default, like the stores of the model
+    (`tests/unit/test_audit_coverage.py`). The reads that feed a decision —
+    `snapshot_of`, `current_snapshot`, `restore_plan` — each run in one
+    transaction at one instant: a link is never read without its element.
+    """
+
+    async def list_all(self) -> tuple[Baseline, ...]:
+        """Every baseline by name, each with the counts of what it holds."""
+        ...
+
+    async def get(self, baseline_id: UUID) -> Baseline | None: ...
+
+    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+        """Copy the whole model under this baseline, in one REPEATABLE READ transaction.
+
+        Raises `DuplicateBaselineError` for a taken name and
+        `BaselineTooLargeError` past the limits; writes nothing then. `audit` is
+        given the stored baseline, counts included.
+        """
+        ...
+
+    async def delete(self, baseline_id: UUID, *, audit: AuditOf[Baseline]) -> bool:
+        """Remove the copy only — never a row of the model."""
+        ...
+
+    async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot: ...
+
+    async def current_snapshot(self) -> ModelSnapshot:
+        """The live elements, links and boxes of every diagram, as values."""
+        ...
+
+    async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
+        """What restoring would do now, documents counted. Raises `BaselineNotFoundError`."""
+        ...
+
+    async def apply_restore(
+        self,
+        baseline_id: UUID,
+        *,
+        keep_new: bool,
+        expected: RestorePlan,
+        now: datetime,
+        audit: AuditOf[RestorePlan],
+    ) -> None:
+        """Re-plan in one SERIALIZABLE transaction and apply it only if it is `expected`.
+
+        A different plan, a protected element touched, a clash or a concurrent
+        write raise `RestoreConflictError` / `RestoreBlockedError` and write nothing.
+        """
         ...
 
 
@@ -435,16 +652,24 @@ class PackageRepository(Protocol):
 
     async def get(self, package_id: UUID) -> Package | None: ...
 
-    async def add(self, package: Package) -> Package:
+    async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         """Store a new package, or refuse a sibling name already taken."""
         ...
 
-    async def save(self, package: Package) -> Package:
-        """Overwrite name, description, parent and update time of a stored package."""
+    async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
+        """Overwrite name, description, parent and update time of a stored package.
+
+        `audit` may be a function of the stored package, called in the transaction.
+        """
         ...
 
     async def delete(
-        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+        self,
+        package_id: UUID,
+        *,
+        into: UUID | None,
+        audit: AuditOf[PackageRemoval],
+        require_empty: bool = False,
     ) -> bool:
         """Move the direct sub-packages, elements and diagrams to `into`, then delete.
 
@@ -459,7 +684,13 @@ class PackageRepository(Protocol):
         """
         ...
 
-    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+    async def move_elements(
+        self,
+        element_ids: Sequence[UUID],
+        package_id: UUID | None,
+        *,
+        audit: AuditOf[Mapping[UUID, UUID | None]],
+    ) -> None:
         """Put these elements in a package (`None`: the root), all or none.
 
         Raises `ElementNotFoundError` naming an absent id and
@@ -483,12 +714,17 @@ class SavedQueryRepository(Protocol):
         """One saved query; raises `InvalidQueryError` when its stored JSON cannot be read."""
         ...
 
-    async def add(self, saved: SavedQuery) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
         """Store a new saved query, or refuse a name already taken."""
         ...
 
-    async def save(self, saved: SavedQuery) -> SavedQuery:
-        """Overwrite name, description, query and update time; never the author."""
+    async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
+        """Overwrite name, description, query and update time; never the author.
+
+        `audit` is a function of the stored row as a plain mapping
+        (`saved_query_record_view`), so a row whose JSON can no longer be read
+        is still described.
+        """
         ...
 
-    async def delete(self, query_id: UUID) -> bool: ...
+    async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool: ...

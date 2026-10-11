@@ -14,10 +14,11 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ea.core.config import Settings
+from ea.domain.audit import AuditChannel
 from ea.domain.auth import LOCAL_DEVELOPER, Caller
 from ea.domain.errors import NotAuthenticatedError
 from ea.domain.ports import AccessTokenVerifier
-from ea.services.caller import current_caller
+from ea.services.caller import current_caller, current_channel
 
 #: `auto_error=False` so a missing header reaches our own 401 envelope rather
 #: than FastAPI's own.
@@ -45,6 +46,8 @@ async def authenticate(
     else:
         caller = await verifier_of(request.app).verify(credentials.credentials)
     current_caller.set(caller)
+    # The door is said by the adapter that received the call, never by the caller.
+    current_channel.set(AuditChannel.HTTP)
     return caller
 
 

@@ -262,9 +262,9 @@ class TestRunning:
     async def test_a_package_that_is_gone_is_a_422_unknown_package_and_the_query_stays(
         self, saved_client: httpx.AsyncClient, packages: InMemoryPackages
     ) -> None:
-        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
         created = await save(saved_client, package_id=str(finance.id))
-        await packages.delete(finance.id, into=None)
+        await packages.delete(finance.id, into=None, audit=())
 
         response = await saved_client.get(f"/queries/{created['id']}/elements")
 

@@ -8,12 +8,15 @@ payload by being added to a dataclass.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated, Final, Literal
+from itertools import islice
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ea.domain.approval import ApprovalState, Transition, allowed_transitions
 from ea.domain.archimate import (
     AccessType,
     Aspect,
@@ -22,6 +25,22 @@ from ea.domain.archimate import (
     RelationshipCategory,
     RelationshipType,
     permitted_relationships,
+)
+from ea.domain.audit import (
+    AuditAction,
+    AuditChannel,
+    AuditEvent,
+    AuditPage,
+    EntityKind,
+    FieldChange,
+)
+from ea.domain.baselines import (
+    MAX_BASELINE_DESCRIPTION_LENGTH,
+    MAX_BASELINE_NAME_LENGTH,
+    Baseline,
+    BaselineDiff,
+    EntityRef,
+    Modified,
 )
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
@@ -69,6 +88,8 @@ from ea.domain.saved_queries import (
 )
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
+from ea.services.baselines import RestoreOutcome
+from ea.services.caller import current_caller
 
 #: Shared constraints, so every endpoint bounds a payload the same way — and so
 #: does every MCP tool, which imports these rather than restating them. The two
@@ -119,6 +140,32 @@ Offset = Annotated[int, Field(ge=0)]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
 LinkName = Annotated[str, Field(max_length=200)]
+#: The audit filters, bounded once for both adapters (docs/adr/0046). A NUL is
+#: refused here because PostgreSQL cannot compare a `text` column to one: it
+#: would reach the driver and come back as a 500.
+Actor = Annotated[str, Field(max_length=200, pattern=r"^[^\x00]*$")]
+RequestIdFilter = Annotated[str, Field(max_length=128, pattern=r"^[^\x00]*$")]
+CursorToken = Annotated[str, Field(max_length=512)]
+#: The baselines (docs/adr/0047). The lengths are the domain's, imported, so the
+#: schema and `Baseline.create` cannot drift into refusing different values.
+BaselineName = Annotated[str, Field(min_length=1, max_length=MAX_BASELINE_NAME_LENGTH)]
+BaselineDescription = Annotated[str, Field(max_length=MAX_BASELINE_DESCRIPTION_LENGTH)]
+Against = Annotated[
+    str,
+    Field(max_length=36, description="A baseline id, or `current` for the model as it is now."),
+]
+#: What a dry run of a restoration hands out (`plan_digest`, a SHA-256) and what
+#: applying must hand back.
+PlanDigest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
+#: The revision of an element an approver read (docs/adr/0048): a positive counter.
+ExpectedRevision = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=2**62,
+        description="The `revision` of the element as you read it: required to approve.",
+    ),
+]
 
 # --- Files in MinIO (docs/adr/0036), and what is known about them (docs/adr/0039) ---
 FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
@@ -141,6 +188,20 @@ class ElementCreate(_Input):
     description: Description = ""
     documentation: Documentation = ""
     properties: Properties = Field(default_factory=dict)
+
+
+class ApprovalRequest(_Input):
+    """One step of review. `approve` must say which revision the approver read."""
+
+    transition: Transition
+    expected_revision: ExpectedRevision | None = None
+
+    @model_validator(mode="after")
+    def _approving_names_a_revision(self) -> ApprovalRequest:
+        if self.transition is Transition.APPROVE and self.expected_revision is None:
+            msg = "approving needs expected_revision, the revision of the element you read"
+            raise ValueError(msg)
+        return self
 
 
 class ElementUpdate(_Input):
@@ -170,9 +231,24 @@ class ElementRead(BaseModel):
     package_id: UUID | None
     created_at: datetime
     updated_at: datetime
+    approval_state: ApprovalState
+    locked: bool
+    approved_by: str | None = Field(description="The Keycloak subject that approved it.")
+    approved_at: datetime | None
+    revision: int = Field(description="Counts the changes to its content; an approval names one.")
+    allowed_transitions: list[Transition] = Field(
+        description="What the caller may do next with this element: the SPA draws a button each."
+    )
 
     @classmethod
     def of(cls, element: Element) -> ElementRead:
+        # Outside a request nobody is calling, and nothing is offered.
+        caller = current_caller.get()
+        offered = (
+            allowed_transitions(element.approval_state, element.locked, caller)
+            if caller is not None
+            else ()
+        )
         return cls(
             id=element.id,
             element_type=element.element_type,
@@ -185,6 +261,12 @@ class ElementRead(BaseModel):
             package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
+            approval_state=element.approval_state,
+            locked=element.locked,
+            approved_by=element.approved_by_sub,
+            approved_at=element.approved_at,
+            revision=element.revision,
+            allowed_transitions=list(offered),
         )
 
 
@@ -576,6 +658,7 @@ class MeRead(BaseModel):
 
     username: str
     can_write: bool
+    can_approve: bool
 
 
 # --- IP address management (docs/adr/0020) --------------------------------
@@ -1082,4 +1165,227 @@ class SavedQueryRead(SavedQuerySummaryRead):
         return cls(
             **SavedQuerySummaryRead.of(saved.summary).model_dump(),
             query=ElementQuerySchema.of(saved.query),
+        )
+
+
+# --- The audit trail (docs/adr/0046) ----------------------------------------
+
+
+class FieldChangeRead(BaseModel):
+    field: str
+    before: Any = None
+    after: Any = None
+
+
+class AuditEventRead(BaseModel):
+    """One use case that changed the catalogue — the diff is computed server-side,
+    so a client displays it and never decides what counts as a change."""
+
+    id: UUID
+    at: datetime
+    actor_sub: str
+    actor_name: str
+    action: AuditAction
+    entity_kind: EntityKind
+    entity_id: UUID | None
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+    request_id: str
+    channel: AuditChannel
+    correlation: str | None
+    changes: list[FieldChangeRead]
+
+    @classmethod
+    def of(cls, event: AuditEvent) -> AuditEventRead:
+        return cls(
+            id=event.id,
+            at=event.at,
+            actor_sub=event.actor_sub,
+            actor_name=event.actor_name,
+            action=event.action,
+            entity_kind=event.entity_kind,
+            entity_id=event.entity_id,
+            before=dict(event.before) if event.before is not None else None,
+            after=dict(event.after) if event.after is not None else None,
+            request_id=event.request_id,
+            channel=event.channel,
+            correlation=event.correlation,
+            changes=[_change(change) for change in event.changes],
+        )
+
+
+def _change(change: FieldChange) -> FieldChangeRead:
+    return FieldChangeRead(field=change.field, before=change.before, after=change.after)
+
+
+class AuditPageRead(BaseModel):
+    items: list[AuditEventRead]
+    next_cursor: str | None = Field(
+        description="Pass it back as `cursor` for the next page; absent on the last one."
+    )
+
+    @classmethod
+    def of(cls, page: AuditPage) -> AuditPageRead:
+        return cls(
+            items=[AuditEventRead.of(event) for event in page.events],
+            next_cursor=page.next_cursor,
+        )
+
+
+# --- Baselines (docs/adr/0047) ------------------------------------------------
+
+#: How many entities of each kind a restoration plan names. The counts are exact
+#: and unbounded; the names are the first few, because a baseline can hold twenty
+#: thousand elements and an answer of that size is of no use to anyone.
+PLAN_LISTED_ITEMS: Final = 20
+#: A warning quotes names from the model; it is cut so one cannot be a megabyte.
+PLAN_WARNING_LENGTH: Final = 300
+
+
+class BaselineCreate(_Input):
+    name: BaselineName
+    description: BaselineDescription = ""
+
+
+class BaselineRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_by: str
+    created_at: datetime
+    element_count: int
+    relationship_count: int
+    box_count: int
+
+    @classmethod
+    def of(cls, baseline: Baseline) -> BaselineRead:
+        return cls(
+            id=baseline.id,
+            name=baseline.name,
+            description=baseline.description,
+            created_by=baseline.created_by,
+            created_at=baseline.created_at,
+            element_count=baseline.element_count,
+            relationship_count=baseline.relationship_count,
+            box_count=baseline.box_count,
+        )
+
+
+class EntityRefRead(BaseModel):
+    kind: str
+    id: UUID
+    label: str
+    type: str
+
+    @classmethod
+    def of(cls, ref: EntityRef) -> EntityRefRead:
+        return cls(kind=ref.kind, id=ref.id, label=ref.label, type=ref.type)
+
+
+class ModifiedRead(EntityRefRead):
+    changes: list[FieldChangeRead]
+
+    @classmethod
+    def of_modified(cls, modified: Modified) -> ModifiedRead:
+        return cls(
+            kind=modified.kind,
+            id=modified.id,
+            label=modified.label,
+            type=modified.type,
+            changes=[_change(change) for change in modified.changes],
+        )
+
+
+class BaselineDiffRead(BaseModel):
+    elements_added: list[EntityRefRead]
+    elements_removed: list[EntityRefRead]
+    elements_modified: list[ModifiedRead]
+    relationships_added: list[EntityRefRead]
+    relationships_removed: list[EntityRefRead]
+    relationships_modified: list[ModifiedRead]
+
+    @classmethod
+    def of(cls, diff: BaselineDiff) -> BaselineDiffRead:
+        return cls(
+            elements_added=[EntityRefRead.of(r) for r in diff.elements_added],
+            elements_removed=[EntityRefRead.of(r) for r in diff.elements_removed],
+            elements_modified=[ModifiedRead.of_modified(m) for m in diff.elements_modified],
+            relationships_added=[EntityRefRead.of(r) for r in diff.relationships_added],
+            relationships_removed=[EntityRefRead.of(r) for r in diff.relationships_removed],
+            relationships_modified=[
+                ModifiedRead.of_modified(m) for m in diff.relationships_modified
+            ],
+        )
+
+
+class RestoreRequest(_Input):
+    dry_run: bool = Field(default=True, description="Report what would change; write nothing.")
+    expected_digest: PlanDigest | None = Field(
+        default=None,
+        description="The `digest` of the dry run you read. Required to apply (dry_run false): "
+        "a model that moved since is refused with `restore_conflict`.",
+    )
+    keep_new: bool | None = Field(
+        default=None, description="Keep what was created since; false (exact) when omitted."
+    )
+
+
+class RestorePlanRead(BaseModel):
+    """What a restoration would do. Every figure is an exact count; the lists name
+    only the first few of each kind (`PLAN_LISTED_ITEMS`)."""
+
+    elements_to_create: int
+    elements_to_update: int
+    elements_to_delete: int
+    relationships_to_create: int
+    relationships_to_delete: int
+    relationships_cascaded: int
+    boxes_to_restore: int
+    documents_lost: int
+    boxes_lost: int
+    created: list[EntityRefRead]
+    updated: list[EntityRefRead]
+    deleted: list[EntityRefRead]
+    warning_count: int
+    warnings: list[str]
+    blocked_count: int
+    blocked: list[EntityRefRead]
+
+
+class RestoreRead(BaseModel):
+    applied: bool
+    digest: str = Field(description="Send it back as `expected_digest` to apply this very plan.")
+    plan: RestorePlanRead
+
+    @classmethod
+    def of(cls, outcome: RestoreOutcome) -> RestoreRead:
+        plan = outcome.plan
+
+        def named(elements: Sequence[Element]) -> list[EntityRefRead]:
+            return [
+                EntityRefRead(kind="element", id=e.id, label=e.name, type=e.element_type.value)
+                for e in islice(elements, PLAN_LISTED_ITEMS)
+            ]
+
+        return cls(
+            applied=outcome.applied,
+            digest=outcome.digest,
+            plan=RestorePlanRead(
+                elements_to_create=len(plan.elements_to_create),
+                elements_to_update=len(plan.elements_to_update),
+                elements_to_delete=len(plan.elements_to_delete),
+                relationships_to_create=len(plan.relationships_to_create),
+                relationships_to_delete=len(plan.relationships_to_delete),
+                relationships_cascaded=plan.cascaded_relationships,
+                boxes_to_restore=len(plan.boxes_to_restore),
+                documents_lost=plan.documents_lost,
+                boxes_lost=plan.boxes_lost,
+                created=named(plan.elements_to_create),
+                updated=named([u.current for u in plan.elements_to_update]),
+                deleted=named(plan.elements_to_delete),
+                warning_count=len(plan.warnings),
+                warnings=[w[:PLAN_WARNING_LENGTH] for w in plan.warnings[:PLAN_LISTED_ITEMS]],
+                blocked_count=len(plan.blocked),
+                blocked=named(plan.blocked),
+            ),
         )

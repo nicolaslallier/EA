@@ -12,10 +12,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from ea.domain.auth import EDITOR_ROLE, Caller
+from ea.domain.audit import AuditChannel
+from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 
 current_caller: ContextVar[Caller | None] = ContextVar("ea_current_caller", default=None)
+
+#: Which door the current call came through. The adapter that knows sets it —
+#: `api/auth.py` (http), `speaking_plainly` (mcp); a script is the system.
+current_channel: ContextVar[AuditChannel] = ContextVar(
+    "ea_current_channel", default=AuditChannel.SYSTEM
+)
 
 
 def require_caller() -> Caller:
@@ -34,6 +41,14 @@ def require_editor() -> Caller:
     return caller
 
 
+def require_approver() -> Caller:
+    caller = require_caller()
+    if not caller.can_approve:
+        msg = f"approving or locking an element needs the {APPROVER_ROLE} role"
+        raise NotAuthorisedError(msg)
+    return caller
+
+
 @contextmanager
 def acting_as(caller: Caller) -> Iterator[Caller]:
     token = current_caller.set(caller)
@@ -41,3 +56,12 @@ def acting_as(caller: Caller) -> Iterator[Caller]:
         yield caller
     finally:
         current_caller.reset(token)
+
+
+@contextmanager
+def acting_through(channel: AuditChannel) -> Iterator[AuditChannel]:
+    token = current_channel.set(channel)
+    try:
+        yield channel
+    finally:
+        current_channel.reset(token)

@@ -13,6 +13,7 @@ included: SQLAlchemy constructs compile to parameters.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from sqlalchemy import (
@@ -28,14 +29,19 @@ from sqlalchemy import (
     not_,
     or_,
     select,
+    update,
 )
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
+from ea.db.models.diagram import DiagramNodeRecord
+from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
+from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     DomainError,
@@ -45,15 +51,27 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.ports import (
+    ElementChange,
+    ElementFilter,
+    ElementGuard,
+    ElementRemoval,
+    EndsReview,
+    GraphView,
+    Held,
+)
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
+from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
+
+    from ea.domain.audit import AuditEvent, AuditOf
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +105,12 @@ def element_row(element: Element) -> dict[str, Any]:
         "properties": dict(element.properties),
         "created_at": element.created_at,
         "updated_at": element.updated_at,
+        "approval_state": element.approval_state.value,
+        "locked": element.locked,
+        "approved_by_sub": element.approved_by_sub,
+        "approved_at": element.approved_at,
+        "revision": element.revision,
+        "last_modified_by_sub": element.last_modified_by_sub,
     }
 
 
@@ -101,6 +125,12 @@ def element_from_row(row: ElementRecord) -> Element:
         documentation=row.documentation,
         properties=dict(row.properties),
         package_id=row.package_id,
+        approval_state=ApprovalState(row.approval_state),
+        locked=row.locked,
+        approved_by_sub=row.approved_by_sub,
+        approved_at=row.approved_at,
+        revision=row.revision,
+        last_modified_by_sub=row.last_modified_by_sub,
     )
 
 
@@ -383,6 +413,173 @@ async def _links_within(
     return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
 
+async def _removal_of(session: AsyncSession, row: ElementRecord) -> ElementRemoval:
+    """What deleting this (locked) element takes along, in the caller's transaction."""
+    link = RelationshipRecord
+    touching = or_(link.source_id == row.id, link.target_id == row.id)
+    links = await session.scalars(
+        select(link).where(touching).order_by(link.created_at, link.id).limit(AUDIT_LISTED_IDS)
+    )
+    return ElementRemoval(
+        element=element_from_row(row),
+        relationship_count=int(await session.scalar(select(func.count()).where(touching)) or 0),
+        relationships=tuple(relationship_from_row(found) for found in links),
+        documents=await _held(session, ElementDocument.id, ElementDocument.element_id == row.id),
+        diagrams=await _held(
+            session, DiagramNodeRecord.diagram_id, DiagramNodeRecord.element_id == row.id
+        ),
+    )
+
+
+async def _held(session: AsyncSession, column: Any, where: ColumnElement[bool]) -> Held:
+    """The exact count of rows matching `where`, and the first few of `column`."""
+    total = await session.scalar(select(func.count()).where(where))
+    ids = await session.scalars(
+        select(column).where(where).order_by(column).limit(AUDIT_LISTED_IDS)
+    )
+    return Held(count=int(total or 0), ids=tuple(ids))
+
+
+#: The review states an element can be changed in; every other value is frozen.
+_EDITABLE_STATES: Final = ("draft", "in_review")
+
+
+def frozen_clause() -> ColumnElement[bool]:
+    """Approved, locked, or in a state this code does not know — fail closed.
+
+    The same test as `ea.domain.approval.is_frozen`, spelled for SQL: "not draft
+    and not in review" rather than "approved", so a value outside the enumeration
+    protects instead of exposing.
+    """
+    return or_(
+        ElementRecord.locked.is_(True), ElementRecord.approval_state.not_in(_EDITABLE_STATES)
+    )
+
+
+#: The columns a review or a touch changes.
+_REVIEW_COLUMNS: Final = frozenset(
+    {
+        "approval_state",
+        "locked",
+        "approved_by_sub",
+        "approved_at",
+        "revision",
+        "last_modified_by_sub",
+    }
+)
+
+
+def author_of(events: Sequence[AuditEvent]) -> str | None:
+    """The subject that did a write: the actor of the events it writes, set by the service."""
+    return events[0].actor_sub if events else None
+
+
+#: How many element rows one locking statement takes. Statements follow each other in
+#: id order, so the order holds across chunks.
+LOCK_CHUNK: Final = 100
+
+
+def lock_order(ids: Iterable[UUID]) -> list[UUID]:
+    """THE order in which element rows are locked, everywhere: ascending ids, each once.
+
+    Two writers that lock overlapping sets of elements — a link between two of them,
+    a batch of filings, the neighbours of a deleted element — queue behind one
+    another instead of each holding what the other wants (docs/adr/0048).
+    """
+    return sorted(set(ids))
+
+
+async def lock_elements(
+    session: AsyncSession,
+    ids: Iterable[UUID],
+    *,
+    key_only: bool,
+    after_chunk: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[UUID, ElementRecord]:
+    """Lock the rows of these elements in `lock_order`, and give back the ones that exist.
+
+    `key_only` takes `FOR NO KEY UPDATE`, which a link insert (a `FOR KEY SHARE` on
+    its ends) does not wait for; otherwise `FOR UPDATE`. `after_chunk` is the seam
+    a test uses to interleave two writers between two chunks.
+    """
+    ordered = lock_order(ids)
+    rows: dict[UUID, ElementRecord] = {}
+    for chunk, start in enumerate(range(0, len(ordered), LOCK_CHUNK)):
+        found = await session.scalars(
+            select(ElementRecord)
+            .where(ElementRecord.id.in_(ordered[start : start + LOCK_CHUNK]))
+            .order_by(ElementRecord.id)
+            .with_for_update(key_share=key_only)
+            .execution_options(populate_existing=True)
+        )
+        rows |= {row.id: row for row in found}
+        if after_chunk is not None:
+            await after_chunk(chunk)
+    return rows
+
+
+async def _other_ends(session: AsyncSession, element_id: UUID) -> set[UUID]:
+    """The elements this one is linked to (a plain read: the caller locks them)."""
+    touching = or_(
+        RelationshipRecord.source_id == element_id, RelationshipRecord.target_id == element_id
+    )
+    found = await session.execute(
+        select(RelationshipRecord.source_id, RelationshipRecord.target_id).where(touching)
+    )
+    return {end for pair in found for end in pair} - {element_id}
+
+
+async def _review_rows(
+    session: AsyncSession,
+    rows: dict[UUID, ElementRecord],
+    ends: EndsReview,
+    author: str | None,
+) -> list[ElementChange]:
+    """Review the (locked) elements at the ends of a link change, and write what changed.
+
+    Each is a new revision last changed by `author`; `ends.change` raising refuses the
+    whole write.
+    """
+    changes = [
+        ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
+        for c in ends.apply(element_from_row(row) for row in rows.values())
+    ]
+    for change in changes:
+        _write_review(rows[change.after.id], change.after)
+    await session.flush()
+    return changes
+
+
+async def _review_ends(
+    session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview, author: str | None
+) -> list[ElementChange]:
+    """Lock the two ends of a link and review them. A missing end is the refusal an insert gives."""
+    rows = await lock_elements(session, end_ids, key_only=True)
+    if rows.keys() != set(end_ids):
+        raise ElementNotFoundError("cannot link: an element at one end does not exist")
+    return await _review_rows(session, rows, ends, author)
+
+
+def _write_review(row: ElementRecord, after: Element) -> None:
+    """The columns a review or a touch changes — and nothing the element says about itself."""
+    for column, value in element_row(after).items():
+        if column in _REVIEW_COLUMNS:
+            setattr(row, column, value)
+
+
+async def touch(session: AsyncSession, element_ids: Sequence[UUID], author: str | None) -> None:
+    """Record, in the writing transaction, that these elements were changed by `author`.
+
+    A new revision each, and the author the separation of duties looks at. The
+    rows are already locked by the caller.
+    """
+    await session.execute(
+        update(ElementRecord)
+        .where(ElementRecord.id.in_(list(element_ids)))
+        .values(revision=ElementRecord.revision + 1, last_modified_by_sub=author)
+    )
+
+
 # --------------------------------------------------------------------------
 # Repository
 # --------------------------------------------------------------------------
@@ -396,10 +593,14 @@ class PostgresArchitectureRepository:
 
     # --- Elements ---------------------------------------------------------
 
-    async def add_element(self, element: Element) -> Element:
+    @replayable
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+        events = events_for(audit, element)
+        element = replace(element, last_modified_by_sub=author_of(events))
         async with self._sessions.begin() as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
+            write_events(session, events)
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -423,29 +624,133 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
-    async def save_element(self, element: Element) -> Element:
-        async with self._sessions.begin() as session:
-            row = await session.get(ElementRecord, element.id)
-            if row is None:
-                msg = f"no element with id {element.id}"
-                raise ElementNotFoundError(msg)
-            for column, value in element_row(element).items():
-                setattr(row, column, value)
-            await _flush_refusing(session, element)
-        return element
+    @replayable
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        return await self._change(element_id, change, audit, content=True)
 
-    async def delete_element(self, element_id: UUID) -> bool:
-        """Its relationships follow by the foreign keys."""
+    @replayable
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        # A transition is not a change to the content: no new revision, no new author.
+        return await self._change(element_id, change, audit, content=False)
+
+    async def _change(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        audit: AuditOf[ElementChange],
+        *,
+        content: bool,
+    ) -> Element:
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
-                delete(ElementRecord).where(ElementRecord.id == element_id)
+            # `FOR UPDATE`: the row the patch is applied to — its content, its review
+            # state, its revision, its last author — is the latest committed one, and a
+            # concurrent writer or transition waits for our commit.
+            row = await session.get(ElementRecord, element_id, with_for_update=True)
+            if row is None:
+                msg = f"no element with id {element_id}"
+                raise ElementNotFoundError(msg)
+            before = element_from_row(row)
+            after = change(before)
+            wanted, stored = element_row(after), element_row(before)
+            changed = {
+                column: value
+                for column, value in wanted.items()
+                if column != "updated_at" and stored[column] != value
+            }
+            if not changed:
+                return before
+            events = events_for(audit, ElementChange(before, after))
+            if content:  # a new revision, by whoever the event says
+                after = replace(
+                    after, revision=before.revision + 1, last_modified_by_sub=author_of(events)
+                )
+                changed["revision"] = after.revision
+                changed["last_modified_by_sub"] = after.last_modified_by_sub
+            for column, value in {**changed, "updated_at": after.updated_at}.items():
+                setattr(row, column, value)
+            await _flush_refusing(session, after)
+            write_events(session, events)
+        return after
+
+    @replayable
+    async def delete_element(
+        self,
+        element_id: UUID,
+        *,
+        audit: AuditOf[ElementRemoval],
+        guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
+    ) -> bool:
+        """Its relationships follow by the foreign keys — and so is a change to their other ends.
+
+        What they take is read here, under the element's lock: a link or a
+        document filed on it meanwhile waits on the foreign key, so the list the
+        event carries is exactly what the cascade removes. The elements at the
+        other ends are locked with it, in `lock_order`, and put to `ends` like the
+        ends of a `disconnect`: a locked one refuses the whole deletion.
+        """
+        async with self._sessions.begin() as session:
+            neighbours = await _other_ends(session, element_id)
+            rows = await lock_elements(session, {element_id, *neighbours}, key_only=False)
+            row = rows.get(element_id)
+            if row is None:
+                return False
+            late = await _other_ends(session, element_id) - neighbours  # linked before our lock
+            rows |= await lock_elements(session, late, key_only=False)
+            if guard is not None:
+                guard(element_from_row(row))
+            removal = await _removal_of(session, row)
+            events = events_for(audit, removal)
+            reviewed = (
+                await _review_rows(
+                    session,
+                    {i: rows[i] for i in neighbours | late if i in rows},
+                    ends,
+                    author_of(events),
+                )
+                if ends is not None
+                else []
             )
-        return bool(_rows_affected(deleted))
+            await session.execute(delete(ElementRecord).where(ElementRecord.id == element_id))
+            write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
+        return True
 
     # --- Relationships ----------------------------------------------------
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship:
+    @replayable
+    async def add_relationship(
+        self,
+        relationship: Relationship,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> Relationship:
+        events = events_for(audit, relationship)
         async with self._sessions.begin() as session:
+            reviewed = (
+                await _review_ends(
+                    session,
+                    (relationship.source_id, relationship.target_id),
+                    ends,
+                    author_of(events),
+                )
+                if ends is not None
+                else []
+            )
             session.add(RelationshipRecord(**relationship_row(relationship)))
             try:
                 await session.flush()
@@ -457,6 +762,9 @@ class PostgresArchitectureRepository:
                     "one of them does not exist"
                 )
                 raise ElementNotFoundError(msg) from error
+            write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
@@ -488,12 +796,40 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool:
+    @replayable
+    async def delete_relationship(
+        self,
+        relationship_id: UUID,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> bool:
         async with self._sessions.begin() as session:
-            deleted = await session.execute(
+            # The ends first, then the link: deleting an element locks its row and
+            # then its links, so this is the one order that cannot deadlock.
+            found = await session.get(RelationshipRecord, relationship_id)
+            if found is None:
+                return False
+            events = events_for(audit, relationship_from_row(found))
+            reviewed = (
+                await _review_ends(
+                    session, (found.source_id, found.target_id), ends, author_of(events)
+                )
+                if ends is not None
+                else []
+            )
+            row = await session.get(
+                RelationshipRecord, relationship_id, with_for_update=True, populate_existing=True
+            )
+            if row is None:
+                return False
+            await session.execute(
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )
-        return bool(_rows_affected(deleted))
+            write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
+        return True
 
     # --- Traversals -------------------------------------------------------
 

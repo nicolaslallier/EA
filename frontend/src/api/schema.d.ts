@@ -4,6 +4,109 @@
  */
 
 export interface paths {
+    "/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Audit Events
+         * @description Who changed what, and when — newest first. `since` is inclusive, `until` exclusive.
+         */
+        get: operations["list_audit_events_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Baselines */
+        get: operations["list_baselines_baselines_get"];
+        put?: never;
+        /**
+         * Create Baseline
+         * @description Freeze a copy of the whole model under a name.
+         */
+        post: operations["create_baseline_baselines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Baseline */
+        get: operations["read_baseline_baselines__baseline_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Baseline */
+        delete: operations["delete_baseline_baselines__baseline_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Baseline Diff
+         * @description What separates a baseline from another one, or from the model as it is now.
+         */
+        get: operations["read_baseline_diff_baselines__baseline_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Baseline
+         * @description Put the model back as the baseline had it — a dry run unless told otherwise.
+         *
+         *     Applying needs `dry_run=false` **and** the `digest` of the dry run you read,
+         *     as `expected_digest`. One transaction: a conflict (`restore_conflict`, read
+         *     the plan again) or a locked element (`restore_blocked`) changes nothing.
+         */
+        post: operations["restore_baseline_baselines__baseline_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams": {
         parameters: {
             query?: never;
@@ -197,6 +300,29 @@ export interface paths {
         patch: operations["update_element_elements__element_id__patch"];
         trace?: never;
     };
+    "/elements/{element_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transition Element
+         * @description Move an element through review.
+         *
+         *     403 without the role the token carries, 409 if the state forbids it or if
+         *     `expected_revision` is no longer the element's revision.
+         */
+        post: operations["transition_element_elements__element_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/elements/{element_id}/documents": {
         parameters: {
             query?: never;
@@ -222,6 +348,26 @@ export interface paths {
          *     is `PUT /documents/{document_id}`.
          */
         post: operations["attach_document_elements__element_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/{element_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Element History
+         * @description The trail of one element — still readable once the element is deleted.
+         */
+        get: operations["read_element_history_elements__element_id__history_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -871,11 +1017,137 @@ export interface components {
             vrf: string;
         };
         /**
+         * ApprovalRequest
+         * @description One step of review. `approve` must say which revision the approver read.
+         */
+        ApprovalRequest: {
+            /** Expected Revision */
+            expected_revision?: number | null;
+            transition: components["schemas"]["Transition"];
+        };
+        /**
+         * ApprovalState
+         * @enum {string}
+         */
+        ApprovalState: "draft" | "in_review" | "approved";
+        /**
          * Aspect
          * @description The aspect an element belongs to — the column of the ArchiMate framework.
          * @enum {string}
          */
         Aspect: "active_structure" | "behavior" | "passive_structure" | "motivation" | "composite" | "connector";
+        /**
+         * AuditAction
+         * @description The closed list of things the trail can say. Never a free string.
+         * @enum {string}
+         */
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        /**
+         * AuditChannel
+         * @description Which door the caller came through — said by the adapter, never by the caller.
+         * @enum {string}
+         */
+        AuditChannel: "http" | "mcp" | "system";
+        /**
+         * AuditEventRead
+         * @description One use case that changed the catalogue — the diff is computed server-side,
+         *     so a client displays it and never decides what counts as a change.
+         */
+        AuditEventRead: {
+            action: components["schemas"]["AuditAction"];
+            /** Actor Name */
+            actor_name: string;
+            /** Actor Sub */
+            actor_sub: string;
+            /** After */
+            after: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
+            /** Changes */
+            changes: components["schemas"]["FieldChangeRead"][];
+            channel: components["schemas"]["AuditChannel"];
+            /** Correlation */
+            correlation: string | null;
+            /** Entity Id */
+            entity_id: string | null;
+            entity_kind: components["schemas"]["EntityKind"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /** AuditPageRead */
+        AuditPageRead: {
+            /** Items */
+            items: components["schemas"]["AuditEventRead"][];
+            /**
+             * Next Cursor
+             * @description Pass it back as `cursor` for the next page; absent on the last one.
+             */
+            next_cursor: string | null;
+        };
+        /** BaselineCreate */
+        BaselineCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /** BaselineDiffRead */
+        BaselineDiffRead: {
+            /** Elements Added */
+            elements_added: components["schemas"]["EntityRefRead"][];
+            /** Elements Modified */
+            elements_modified: components["schemas"]["ModifiedRead"][];
+            /** Elements Removed */
+            elements_removed: components["schemas"]["EntityRefRead"][];
+            /** Relationships Added */
+            relationships_added: components["schemas"]["EntityRefRead"][];
+            /** Relationships Modified */
+            relationships_modified: components["schemas"]["ModifiedRead"][];
+            /** Relationships Removed */
+            relationships_removed: components["schemas"]["EntityRefRead"][];
+        };
+        /** BaselineRead */
+        BaselineRead: {
+            /** Box Count */
+            box_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Description */
+            description: string;
+            /** Element Count */
+            element_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Relationship Count */
+            relationship_count: number;
+        };
         /** Body_attach_document_elements__element_id__documents_post */
         Body_attach_document_elements__element_id__documents_post: {
             /**
@@ -1202,6 +1474,19 @@ export interface components {
          * @description An element as the API exposes it, layer and aspect resolved for the caller.
          */
         ElementRead: {
+            /**
+             * Allowed Transitions
+             * @description What the caller may do next with this element: the SPA draws a button each.
+             */
+            allowed_transitions: components["schemas"]["Transition"][];
+            approval_state: components["schemas"]["ApprovalState"];
+            /** Approved At */
+            approved_at: string | null;
+            /**
+             * Approved By
+             * @description The Keycloak subject that approved it.
+             */
+            approved_by: string | null;
             aspect: components["schemas"]["Aspect"];
             /**
              * Created At
@@ -1219,6 +1504,8 @@ export interface components {
              */
             id: string;
             layer: components["schemas"]["Layer"];
+            /** Locked */
+            locked: boolean;
             /** Name */
             name: string;
             /** Package Id */
@@ -1227,6 +1514,11 @@ export interface components {
             properties: {
                 [key: string]: string;
             };
+            /**
+             * Revision
+             * @description Counts the changes to its content; an approval names one.
+             */
+            revision: number;
             /**
              * Updated At
              * Format: date-time
@@ -1273,6 +1565,25 @@ export interface components {
             } | null;
         };
         /**
+         * EntityKind
+         * @enum {string}
+         */
+        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline";
+        /** EntityRefRead */
+        EntityRefRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+        };
+        /**
          * ErrorResponse
          * @description The single error envelope every failing endpoint returns.
          */
@@ -1287,6 +1598,15 @@ export interface components {
              * @description Stable machine-readable code.
              */
             error: string;
+        };
+        /** FieldChangeRead */
+        FieldChangeRead: {
+            /** After */
+            after?: unknown;
+            /** Before */
+            before?: unknown;
+            /** Field */
+            field: string;
         };
         /**
          * FileDetailsWrite
@@ -1445,6 +1765,8 @@ export interface components {
          * @description The caller, as far as the SPA needs to know it.
          */
         MeRead: {
+            /** Can Approve */
+            can_approve: boolean;
             /** Can Write */
             can_write: boolean;
             /** Username */
@@ -1461,6 +1783,22 @@ export interface components {
             layers: components["schemas"]["Layer"][];
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
+        };
+        /** ModifiedRead */
+        ModifiedRead: {
+            /** Changes */
+            changes: components["schemas"]["FieldChangeRead"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
         };
         /**
          * MoveElements
@@ -1735,6 +2073,75 @@ export interface components {
             strength: number;
             value: components["schemas"]["RelationshipType"];
         };
+        /**
+         * RestorePlanRead
+         * @description What a restoration would do. Every figure is an exact count; the lists name
+         *     only the first few of each kind (`PLAN_LISTED_ITEMS`).
+         */
+        RestorePlanRead: {
+            /** Blocked */
+            blocked: components["schemas"]["EntityRefRead"][];
+            /** Blocked Count */
+            blocked_count: number;
+            /** Boxes Lost */
+            boxes_lost: number;
+            /** Boxes To Restore */
+            boxes_to_restore: number;
+            /** Created */
+            created: components["schemas"]["EntityRefRead"][];
+            /** Deleted */
+            deleted: components["schemas"]["EntityRefRead"][];
+            /** Documents Lost */
+            documents_lost: number;
+            /** Elements To Create */
+            elements_to_create: number;
+            /** Elements To Delete */
+            elements_to_delete: number;
+            /** Elements To Update */
+            elements_to_update: number;
+            /** Relationships Cascaded */
+            relationships_cascaded: number;
+            /** Relationships To Create */
+            relationships_to_create: number;
+            /** Relationships To Delete */
+            relationships_to_delete: number;
+            /** Updated */
+            updated: components["schemas"]["EntityRefRead"][];
+            /** Warning Count */
+            warning_count: number;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** RestoreRead */
+        RestoreRead: {
+            /** Applied */
+            applied: boolean;
+            /**
+             * Digest
+             * @description Send it back as `expected_digest` to apply this very plan.
+             */
+            digest: string;
+            plan: components["schemas"]["RestorePlanRead"];
+        };
+        /** RestoreRequest */
+        RestoreRequest: {
+            /**
+             * Dry Run
+             * @description Report what would change; write nothing.
+             * @default true
+             */
+            dry_run?: boolean;
+            /**
+             * Expected Digest
+             * @description The `digest` of the dry run you read. Required to apply (dry_run false): a model that moved since is refused with `restore_conflict`.
+             */
+            expected_digest?: string | null;
+            /**
+             * Keep New
+             * @description Keep what was created since; false (exact) when omitted.
+             */
+            keep_new?: boolean | null;
+        };
         /** SavedQueryCreate */
         SavedQueryCreate: {
             /**
@@ -1893,6 +2300,11 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /**
+         * Transition
+         * @enum {string}
+         */
+        Transition: "submit" | "approve" | "reject" | "reopen" | "lock" | "unlock";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1915,6 +2327,406 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_audit_events_audit_get: {
+        parameters: {
+            query?: {
+                entity_kind?: components["schemas"]["EntityKind"] | null;
+                entity_id?: string | null;
+                actor?: string | null;
+                action?: components["schemas"]["AuditAction"] | null;
+                since?: string | null;
+                until?: string | null;
+                request_id?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_baselines_baselines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_baseline_baselines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BaselineCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_baseline_baselines__baseline_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_baseline_baselines__baseline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_baseline_diff_baselines__baseline_id__diff_get: {
+        parameters: {
+            query?: {
+                against?: string | null;
+            };
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineDiffRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_baseline_baselines__baseline_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_diagrams_diagrams_get: {
         parameters: {
             query?: {
@@ -2875,6 +3687,77 @@ export interface operations {
             };
         };
     };
+    transition_element_elements__element_id__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_element_documents_elements__element_id__documents_get: {
         parameters: {
             query?: never;
@@ -2986,6 +3869,58 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_element_history_elements__element_id__history_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

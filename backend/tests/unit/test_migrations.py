@@ -294,3 +294,62 @@ def test_the_saved_queries_table_has_a_unique_name_and_a_jsonb_query() -> None:
     assert {c.name for c in table.constraints if c.name} >= {"uq_saved_queries_name"}
     assert table.c.query.type.__class__.__name__ == "JSONB"
     assert not table.c.query.nullable
+
+
+def test_revision_0011_follows_0010() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0011")
+
+    assert revision is not None
+    assert revision.down_revision == "0010"
+
+
+def test_the_audit_table_names_its_entity_without_a_foreign_key() -> None:
+    """An event must outlive what it describes (docs/adr/0046)."""
+    table = Base.metadata.tables["audit_events"]
+
+    assert not table.foreign_keys
+    assert table.c.entity_id.nullable is True
+    assert table.c.request_id.nullable is False
+    assert table.c.channel.nullable is False
+    assert {index.name for index in table.indexes} == {
+        "ix_audit_events_entity",
+        "ix_audit_events_at",
+        "ix_audit_events_actor_sub",
+    }
+    assert table.primary_key.name == "pk_audit_events"
+
+
+def test_revision_0012_follows_0011() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0012")
+
+    assert revision is not None
+    assert revision.down_revision == "0011"
+
+
+def test_a_baseline_references_nothing_but_its_own_header() -> None:
+    """A copy that outlives its elements, packages and diagrams (docs/adr/0047)."""
+    for name in ("baseline_elements", "baseline_relationships", "baseline_boxes"):
+        (foreign_key,) = Base.metadata.tables[name].foreign_keys
+        assert foreign_key.column.table.name == "baselines"
+        assert foreign_key.ondelete == "CASCADE"
+    assert not Base.metadata.tables["baselines"].foreign_keys
+
+
+def test_revision_0013_follows_0012() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0013")
+
+    assert revision is not None
+    assert revision.down_revision == "0012"
+
+
+def test_the_review_state_sits_beside_the_properties_and_is_constrained() -> None:
+    """Review is not in `properties`: no `PATCH` erases it, no index is touched (docs/adr/0048)."""
+    table = Base.metadata.tables["elements"]
+
+    assert {c.name for c in table.constraints if c.name} >= {
+        "ck_elements_approval_state_known",
+        "ck_elements_locked_implies_approved",
+        "uq_elements_element_type_name",
+    }
+    assert not table.c.approval_state.nullable and not table.c.locked.nullable
+    assert table.c.approved_by_sub.nullable and table.c.approved_at.nullable

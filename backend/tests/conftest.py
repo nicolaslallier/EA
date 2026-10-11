@@ -9,7 +9,15 @@ import math
 import os
 import re
 import socket
-from collections.abc import AsyncIterator, Collection, Iterator, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -17,14 +25,28 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.auth import EDITOR_ROLE, Caller
+from ea.domain.audit import (
+    AuditEvent,
+    AuditFilter,
+    AuditOf,
+    AuditPage,
+    decode_cursor,
+    encode_cursor,
+    events_for,
+    saved_query_view,
+)
+from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
+from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
+    BaselineNotFoundError,
     DiagramNotFoundError,
     DocumentNotFoundError,
+    DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
@@ -34,6 +56,8 @@ from ea.domain.errors import (
     NotAuthenticatedError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    RestoreBlockedError,
+    RestoreConflictError,
     SavedQueryNotFoundError,
     StoredFileNotFoundError,
 )
@@ -41,7 +65,16 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
-from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.ports import (
+    ElementChange,
+    ElementFilter,
+    ElementGuard,
+    ElementRemoval,
+    EndsReview,
+    GraphView,
+    Held,
+    PackageRemoval,
+)
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -49,7 +82,9 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
+from ea.repositories.architecture_store import author_of
 from ea.services.architecture import ArchitectureService
+from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -71,6 +106,18 @@ def an_editor(**overrides: object) -> Caller:
         "roles": frozenset({EDITOR_ROLE}),
     }
     return Caller(**{**fields, **overrides})  # type: ignore[arg-type]
+
+
+def an_approver(**overrides: object) -> Caller:
+    """An approver who is also an editor: the roles accumulate (docs/adr/0048)."""
+    return an_editor(
+        **{
+            "subject": "approver-1",
+            "username": "approver",
+            "roles": frozenset({EDITOR_ROLE, APPROVER_ROLE}),
+            **overrides,
+        }
+    )
 
 
 def a_reader(**overrides: object) -> Caller:
@@ -265,6 +312,50 @@ def _logging_is_put_back_exactly_as_it_was() -> Iterator[None]:
         logger.filters[:] = filters
 
 
+class InMemoryAuditLog:
+    """The `audit_events` table: append-only, and written only by a write that succeeded.
+
+    The three repository doubles share one of these (the `audit_log` fixture), so
+    a service test asserts on what a real transaction would have committed: a
+    refused write appends nothing, because the double raises before it does.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def append(self, events: Sequence[AuditEvent]) -> None:
+        self.events.extend(events)
+
+    async def page(self, criteria: AuditFilter) -> AuditPage:
+        def matches(event: AuditEvent) -> bool:
+            return all(
+                [
+                    criteria.entity_kind is None or event.entity_kind == criteria.entity_kind,
+                    criteria.entity_id is None or event.entity_id == criteria.entity_id,
+                    criteria.actor is None or criteria.actor in (event.actor_sub, event.actor_name),
+                    criteria.action is None or event.action == criteria.action,
+                    criteria.since is None or event.at >= criteria.since,
+                    criteria.until is None or event.at < criteria.until,
+                    criteria.request_id is None or event.request_id == criteria.request_id,
+                ]
+            )
+
+        ordered = sorted(
+            (event for event in self.events if matches(event)),
+            key=lambda event: (event.at, event.id.int),
+            reverse=True,
+        )
+        if criteria.cursor is not None:
+            at, event_id = decode_cursor(criteria.cursor)
+            ordered = [e for e in ordered if (e.at, e.id.int) < (at, event_id.int)]
+        shown = ordered[: criteria.limit]
+        more = len(ordered) > criteria.limit
+        return AuditPage(
+            events=tuple(shown),
+            next_cursor=encode_cursor(shown[-1].at, shown[-1].id) if more else None,
+        )
+
+
 class InMemoryRepository:
     """A dictionary pretending to be a graph. Enough for the service's rules.
 
@@ -273,14 +364,27 @@ class InMemoryRepository:
     test must not rely on it — `tests/integration/test_element_cascade.py` does.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
 
-    async def add_element(self, element: Element) -> Element:
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+        events = events_for(audit, element)
+        element = replace(element, last_modified_by_sub=author_of(events))
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
+        self.audit_log.append(events)
         return element
+
+    def touch(self, element_ids: Iterable[UUID], events: Sequence[AuditEvent]) -> None:
+        """What the real repositories do to a changed element: a new revision and an author."""
+        author = author_of(events)
+        for element_id in element_ids:
+            element = self.elements[element_id]
+            self.elements[element_id] = replace(
+                element, revision=element.revision + 1, last_modified_by_sub=author
+            )
 
     async def get_element(self, element_id: UUID) -> Element | None:
         return self.elements.get(element_id)
@@ -291,12 +395,45 @@ class InMemoryRepository:
     async def count_elements(self, criteria: ElementFilter) -> int:
         return len(self.elements)
 
-    async def save_element(self, element: Element) -> Element:
-        if element.id not in self.elements:
-            raise ElementNotFoundError(str(element.id))
-        self._refuse_a_taken_address(element)
-        self.elements[element.id] = element
-        return element
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        if element_id not in self.elements:
+            raise ElementNotFoundError(str(element_id))
+        before = self.elements[element_id]
+        after = change(before)
+        if replace(after, updated_at=before.updated_at) == before:
+            return before  # nothing observable changed: no write, no event
+        self._refuse_a_taken_address(after)
+        events = events_for(audit, ElementChange(before, after))
+        after = replace(
+            after,
+            revision=before.revision + 1,
+            last_modified_by_sub=author_of(events),
+        )
+        self.elements[element_id] = after
+        self.audit_log.append(events)
+        return after
+
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        if element_id not in self.elements:
+            raise ElementNotFoundError(str(element_id))
+        before = self.elements[element_id]
+        after = change(before)
+        events = events_for(audit, ElementChange(before, after))
+        self.elements[element_id] = after
+        self.audit_log.append(events)
+        return after
 
     def _refuse_a_taken_address(self, element: Element) -> None:
         """Stand in for the `(vrf, ip_address)` partial unique index.
@@ -324,11 +461,71 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    async def delete_element(self, element_id: UUID) -> bool:
-        return self.elements.pop(element_id, None) is not None
+    def _review_ends(
+        self, end_ids: Sequence[UUID], ends: EndsReview, events: Sequence[AuditEvent]
+    ) -> list[ElementChange]:
+        """What the repository does to the elements at the ends of a link, in its transaction."""
+        missing = [i for i in end_ids if i not in self.elements]
+        if missing:
+            raise ElementNotFoundError(str(missing[0]))
+        author = author_of(events)
+        changes = [
+            ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
+            for c in ends.apply(self.elements[i] for i in set(end_ids))
+        ]
+        for change in changes:
+            self.elements[change.after.id] = change.after
+        return changes
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship:
+    async def delete_element(
+        self,
+        element_id: UUID,
+        *,
+        audit: AuditOf[ElementRemoval],
+        guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
+    ) -> bool:
+        element = self.elements.get(element_id)
+        if element is None:
+            return False
+        if guard is not None:
+            guard(element)
+        links = tuple(
+            r for r in self.relationships.values() if element_id in (r.source_id, r.target_id)
+        )
+        events = events_for(
+            audit,
+            ElementRemoval(
+                element=element, relationship_count=len(links), relationships=links[:100]
+            ),
+        )
+        neighbours = {end for r in links for end in (r.source_id, r.target_id)} - {element_id}
+        reviewed = self._review_ends(tuple(neighbours), ends, events) if ends is not None else []
+        del self.elements[element_id]
+        for link in links:
+            del self.relationships[link.id]
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
+        return True
+
+    async def add_relationship(
+        self,
+        relationship: Relationship,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> Relationship:
+        events = events_for(audit, relationship)
+        reviewed = (
+            self._review_ends((relationship.source_id, relationship.target_id), ends, events)
+            if ends is not None
+            else []
+        )
         self.relationships[relationship.id] = relationship
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
@@ -344,8 +541,27 @@ class InMemoryRepository:
     ) -> tuple[Relationship, ...]:
         return tuple(self.relationships.values())
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool:
-        return self.relationships.pop(relationship_id, None) is not None
+    async def delete_relationship(
+        self,
+        relationship_id: UUID,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> bool:
+        stored = self.relationships.get(relationship_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
+        reviewed = (
+            self._review_ends((stored.source_id, stored.target_id), ends, events)
+            if ends is not None
+            else []
+        )
+        del self.relationships[relationship_id]
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
+        return True
 
     async def relations_of(
         self, element_id: UUID, *, relationship_types: Sequence[R] = ()
@@ -442,11 +658,36 @@ class InMemoryDocuments:
     against PostgreSQL would get.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        audit_log: InMemoryAuditLog | None = None,
+        graph: InMemoryRepository | None = None,
+    ) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        #: The graph double the documents hang from: the freeze of an element is read there.
+        self.graph = graph
         self.documents: dict[UUID, Document] = {}
         self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
 
-    async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    def _refuse_a_frozen_element(self, element_id: UUID) -> None:
+        """Stand in for the repository reading the element under its lock (docs/adr/0048)."""
+        element = self.graph.elements.get(element_id) if self.graph is not None else None
+        if element is not None:
+            guard_element_write(element, WriteKind.DOCUMENT)
+
+    def _touch(self, element_id: UUID, events: Sequence[AuditEvent]) -> None:
+        if self.graph is not None and element_id in self.graph.elements:
+            self.graph.touch([element_id], events)
+
+    async def add(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
+        self._refuse_a_frozen_element(document.element_id)
+        events = events_for(audit, document)
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
             for stored in self.documents.values()
@@ -456,6 +697,8 @@ class InMemoryDocuments:
             raise DuplicateDocumentError(msg)
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
+        self.audit_log.append(events)
+        self._touch(document.element_id, events)
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -470,18 +713,39 @@ class InMemoryDocuments:
             )
         )
 
-    async def replace(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
+    async def replace(
+        self,
+        document: Document,
+        chunks: Sequence[EmbeddedChunk] = (),
+        *,
+        audit: AuditOf[Document],
+    ) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
+        changing = self.documents[document.id].content != document.content
+        if changing:
+            self._refuse_a_frozen_element(document.element_id)
+        events = events_for(audit, self.documents[document.id])
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
+        self.audit_log.append(events)
+        if changing:
+            self._touch(document.element_id, events)
         return document
 
-    async def delete(self, document_id: UUID) -> bool:
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """The passages go with the document — here by hand, in PostgreSQL by
         the foreign key from `document_chunks`."""
+        stored = self.documents.get(document_id)
+        if stored is None:
+            return False
+        self._refuse_a_frozen_element(stored.element_id)
+        events = events_for(audit, stored)
         self.chunks.pop(document_id, None)
-        return self.documents.pop(document_id, None) is not None
+        del self.documents[document_id]
+        self.audit_log.append(events)
+        self._touch(stored.element_id, events)
+        return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         return tuple(
@@ -528,7 +792,8 @@ class InMemoryDiagrams:
     real table would give.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.diagrams: dict[UUID, Diagram] = {}
         self.nodes: dict[UUID, tuple[DiagramNode, ...]] = {}
 
@@ -551,9 +816,10 @@ class InMemoryDiagrams:
         ]
         return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
-    async def add(self, diagram: Diagram) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         self._refuse_a_taken_name(diagram)
         self.diagrams[diagram.id] = diagram
+        self.audit_log.append(events_for(audit, diagram))
         return diagram
 
     async def get(self, diagram_id: UUID) -> Diagram | None:
@@ -563,26 +829,240 @@ class InMemoryDiagrams:
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]:
         return self.nodes.get(diagram_id, ())
 
-    async def save(self, diagram: Diagram) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         if diagram.id not in self.diagrams:
             raise DiagramNotFoundError(str(diagram.id))
         self._refuse_a_taken_name(diagram)
+        events = events_for(audit, self.diagrams[diagram.id])
         self.diagrams[diagram.id] = diagram
+        self.audit_log.append(events)
         return diagram
 
-    async def delete(self, diagram_id: UUID) -> bool:
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
         self.nodes.pop(diagram_id, None)
-        return self.diagrams.pop(diagram_id, None) is not None
+        del self.diagrams[diagram_id]
+        self.audit_log.append(events)
+        return True
 
     async def replace_layout(
-        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
+        self,
+        diagram_id: UUID,
+        nodes: Sequence[DiagramNode],
+        *,
+        now: datetime,
+        audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
             return False
+        events = events_for(audit, self.nodes.get(diagram_id, ()))
         self.nodes[diagram_id] = tuple(nodes)
         self.diagrams[diagram_id] = stored.touched(now)
+        self.audit_log.append(events)
         return True
+
+
+class InMemoryBaselines:
+    """The baseline tables over the model doubles they copy.
+
+    Capture copies the dicts. `apply_restore` plans again on the double's own
+    state, refuses a plan that is not the one expected or that touches a
+    protected element (`protected`, a set a test fills, plus every approved or locked
+    one, as the real repository reads them), mutates and swaps in
+    only if every step held — the all-or-nothing the real transaction gives,
+    uniqueness of (type, name) and of addresses included.
+    """
+
+    def __init__(
+        self,
+        graph: InMemoryRepository,
+        diagrams: InMemoryDiagrams,
+        documents: InMemoryDocuments | None = None,
+        packages: InMemoryPackages | None = None,
+    ) -> None:
+        self.graph = graph
+        self.diagrams = diagrams
+        self.documents = documents
+        self.packages = packages
+        self.audit_log = graph.audit_log
+        self.protected: set[UUID] = set()
+        self.baselines: dict[UUID, Baseline] = {}
+        self.copies: dict[UUID, ModelSnapshot] = {}
+
+    def _counted(self, baseline: Baseline) -> Baseline:
+        copy = self.copies.get(baseline.id, ModelSnapshot((), ()))
+        return baseline.with_counts(len(copy.elements), len(copy.relationships), len(copy.boxes))
+
+    async def list_all(self) -> tuple[Baseline, ...]:
+        return tuple(
+            self._counted(b) for b in sorted(self.baselines.values(), key=lambda b: b.name)
+        )
+
+    async def get(self, baseline_id: UUID) -> Baseline | None:
+        stored = self.baselines.get(baseline_id)
+        return self._counted(stored) if stored is not None else None
+
+    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+        if any(b.name == baseline.name for b in self.baselines.values()):
+            raise DuplicateBaselineError(f"a baseline is already named {baseline.name!r}")
+        self.baselines[baseline.id] = baseline
+        self.copies[baseline.id] = await self.current_snapshot()
+        stored = self._counted(baseline)
+        self.audit_log.append(events_for(audit, stored))
+        return stored
+
+    async def delete(self, baseline_id: UUID, *, audit: AuditOf[Baseline]) -> bool:
+        stored = self.baselines.get(baseline_id)
+        if stored is None:
+            return False
+        events = events_for(audit, self._counted(stored))
+        del self.baselines[baseline_id]
+        self.copies.pop(baseline_id, None)
+        self.audit_log.append(events)
+        return True
+
+    async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot:
+        return self.copies.get(baseline_id, ModelSnapshot((), ()))
+
+    async def current_snapshot(self) -> ModelSnapshot:
+        tree = self.packages.packages if self.packages is not None else {}
+
+        def path(package_id: UUID) -> str:
+            package = tree[package_id]
+            above = path(package.parent_id) + " / " if package.parent_id else ""
+            return above + package.name
+
+        return ModelSnapshot(
+            elements=tuple(self.graph.elements.values()),
+            relationships=tuple(self.graph.relationships.values()),
+            boxes=tuple(
+                BoxSnapshot(diagram_id, n.element_id, n.x, n.y, n.width, n.height)
+                for diagram_id, nodes in self.diagrams.nodes.items()
+                for n in nodes
+            ),
+            package_paths={package_id: path(package_id) for package_id in tree},
+        )
+
+    async def _plan(self, baseline_id: UUID, keep_new: bool) -> RestorePlan:
+        if baseline_id not in self.baselines:
+            raise BaselineNotFoundError(f"no baseline with id {baseline_id}")
+        plan = plan_restore(
+            self.copies[baseline_id],
+            await self.current_snapshot(),
+            keep_new=keep_new,
+            packages_present=frozenset(self.packages.packages if self.packages else ()),
+            protected_ids=frozenset(self.protected)
+            | frozenset(e.id for e in self.graph.elements.values() if is_frozen(e)),
+            diagrams_present=frozenset(self.diagrams.diagrams),
+        )
+        held: dict[UUID, list[UUID]] = {}
+        for d in sorted(
+            self.documents.documents.values() if self.documents else (), key=lambda d: str(d.id)
+        ):
+            held.setdefault(d.element_id, []).append(d.id)
+        return replace(
+            plan,
+            documents_lost=sum(len(held.get(e.id, ())) for e in plan.elements_to_delete),
+            cascades=tuple(
+                replace(
+                    c,
+                    document_count=len(held.get(c.element_id, ())),
+                    document_ids=tuple(held.get(c.element_id, ())[:100]),
+                )
+                for c in plan.cascades
+            ),
+        )
+
+    async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
+        return await self._plan(baseline_id, keep_new)
+
+    async def apply_restore(
+        self,
+        baseline_id: UUID,
+        *,
+        keep_new: bool,
+        expected: RestorePlan,
+        now: datetime,
+        audit: AuditOf[RestorePlan],
+    ) -> None:
+        plan = await self._plan(baseline_id, keep_new)
+        if plan.is_blocked:
+            raise RestoreBlockedError(
+                "protected elements: " + ", ".join(e.name for e in plan.blocked)
+            )
+        if plan != expected:
+            raise RestoreConflictError("the model changed since the plan was read")
+        events = events_for(audit, plan)
+        saved = (
+            dict(self.graph.elements),
+            dict(self.graph.relationships),
+            dict(self.diagrams.nodes),
+            dict(self.documents.documents) if self.documents else {},
+        )
+        try:
+            for link in plan.relationships_to_delete:
+                self.graph.relationships.pop(link.id, None)
+            for element in plan.elements_to_delete:
+                self.graph.elements.pop(element.id, None)
+                for link_id in [
+                    i
+                    for i, r in self.graph.relationships.items()
+                    if element.id in (r.source_id, r.target_id)
+                ]:
+                    del self.graph.relationships[link_id]
+                if self.documents is not None:
+                    for doc_id in [
+                        i for i, d in self.documents.documents.items() if d.element_id == element.id
+                    ]:
+                        del self.documents.documents[doc_id]
+                for diagram_id, nodes in list(self.diagrams.nodes.items()):
+                    self.diagrams.nodes[diagram_id] = tuple(
+                        n for n in nodes if n.element_id != element.id
+                    )
+            for update in plan.elements_to_update:
+                restored = replace(update.restored, updated_at=now)
+                self.graph._refuse_a_taken_address(restored)
+                self.graph.elements[restored.id] = restored
+            for element in plan.elements_to_create:
+                clash = any(
+                    e.name == element.name and e.element_type == element.element_type
+                    for e in self.graph.elements.values()
+                )
+                if clash:
+                    raise RestoreConflictError(f"restoring {element.name!r} conflicts: name taken")
+                try:
+                    self.graph._refuse_a_taken_address(element)
+                except AddressAlreadyAssignedError as refusal:
+                    raise RestoreConflictError(
+                        f"restoring {element.name!r} conflicts: {refusal}"
+                    ) from refusal
+                self.graph.elements[element.id] = element
+            for link in plan.relationships_to_create:
+                self.graph.relationships[link.id] = link
+            for box in plan.boxes_to_restore:
+                kept = [
+                    n
+                    for n in self.diagrams.nodes.get(box.diagram_id, ())
+                    if n.element_id != box.element_id
+                ]
+                kept.append(DiagramNode(box.element_id, box.x, box.y, box.width, box.height))
+                self.diagrams.nodes[box.diagram_id] = tuple(kept)
+        except Exception:
+            self.graph.elements, self.graph.relationships = saved[0], saved[1]
+            self.diagrams.nodes = saved[2]
+            if self.documents is not None:
+                self.documents.documents = saved[3]
+            raise
+        self.audit_log.append(events)
+
+
+def _held_ids(ids: Iterable[UUID]) -> Held:
+    found = tuple(sorted(ids))
+    return Held(len(found), found[:100])
 
 
 class InMemoryPackages:
@@ -591,6 +1071,7 @@ class InMemoryPackages:
     diagram doubles it is built over."""
 
     def __init__(self, graph: InMemoryRepository, diagrams: InMemoryDiagrams) -> None:
+        self.audit_log = graph.audit_log
         self.packages: dict[UUID, Package] = {}
         self._graph = graph
         self._diagrams = diagrams
@@ -625,22 +1106,30 @@ class InMemoryPackages:
     async def get(self, package_id: UUID) -> Package | None:
         return self.packages.get(package_id)
 
-    async def add(self, package: Package) -> Package:
+    async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         self._require_parent(package)
         self._refuse_a_taken_name(package)
         self.packages[package.id] = package
+        self.audit_log.append(events_for(audit, package))
         return package
 
-    async def save(self, package: Package) -> Package:
+    async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         if package.id not in self.packages:
             raise PackageNotFoundError(str(package.id))
         self._require_parent(package)
         self._refuse_a_taken_name(package)
+        events = events_for(audit, self.packages[package.id])
         self.packages[package.id] = package
+        self.audit_log.append(events)
         return package
 
     async def delete(
-        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+        self,
+        package_id: UUID,
+        *,
+        into: UUID | None,
+        audit: AuditOf[PackageRemoval],
+        require_empty: bool = False,
     ) -> bool:
         if package_id not in self.packages:
             return False
@@ -649,11 +1138,33 @@ class InMemoryPackages:
             if held.elements or held.diagrams or held.children:
                 msg = "the package still holds sub-packages, elements or diagrams"
                 raise PackageNotEmptyError(msg)
+        if not require_empty:
+            guard_all(
+                [e for e in self._graph.elements.values() if e.package_id == package_id],
+                WriteKind.FILING,
+            )
         children = [p for p in self.packages.values() if p.parent_id == package_id]
         for child in children:  # checked before anything moves: all or none
             self._refuse_a_taken_name(replace(child, parent_id=into))
+        events = events_for(
+            audit,
+            PackageRemoval(
+                package=self.packages[package_id],
+                into=into,
+                sub_packages=Held(len(children), tuple(c.id for c in children)),
+                elements=_held_ids(
+                    e.id for e in self._graph.elements.values() if e.package_id == package_id
+                ),
+                diagrams=_held_ids(
+                    d.id for d in self._diagrams.diagrams.values() if d.package_id == package_id
+                ),
+            ),
+        )
         for child in children:
             self.packages[child.id] = replace(child, parent_id=into)
+        self._graph.touch(
+            [e.id for e in self._graph.elements.values() if e.package_id == package_id], events
+        )
         for element_id, element in list(self._graph.elements.items()):
             if element.package_id == package_id:
                 self._graph.elements[element_id] = replace(element, package_id=into)
@@ -661,14 +1172,34 @@ class InMemoryPackages:
             if diagram.package_id == package_id:
                 self._diagrams.diagrams[diagram_id] = replace(diagram, package_id=into)
         del self.packages[package_id]
+        self.audit_log.append(events)
         return True
 
-    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+    async def move_elements(
+        self,
+        element_ids: Sequence[UUID],
+        package_id: UUID | None,
+        *,
+        audit: AuditOf[Mapping[UUID, UUID | None]],
+    ) -> None:
         missing = [str(i) for i in element_ids if i not in self._graph.elements]
         if missing:
             raise ElementNotFoundError(f"no element with id {', '.join(missing)}")
         if package_id is not None and package_id not in self.packages:
             raise PackageNotFoundError(str(package_id))
+        guard_all([self._graph.elements[i] for i in dict.fromkeys(element_ids)], WriteKind.FILING)
+        events = events_for(
+            audit, {i: self._graph.elements[i].package_id for i in dict.fromkeys(element_ids)}
+        )
+        self.audit_log.append(events)
+        self._graph.touch(
+            [
+                i
+                for i in dict.fromkeys(element_ids)
+                if self._graph.elements[i].package_id != package_id
+            ],
+            events,
+        )
         for element_id in element_ids:
             self._graph.elements[element_id] = replace(
                 self._graph.elements[element_id], package_id=package_id
@@ -682,7 +1213,8 @@ class InMemorySavedQueries:
     prove a listing survives a row `get` refuses — as the real table does.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.queries: dict[UUID, SavedQuery] = {}
         self.corrupt: set[UUID] = set()
 
@@ -701,21 +1233,30 @@ class InMemorySavedQueries:
             raise InvalidQueryError(msg)
         return self.queries.get(query_id)
 
-    async def add(self, saved: SavedQuery) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
         self._refuse_a_taken_name(saved)
         self.queries[saved.id] = saved
+        self.audit_log.append(events_for(audit, saved))
         return saved
 
-    async def save(self, saved: SavedQuery) -> SavedQuery:
+    async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
         if saved.id not in self.queries:
             raise SavedQueryNotFoundError(str(saved.id))
         self._refuse_a_taken_name(saved)
+        events = events_for(audit, saved_query_view(self.queries[saved.id]))
         self.queries[saved.id] = saved
+        self.audit_log.append(events)
         return saved
 
-    async def delete(self, query_id: UUID) -> bool:
+    async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool:
+        stored = self.queries.get(query_id)
+        if stored is None:
+            return False
+        events = events_for(audit, saved_query_view(stored))
         self.corrupt.discard(query_id)
-        return self.queries.pop(query_id, None) is not None
+        del self.queries[query_id]
+        self.audit_log.append(events)
+        return True
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -920,18 +1461,23 @@ def _bag_of_words(text: str) -> tuple[float, ...]:
 
 
 @pytest.fixture
-def repository() -> InMemoryRepository:
-    return InMemoryRepository()
+def audit_log() -> InMemoryAuditLog:
+    return InMemoryAuditLog()
 
 
 @pytest.fixture
-def documents() -> InMemoryDocuments:
-    return InMemoryDocuments()
+def repository(audit_log: InMemoryAuditLog) -> InMemoryRepository:
+    return InMemoryRepository(audit_log)
 
 
 @pytest.fixture
-def diagrams() -> InMemoryDiagrams:
-    return InMemoryDiagrams()
+def documents(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> InMemoryDocuments:
+    return InMemoryDocuments(audit_log, repository)
+
+
+@pytest.fixture
+def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
+    return InMemoryDiagrams(audit_log)
 
 
 @pytest.fixture
@@ -951,8 +1497,23 @@ def package_service(packages: InMemoryPackages) -> PackageService:
 
 
 @pytest.fixture
-def saved_queries() -> InMemorySavedQueries:
-    return InMemorySavedQueries()
+def baseline_store(
+    repository: InMemoryRepository,
+    diagrams: InMemoryDiagrams,
+    documents: InMemoryDocuments,
+    packages: InMemoryPackages,
+) -> InMemoryBaselines:
+    return InMemoryBaselines(repository, diagrams, documents, packages)
+
+
+@pytest.fixture
+def baseline_service(baseline_store: InMemoryBaselines) -> BaselineService:
+    return BaselineService(baseline_store, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def saved_queries(audit_log: InMemoryAuditLog) -> InMemorySavedQueries:
+    return InMemorySavedQueries(audit_log)
 
 
 @pytest.fixture

@@ -11,7 +11,8 @@ Six services, because the catalogue spans six concerns: the graph, the
 markdown attached to its elements (docs/adr/0017), the IP addressing
 (docs/adr/0020), the files kept in a bucket beside it (docs/adr/0036), the tree
 of packages that files elements and diagrams (docs/adr/0042), and the saved
-queries that keep a structured search under a name (docs/adr/0043). They
+queries that keep a structured search under a name (docs/adr/0043), the audit
+trail (docs/adr/0046) and the baselines (docs/adr/0047). They
 are kept apart here exactly as they are in `api/`, since the rules that bind
 them — an element must exist before a file hangs off it — belong to the
 service and an adapter holding a repository instead would be free to skip
@@ -27,6 +28,7 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
@@ -36,10 +38,17 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
+from ea.api.baselines import against_of
 from ea.api.schemas import (
+    Actor,
     Address,
     AddressLocationRead,
     AddressRead,
+    Against,
+    AuditPageRead,
+    BaselineDiffRead,
+    BaselineRead,
+    CursorToken,
     Depth,
     Description,
     Documentation,
@@ -71,7 +80,9 @@ from ea.api.schemas import (
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    RequestIdFilter,
     Reserved,
+    RestoreRead,
     SavedQueryRead,
     SavedQuerySummaryRead,
     Search,
@@ -79,8 +90,13 @@ from ea.api.schemas import (
     SubnetRead,
     package_target,
 )
+from ea.api.schemas import BaselineDescription as BaselineDescriptionBounds
+from ea.api.schemas import BaselineName as BaselineNameBounds
 from ea.api.schemas import Cidr as PrefixBounds
+from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
+from ea.api.schemas import PlanDigest as PlanDigestBounds
 from ea.api.schemas import Vrf as VrfBounds
+from ea.domain.approval import Transition
 from ea.domain.archimate import (
     AccessType,
     ElementType,
@@ -92,6 +108,7 @@ from ea.domain.archimate import (
     # `build_mcp_server` the bare name would resolve to the tool itself.
     permitted_relationships as permitted_between,
 )
+from ea.domain.audit import DEFAULT_AUDIT_PAGE, AuditAction, AuditFilter, EntityKind, aware
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
@@ -107,6 +124,8 @@ from ea.domain.query import (
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
+from ea.services.baselines import BaselineService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
@@ -207,7 +226,34 @@ tags, replacing all three at once. Write one when you upload a binary a reader
 cannot open to find out what it is: `rapport-q3.pdf` says almost nothing, and a
 sentence beside it says everything. A file the bucket holds but this catalogue
 has never seen — one dropped in by the pipeline or by hand — comes back with no
-record at all; describing it is what gives it one.\
+record at all; describing it is what gives it one.
+
+Every change to the catalogue is kept in an audit trail. Before rewriting an
+element, call `get_element_history` to see who changed it, when and how; use
+`list_audit_events` to ask the trail anything else (by actor, by action, by
+period). The trail is read-only: it records what happened, it cannot be edited.
+
+A baseline is a frozen copy of the whole model (not of its documents).
+`create_baseline` captures one before a risky change; `diff_baselines` compares
+it with the model as it is now, or with another baseline; `restore_baseline`
+puts the model back. Restoring **deletes what was created since, along with the
+documents and diagram boxes of those elements**, and overwrites what changed, so
+it ALWAYS starts as a dry run (`dry_run` is true unless you say otherwise): read
+the plan, show it to the person you work for, and only after they agree call it
+again with `dry_run=false` and the plan's `digest` as `expected_digest`. If the
+model moved meanwhile you get `restore_conflict`: dry-run again and show the new
+plan.
+
+An element can be put through review. `transition_element` moves it: `submit`
+(any editor), then `approve`, `reject`, `reopen`, `lock` or `unlock`, which need
+the approver role of your token — a refusal says so. Approving certifies one
+revision: read the element, then pass its `revision` as `expected_revision`; if
+the element changed since you read it you are refused, and read it again. Once
+an element is approved, `update_element`, `delete_element`, its relationships
+and its documents are refused unless you are an approver (and then any change
+sends it back to review), and a locked element refuses everything until it is
+unlocked. `allowed_transitions` on the element lists exactly what your token may
+do next.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -217,6 +263,8 @@ IpamProvider = Callable[[], IpamService]
 FileProvider = Callable[[], FileService]
 PackageProvider = Callable[[], PackageService]
 QueryProvider = Callable[[], SavedQueryService]
+AuditProvider = Callable[[], AuditService]
+BaselineProvider = Callable[[], BaselineService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -477,12 +525,14 @@ def build_mcp_server(
     get_files: FileProvider,
     get_packages: PackageProvider,
     get_queries: QueryProvider,
+    get_audit: AuditProvider,
+    get_baselines: BaselineProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the six services of the module docstring.
+    """Assemble the tool set over the eight services of the module docstring.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -493,7 +543,7 @@ def build_mcp_server(
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
-    `get_packages` and `get_queries` are required for the same reason.
+    `get_packages`, `get_queries`, `get_audit` and `get_baselines` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -612,6 +662,38 @@ def build_mcp_server(
         """
         await get_service().delete_element(element_id)
         return f"element {element_id} and every relationship attached to it were deleted"
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def transition_element(
+        element_id: ElementId,
+        transition: Annotated[
+            Transition,
+            Field(description="submit, approve, reject, reopen, lock or unlock."),
+        ],
+        expected_revision: Annotated[
+            ExpectedRevisionBounds | None,
+            Field(
+                description=(
+                    "The `revision` of the element as you read it. Required to approve: "
+                    "an approval certifies that revision and nothing newer."
+                )
+            ),
+        ] = None,
+    ) -> ElementRead:
+        """Move an element through review: draft, in review, approved, locked.
+
+        `submit` needs the editor role; every other transition needs the approver
+        role of the token you were given, and `approve` is also refused to
+        whoever made the last change to the element, and when it changed since
+        `expected_revision`. The answer lists `allowed_transitions`: what you may
+        do next.
+        """
+        return ElementRead.of(
+            await get_service().transition_element(
+                element_id, transition, expected_revision=expected_revision
+            )
+        )
 
     # --- Relationships ----------------------------------------------------
 
@@ -1348,5 +1430,129 @@ def build_mcp_server(
         for a single pair is `permitted_relationships`, and much smaller.
         """
         return RelationshipMatrixRead.for_source(source)
+
+    # --- The audit trail (docs/adr/0046) ----------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_audit_events(
+        entity_kind: EntityKind | None = None,
+        entity_id: ElementId | None = None,
+        actor: Actor | None = None,
+        action: AuditAction | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        request_id: RequestIdFilter | None = None,
+        cursor: CursorToken | None = None,
+        limit: Limit = DEFAULT_AUDIT_PAGE,
+    ) -> AuditPageRead:
+        """Who changed what, and when — newest first, a page at a time.
+
+        `actor` matches a user name or a Keycloak subject. `since` is inclusive,
+        `until` exclusive; a moment without a zone is read as UTC. Each event
+        carries `changes`, the field-by-field diff. Pass `next_cursor` back as
+        `cursor` to read the next page.
+        """
+        page = await get_audit().list_events(
+            AuditFilter(
+                entity_kind=entity_kind,
+                entity_id=entity_id,
+                actor=actor,
+                action=action,
+                since=aware(since),
+                until=aware(until),
+                request_id=request_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        )
+        return AuditPageRead.of(page)
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_element_history(
+        element_id: ElementId,
+        cursor: CursorToken | None = None,
+        limit: Limit = DEFAULT_AUDIT_PAGE,
+    ) -> AuditPageRead:
+        """The trail of one element, newest first — readable after it is deleted.
+
+        Read this before rewriting an element: it says who last changed it and what.
+        """
+        page = await get_audit().list_events(
+            AuditFilter(
+                entity_kind=EntityKind.ELEMENT, entity_id=element_id, cursor=cursor, limit=limit
+            )
+        )
+        return AuditPageRead.of(page)
+
+    # --- Baselines (docs/adr/0047) -----------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_baselines() -> list[BaselineRead]:
+        """The baselines, by name, each with the counts of what it holds."""
+        return [BaselineRead.of(b) for b in await get_baselines().list_baselines()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_baseline(
+        name: BaselineNameBounds, description: BaselineDescriptionBounds = ""
+    ) -> BaselineRead:
+        """Freeze a copy of the whole model under a name (documents are not part of it).
+
+        Cheap and non-destructive: do it before a large or risky change, so there
+        is something to compare against and to go back to.
+        """
+        return BaselineRead.of(await get_baselines().create(name=name, description=description))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def diff_baselines(
+        baseline_id: UUID,
+        against: Annotated[
+            Against | None,
+            Field(
+                description="Another baseline id; omit it to compare with the model as it is now."
+            ),
+        ] = None,
+    ) -> BaselineDiffRead:
+        """What was added, removed or modified between a baseline and another, or the live model."""
+        return BaselineDiffRead.of(await get_baselines().diff(baseline_id, against_of(against)))
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def restore_baseline(
+        baseline_id: UUID,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description="True reports the plan and writes nothing. Set it to false to apply."
+            ),
+        ] = True,
+        expected_digest: Annotated[
+            PlanDigestBounds | None,
+            Field(description="The `digest` of the dry run that was read. Required to apply."),
+        ] = None,
+        keep_new: Annotated[
+            bool | None,
+            Field(description="Keep what was created since the baseline. Default: delete it."),
+        ] = None,
+    ) -> RestoreRead:
+        """Put the model back as a baseline had it. **Destructive when `dry_run` is false.**
+
+        With `dry_run=true` (the default) nothing is written: the answer counts
+        what would be created, overwritten and deleted — elements, relationships,
+        and the documents and diagram boxes that go with a deleted element (those
+        documents are lost for good) — and carries a `digest`. Read it to the
+        person you work for; only after they agree call again with
+        `dry_run=false` and that `digest` as `expected_digest`. A plan that
+        touches a locked element is refused; unlock it first. All or nothing.
+        """
+        return RestoreRead.of(
+            await get_baselines().restore(
+                baseline_id, dry_run=dry_run, expected_digest=expected_digest, keep_new=keep_new
+            )
+        )
 
     return server

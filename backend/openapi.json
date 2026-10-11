@@ -130,6 +130,43 @@
         "title": "AddressRead",
         "type": "object"
       },
+      "ApprovalRequest": {
+        "additionalProperties": false,
+        "description": "One step of review. `approve` must say which revision the approver read.",
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "description": "The `revision` of the element as you read it: required to approve.",
+                "maximum": 4.611686018427388e+18,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/Transition"
+          }
+        },
+        "required": [
+          "transition"
+        ],
+        "title": "ApprovalRequest",
+        "type": "object"
+      },
+      "ApprovalState": {
+        "enum": [
+          "draft",
+          "in_review",
+          "approved"
+        ],
+        "title": "ApprovalState",
+        "type": "string"
+      },
       "Aspect": {
         "description": "The aspect an element belongs to \u2014 the column of the ArchiMate framework.",
         "enum": [
@@ -142,6 +179,315 @@
         ],
         "title": "Aspect",
         "type": "string"
+      },
+      "AuditAction": {
+        "description": "The closed list of things the trail can say. Never a free string.",
+        "enum": [
+          "element.created",
+          "element.updated",
+          "element.deleted",
+          "element.submitted",
+          "element.approved",
+          "element.rejected",
+          "element.reopened",
+          "element.locked",
+          "element.unlocked",
+          "relationship.created",
+          "relationship.deleted",
+          "diagram.created",
+          "diagram.updated",
+          "diagram.deleted",
+          "diagram.layout_replaced",
+          "document.attached",
+          "document.revised",
+          "document.discarded",
+          "package.created",
+          "package.updated",
+          "package.deleted",
+          "package.elements_moved",
+          "saved_query.created",
+          "saved_query.updated",
+          "saved_query.deleted",
+          "baseline.created",
+          "baseline.deleted",
+          "baseline.restored"
+        ],
+        "title": "AuditAction",
+        "type": "string"
+      },
+      "AuditChannel": {
+        "description": "Which door the caller came through \u2014 said by the adapter, never by the caller.",
+        "enum": [
+          "http",
+          "mcp",
+          "system"
+        ],
+        "title": "AuditChannel",
+        "type": "string"
+      },
+      "AuditEventRead": {
+        "description": "One use case that changed the catalogue \u2014 the diff is computed server-side,\nso a client displays it and never decides what counts as a change.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "actor_name": {
+            "title": "Actor Name",
+            "type": "string"
+          },
+          "actor_sub": {
+            "title": "Actor Sub",
+            "type": "string"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/FieldChangeRead"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/AuditChannel"
+          },
+          "correlation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "entity_kind": {
+            "$ref": "#/components/schemas/EntityKind"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "actor_sub",
+          "actor_name",
+          "action",
+          "entity_kind",
+          "entity_id",
+          "before",
+          "after",
+          "request_id",
+          "channel",
+          "correlation",
+          "changes"
+        ],
+        "title": "AuditEventRead",
+        "type": "object"
+      },
+      "AuditPageRead": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass it back as `cursor` for the next page; absent on the last one.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AuditPageRead",
+        "type": "object"
+      },
+      "BaselineCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "BaselineCreate",
+        "type": "object"
+      },
+      "BaselineDiffRead": {
+        "properties": {
+          "elements_added": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Elements Added",
+            "type": "array"
+          },
+          "elements_modified": {
+            "items": {
+              "$ref": "#/components/schemas/ModifiedRead"
+            },
+            "title": "Elements Modified",
+            "type": "array"
+          },
+          "elements_removed": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Elements Removed",
+            "type": "array"
+          },
+          "relationships_added": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Relationships Added",
+            "type": "array"
+          },
+          "relationships_modified": {
+            "items": {
+              "$ref": "#/components/schemas/ModifiedRead"
+            },
+            "title": "Relationships Modified",
+            "type": "array"
+          },
+          "relationships_removed": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Relationships Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "elements_added",
+          "elements_removed",
+          "elements_modified",
+          "relationships_added",
+          "relationships_removed",
+          "relationships_modified"
+        ],
+        "title": "BaselineDiffRead",
+        "type": "object"
+      },
+      "BaselineRead": {
+        "properties": {
+          "box_count": {
+            "title": "Box Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "element_count": {
+            "title": "Element Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "relationship_count": {
+            "title": "Relationship Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_by",
+          "created_at",
+          "element_count",
+          "relationship_count",
+          "box_count"
+        ],
+        "title": "BaselineRead",
+        "type": "object"
       },
       "Body_attach_document_elements__element_id__documents_post": {
         "properties": {
@@ -776,6 +1122,41 @@
       "ElementRead": {
         "description": "An element as the API exposes it, layer and aspect resolved for the caller.",
         "properties": {
+          "allowed_transitions": {
+            "description": "What the caller may do next with this element: the SPA draws a button each.",
+            "items": {
+              "$ref": "#/components/schemas/Transition"
+            },
+            "title": "Allowed Transitions",
+            "type": "array"
+          },
+          "approval_state": {
+            "$ref": "#/components/schemas/ApprovalState"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Keycloak subject that approved it.",
+            "title": "Approved By"
+          },
           "aspect": {
             "$ref": "#/components/schemas/Aspect"
           },
@@ -803,6 +1184,10 @@
           "layer": {
             "$ref": "#/components/schemas/Layer"
           },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -826,6 +1211,11 @@
             "title": "Properties",
             "type": "object"
           },
+          "revision": {
+            "description": "Counts the changes to its content; an approval names one.",
+            "title": "Revision",
+            "type": "integer"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -843,7 +1233,13 @@
           "properties",
           "package_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "approval_state",
+          "locked",
+          "approved_by",
+          "approved_at",
+          "revision",
+          "allowed_transitions"
         ],
         "title": "ElementRead",
         "type": "object"
@@ -1002,6 +1398,48 @@
         "title": "ElementUpdate",
         "type": "object"
       },
+      "EntityKind": {
+        "enum": [
+          "element",
+          "relationship",
+          "package",
+          "saved_query",
+          "diagram",
+          "document",
+          "baseline"
+        ],
+        "title": "EntityKind",
+        "type": "string"
+      },
+      "EntityRefRead": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "label",
+          "type"
+        ],
+        "title": "EntityRefRead",
+        "type": "object"
+      },
       "ErrorResponse": {
         "description": "The single error envelope every failing endpoint returns.",
         "properties": {
@@ -1021,6 +1459,25 @@
           "detail"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FieldChangeRead": {
+        "properties": {
+          "after": {
+            "title": "After"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "FieldChangeRead",
         "type": "object"
       },
       "FileDetailsWrite": {
@@ -1279,6 +1736,10 @@
       "MeRead": {
         "description": "The caller, as far as the SPA needs to know it.",
         "properties": {
+          "can_approve": {
+            "title": "Can Approve",
+            "type": "boolean"
+          },
           "can_write": {
             "title": "Can Write",
             "type": "boolean"
@@ -1290,7 +1751,8 @@
         },
         "required": [
           "username",
-          "can_write"
+          "can_write",
+          "can_approve"
         ],
         "title": "MeRead",
         "type": "object"
@@ -1326,6 +1788,43 @@
           "layers"
         ],
         "title": "MetamodelRead",
+        "type": "object"
+      },
+      "ModifiedRead": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/FieldChangeRead"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "label",
+          "type",
+          "changes"
+        ],
+        "title": "ModifiedRead",
         "type": "object"
       },
       "MoveElements": {
@@ -1859,6 +2358,173 @@
         "title": "RelationshipTypeRead",
         "type": "object"
       },
+      "RestorePlanRead": {
+        "description": "What a restoration would do. Every figure is an exact count; the lists name\nonly the first few of each kind (`PLAN_LISTED_ITEMS`).",
+        "properties": {
+          "blocked": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Blocked",
+            "type": "array"
+          },
+          "blocked_count": {
+            "title": "Blocked Count",
+            "type": "integer"
+          },
+          "boxes_lost": {
+            "title": "Boxes Lost",
+            "type": "integer"
+          },
+          "boxes_to_restore": {
+            "title": "Boxes To Restore",
+            "type": "integer"
+          },
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Created",
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "documents_lost": {
+            "title": "Documents Lost",
+            "type": "integer"
+          },
+          "elements_to_create": {
+            "title": "Elements To Create",
+            "type": "integer"
+          },
+          "elements_to_delete": {
+            "title": "Elements To Delete",
+            "type": "integer"
+          },
+          "elements_to_update": {
+            "title": "Elements To Update",
+            "type": "integer"
+          },
+          "relationships_cascaded": {
+            "title": "Relationships Cascaded",
+            "type": "integer"
+          },
+          "relationships_to_create": {
+            "title": "Relationships To Create",
+            "type": "integer"
+          },
+          "relationships_to_delete": {
+            "title": "Relationships To Delete",
+            "type": "integer"
+          },
+          "updated": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Updated",
+            "type": "array"
+          },
+          "warning_count": {
+            "title": "Warning Count",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "elements_to_create",
+          "elements_to_update",
+          "elements_to_delete",
+          "relationships_to_create",
+          "relationships_to_delete",
+          "relationships_cascaded",
+          "boxes_to_restore",
+          "documents_lost",
+          "boxes_lost",
+          "created",
+          "updated",
+          "deleted",
+          "warning_count",
+          "warnings",
+          "blocked_count",
+          "blocked"
+        ],
+        "title": "RestorePlanRead",
+        "type": "object"
+      },
+      "RestoreRead": {
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "Send it back as `expected_digest` to apply this very plan.",
+            "title": "Digest",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/RestorePlanRead"
+          }
+        },
+        "required": [
+          "applied",
+          "digest",
+          "plan"
+        ],
+        "title": "RestoreRead",
+        "type": "object"
+      },
+      "RestoreRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "description": "Report what would change; write nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The `digest` of the dry run you read. Required to apply (dry_run false): a model that moved since is refused with `restore_conflict`.",
+            "title": "Expected Digest"
+          },
+          "keep_new": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Keep what was created since; false (exact) when omitted.",
+            "title": "Keep New"
+          }
+        },
+        "title": "RestoreRequest",
+        "type": "object"
+      },
       "SavedQueryCreate": {
         "additionalProperties": false,
         "properties": {
@@ -2161,6 +2827,18 @@
         "title": "SubnetRead",
         "type": "object"
       },
+      "Transition": {
+        "enum": [
+          "submit",
+          "approve",
+          "reject",
+          "reopen",
+          "lock",
+          "unlock"
+        ],
+        "title": "Transition",
+        "type": "string"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2216,6 +2894,681 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/audit": {
+      "get": {
+        "description": "Who changed what, and when \u2014 newest first. `since` is inclusive, `until` exclusive.",
+        "operationId": "list_audit_events_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "entity_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EntityKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AuditAction"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Audit Events",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/baselines": {
+      "get": {
+        "operationId": "list_baselines_baselines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BaselineRead"
+                  },
+                  "title": "Response List Baselines Baselines Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Baselines",
+        "tags": [
+          "baselines"
+        ]
+      },
+      "post": {
+        "description": "Freeze a copy of the whole model under a name.",
+        "operationId": "create_baseline_baselines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BaselineCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Baseline",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}": {
+      "delete": {
+        "operationId": "delete_baseline_baselines__baseline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Baseline",
+        "tags": [
+          "baselines"
+        ]
+      },
+      "get": {
+        "operationId": "read_baseline_baselines__baseline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Baseline",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}/diff": {
+      "get": {
+        "description": "What separates a baseline from another one, or from the model as it is now.",
+        "operationId": "read_baseline_diff_baselines__baseline_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "against",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A baseline id, or `current` for the model as it is now.",
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Against"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineDiffRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Baseline Diff",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}/restore": {
+      "post": {
+        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.",
+        "operationId": "restore_baseline_baselines__baseline_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Baseline",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
     "/diagrams": {
       "get": {
         "description": "Every saved diagram, sorted by name \u2014 or only those filed in a package.",
@@ -3605,6 +4958,105 @@
         ]
       }
     },
+    "/elements/{element_id}/approval": {
+      "post": {
+        "description": "Move an element through review.\n\n403 without the role the token carries, 409 if the state forbids it or if\n`expected_revision` is no longer the element's revision.",
+        "operationId": "transition_element_elements__element_id__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transition Element",
+        "tags": [
+          "architecture"
+        ]
+      }
+    },
     "/elements/{element_id}/documents": {
       "get": {
         "description": "What is attached to an element: the names and the sizes, not the text.\n\nA 404 rather than an empty list when the element is unknown \u2014 an empty list\nis the answer to a different question.",
@@ -3782,6 +5234,104 @@
         "summary": "Attach Document",
         "tags": [
           "documents"
+        ]
+      }
+    },
+    "/elements/{element_id}/history": {
+      "get": {
+        "description": "The trail of one element \u2014 still readable once the element is deleted.",
+        "operationId": "read_element_history_elements__element_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Element History",
+        "tags": [
+          "audit"
         ]
       }
     },

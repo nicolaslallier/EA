@@ -19,7 +19,7 @@ async function renderAt(path: string) {
 describe('UserBadge', () => {
   it('shows who is logged in, from useMe', async () => {
     vi.mocked(useMe).mockReturnValueOnce({
-      me: ref({ username: 'alice', can_write: false }),
+      me: ref({ username: 'alice', can_write: false, can_approve: false }),
       canWrite: computed(() => false),
       error: ref(null),
       load: vi.fn(() => Promise.resolve()),

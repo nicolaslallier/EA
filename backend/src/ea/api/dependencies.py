@@ -13,6 +13,8 @@ from fastapi import Depends, FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
+from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
@@ -125,6 +127,38 @@ def get_ipam_service(request: Request) -> IpamService:
 
 
 Ipam = Annotated[IpamService, Depends(get_ipam_service)]
+
+
+def audit_service_of(app: FastAPI) -> AuditService:
+    """The audit reader the lifespan attached, or a clear failure — a wiring fault, so a 500."""
+    service: AuditService | None = getattr(app.state, "audit_service", None)
+    if service is None:
+        msg = "no audit service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_audit_service(request: Request) -> AuditService:
+    return audit_service_of(request.app)
+
+
+Audit = Annotated[AuditService, Depends(get_audit_service)]
+
+
+def baseline_service_of(app: FastAPI) -> BaselineService:
+    """The baseline use cases the lifespan attached, or a clear failure (a wiring fault: 500)."""
+    service: BaselineService | None = getattr(app.state, "baseline_service", None)
+    if service is None:
+        msg = "no baseline service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_baseline_service(request: Request) -> BaselineService:
+    return baseline_service_of(request.app)
+
+
+Baselines = Annotated[BaselineService, Depends(get_baseline_service)]
 
 
 def file_service_of(app: FastAPI) -> FileService:

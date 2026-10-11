@@ -18,7 +18,7 @@ describe('who is logged in', () => {
   })
 
   it('asks the API once, however many screens ask', async () => {
-    const fetch = answering({ username: 'alice', can_write: true })
+    const fetch = answering({ username: 'alice', can_write: true, can_approve: false })
     vi.stubGlobal('fetch', fetch)
 
     await Promise.all([useMe().load(), useMe().load()])

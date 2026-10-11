@@ -39,15 +39,17 @@ class World:
 
     async def package(self, name: str, parent: Package | None = None) -> Package:
         return await self.packages.add(
-            Package.create(name=name, parent_id=parent.id if parent else None, now=NOW)
+            Package.create(name=name, parent_id=parent.id if parent else None, now=NOW),
+            audit=(),
         )
 
     async def element(self, name: str, package: Package | None = None) -> Element:
         stored = await self.graph.add_element(
-            Element.create(element_type=E.NODE, name=name, now=NOW)
+            Element.create(element_type=E.NODE, name=name, now=NOW),
+            audit=(),
         )
         if package is not None:
-            await self.packages.move_elements([stored.id], package.id)
+            await self.packages.move_elements([stored.id], package.id, audit=())
         return stored
 
 
@@ -85,13 +87,15 @@ class TestSiblingNames:
         b = await world.package("B")
 
         with pytest.raises(DuplicatePackageError):
-            await world.packages.save(b.revise(name="a", now=NOW))
+            await world.packages.save(b.revise(name="a", now=NOW), audit=())
 
     async def test_a_parent_that_is_gone_is_a_not_found(self, world: World) -> None:
         ghost = Package.create(name="Fantôme", now=NOW)
 
         with pytest.raises(PackageNotFoundError):
-            await world.packages.add(Package.create(name="X", parent_id=ghost.id, now=NOW))
+            await world.packages.add(
+                Package.create(name="X", parent_id=ghost.id, now=NOW), audit=()
+            )
 
 
 class TestListingAndCounting:
@@ -121,7 +125,7 @@ class TestDeleting:
         await world.element("a", finance)
         await world.element("b", budget)
 
-        assert await world.packages.delete(finance.id, into=None) is True
+        assert await world.packages.delete(finance.id, into=None, audit=()) is True
 
         assert await world.packages.get(finance.id) is None
         moved = await world.packages.get(budget.id)
@@ -138,13 +142,13 @@ class TestDeleting:
         await world.element("a", finance)
 
         with pytest.raises(DuplicatePackageError):
-            await world.packages.delete(finance.id, into=None)
+            await world.packages.delete(finance.id, into=None, audit=())
 
         assert await world.packages.get(finance.id) is not None
         assert await names(world, package_id=finance.id, include_subpackages=False) == ["a"]
 
     async def test_an_unknown_package_is_not_deleted(self, world: World) -> None:
-        assert await world.packages.delete(uuid4(), into=None) is False
+        assert await world.packages.delete(uuid4(), into=None, audit=()) is False
 
 
 class TestMovingElements:
@@ -153,7 +157,7 @@ class TestMovingElements:
         kept = await world.element("a")
 
         with pytest.raises(ElementNotFoundError):
-            await world.packages.move_elements([kept.id, uuid4()], finance.id)
+            await world.packages.move_elements([kept.id, uuid4()], finance.id, audit=())
 
         stored = await world.graph.get_element(kept.id)
         assert stored is not None
@@ -163,13 +167,13 @@ class TestMovingElements:
         element = await world.element("a")
 
         with pytest.raises(PackageNotFoundError):
-            await world.packages.move_elements([element.id], uuid4())
+            await world.packages.move_elements([element.id], uuid4(), audit=())
 
     async def test_back_to_the_root(self, world: World) -> None:
         finance = await world.package("Finance")
         element = await world.element("a", finance)
 
-        await world.packages.move_elements([element.id], None)
+        await world.packages.move_elements([element.id], None, audit=())
 
         stored = await world.graph.get_element(element.id)
         assert stored is not None
@@ -180,9 +184,9 @@ class TestMovingElements:
     ) -> None:
         finance = await world.package("Finance")
         stale = await world.element("a")
-        await world.packages.move_elements([stale.id], finance.id)
+        await world.packages.move_elements([stale.id], finance.id, audit=())
 
-        await world.graph.save_element(stale.rename("a2", now=NOW))
+        await world.graph.update_element(stale.id, lambda e: e.rename("a2", now=NOW), audit=())
 
         stored = await world.graph.get_element(stale.id)
         assert stored is not None
@@ -238,8 +242,8 @@ class TestTheTreeUnderConcurrency:
             b = await world.package(f"B{_}")
 
             outcomes = await asyncio.gather(
-                world.packages.save(a.moved_to(b.id, now=NOW)),
-                world.packages.save(b.moved_to(a.id, now=NOW)),
+                world.packages.save(a.moved_to(b.id, now=NOW), audit=()),
+                world.packages.save(b.moved_to(a.id, now=NOW), audit=()),
                 return_exceptions=True,
             )
 
@@ -256,8 +260,8 @@ class TestTheTreeUnderConcurrency:
         s1 = await world.package("s1", s)
         # Moved alone, s lands at depth 11 and s1 at 12; a child of s1 alone is fine too.
         outcomes = await asyncio.gather(
-            world.packages.save(s.moved_to(chain[-1].id, now=NOW)),
-            world.packages.add(Package.create(name="s2", parent_id=s1.id, now=NOW)),
+            world.packages.save(s.moved_to(chain[-1].id, now=NOW), audit=()),
+            world.packages.add(Package.create(name="s2", parent_id=s1.id, now=NOW), audit=()),
             return_exceptions=True,
         )
 
@@ -271,7 +275,7 @@ class TestTheTreeUnderConcurrency:
         b = await world.package("B", a)
 
         with pytest.raises(CyclicPackageError):
-            await world.packages.save(a.moved_to(b.id, now=NOW))
+            await world.packages.save(a.moved_to(b.id, now=NOW), audit=())
 
 
 class TestDeletingAnEmptyPackageOnly:
@@ -284,7 +288,7 @@ class TestDeletingAnEmptyPackageOnly:
         element = await world.element("a", finance)
 
         with pytest.raises(PackageNotEmptyError):
-            await world.packages.delete(finance.id, into=None, require_empty=True)
+            await world.packages.delete(finance.id, into=None, require_empty=True, audit=())
 
         stored = await world.graph.get_element(element.id)
         assert stored is not None
@@ -293,7 +297,9 @@ class TestDeletingAnEmptyPackageOnly:
     async def test_an_empty_package_is_deleted(self, world: World) -> None:
         finance = await world.package("Finance")
 
-        assert await world.packages.delete(finance.id, into=None, require_empty=True) is True
+        assert (
+            await world.packages.delete(finance.id, into=None, require_empty=True, audit=()) is True
+        )
 
     async def test_a_delete_racing_a_filing_never_re_roots_the_element(self, world: World) -> None:
         for round_ in range(8):
@@ -301,8 +307,8 @@ class TestDeletingAnEmptyPackageOnly:
             element = await world.element(f"e{round_}")
 
             outcomes = await asyncio.gather(
-                world.packages.delete(finance.id, into=None, require_empty=True),
-                world.packages.move_elements([element.id], finance.id),
+                world.packages.delete(finance.id, into=None, require_empty=True, audit=()),
+                world.packages.move_elements([element.id], finance.id, audit=()),
                 return_exceptions=True,
             )
 

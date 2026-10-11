@@ -5,16 +5,32 @@
 // It is given the element rather than fetching it: the read belongs to the
 // screen that answers the URL, and this component only has to draw whatever it
 // is handed, whichever screen that is.
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import ApprovalBanner from './ApprovalBanner.vue'
+import ElementHistory from '../history/ElementHistory.vue'
 import { ASPECT_LABELS, LAYER_LABELS } from '../metamodel/useMetamodel'
 import type { ElementRead } from './useElementCatalogue'
 
-const props = defineProps<{ element: ElementRead; typeLabel: string; packagePath?: string }>()
+const props = defineProps<{
+  element: ElementRead
+  typeLabel: string
+  packagePath?: string
+}>()
 defineEmits<{ close: [] }>()
 
-const attributes = computed(() => Object.entries(props.element.properties))
+// A transition answers with the element as it is now, and a stale approval with
+// the element re-read: the sheet follows that copy rather than the prop.
+const shown = ref(props.element)
+watch(
+  () => props.element,
+  (next) => {
+    shown.value = next
+  },
+)
+
+const attributes = computed(() => Object.entries(shown.value.properties))
 
 /** ISO instants are for machines; a date is what the reader needs. */
 function day(iso: string): string {
@@ -25,9 +41,11 @@ function day(iso: string): string {
 <template>
   <section class="detail" aria-label="Détail de l'élément">
     <header class="detail__header">
-      <h3>{{ element.name }}</h3>
+      <h3>{{ shown.name }}</h3>
       <button type="button" class="secondary" @click="$emit('close')">Fermer</button>
     </header>
+
+    <ApprovalBanner :element="shown" @changed="(next) => (shown = next)" />
 
     <dl class="fields">
       <div class="field">
@@ -36,42 +54,46 @@ function day(iso: string): string {
       </div>
       <div class="field">
         <dt>Couche</dt>
-        <dd>{{ LAYER_LABELS[element.layer] }}</dd>
+        <dd>{{ LAYER_LABELS[shown.layer] }}</dd>
       </div>
       <div class="field">
         <dt>Aspect</dt>
-        <dd>{{ ASPECT_LABELS[element.aspect] }}</dd>
+        <dd>{{ ASPECT_LABELS[shown.aspect] }}</dd>
       </div>
       <div class="field field--wide">
         <dt>Paquet</dt>
-        <dd v-if="element.package_id && packagePath">
-          <RouterLink :to="{ path: '/elements', query: { package: element.package_id } }">
+        <dd v-if="shown.package_id && packagePath">
+          <RouterLink :to="{ path: '/elements', query: { package: shown.package_id } }">
             {{ packagePath }}
           </RouterLink>
         </dd>
-        <dd v-else-if="element.package_id">Rangé dans un paquet</dd>
+        <dd v-else-if="shown.package_id">Rangé dans un paquet</dd>
         <dd v-else class="empty">À la racine</dd>
       </div>
       <div class="field">
         <dt>Créé le</dt>
-        <dd>{{ day(element.created_at) }}</dd>
+        <dd>{{ day(shown.created_at) }}</dd>
       </div>
       <div class="field">
         <dt>Modifié le</dt>
-        <dd>{{ day(element.updated_at) }}</dd>
+        <dd>{{ day(shown.updated_at) }}</dd>
       </div>
       <div class="field field--wide">
         <dt>Identifiant</dt>
-        <dd><code>{{ element.id }}</code></dd>
+        <dd>
+          <code>{{ shown.id }}</code>
+        </dd>
       </div>
       <div class="field field--wide">
         <dt>Description</dt>
-        <dd v-if="element.description">{{ element.description }}</dd>
+        <dd v-if="shown.description">{{ shown.description }}</dd>
         <dd v-else class="empty">Non renseignée</dd>
       </div>
       <div class="field field--wide">
         <dt>Documentation</dt>
-        <dd v-if="element.documentation" class="documentation">{{ element.documentation }}</dd>
+        <dd v-if="shown.documentation" class="documentation">
+          {{ shown.documentation }}
+        </dd>
         <dd v-else class="empty">Non renseignée</dd>
       </div>
     </dl>
@@ -87,8 +109,10 @@ function day(iso: string): string {
       </dl>
     </section>
 
+    <ElementHistory :element-id="shown.id" />
+
     <p class="actions">
-      <RouterLink :to="{ name: 'neighbourhood', query: { element: element.id } }">
+      <RouterLink :to="{ name: 'neighbourhood', query: { element: shown.id } }">
         Voir le voisinage
       </RouterLink>
     </p>

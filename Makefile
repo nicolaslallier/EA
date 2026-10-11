@@ -195,7 +195,7 @@ NC    := \033[0m
         runner-up runner-down runner-logs runner-pull \
         app-up app-down app-restart app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
-        embed-ping embed-models docs-reindex files-reconcile openapi openapi-check \
+        embed-ping embed-models docs-reindex files-reconcile baseline-capture openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
         lint-check lint-fe typecheck-be typecheck-fe audit hooks \
         pg-backup pg-restore graph-import \
@@ -516,6 +516,27 @@ docs-reindex: | $(VENV_STAMP) ## Reconstruit l'index sémantique de tous les doc
 files-reconcile: | $(VENV_STAMP) ## Rapproche le catalogue des fichiers du contenu du bucket
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
 	cd $(BACKEND) && uv run python -m ea.files_reconcile
+
+# La baseline d'avant la mise en service (docs/adr/0047) : la migration du
+# journal donne un premier événement à chaque ligne existante mais ne capture
+# rien. Un opérateur prend l'instantané ici, avant que quiconque n'écrive. Elle
+# ÉCRIT dans la base PARTAGÉE (trois tables baseline_*, un événement d'audit
+# `baseline.created` signé ea-system) : la cible est affichée, puis CONFIRM=yes
+# est exigé, comme pour graph-import et pg-restore. Le nom doit être unique.
+# Un doublon (`409`) n'écrit rien. Sa rétention : docs/audit-retention.md.
+BASELINE_NAME ?= Avant mise en service $(shell date +%Y-%m-%d)
+# Le nom et la description sont des DONNÉES : ils passent par l'environnement
+# (`$(value …)` les prend sans les développer), jamais recopiés dans la ligne de
+# commande que le shell relit — un guillemet, un `$` ou un point-virgule y serait
+# du code.
+baseline-capture: export BASELINE_NAME_IN := $(or $(value NAME),$(BASELINE_NAME))
+baseline-capture: export BASELINE_DESCRIPTION_IN := $(value DESCRIPTION)
+baseline-capture: | $(VENV_STAMP) ## Capture une baseline du modèle (CONFIRM=yes ; NAME='…' DESCRIPTION='…' facultatifs)
+	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
+	@test "$(CONFIRM)" = "yes" || { \
+		printf "$(RED)Écrit une baseline dans la base PARTAGÉE (nom : %s).$(NC)\n" "$$BASELINE_NAME_IN"; \
+		printf "Relance avec : make baseline-capture CONFIRM=yes [NAME='…'] [DESCRIPTION='…']\n"; exit 1; }
+	cd $(BACKEND) && uv run python -m ea.baseline_capture --name "$$BASELINE_NAME_IN" --description "$$BASELINE_DESCRIPTION_IN"
 
 ## --- Contrat front/back ---------------------------------------------------
 #

@@ -14,4 +14,6 @@ router = APIRouter(tags=["auth"])
 
 @router.get("/me", response_model=MeRead, responses={401: {"model": ErrorResponse}})
 async def read_me(caller: CurrentCaller) -> MeRead:
-    return MeRead(username=caller.username, can_write=caller.can_write)
+    return MeRead(
+        username=caller.username, can_write=caller.can_write, can_approve=caller.can_approve
+    )

@@ -17,7 +17,9 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -39,6 +41,14 @@ class ElementRecord(Base):
     __table_args__ = (
         # Two applications called "Billing" are a modelling mistake, not a fact.
         UniqueConstraint("element_type", "name"),
+        # Static DDL text. The review state (docs/adr/0048): three values, and a
+        # lock only on an approved element.
+        CheckConstraint(
+            "approval_state IN ('draft', 'in_review', 'approved')", name="approval_state_known"
+        ),
+        CheckConstraint(
+            "NOT locked OR approval_state = 'approved'", name="locked_implies_approved"
+        ),
         # Static DDL text, no runtime value: the expressions of two indexes.
         Index(
             "uq_elements_vrf_ip_address",
@@ -73,6 +83,16 @@ class ElementRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The review state sits beside `properties`, not in it: the (type, name) and
+    # IPAM indexes are untouched, and a `PATCH` that replaces `properties`
+    # cannot erase it. Static DDL defaults, no runtime value.
+    approval_state: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    approved_by_sub: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped by every write to the element's content; an approval names the one it saw.
+    last_modified_by_sub: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("1"))
 
 
 class RelationshipRecord(Base):

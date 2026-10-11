@@ -24,25 +24,32 @@ from ea.domain.errors import (
     AddressAlreadyAssignedError,
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
+    ApprovalStaleError,
+    BaselineNotFoundError,
+    BaselineTooLargeError,
     CyclicContainmentError,
     CyclicPackageError,
     DiagramNotFoundError,
     DocumentNotFoundError,
     DomainError,
+    DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicateElementError,
     DuplicateNetworkError,
     DuplicatePackageError,
     DuplicateSavedQueryError,
+    ElementLockedError,
     ElementNotFoundError,
     FileNotTextError,
     FileStorageUnavailableError,
     FileTooLargeError,
     IllegalRelationshipError,
+    InvalidCursorError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
     InvalidQueryError,
+    InvalidTransitionError,
     NetworkExhaustedError,
     NotAddressableError,
     NotASubnetError,
@@ -51,6 +58,8 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
+    RestoreBlockedError,
+    RestoreConflictError,
     SavedQueryNotFoundError,
     SearchUnavailableError,
     StoredFileExistsError,
@@ -58,6 +67,7 @@ from ea.domain.errors import (
     TooManyPackagesError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    WriteConflictError,
 )
 
 if TYPE_CHECKING:
@@ -86,6 +96,23 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     PackageTooDeepError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "package_too_deep"),
     TooManyPackagesError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_packages"),
     UnknownPackageError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_package"),
+    # --- The audit trail (docs/adr/0046) ---
+    # A cursor travels in a URL and anyone can edit one: a refusal, never a 500.
+    InvalidCursorError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_cursor"),
+    # --- Baselines (docs/adr/0047) ---
+    # `restore_conflict` is the one a caller retries: the model moved under the
+    # plan, or a name or an address was taken meanwhile, and nothing was written.
+    # `restore_blocked` is the one it must not: an element is locked.
+    BaselineNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
+    BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
+    # --- Review and locking (docs/adr/0048) ---
+    ApprovalStaleError: (status.HTTP_409_CONFLICT, "approval_stale"),
+    WriteConflictError: (status.HTTP_409_CONFLICT, "write_conflict"),
+    ElementLockedError: (status.HTTP_409_CONFLICT, "element_locked"),
+    InvalidTransitionError: (status.HTTP_409_CONFLICT, "invalid_transition"),
+    RestoreBlockedError: (status.HTTP_409_CONFLICT, "restore_blocked"),
+    RestoreConflictError: (status.HTTP_409_CONFLICT, "restore_conflict"),
     # --- Structured search and saved queries ---
     InvalidQueryError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_query"),
     SavedQueryNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),

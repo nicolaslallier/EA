@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Final
 from uuid import UUID, uuid4
 
+from ea.domain.model import reject_nul
 from ea.domain.packages import UNSET, Unset
 from ea.domain.ports import GraphView
 
@@ -26,6 +27,7 @@ DEFAULT_BOX_HEIGHT: Final = 46.0
 
 
 def _clean_name(name: str) -> str:
+    reject_nul(name, "a diagram name")
     cleaned = name.strip()
     if not cleaned:
         msg = "a diagram name cannot be blank"
@@ -72,7 +74,7 @@ class Diagram:
         return cls(
             id=uuid4(),
             name=_clean_name(name),
-            description=description.strip(),
+            description=reject_nul(description, "a diagram description").strip(),
             created_at=now,
             updated_at=now,
             package_id=package_id,
@@ -93,7 +95,9 @@ class Diagram:
         return replace(
             self,
             name=self.name if name is None else _clean_name(name),
-            description=self.description if description is None else description.strip(),
+            description=self.description
+            if description is None
+            else reject_nul(description, "a diagram description").strip(),
             package_id=self.package_id if isinstance(package_id, Unset) else package_id,
             updated_at=now,
         )

@@ -16,13 +16,19 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.audit import AuditAction, saved_query_view
 from ea.domain.errors import SavedQueryNotFoundError, UnknownPackageError
 from ea.domain.ports import ElementFilter
 from ea.domain.query import ElementQuery, QueryResult
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
+from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
+
+    from ea.domain.audit import AuditEvent
     from ea.domain.ports import PackageRepository, SavedQueryRepository
     from ea.services.architecture import ArchitectureService
 
@@ -52,6 +58,7 @@ class SavedQueryService:
         self._packages = packages
         self._architecture = architecture
         self._now = clock
+        self._trail = AuditTrail(clock)
 
     async def list_queries(self) -> tuple[SavedQuerySummary, ...]:
         require_caller()
@@ -66,15 +73,24 @@ class SavedQueryService:
 
     async def create(self, *, name: str, query: ElementQuery, description: str = "") -> SavedQuery:
         caller = require_editor()
-        stored = await self._repository.add(
-            SavedQuery.create(
-                name=name,
-                query=query,
-                created_by=caller.username,
-                description=description,
-                now=self._now(),
-            )
+        saved = SavedQuery.create(
+            name=name,
+            query=query,
+            created_by=caller.username,
+            description=description,
+            now=self._now(),
         )
+
+        def created(stored: SavedQuery) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.SAVED_QUERY_CREATED,
+                    entity_id=stored.id,
+                    after=saved_query_view(stored),
+                ),
+            )
+
+        stored = await self._repository.add(saved, audit=created)
         self._audit("query saved: %r", stored, "query_saved")
         return stored
 
@@ -89,16 +105,34 @@ class SavedQueryService:
         """Rename, describe or replace the filter. The author is never rewritten."""
         require_editor()
         current = await self.get(query_id)
-        stored = await self._repository.save(
-            current.revise(name=name, description=description, query=query, now=self._now())
-        )
+        revised = current.revise(name=name, description=description, query=query, now=self._now())
+
+        def events(before: Mapping[str, Any]) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.SAVED_QUERY_UPDATED,
+                    entity_id=query_id,
+                    before=before,
+                    after=saved_query_view(revised),
+                ),
+            )
+
+        stored = await self._repository.save(revised, audit=events)
         self._audit("query updated: %r", stored, "query_updated")
         return stored
 
     async def delete(self, query_id: UUID) -> None:
         """Delete the query — not the elements it finds."""
         require_editor()
-        if not await self._repository.delete(query_id):
+
+        def events(before: Mapping[str, Any]) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.SAVED_QUERY_DELETED, entity_id=query_id, before=before
+                ),
+            )
+
+        if not await self._repository.delete(query_id, audit=events):
             raise _not_found(query_id)
         logger.info(
             "saved query deleted",

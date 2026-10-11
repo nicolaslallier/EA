@@ -24,12 +24,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.audit import UNAUDITED_REINDEX, AuditAction, document_view
 from ea.domain.documents import Document, DocumentSummary, clean_filename, decode_markdown
 from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
+from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
+from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
+    from ea.domain.audit import AuditEvent
     from ea.domain.ports import DocumentRepository
     from ea.services.architecture import ArchitectureService
     from ea.services.indexing import DocumentIndexer
@@ -59,6 +63,7 @@ class DocumentService:
         self._architecture = architecture
         self._now = clock
         self._indexer = indexer
+        self._trail = AuditTrail(clock)
 
     async def attach(self, element_id: UUID, *, filename: str, raw: bytes) -> Document:
         """Attach an uploaded markdown file to an element.
@@ -89,7 +94,18 @@ class DocumentService:
             now=self._now(),
         )
         passages = await self._passages_of(document)
-        stored = await self._repository.add(document, passages)
+
+        def created(stored: Document) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DOCUMENT_ATTACHED,
+                    entity_id=stored.id,
+                    after=document_view(stored),
+                ),
+            )
+
+        with logged_refusal("lock_refused", [element_id]):
+            stored = await self._repository.add(document, passages, audit=created)
         logger.info(
             "document %r attached (%d bytes, %d passage(s))",
             stored.filename,
@@ -150,7 +166,19 @@ class DocumentService:
             raise ValueError(msg)
         revised = current.revise(content, now=self._now())
         passages = await self._passages_of(revised)
-        stored = await self._repository.replace(revised, passages)
+
+        def events(before: Document) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DOCUMENT_REVISED,
+                    entity_id=revised.id,
+                    before=document_view(before),
+                    after=document_view(revised),
+                ),
+            )
+
+        with logged_refusal("lock_refused", [current.element_id]):
+            stored = await self._repository.replace(revised, passages, audit=events)
         logger.info(
             "document %r revised (%d bytes, %d passage(s))",
             stored.filename,
@@ -167,7 +195,19 @@ class DocumentService:
 
     async def discard(self, document_id: UUID) -> None:
         require_editor()
-        if not await self._repository.delete(document_id):
+
+        def events(before: Document) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DOCUMENT_DISCARDED,
+                    entity_id=document_id,
+                    before=document_view(before),
+                ),
+            )
+
+        with logged_refusal("lock_refused"):
+            deleted = await self._repository.delete(document_id, audit=events)
+        if not deleted:
             msg = f"no document with id {document_id}"
             raise DocumentNotFoundError(msg)
         logger.info(
@@ -228,7 +268,9 @@ class DocumentService:
             document = await self._repository.get(document_id)
             if document is None:  # pragma: no cover - deleted mid-walk, not a bug
                 continue
-            await self._repository.replace(document, await indexer.passages_of(document))
+            await self._repository.replace(
+                document, await indexer.passages_of(document), audit=UNAUDITED_REINDEX
+            )
             indexed += 1
         return indexed
 

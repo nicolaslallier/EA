@@ -153,6 +153,12 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     package_id: null,
     created_at: '2026-09-07T12:00:00Z',
     updated_at: '2026-09-07T12:00:00Z',
+    approval_state: 'draft',
+    locked: false,
+    approved_by: null,
+    approved_at: null,
+    revision: 1,
+    allowed_transitions: [],
     ...overrides,
   }
 }
@@ -376,4 +382,95 @@ export function aSavedQuerySummary(
 /** The same query opened — with its filter. */
 export function aSavedQuery(overrides: Partial<SavedQueryRead> = {}): SavedQueryRead {
   return { ...aSavedQuerySummary(), query: emptyQuery(), ...overrides }
+}
+
+type AuditEventRead = components['schemas']['AuditEventRead']
+
+/** One line of the audit trail, as `GET /audit` returns it. */
+export function anAuditEvent(overrides: Partial<AuditEventRead> = {}): AuditEventRead {
+  return {
+    id: '11111111-1111-4111-8111-111111111111',
+    at: '2026-10-10T12:00:00Z',
+    actor_sub: 'editor-1',
+    actor_name: 'editor',
+    action: 'element.updated',
+    entity_kind: 'element',
+    entity_id: '22222222-2222-4222-8222-222222222222',
+    before: { name: 'db-01' },
+    after: { name: 'db-02' },
+    request_id: 'req-1',
+    channel: 'http',
+    correlation: null,
+    changes: [{ field: 'name', before: 'db-01', after: 'db-02' }],
+    ...overrides,
+  }
+}
+
+type BaselineRead = components['schemas']['BaselineRead']
+type BaselineDiffRead = components['schemas']['BaselineDiffRead']
+type RestoreRead = components['schemas']['RestoreRead']
+type RestorePlanRead = components['schemas']['RestorePlanRead']
+
+/** A baseline, as `GET /baselines` returns it. */
+export function aBaseline(overrides: Partial<BaselineRead> = {}): BaselineRead {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Avant migration',
+    description: '',
+    created_by: 'editor',
+    created_at: '2026-10-10T12:00:00Z',
+    element_count: 12,
+    relationship_count: 20,
+    box_count: 5,
+    ...overrides,
+  }
+}
+
+/** What separates a baseline from the model: nothing, unless a spec says. */
+export function aDiff(overrides: Partial<BaselineDiffRead> = {}): BaselineDiffRead {
+  return {
+    elements_added: [],
+    elements_removed: [],
+    elements_modified: [],
+    relationships_added: [],
+    relationships_removed: [],
+    relationships_modified: [],
+    ...overrides,
+  }
+}
+
+/** A restoration plan that changes nothing, unless a spec says. */
+export function aRestorePlan(overrides: Partial<RestorePlanRead> = {}): RestorePlanRead {
+  return {
+    elements_to_create: 0,
+    elements_to_update: 0,
+    elements_to_delete: 0,
+    relationships_to_create: 0,
+    relationships_to_delete: 0,
+    relationships_cascaded: 0,
+    boxes_to_restore: 0,
+    documents_lost: 0,
+    boxes_lost: 0,
+    created: [],
+    updated: [],
+    deleted: [],
+    warning_count: 0,
+    warnings: [],
+    blocked_count: 0,
+    blocked: [],
+    ...overrides,
+  }
+}
+
+/** The answer to `POST /baselines/{id}/restore`. */
+export function aRestore(
+  plan: Partial<RestorePlanRead> = {},
+  overrides: Partial<RestoreRead> = {},
+): RestoreRead {
+  return {
+    applied: false,
+    digest: 'a'.repeat(64),
+    plan: aRestorePlan(plan),
+    ...overrides,
+  }
 }

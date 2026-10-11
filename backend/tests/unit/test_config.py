@@ -231,3 +231,28 @@ class TestFileStorage:
             debug=True, s3_enabled=True, s3_access_key="ea-api", s3_secret_key="secret"
         )
         assert settings.s3_secret_key.get_secret_value() == "secret"
+
+
+def test_separation_of_duties_is_on_by_default_and_only_an_explicit_value_turns_it_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings(debug=True).approval_separation is True
+    monkeypatch.setenv("EA_APPROVAL_SEPARATION", "false")
+    assert Settings(debug=True).approval_separation is False
+    monkeypatch.setenv("EA_APPROVAL_SEPARATION", "perhaps")
+    with pytest.raises(ValidationError):
+        Settings(debug=True)
+
+
+def test_switching_separation_off_is_announced_in_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from ea.services.architecture import ArchitectureService
+    from tests.conftest import InMemoryRepository
+
+    with caplog.at_level("WARNING"):
+        ArchitectureService(InMemoryRepository(), separate_duties=False)
+        ArchitectureService(InMemoryRepository())
+
+    (record,) = [r for r in caplog.records if getattr(r, "action", "") == "separation_disabled"]
+    assert "EA_APPROVAL_SEPARATION" in record.getMessage()

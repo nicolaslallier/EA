@@ -110,7 +110,8 @@ class TestAnUnexpectedFailure:
         )
 
         assert response.status_code == 500
-        assert response.headers[REQUEST_ID_HEADER] == "a-failing-call"
+        assert response.headers[REQUEST_ID_HEADER]
+        assert response.headers[REQUEST_ID_HEADER] != "a-failing-call"
 
 
 @pytest_asyncio.fixture

@@ -33,16 +33,18 @@ async def client(engine_at_head: AsyncEngine) -> AsyncIterator[httpx.AsyncClient
     sessions = create_session_factory(engine_at_head)
     graph = PostgresArchitectureRepository(sessions)
     packages = PostgresPackageRepository(sessions)
-    finance = await packages.add(Package.create(name="Finance", now=NOW))
+    finance = await packages.add(Package.create(name="Finance", now=NOW), audit=())
     for name, kind, filed in (
         ("billing", E.APPLICATION_COMPONENT, True),
         ("ledger", E.APPLICATION_COMPONENT, False),
         ("db_01", E.NODE, True),
         ("dbx01", E.NODE, False),
     ):
-        element = await graph.add_element(Element.create(element_type=kind, name=name, now=NOW))
+        element = await graph.add_element(
+            Element.create(element_type=kind, name=name, now=NOW), audit=()
+        )
         if filed:
-            await packages.move_elements([element.id], finance.id)
+            await packages.move_elements([element.id], finance.id, audit=())
     app = create_app(
         Settings(debug=True, auth_enabled=False),
         architecture_service=ArchitectureService(graph, clock=lambda: NOW),

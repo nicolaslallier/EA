@@ -42,7 +42,7 @@ class DiagramsOnStoredElements(PostgresDiagramRepository):
         self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
     ) -> bool:
         await ensure_elements(self._engine, *(node.element_id for node in nodes))
-        return await super().replace_layout(diagram_id, nodes, now=now)
+        return await super().replace_layout(diagram_id, nodes, now=now, audit=())
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def a_diagram(name: str = "Vente") -> Diagram:
 
 
 async def test_a_diagram_survives_the_round_trip(diagrams: PostgresDiagramRepository) -> None:
-    stored = await diagrams.add(a_diagram())
+    stored = await diagrams.add(a_diagram(), audit=())
 
     read = await diagrams.get(stored.id)
 
@@ -66,11 +66,11 @@ async def test_a_diagram_survives_the_round_trip(diagrams: PostgresDiagramReposi
 async def test_a_name_taken_twice_hits_the_constraint_and_leaves_the_store_usable(
     diagrams: PostgresDiagramRepository,
 ) -> None:
-    await diagrams.add(a_diagram("Vente"))
+    await diagrams.add(a_diagram("Vente"), audit=())
 
     with pytest.raises(DuplicateDiagramError):
-        await diagrams.add(a_diagram("Vente"))
-    await diagrams.add(a_diagram("Achat"))
+        await diagrams.add(a_diagram("Vente"), audit=())
+    await diagrams.add(a_diagram("Achat"), audit=())
 
     assert [d.name for d in await diagrams.list_all()] == ["Achat", "Vente"]
 
@@ -78,20 +78,20 @@ async def test_a_name_taken_twice_hits_the_constraint_and_leaves_the_store_usabl
 async def test_a_rename_onto_a_taken_name_hits_the_constraint(
     diagrams: PostgresDiagramRepository,
 ) -> None:
-    await diagrams.add(a_diagram("Vente"))
-    other = await diagrams.add(a_diagram("Achat"))
+    await diagrams.add(a_diagram("Vente"), audit=())
+    other = await diagrams.add(a_diagram("Achat"), audit=())
 
     with pytest.raises(DuplicateDiagramError):
-        await diagrams.save(other.revise(name="Vente", now=LATER))
+        await diagrams.save(other.revise(name="Vente", now=LATER), audit=())
 
 
 async def test_saving_a_diagram_that_is_gone_says_so(diagrams: PostgresDiagramRepository) -> None:
     with pytest.raises(DiagramNotFoundError):
-        await diagrams.save(a_diagram())
+        await diagrams.save(a_diagram(), audit=())
 
 
 async def test_a_layout_is_replaced_whole_and_counted(diagrams: PostgresDiagramRepository) -> None:
-    diagram = await diagrams.add(a_diagram())
+    diagram = await diagrams.add(a_diagram(), audit=())
     first, second = uuid4(), uuid4()
     await diagrams.replace_layout(diagram.id, [DiagramNode(first, 0, 0)], now=FIXED_NOW)
 
@@ -116,7 +116,7 @@ async def test_concurrent_layouts_of_one_diagram_queue_instead_of_colliding(
     Without a lock, the second DELETE cannot see the rows the first INSERT
     committed, and its own INSERT then hits the primary key.
     """
-    diagram = await diagrams.add(a_diagram())
+    diagram = await diagrams.add(a_diagram(), audit=())
     moved = uuid4()
 
     await asyncio.gather(
@@ -139,7 +139,7 @@ async def test_a_failed_layout_leaves_the_previous_one_in_place(
     diagrams: PostgresDiagramRepository,
 ) -> None:
     """One transaction: the delete of the old nodes is rolled back with the insert."""
-    diagram = await diagrams.add(a_diagram())
+    diagram = await diagrams.add(a_diagram(), audit=())
     kept = DiagramNode(uuid4(), 0, 0)
     await diagrams.replace_layout(diagram.id, [kept], now=FIXED_NOW)
     twice = uuid4()
@@ -155,11 +155,11 @@ async def test_a_failed_layout_leaves_the_previous_one_in_place(
 async def test_deleting_a_diagram_takes_its_nodes_by_the_foreign_key(
     diagrams: PostgresDiagramRepository, engine_at_head: AsyncEngine
 ) -> None:
-    diagram = await diagrams.add(a_diagram())
+    diagram = await diagrams.add(a_diagram(), audit=())
     await diagrams.replace_layout(diagram.id, [DiagramNode(uuid4(), 0, 0)], now=FIXED_NOW)
 
-    assert await diagrams.delete(diagram.id) is True
-    assert await diagrams.delete(diagram.id) is False
+    assert await diagrams.delete(diagram.id, audit=()) is True
+    assert await diagrams.delete(diagram.id, audit=()) is False
 
     async with engine_at_head.connect() as connection:
         left = await connection.scalar(select(func.count()).select_from(DiagramNodeRecord))
@@ -171,11 +171,12 @@ class TestPackages:
         self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
     ) -> None:
         packages = PostgresPackageRepository(create_session_factory(engine_at_head))
-        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
         filed = await diagrams.add(
-            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id)
+            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id),
+            audit=(),
         )
-        await diagrams.add(Diagram.create(name="Racine", now=FIXED_NOW))
+        await diagrams.add(Diagram.create(name="Racine", now=FIXED_NOW), audit=())
 
         assert (await diagrams.get(filed.id)).package_id == finance.id  # type: ignore[union-attr]
         assert [d.name for d in await diagrams.list_all(package_ids={finance.id})] == ["Compta"]
@@ -186,17 +187,20 @@ class TestPackages:
         self, diagrams: PostgresDiagramRepository
     ) -> None:
         with pytest.raises(PackageNotFoundError):
-            await diagrams.add(Diagram.create(name="Vente", now=FIXED_NOW, package_id=uuid4()))
+            await diagrams.add(
+                Diagram.create(name="Vente", now=FIXED_NOW, package_id=uuid4()), audit=()
+            )
 
     async def test_deleting_a_package_moves_its_diagrams_up(
         self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
     ) -> None:
         packages = PostgresPackageRepository(create_session_factory(engine_at_head))
-        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
         diagram = await diagrams.add(
-            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id)
+            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id),
+            audit=(),
         )
 
-        await packages.delete(finance.id, into=None)
+        await packages.delete(finance.id, into=None, audit=())
 
         assert (await diagrams.get(diagram.id)).package_id is None  # type: ignore[union-attr]

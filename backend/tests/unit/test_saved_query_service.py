@@ -142,11 +142,11 @@ class TestRunning:
         saved_query_service: SavedQueryService,
         packages: InMemoryPackages,
     ) -> None:
-        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
         saved = await saved_query_service.create(
             name="Compta", query=ElementQuery(package_id=finance.id)
         )
-        await packages.delete(finance.id, into=None)
+        await packages.delete(finance.id, into=None, audit=())
 
         with pytest.raises(UnknownPackageError, match=str(finance.id)):
             await saved_query_service.run(saved.id)
@@ -157,7 +157,7 @@ class TestRunning:
     async def test_a_package_that_exists_runs(
         self, saved_query_service: SavedQueryService, packages: InMemoryPackages
     ) -> None:
-        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
         saved = await saved_query_service.create(
             name="Compta", query=ElementQuery(package_id=finance.id)
         )

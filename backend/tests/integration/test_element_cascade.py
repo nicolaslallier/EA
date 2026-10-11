@@ -38,12 +38,16 @@ async def test_deleting_an_element_takes_its_links_documents_passages_and_boxes(
     documents = PostgresDocumentRepository(sessions)
     diagrams = PostgresDiagramRepository(sessions)
     doomed = await graph.add_element(
-        Element.create(element_type=E.APPLICATION_COMPONENT, name="Billing", now=FIXED_NOW)
+        Element.create(element_type=E.APPLICATION_COMPONENT, name="Billing", now=FIXED_NOW),
+        audit=(),
     )
     spared = await graph.add_element(
-        Element.create(element_type=E.NODE, name="db-01", now=FIXED_NOW)
+        Element.create(element_type=E.NODE, name="db-01", now=FIXED_NOW),
+        audit=(),
     )
-    await graph.add_relationship(Relationship.between(R.ASSOCIATION, doomed, spared, now=FIXED_NOW))
+    await graph.add_relationship(
+        Relationship.between(R.ASSOCIATION, doomed, spared, now=FIXED_NOW), audit=()
+    )
     document = await documents.add(
         Document.create(element_id=doomed.id, filename="a.md", content="# A\n", now=FIXED_NOW),
         [
@@ -55,18 +59,23 @@ async def test_deleting_an_element_takes_its_links_documents_passages_and_boxes(
                 model="test-embed",
             )
         ],
+        audit=(),
     )
     kept = await documents.add(
-        Document.create(element_id=spared.id, filename="b.md", content="# B\n", now=FIXED_NOW)
+        Document.create(element_id=spared.id, filename="b.md", content="# B\n", now=FIXED_NOW),
+        audit=(),
     )
-    diagram = await diagrams.add(Diagram.create(name="Vente", description="", now=FIXED_NOW))
+    diagram = await diagrams.add(
+        Diagram.create(name="Vente", description="", now=FIXED_NOW), audit=()
+    )
     await diagrams.replace_layout(
         diagram.id,
         [DiagramNode(doomed.id, 0, 0), DiagramNode(spared.id, 1, 1)],
         now=FIXED_NOW,
+        audit=(),
     )
 
-    assert await graph.delete_element(doomed.id) is True
+    assert await graph.delete_element(doomed.id, audit=()) is True
 
     assert await graph.list_relationships(element_id=spared.id) == ()
     assert await documents.get(document.id) is None
