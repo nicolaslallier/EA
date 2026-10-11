@@ -95,7 +95,7 @@ async function apply(): Promise<void> {
 
 function explain(caught: unknown): string {
   if (caught instanceof ApiError && caught.code === 'restore_conflict') {
-    return "L'état du modèle a changé depuis le plan affiché. Le plan est relu : vérifie-le, puis confirme à nouveau."
+    return "L'état du modèle a changé depuis le plan affiché. Le plan est relu : vérifie-le ; la saisie du nom a été vidée, retape le nom de la baseline pour confirmer."
   }
   if (caught instanceof ApiError && caught.code === 'restore_blocked') {
     return `Un élément verrouillé empêche la restauration (${caught.message}). Déverrouille-le, puis relis le plan.`

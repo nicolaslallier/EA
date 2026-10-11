@@ -214,6 +214,7 @@ describe('RestoreDialog — confirming', () => {
     calls[1]?.answer({ error: 'restore_conflict', detail: 'the model changed' }, 409)
 
     expect((await screen.findByRole('alert')).textContent).toContain('a changé')
+    expect(screen.getByRole('alert').textContent).toContain('retape le nom')
     await vi.waitFor(() => expect(calls).toHaveLength(3)) // the plan is read again
     calls[2]?.answer(aRestore({ ...COUNTED, elements_to_delete: 8 }, { digest: '2'.repeat(64) }))
     await waitFor(() => expect(counted('Éléments supprimés')).toBe('8'))
@@ -253,6 +254,18 @@ describe('RestoreDialog — confirming', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('boom')
     expect(isDisabled(screen.getByRole('button', { name: 'Restaurer' }))).toBe(false)
     expect(view.emitted().restored).toBeUndefined()
+  })
+})
+
+describe('RestoreDialog — leaving', () => {
+  it('abandons the plan being computed when it is closed', async () => {
+    const calls = deferApi()
+    const view = mount()
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+
+    view.unmount()
+
+    expect(calls[0]?.aborted()).toBe(true)
   })
 })
 
