@@ -163,15 +163,15 @@ export function aPlateau(overrides: Partial<PlateauRead> = {}): PlateauRead {
   }
 }
 
-/** One thing on the roadmap, as `/roadmap` returns it. */
+/** One thing on the roadmap, as `/roadmap` returns it: undated unless told otherwise. */
 export function aRoadmapItem(overrides: Partial<RoadmapItemRead> = {}): RoadmapItemRead {
   return {
     id: 'dddddddd-1111-4111-8111-111111111111',
     name: 'Migration',
     element_type: 'work_package',
-    valid_from: '2026-06-01',
-    valid_until: '2027-12-31',
-    dated: true,
+    valid_from: null,
+    valid_until: null,
+    dated: Boolean(overrides.valid_from ?? overrides.valid_until),
     plateau_ids: [],
     ...overrides,
   }
