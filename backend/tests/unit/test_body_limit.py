@@ -101,3 +101,30 @@ async def test_a_get_on_the_same_path_is_not_limited() -> None:
         response = await client.get("/exchanges/imports")
 
     assert response.status_code == 405  # the route's own answer, not a 413
+
+
+async def test_a_declared_length_over_the_limit_reads_not_one_byte_of_the_body() -> None:
+    reads = 0
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        nonlocal reads
+        reads += 1
+        return {"type": "http.request", "body": b"x" * 1000, "more_body": True}
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/exchanges/imports",
+        "headers": [(b"content-length", str(LIMIT + 1).encode())],
+        "app": make_app(),
+    }
+    app = LimitingRequestBodies(make_app(), path_suffix="/exchanges/imports", limit=LIMIT)
+
+    await app(scope, receive, send)  # type: ignore[arg-type]
+
+    assert sent[0]["status"] == 413
+    assert reads == 0  # refused on the header alone: nothing was pulled from the wire
