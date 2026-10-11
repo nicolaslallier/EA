@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 from uuid import UUID
 
@@ -670,8 +671,43 @@ async def test_a_link_is_a_change_to_both_of_its_ends(engine_at_head: AsyncEngin
 
 
 async def test_overlapping_batches_in_opposite_orders_do_not_deadlock(
-    engine_at_head: AsyncEngine,
+    engine_at_head: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Two writers lock the same two elements in opposite orders, with a barrier between locks.
+
+    One row per statement, and after the first lock each waits (briefly) for the other to
+    hold its own first one. Sorted, they both start with the same row and queue; unsorted,
+    each holds what the other wants and PostgreSQL kills one (40P01).
+    """
+    from ea.repositories import architecture_store
+
+    monkeypatch.setattr(architecture_store, "LOCK_CHUNK", 1)
+    world = World(engine_at_head)
+    one = await world.graph.create_element(element_type=E.NODE, name="a")
+    two = await world.graph.create_element(element_type=E.NODE, name="b")
+    sessions = create_session_factory(engine_at_head)
+    holding = {1: asyncio.Event(), 2: asyncio.Event()}
+
+    async def writer(me: int, ids: list[UUID]) -> None:
+        async def after_chunk(chunk: int) -> None:
+            if chunk == 0:
+                holding[me].set()
+                with contextlib.suppress(TimeoutError):  # the other one is queued behind us
+                    await asyncio.wait_for(holding[3 - me].wait(), 0.5)
+
+        async with sessions.begin() as session:
+            await architecture_store.lock_elements(
+                session, ids, key_only=False, after_chunk=after_chunk
+            )
+
+    results = await asyncio.gather(
+        writer(1, [one.id, two.id]), writer(2, [two.id, one.id]), return_exceptions=True
+    )
+
+    assert [r for r in results if isinstance(r, BaseException)] == []
+
+
+async def test_overlapping_filings_and_edits_do_not_deadlock(engine_at_head: AsyncEngine) -> None:
     world = World(engine_at_head)
     first = await world.packages.create(name="One")
     second = await world.packages.create(name="Two")

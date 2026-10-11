@@ -37,6 +37,7 @@ from ea.repositories.architecture_store import (
     constraint_of,
     element_from_row,
     frozen_clause,
+    lock_elements,
 )
 from ea.repositories.audit_store import write_events
 
@@ -263,12 +264,10 @@ class PostgresPackageRepository:
                     # order: a row that does not match a `WHERE` is skipped by `FOR UPDATE`,
                     # not waited for, so a lock filtered on "frozen" would miss an approval
                     # in flight. The queries after it are new statements and see it.
-                    await session.execute(
-                        select(ElementRecord.id)
-                        .where(ElementRecord.package_id == package_id)
-                        .order_by(ElementRecord.id)
-                        .with_for_update()
+                    members = await session.scalars(
+                        select(ElementRecord.id).where(ElementRecord.package_id == package_id)
                     )
+                    await lock_elements(session, members, key_only=False)
                     refused = (
                         await session.execute(
                             select(ElementRecord, func.count().over())
@@ -323,14 +322,7 @@ class PostgresPackageRepository:
             # between the origins read below and the update that follows.
             await session.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
             # `FOR UPDATE`: the origins the event names are the ones this move leaves.
-            found = (
-                await session.scalars(
-                    select(ElementRecord)
-                    .where(ElementRecord.id.in_(wanted))
-                    .order_by(ElementRecord.id)  # a fixed order, so overlapping batches queue
-                    .with_for_update()
-                )
-            ).all()
+            found = list((await lock_elements(session, wanted, key_only=False)).values())
             origins = {row.id: row.package_id for row in found}
             missing = [str(element_id) for element_id in wanted if element_id not in origins]
             if missing:
