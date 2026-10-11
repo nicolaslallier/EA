@@ -21,7 +21,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -101,6 +101,7 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
+from ea.domain.timeline import Lifespan
 from ea.repositories.architecture_store import author_of
 from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
@@ -389,6 +390,8 @@ class InMemoryRepository:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
+        #: The last `as_of` a read was asked with, for a test to see it travel.
+        self.last_as_of: date | None = None
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
@@ -410,11 +413,18 @@ class InMemoryRepository:
     async def get_element(self, element_id: UUID) -> Element | None:
         return self.elements.get(element_id)
 
+    def _matching(self, criteria: ElementFilter) -> list[Element]:
+        return [
+            element
+            for element in self.elements.values()
+            if criteria.as_of is None or Lifespan.read(element.properties).covers(criteria.as_of)
+        ]
+
     async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
-        return tuple(self.elements.values())[criteria.offset : criteria.offset + criteria.limit]
+        return tuple(self._matching(criteria))[criteria.offset : criteria.offset + criteria.limit]
 
     async def count_elements(self, criteria: ElementFilter) -> int:
-        return len(self.elements)
+        return len(self._matching(criteria))
 
     async def update_element(
         self,
@@ -559,7 +569,9 @@ class InMemoryRepository:
         relationship_types: Sequence[R] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
+        self.last_as_of = as_of
         return tuple(self.relationships.values())
 
     async def delete_relationship(
@@ -603,13 +615,25 @@ class InMemoryRepository:
         )
 
     async def neighbourhood(
-        self, element_id: UUID, *, depth: int = 1, relationship_types: Sequence[R] = ()
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 1,
+        relationship_types: Sequence[R] = (),
+        as_of: date | None = None,
     ) -> GraphView:
+        self.last_as_of = as_of
         return GraphView(elements=(self.elements[element_id],), relationships=())
 
     async def impacted_by(
-        self, element_id: UUID, *, depth: int = 5, relationship_types: Sequence[R] = ()
+        self,
+        element_id: UUID,
+        *,
+        depth: int = 5,
+        relationship_types: Sequence[R] = (),
+        as_of: date | None = None,
     ) -> GraphView:
+        self.last_as_of = as_of
         return GraphView(elements=(self.elements[element_id],), relationships=())
 
     async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:

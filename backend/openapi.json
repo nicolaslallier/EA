@@ -1016,6 +1016,24 @@
             "title": "Id",
             "type": "string"
           },
+          "inactive_element_ids": {
+            "description": "Boxes whose element is not in service on the requested `as_of` day.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Inactive Element Ids",
+            "type": "array"
+          },
+          "inactive_relationship_ids": {
+            "description": "Links out of period on `as_of`, or whose either end is.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Inactive Relationship Ids",
+            "type": "array"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -5033,7 +5051,7 @@
         ]
       },
       "get": {
-        "description": "A diagram with its boxes, the elements they show and the links between them.",
+        "description": "A diagram with its boxes, the elements they show and the links between them.\n\n`as_of` removes nothing: it lists, in `inactive_*_ids`, what is out of period that day.",
         "operationId": "read_diagram_diagrams__diagram_id__get",
         "parameters": [
           {
@@ -5044,6 +5062,24 @@
               "format": "uuid",
               "title": "Diagram Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Read the model as it is on this day (YYYY-MM-DD): what is not in service that day is left out. Leave it out for no date filter.",
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
             }
           }
         ],
@@ -5651,6 +5687,24 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Read the model as it is on this day (YYYY-MM-DD): what is not in service that day is left out. Leave it out for no date filter.",
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
             }
           }
         ],
@@ -6587,6 +6641,24 @@
               ],
               "title": "Relationship Type"
             }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Read the model as it is on this day (YYYY-MM-DD): what is not in service that day is left out. Leave it out for no date filter.",
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
           }
         ],
         "responses": {
@@ -6696,6 +6768,24 @@
                 }
               ],
               "title": "Relationship Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Read the model as it is on this day (YYYY-MM-DD): what is not in service that day is left out. Leave it out for no date filter.",
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
             }
           }
         ],
@@ -10039,6 +10129,24 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "Read the model as it is on this day (YYYY-MM-DD): what is not in service that day is left out. Leave it out for no date filter.",
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
             }
           }
         ],

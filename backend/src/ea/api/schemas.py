@@ -9,7 +9,7 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from itertools import islice
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
@@ -149,6 +149,17 @@ Limit = Annotated[int, Field(ge=1, le=200)]
 Offset = Annotated[int, Field(ge=0)]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
+#: A day to read the model on (docs/adr/0060): what is outside its `valid_from` /
+#: `valid_until` that day is left out. A typed `date`, never free text.
+AsOf = Annotated[
+    date,
+    Field(
+        description=(
+            "Read the model as it is on this day (YYYY-MM-DD): what is not in service "
+            "that day is left out. Leave it out for no date filter."
+        )
+    ),
+]
 LinkName = Annotated[str, Field(max_length=200)]
 #: The audit filters, bounded once for both adapters (docs/adr/0046). A NUL is
 #: refused here because PostgreSQL cannot compare a `text` column to one: it
@@ -903,6 +914,14 @@ class DiagramRead(BaseModel):
     relationships: list[RelationshipRead] = Field(
         description="Only the relationships whose two ends are both on the diagram."
     )
+    inactive_element_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Boxes whose element is not in service on the requested `as_of` day.",
+    )
+    inactive_relationship_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Links out of period on `as_of`, or whose either end is.",
+    )
 
     @classmethod
     def of(cls, detail: DiagramDetail) -> DiagramRead:
@@ -917,6 +936,8 @@ class DiagramRead(BaseModel):
             nodes=[DiagramNode.of(node) for node in detail.nodes],
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
+            inactive_element_ids=sorted(detail.inactive_elements, key=str),
+            inactive_relationship_ids=sorted(detail.inactive_relationships, key=str),
         )
 
 

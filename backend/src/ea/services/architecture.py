@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -491,6 +491,7 @@ class ArchitectureService:
         relationship_types: Sequence[RelationshipType] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
         require_caller()
         return await self._repository.list_relationships(
@@ -498,6 +499,7 @@ class ArchitectureService:
             relationship_types=relationship_types,
             limit=limit,
             offset=offset,
+            as_of=as_of,
         )
 
     async def disconnect(self, relationship_id: UUID) -> None:
@@ -550,12 +552,17 @@ class ArchitectureService:
         *,
         depth: int = 1,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
-        """The sub-graph around an element — what a diagram of it would show."""
+        """The sub-graph around an element — what a diagram of it would show.
+
+        On `as_of`, an element that exists but is not in service that day gives an empty
+        sub-graph (docs/adr/0060), not a 404.
+        """
         require_caller()
         await self.get_element(element_id)
         return await self._repository.neighbourhood(
-            element_id, depth=depth, relationship_types=relationship_types
+            element_id, depth=depth, relationship_types=relationship_types, as_of=as_of
         )
 
     async def impact_of(
@@ -564,10 +571,11 @@ class ArchitectureService:
         *,
         depth: int = 5,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """Everything that would be affected if this element stopped working."""
         require_caller()
         await self.get_element(element_id)
         return await self._repository.impacted_by(
-            element_id, depth=depth, relationship_types=relationship_types
+            element_id, depth=depth, relationship_types=relationship_types, as_of=as_of
         )

@@ -56,6 +56,11 @@ class Lifespan:
     def read(cls, properties: Mapping[str, str]) -> Lifespan:
         return cls(_read(properties, VALID_FROM), _read(properties, VALID_UNTIL))
 
+    @classmethod
+    def read_tolerant(cls, properties: Mapping[str, str]) -> Lifespan:
+        """As `read`, for a read that must not fail: what is not a day counts as open."""
+        return cls.read(readable_lifespan_properties(properties))
+
     @property
     def is_dated(self) -> bool:
         return self.start is not None or self.end is not None

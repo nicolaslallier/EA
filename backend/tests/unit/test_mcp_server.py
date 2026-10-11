@@ -695,6 +695,48 @@ class TestTraversals:
 
 
 @pytest.mark.asyncio
+class TestTime:
+    async def test_the_catalogue_can_be_read_on_a_day(self, server: MCPServer[Any]) -> None:
+        await call(
+            server,
+            "create_element",
+            element_type="application_component",
+            name="Legacy",
+            properties={"valid_until": "2026-12-31"},
+        )
+        await an_element(server, "application_component", "Always")
+
+        everything = await call(server, "list_elements")
+        later = await call(server, "list_elements", as_of="2027-06-01")
+
+        assert everything["total"] == 2
+        assert [item["name"] for item in later["items"]] == ["Always"]
+
+    async def test_an_agent_that_writes_a_partial_date_is_told_why(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="valid_from"):
+            await call(
+                server,
+                "create_element",
+                element_type="application_component",
+                name="X",
+                properties={"valid_from": "2027-06"},
+            )
+
+    async def test_the_day_is_a_typed_argument(self, server: MCPServer[Any]) -> None:
+        created = await an_element(server, "node", "db-01")
+
+        with pytest.raises(ToolError):
+            await call(server, "list_elements", as_of="demain")
+        for tool in ("neighbourhood", "impact_of"):
+            answer = await call(server, tool, element_id=created["id"], as_of="2027-06-01")
+            assert [e["name"] for e in answer["elements"]] == ["db-01"]
+            with pytest.raises(ToolError):
+                await call(server, tool, element_id=created["id"], as_of="2027-13-01")
+
+
+@pytest.mark.asyncio
 class TestMetamodel:
     async def test_the_palette_is_served_whole(self, server: MCPServer[Any]) -> None:
         """61 element types and 11 relationships — the agent asks, it never guesses."""

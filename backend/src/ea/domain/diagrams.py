@@ -121,6 +121,9 @@ class DiagramDetail:
     diagram: Diagram
     nodes: tuple[DiagramNode, ...]
     graph: GraphView
+    #: On the `as_of` day asked, what is out of period - greyed by the SPA, never removed.
+    inactive_elements: frozenset[UUID] = frozenset()
+    inactive_relationships: frozenset[UUID] = frozenset()
 
 
 def check_layout(nodes: Sequence[DiagramNode]) -> tuple[DiagramNode, ...]:

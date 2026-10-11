@@ -8,6 +8,7 @@ carries dependency.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Annotated
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Query, Response, status
 from ea.api.dependencies import Architecture
 from ea.api.schemas import (
     ApprovalRequest,
+    AsOf,
     Depth,
     ElementCreate,
     ElementPage,
@@ -40,6 +42,7 @@ router = APIRouter(tags=["architecture"])
 DepthQuery = Annotated[Depth, Query()]
 LimitQuery = Annotated[Limit, Query()]
 OffsetQuery = Annotated[Offset, Query()]
+AsOfQuery = Annotated[AsOf | None, Query()]
 
 NOT_FOUND: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: {"model": ErrorResponse}
@@ -78,6 +81,7 @@ async def list_elements(
     root_only: Annotated[bool, Query()] = False,
     limit: LimitQuery = 50,
     offset: OffsetQuery = 0,
+    as_of: AsOfQuery = None,
 ) -> ElementPage:
     """Browse the catalogue, narrowed by type, by layer, by a name fragment
     or filed in a package (subpackages included unless told otherwise)."""
@@ -93,7 +97,7 @@ async def list_elements(
         limit=limit,
         offset=offset,
     )
-    criteria = ElementFilter.from_query(query)
+    criteria = replace(ElementFilter.from_query(query), as_of=as_of)
     elements = await service.list_elements(criteria)
     return ElementPage(
         items=[ElementRead.of(element) for element in elements],
@@ -193,6 +197,7 @@ async def list_relationships(
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
     limit: LimitQuery = 50,
     offset: OffsetQuery = 0,
+    as_of: AsOfQuery = None,
 ) -> list[RelationshipRead]:
     """List links, optionally only those touching one element."""
     relationships = await service.list_relationships(
@@ -200,6 +205,7 @@ async def list_relationships(
         relationship_types=tuple(relationship_type or ()),
         limit=limit,
         offset=offset,
+        as_of=as_of,
     )
     return [RelationshipRead.of(relationship) for relationship in relationships]
 
@@ -248,10 +254,11 @@ async def read_neighbourhood(
     service: Architecture,
     depth: DepthQuery = 1,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
+    as_of: AsOfQuery = None,
 ) -> GraphRead:
     """The sub-graph around an element, following links in either direction."""
     view = await service.neighbourhood(
-        element_id, depth=depth, relationship_types=tuple(relationship_type or ())
+        element_id, depth=depth, relationship_types=tuple(relationship_type or ()), as_of=as_of
     )
     return GraphRead.of(view)
 
@@ -262,6 +269,7 @@ async def read_impact(
     service: Architecture,
     depth: DepthQuery = 5,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
+    as_of: AsOfQuery = None,
 ) -> GraphRead:
     """What depends on this element, transitively.
 
@@ -270,6 +278,6 @@ async def read_impact(
     whole is composed *of* its parts.
     """
     view = await service.impact_of(
-        element_id, depth=depth, relationship_types=tuple(relationship_type or ())
+        element_id, depth=depth, relationship_types=tuple(relationship_type or ()), as_of=as_of
     )
     return GraphRead.of(view)

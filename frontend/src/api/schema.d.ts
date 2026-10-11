@@ -186,6 +186,8 @@ export interface paths {
         /**
          * Read Diagram
          * @description A diagram with its boxes, the elements they show and the links between them.
+         *
+         *     `as_of` removes nothing: it lists, in `inactive_*_ids`, what is out of period that day.
          */
         get: operations["read_diagram_diagrams__diagram_id__get"];
         put?: never;
@@ -1572,6 +1574,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Inactive Element Ids
+             * @description Boxes whose element is not in service on the requested `as_of` day.
+             */
+            inactive_element_ids?: string[];
+            /**
+             * Inactive Relationship Ids
+             * @description Links out of period on `as_of`, or whose either end is.
+             */
+            inactive_relationship_ids?: string[];
             /** Name */
             name: string;
             /** Nodes */
@@ -3522,7 +3534,9 @@ export interface operations {
     };
     read_diagram_diagrams__diagram_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                as_of?: string | null;
+            };
             header?: never;
             path: {
                 diagram_id: string;
@@ -3961,6 +3975,7 @@ export interface operations {
                 root_only?: boolean;
                 limit?: number;
                 offset?: number;
+                as_of?: string | null;
             };
             header?: never;
             path?: never;
@@ -4617,6 +4632,7 @@ export interface operations {
             query?: {
                 depth?: number;
                 relationship_type?: components["schemas"]["RelationshipType"][] | null;
+                as_of?: string | null;
             };
             header?: never;
             path: {
@@ -4678,6 +4694,7 @@ export interface operations {
             query?: {
                 depth?: number;
                 relationship_type?: components["schemas"]["RelationshipType"][] | null;
+                as_of?: string | null;
             };
             header?: never;
             path: {
@@ -6976,6 +6993,7 @@ export interface operations {
                 relationship_type?: components["schemas"]["RelationshipType"][] | null;
                 limit?: number;
                 offset?: number;
+                as_of?: string | null;
             };
             header?: never;
             path?: never;

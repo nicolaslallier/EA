@@ -46,6 +46,7 @@ from ea.api.schemas import (
     AddressRead,
     Against,
     AggregateRead,
+    AsOf,
     AuditPageRead,
     AxisSelect,
     BaselineDiffRead,
@@ -332,6 +333,15 @@ AnalysisProvider = Callable[[], AnalysisService]
 # agent is offered: a document as text, a search, an id described for a model.
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
+]
+AsOfArgument = Annotated[
+    AsOf | None,
+    Field(
+        description=(
+            "A day, YYYY-MM-DD: read the model as it is that day - what is not yet or "
+            "no longer in service is left out. Omit it to see everything."
+        )
+    ),
 ]
 Properties = Annotated[
     dict[str, str] | None,
@@ -684,8 +694,12 @@ def build_mcp_server(
         include_subpackages: bool = True,
         limit: Limit = 50,
         offset: Offset = 0,
+        as_of: AsOfArgument = None,
     ) -> ElementPage:
         """Browse the catalogue, narrowed by type, layer, name fragment or package.
+
+        `as_of` reads the catalogue on a day: an element carries `valid_from` /
+        `valid_until` (YYYY-MM-DD) in its properties and is left out outside them.
 
         All the criteria are combined with AND. `total` counts everything the
         criteria match, not the page, so a follow-up call can page through it.
@@ -699,6 +713,7 @@ def build_mcp_server(
             include_subpackages=include_subpackages,
             limit=limit,
             offset=offset,
+            as_of=as_of,
         )
         service = get_service()
         return ElementPage(
@@ -865,6 +880,7 @@ def build_mcp_server(
         element_id: ElementId,
         depth: Depth = 1,
         relationship_types: list[RelationshipType] | None = None,
+        as_of: AsOfArgument = None,
     ) -> GraphRead:
         """What is around an element, within `depth` hops, following links either way.
 
@@ -873,7 +889,10 @@ def build_mcp_server(
         """
         return GraphRead.of(
             await get_service().neighbourhood(
-                element_id, depth=depth, relationship_types=tuple(relationship_types or ())
+                element_id,
+                depth=depth,
+                relationship_types=tuple(relationship_types or ()),
+                as_of=as_of,
             )
         )
 
@@ -883,6 +902,7 @@ def build_mcp_server(
         element_id: ElementId,
         depth: Depth = 5,
         relationship_types: list[RelationshipType] | None = None,
+        as_of: AsOfArgument = None,
     ) -> GraphRead:
         """What depends on an element, transitively — what breaks if it fails.
 
@@ -894,7 +914,10 @@ def build_mcp_server(
         """
         return GraphRead.of(
             await get_service().impact_of(
-                element_id, depth=depth, relationship_types=tuple(relationship_types or ())
+                element_id,
+                depth=depth,
+                relationship_types=tuple(relationship_types or ()),
+                as_of=as_of,
             )
         )
 
