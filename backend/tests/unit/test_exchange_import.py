@@ -58,6 +58,23 @@ def host(identifier: str, name: str, address: str = "10.0.0.5") -> str:
     )
 
 
+DESCRIPTION_DEFINITION = (
+    '<propertyDefinitions><propertyDefinition identifier="d" type="string">'
+    "<name>ea.description</name></propertyDefinition></propertyDefinitions>"
+)
+
+
+def el_described(identifier: str, name: str, text: str = "from the file") -> str:
+    """A node carrying a description: the one thing an import still fills on an element it finds."""
+    return el(
+        identifier,
+        "Node",
+        name,
+        f'<properties><property propertyDefinitionRef="d"><value>{text}</value></property>'
+        "</properties>",
+    )
+
+
 IP_DEFINITION = (
     '<propertyDefinitions><propertyDefinition identifier="ip" type="string">'
     "<name>ip_address</name></propertyDefinition></propertyDefinitions>"
@@ -146,7 +163,7 @@ class TestTheCollisionRule:
         after_kept = await service.get_element(kept.id)
         after_empty = await service.get_element(empty.id)
         assert after_kept.description == "mine"
-        assert dict(after_kept.properties) == {"tier": "gold", SOURCE_ID: "a"}
+        assert dict(after_kept.properties) == {"tier": "gold"}  # never stamped with a source_id
         assert after_empty.description == "from the file"
 
     async def test_on_conflict_fail_makes_an_existing_element_a_rejected_row(
@@ -555,13 +572,16 @@ class TestTheReplayOfRows:
         events_before = len(repository.audit_log.events)
         refusing_on_write(monkeypatch, service, "D")
         content = xml(
-            exchange_xml(el("o", "Node", "old") + el("c", "Node", "C") + el("d", "Node", "D"))
+            exchange_xml(
+                el_described("o", "old") + el("c", "Node", "C") + el("d", "Node", "D"),
+                extra=DESCRIPTION_DEFINITION,
+            )
         )
 
         await exchange_service.import_exchange(content, REAL)
 
         stored = repository.elements[existing.id]
-        assert stored.properties[SOURCE_ID] == "o"
+        assert stored.description == "from the file"
         assert stored.revision == existing.revision + 1  # completed once
         # one update of "old" and one creation of "C": nothing orphaned by the rollback
         assert len(repository.audit_log.events) - events_before == 2
@@ -635,16 +655,14 @@ class TestReview:
     ) -> None:
         approved = await service.create_element(element_type=E.NODE, name="srv")
         self.approve(repository, approved.id)
-        content = xml(exchange_xml(el("s", "Node", "srv")))
+        content = xml(exchange_xml(el_described("s", "srv"), extra=DESCRIPTION_DEFINITION))
 
         report = await exchange_service.import_exchange(content, REAL)
 
         assert report.counts[Category.ELEMENTS].reused == 1
         assert [i.code for i in report.issues] == ["completion_not_applied"]
         stored = repository.elements[approved.id]
-        assert (
-            stored.approval_state is ApprovalState.APPROVED and SOURCE_ID not in stored.properties
-        )
+        assert stored.approval_state is ApprovalState.APPROVED and stored.description == ""
 
     async def test_an_approver_importing_over_ten_approved_elements_changes_none_of_them(
         self,
@@ -659,10 +677,12 @@ class TestReview:
             ids.append(element.id)
         before = {uid: repository.elements[uid] for uid in ids}
         events = len(repository.audit_log.events)
-        rows = "".join(el(f"s{n}", "Node", f"srv{n}") for n in range(10))
+        rows = "".join(el_described(f"s{n}", f"srv{n}") for n in range(10))
 
         with acting_as(an_approver()):  # a bulk import never reopens a review, for any role
-            report = await exchange_service.import_exchange(xml(exchange_xml(rows)), REAL)
+            report = await exchange_service.import_exchange(
+                xml(exchange_xml(rows, extra=DESCRIPTION_DEFINITION)), REAL
+            )
 
         assert [i.code for i in report.issues] == ["completion_not_applied"] * 10
         assert report.counts[Category.ELEMENTS].reused == 10
@@ -778,35 +798,46 @@ class TestCompletionIsDecidedOnTheRowAsItIsNow:
         await exchange_service.import_exchange(xml(data), REAL)
 
         stored = repository.elements[existing.id]
-        assert stored.description == "theirs"
-        assert stored.properties[SOURCE_ID] == "s"  # the blank that was still blank is filled
+        assert stored.description == "theirs"  # what somebody wrote meanwhile is kept
 
-    async def test_a_source_id_written_meanwhile_is_not_overwritten_and_nothing_is_written(
+    async def test_an_element_that_is_found_is_never_stamped_with_a_source_id(
         self,
         exchange_service: ExchangeService,
         service: ArchitectureService,
         repository: InMemoryRepository,
-        exchange_store: InMemoryExchange,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         existing = await service.create_element(element_type=E.NODE, name="srv")
-
-        def theirs() -> None:
-            stored = repository.elements[existing.id]
-            repository.elements[existing.id] = replace(stored, properties={SOURCE_ID: "theirs"})
-
-        self.after_the_catalogue_is_read(monkeypatch, exchange_store, theirs)
         events = len(repository.audit_log.events)
-        before = repository.elements[existing.id].revision
+        before = repository.elements[existing.id]
 
         report = await exchange_service.import_exchange(
             xml(exchange_xml(el("s", "Node", "srv"))), REAL
         )
 
         assert report.counts[Category.ELEMENTS].reused == 1
-        assert repository.elements[existing.id].properties[SOURCE_ID] == "theirs"
-        assert repository.elements[existing.id].revision == before
-        assert len(repository.audit_log.events) == events  # nothing to fill: no event, no revision
+        assert repository.elements[existing.id] == before  # no revision, no new last modifier
+        assert len(repository.audit_log.events) == events  # and no audit event
+
+    async def test_importing_the_same_file_again_writes_nothing_at_all(
+        self,
+        exchange_service: ExchangeService,
+        repository: InMemoryRepository,
+    ) -> None:
+        content = xml(
+            exchange_xml(
+                el_described("a", "A") + el("b", "Node", "B"), extra=DESCRIPTION_DEFINITION
+            )
+        )
+        await exchange_service.import_exchange(content, REAL)
+        events = len(repository.audit_log.events)
+        stored = dict(repository.elements)
+
+        again = await exchange_service.import_exchange(content, REAL)
+
+        assert again.counts[Category.ELEMENTS].reused == 2
+        assert again.counts[Category.ELEMENTS].created == 0
+        assert len(repository.audit_log.events) == events  # no event
+        assert repository.elements == stored  # no revision, no last modifier changed
 
     async def test_an_element_approved_meanwhile_refuses_the_completion_and_the_import_goes_on(
         self,
@@ -827,13 +858,18 @@ class TestCompletionIsDecidedOnTheRowAsItIsNow:
         self.after_the_catalogue_is_read(monkeypatch, exchange_store, approved)
 
         report = await exchange_service.import_exchange(
-            xml(exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))), REAL
+            xml(
+                exchange_xml(
+                    el_described("s", "srv") + el("n", "Node", "new"), extra=DESCRIPTION_DEFINITION
+                )
+            ),
+            REAL,
         )
 
         assert [i.code for i in report.issues] == ["completion_not_applied"]
         assert report.counts[Category.ELEMENTS].reused == 1
         assert report.counts[Category.ELEMENTS].created == 1
-        assert SOURCE_ID not in repository.elements[existing.id].properties
+        assert repository.elements[existing.id].description == ""
 
     async def test_an_element_deleted_meanwhile_is_a_refused_row_not_a_failure(
         self,
@@ -849,7 +885,12 @@ class TestCompletionIsDecidedOnTheRowAsItIsNow:
         )
 
         report = await exchange_service.import_exchange(
-            xml(exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))), REAL
+            xml(
+                exchange_xml(
+                    el_described("s", "srv") + el("n", "Node", "new"), extra=DESCRIPTION_DEFINITION
+                )
+            ),
+            REAL,
         )
 
         assert [i.code for i in report.issues] == ["element_gone"]

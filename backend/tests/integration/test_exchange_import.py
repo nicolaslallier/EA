@@ -192,7 +192,7 @@ async def test_a_description_written_by_another_transaction_meanwhile_is_kept(
 
     assert report.applied and report.counts[Category.ELEMENTS].reused == 1
     stored = await graph_service.get_element(existing.id)
-    assert stored.description == "theirs" and stored.properties[SOURCE_ID] == "s"
+    assert stored.description == "theirs"  # what the rival wrote is kept
 
 
 async def test_an_element_approved_meanwhile_refuses_the_completion_and_the_import_goes_on(
@@ -205,13 +205,15 @@ async def test_an_element_approved_meanwhile_refuses_the_completion_and_the_impo
         f"UPDATE elements SET approval_state = 'approved', approved_by_sub = 'a', "
         f"approved_at = now() WHERE id = '{existing.id}'",
     )
-    data = exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))
+    data = exchange_xml(
+        el("s", "Node", "srv", DESCRIBED) + el("n", "Node", "new"), extra=DESCRIPTION_KEY
+    )
 
     report = await importer.import_exchange(content(data), REAL)
 
     assert [i.code for i in report.issues] == ["completion_not_applied"]
     assert report.counts[Category.ELEMENTS].created == 1
-    assert SOURCE_ID not in (await graph_service.get_element(existing.id)).properties
+    assert (await graph_service.get_element(existing.id)).description == ""
 
 
 async def test_an_element_deleted_meanwhile_is_a_refused_row(
@@ -221,7 +223,9 @@ async def test_an_element_deleted_meanwhile_is_a_refused_row(
     importer = with_a_rival(
         engine_at_head, graph_service, f"DELETE FROM elements WHERE id = '{existing.id}'"
     )
-    data = exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))
+    data = exchange_xml(
+        el("s", "Node", "srv", DESCRIBED) + el("n", "Node", "new"), extra=DESCRIPTION_KEY
+    )
 
     report = await importer.import_exchange(content(data), REAL)
 

@@ -101,10 +101,14 @@ paquets du sous-arbre demandé (la racine devient un dossier de premier niveau) 
 
 - L'aller-retour (export → base vide → import → export) conserve paquets, rangement, vues et positions
   (comparaison structurelle sur PostgreSQL), et un réimport dans la même base ne crée ni ne déplace rien.
-  Ce n'est **pas** une identité pour : les identifiants sans signification (renommés par position) ; un premier
-  réimport qui complète le `source_id` d'un élément qui n'en avait pas (une révision) ; les coordonnées arrondies à
-  l'unité (Exchange n'a que des entiers) ; une vue dont une boîte a été omise ; un paquet vide qui n'a pas de
-  contenu mais est exporté quand même.
+  Un réimport du même fichier ne crée ni révision, ni événement d'audit, ni nouveau dernier modifieur.
+  Ce n'est **pas** une identité pour : les identifiants sans signification (renommés par position) ; les
+  coordonnées arrondies à l'unité (Exchange n'a que des entiers) ; une vue dont une boîte a été omise.
+- **Le `source_id` n'est posé qu'à la création.** Un élément retrouvé (par type et nom) n'est jamais estampillé : dix
+  mille éléments réutilisés seraient dix mille révisions et événements d'audit, et l'importeur deviendrait le dernier
+  modifieur de chacun, qui ne pourrait plus l'approuver. Seule une description vide est encore complétée (sous la garde
+  d'approbation et de verrouillage : `completion_not_applied`, jamais rouvert). Conséquence : un élément sans
+  `source_id` est exporté sous `id-<uuid>` à chaque fois, ce qui est stable.
 - Les journaux ne citent plus un nom venu d'un fichier : tout nom cité par un service passe par `logged()`,
   vérifié par `test_log_names_guard.py` (le journal d'audit garde les noms).
 - Nouvelles bornes, toutes lues par un site d'application et couvertes par `test_exchange_bounds.py`.

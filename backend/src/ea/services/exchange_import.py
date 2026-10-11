@@ -575,7 +575,12 @@ class ImportRun:
     async def _complete(
         self, match: Element, item: ExchangeElement, state: _State, issues: list[Issue]
     ) -> Element:
-        """Fill what is empty — a description, a `source_id` — and touch nothing else.
+        """Fill an empty description and touch nothing else.
+
+        The `source_id` is set when an element is *created*, never when one is found: the match is
+        by type and name, and stamping every element a file merely mentions would be a revision,
+        an audit event and a new last modifier for each (ten thousand of them for a reimport),
+        which would also keep their author from approving them.
 
         This *is* a write to an existing element, so the approval guard may refuse it: that is
         a warning, not a failure, and never a way round the guard.
@@ -584,15 +589,10 @@ class ImportRun:
         # a field is still blank is decided by the service on the row it holds locked:
         # what somebody wrote in between is kept (`complete_element`).
         description = item.description if item.description and not match.description else ""
-        missing_source = not match.properties.get(SOURCE_ID)
-        if not description and not missing_source:
+        if not description:
             return match
         try:
-            updated = await self._architecture.complete_element(
-                match.id,
-                description=description,
-                properties={SOURCE_ID: item.identifier} if missing_source else None,
-            )
+            updated = await self._architecture.complete_element(match.id, description=description)
         except ElementLockedError as refusal:
             issues.append(
                 Issue(

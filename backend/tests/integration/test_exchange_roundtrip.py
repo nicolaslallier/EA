@@ -758,10 +758,9 @@ async def test_importing_an_export_into_the_same_database_creates_and_moves_noth
     assert report.counts[Category.PACKAGES].reused == 3
     assert report.counts[Category.VIEWS].reused == 2
     after = await state()
-    # No element changed package. The first import of a file does complete an element that had
-    # no `source_id` with the file's identifier (a revision, as in the XML round trip); the
-    # second one is the identity.
-    assert {n: p for n, (p, _) in after.items()} == {n: p for n, (p, _) in before.items()}
+    # Nothing was touched: no package, no revision (an element that is found is not stamped
+    # with a `source_id`), so no event and no new last modifier.
+    assert after == before
     assert await exported(exchange) == first
     await exchange.import_exchange(content(first), REAL)
     assert await state() == after
