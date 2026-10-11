@@ -207,3 +207,32 @@ class InvalidCursorError(DomainError):
 
     A refusal and not a crash: the cursor travels in a URL, and anyone can edit one.
     """
+
+
+class BaselineNotFoundError(DomainError):
+    """A baseline referenced by id is absent from the store."""
+
+
+class DuplicateBaselineError(DomainError):
+    """A baseline name is already taken."""
+
+
+class BaselineTooLargeError(DomainError):
+    """The model is larger than a baseline accepts to copy (elements, or bytes of text).
+
+    Refused before anything is written: a copy that size would be a second
+    database, and the limit is declared once in `domain/baselines.py`.
+    """
+
+
+class RestoreBlockedError(DomainError):
+    """A restoration would change an element that is locked — unlock it first."""
+
+
+class RestoreConflictError(DomainError):
+    """A restoration the catalogue refused, or that no longer matches the plan read.
+
+    A uniqueness clash, a concurrent write, or a model that moved since the dry
+    run. Nothing was written and no event was recorded; reading the plan again
+    and retrying is safe.
+    """

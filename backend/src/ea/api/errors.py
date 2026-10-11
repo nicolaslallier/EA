@@ -24,11 +24,14 @@ from ea.domain.errors import (
     AddressAlreadyAssignedError,
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
+    BaselineNotFoundError,
+    BaselineTooLargeError,
     CyclicContainmentError,
     CyclicPackageError,
     DiagramNotFoundError,
     DocumentNotFoundError,
     DomainError,
+    DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicateElementError,
@@ -52,6 +55,8 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
+    RestoreBlockedError,
+    RestoreConflictError,
     SavedQueryNotFoundError,
     SearchUnavailableError,
     StoredFileExistsError,
@@ -90,6 +95,15 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # --- The audit trail (docs/adr/0044) ---
     # A cursor travels in a URL and anyone can edit one: a refusal, never a 500.
     InvalidCursorError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_cursor"),
+    # --- Baselines (docs/adr/0045) ---
+    # `restore_conflict` is the one a caller retries: the model moved under the
+    # plan, or a name or an address was taken meanwhile, and nothing was written.
+    # `restore_blocked` is the one it must not: an element is locked.
+    BaselineNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
+    BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
+    RestoreBlockedError: (status.HTTP_409_CONFLICT, "restore_blocked"),
+    RestoreConflictError: (status.HTTP_409_CONFLICT, "restore_conflict"),
     # --- Structured search and saved queries ---
     InvalidQueryError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_query"),
     SavedQueryNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),

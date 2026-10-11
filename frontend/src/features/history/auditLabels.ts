@@ -27,6 +27,9 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'saved_query.created': 'Requête enregistrée',
   'saved_query.updated': 'Requête modifiée',
   'saved_query.deleted': 'Requête supprimée',
+  'baseline.created': 'Baseline capturée',
+  'baseline.deleted': 'Baseline supprimée',
+  'baseline.restored': 'Baseline restaurée',
 }
 
 export const KIND_LABELS: Record<EntityKind, string> = {
@@ -36,6 +39,7 @@ export const KIND_LABELS: Record<EntityKind, string> = {
   saved_query: 'Requête enregistrée',
   diagram: 'Diagramme',
   document: 'Document',
+  baseline: 'Baseline',
 }
 
 /** A hand-written URL may name anything: only what the labels know is a filter. */

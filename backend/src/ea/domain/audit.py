@@ -44,6 +44,7 @@ class EntityKind(StrEnum):
     SAVED_QUERY = "saved_query"
     DIAGRAM = "diagram"
     DOCUMENT = "document"
+    BASELINE = "baseline"
 
 
 class AuditChannel(StrEnum):
@@ -76,6 +77,9 @@ class AuditAction(StrEnum):
     SAVED_QUERY_CREATED = "saved_query.created"
     SAVED_QUERY_UPDATED = "saved_query.updated"
     SAVED_QUERY_DELETED = "saved_query.deleted"
+    BASELINE_CREATED = "baseline.created"
+    BASELINE_DELETED = "baseline.deleted"
+    BASELINE_RESTORED = "baseline.restored"
 
     @property
     def kind(self) -> EntityKind:

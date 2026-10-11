@@ -921,7 +921,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1378,7 +1378,7 @@ export interface components {
          * EntityKind
          * @enum {string}
          */
-        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document";
+        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline";
         /**
          * ErrorResponse
          * @description The single error envelope every failing endpoint returns.

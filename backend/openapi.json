@@ -164,7 +164,10 @@
           "package.elements_moved",
           "saved_query.created",
           "saved_query.updated",
-          "saved_query.deleted"
+          "saved_query.deleted",
+          "baseline.created",
+          "baseline.deleted",
+          "baseline.restored"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -1181,7 +1184,8 @@
           "package",
           "saved_query",
           "diagram",
-          "document"
+          "document",
+          "baseline"
         ],
         "title": "EntityKind",
         "type": "string"
