@@ -31,6 +31,7 @@ from ea.api.dependencies import (
     ipam_service_of,
     package_service_of,
     saved_query_service_of,
+    timeline_service_of,
 )
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
@@ -45,6 +46,7 @@ from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.packages import router as packages_router
 from ea.api.queries import router as queries_router
 from ea.api.schemas import ErrorResponse
+from ea.api.timeline import router as timeline_router
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.postgres import check_connectivity as check_relational_store
@@ -64,6 +66,7 @@ from ea.domain.ports import (
     ObjectStore,
     PackageRepository,
     SavedQueryRepository,
+    TimelineRepository,
 )
 from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
 from ea.domain.search import EMBEDDING_DIMENSIONS
@@ -95,6 +98,7 @@ from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +337,11 @@ def _lifespan(
                         admission=app.state.analysis_admission,
                         scope_ids=build_scope_resolver(app),
                     )
+                    app.state.timeline_service = TimelineService(
+                        app.state.architecture_service,
+                        repository,
+                        admission=app.state.analysis_admission,
+                    )
                     exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
@@ -525,6 +534,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: baseline_service_of(app),
         lambda: exchange_service_of(app),
         lambda: analysis_service_of(app),
+        lambda: timeline_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -563,6 +573,7 @@ def create_app(
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
     analysis: AnalysisRepository | None = None,
+    timeline: TimelineRepository | None = None,
     diagrams: DiagramRepository | None = None,
     packages: PackageRepository | None = None,
     queries: SavedQueryRepository | None = None,
@@ -656,6 +667,10 @@ def create_app(
                 admission=app.state.analysis_admission,
                 scope_ids=build_scope_resolver(app),
             )
+        if timeline is not None:
+            app.state.timeline_service = TimelineService(
+                architecture_service, timeline, admission=app.state.analysis_admission
+            )
         if packages is not None:
             app.state.package_service = PackageService(packages)
         if queries is not None:
@@ -734,6 +749,7 @@ def create_app(
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(timeline_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

@@ -971,6 +971,53 @@ export interface paths {
         patch: operations["update_package_packages__package_id__patch"];
         trace?: never;
     };
+    "/plateaus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Plateaus
+         * @description Every plateau, earliest first (a plateau with no start last), with its size.
+         */
+        get: operations["list_plateaus_plateaus_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plateaus/gap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Plateau Gap
+         * @description What leaves (`only_in_a`), arrives (`only_in_b`) and stays (`common`) from `a` to `b`.
+         *
+         *     A plateau contains what it composes or aggregates. `gaps` lists the gap elements
+         *     already drawn between the two.
+         */
+        get: operations["read_plateau_gap_plateaus_gap_get"];
+        put?: never;
+        /**
+         * Create Plateau Gap
+         * @description Draw the gap between two plateaus: a `gap` element associated to both.
+         */
+        post: operations["create_plateau_gap_plateaus_gap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/quality": {
         parameters: {
             query?: never;
@@ -1096,6 +1143,29 @@ export interface paths {
         post?: never;
         /** Delete Relationship */
         delete: operations["delete_relationship_relationships__relationship_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/roadmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Roadmap
+         * @description Plateaus, work packages and deliverables with their dates, and the links between them.
+         *
+         *     The window defaults to the bounds of the data. What has no date is returned too,
+         *     flagged `dated: false`, for the SPA to list apart.
+         */
+        get: operations["read_roadmap_roadmap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2092,6 +2162,27 @@ export interface components {
             severity: components["schemas"]["Severity"];
         };
         /**
+         * GapCreate
+         * @description Draw the gap between two plateaus.
+         */
+        GapCreate: {
+            /**
+             * A
+             * Format: uuid
+             */
+            a: string;
+            /**
+             * B
+             * Format: uuid
+             */
+            b: string;
+            /**
+             * Name
+             * @description Default: « Écart <a> → <b> ».
+             */
+            name?: string | null;
+        };
+        /**
          * GraphRead
          * @description A sub-graph: the nodes and the edges between them, ready to be drawn.
          */
@@ -2425,6 +2516,56 @@ export interface components {
             parent_id?: string | null;
         };
         /**
+         * PlateauGapRead
+         * @description What changes between plateau `a` and plateau `b`, and the gaps already drawn.
+         */
+        PlateauGapRead: {
+            a: components["schemas"]["ElementRead"];
+            b: components["schemas"]["ElementRead"];
+            /** Common */
+            common: components["schemas"]["ElementRead"][];
+            /**
+             * Gaps
+             * @description The gap elements already associated to both.
+             */
+            gaps: components["schemas"]["ElementRead"][];
+            /**
+             * Only In A
+             * @description What leaves: in `a`, not in `b`.
+             */
+            only_in_a: components["schemas"]["ElementRead"][];
+            /**
+             * Only In B
+             * @description What arrives: in `b`, not in `a`.
+             */
+            only_in_b: components["schemas"]["ElementRead"][];
+        };
+        /**
+         * PlateauRead
+         * @description A plateau, with when it is reached and what it contains.
+         */
+        PlateauRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Member Count
+             * @description Elements it composes or aggregates, counted once.
+             */
+            member_count: number;
+            /** Name */
+            name: string;
+            /**
+             * Valid From
+             * @description When this state is reached; none: undated.
+             */
+            valid_from: string | null;
+            /** Valid Until */
+            valid_until: string | null;
+        };
+        /**
          * PropertyOp
          * @enum {string}
          */
@@ -2702,6 +2843,62 @@ export interface components {
              * @description Keep what was created since; false (exact) when omitted.
              */
             keep_new?: boolean | null;
+        };
+        /** RoadmapEdgeRead */
+        RoadmapEdgeRead: {
+            relationship_type: components["schemas"]["RelationshipType"];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /** RoadmapItemRead */
+        RoadmapItemRead: {
+            /**
+             * Dated
+             * @description False: listed apart, in the undated band.
+             */
+            dated: boolean;
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Plateau Ids
+             * @description The plateaus of the roadmap that contain it.
+             */
+            plateau_ids: string[];
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid Until */
+            valid_until: string | null;
+        };
+        /**
+         * RoadmapRead
+         * @description Plateaus, work packages and deliverables with their dates, and the links between them.
+         */
+        RoadmapRead: {
+            /** Edges */
+            edges: components["schemas"]["RoadmapEdgeRead"][];
+            /** Items */
+            items: components["schemas"]["RoadmapItemRead"][];
+            /**
+             * Window From
+             * @description Asked for, else the first date of the data.
+             */
+            window_from: string | null;
+            /** Window To */
+            window_to: string | null;
         };
         /**
          * RuleCode
@@ -6561,6 +6758,183 @@ export interface operations {
             };
         };
     };
+    list_plateaus_plateaus_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlateauRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_plateau_gap_plateaus_gap_get: {
+        parameters: {
+            query: {
+                /** @description The plateau to start from. */
+                a: string;
+                /** @description The plateau to reach. */
+                b: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlateauGapRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_plateau_gap_plateaus_gap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GapCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_quality_quality_get: {
         parameters: {
             query?: {
@@ -7160,6 +7534,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_roadmap_roadmap_get: {
+        parameters: {
+            query?: {
+                /** @description First day shown (YYYY-MM-DD). */
+                from?: string | null;
+                /** @description Last day shown; at most 20 years after `from`. */
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoadmapRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

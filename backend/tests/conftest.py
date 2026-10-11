@@ -30,6 +30,7 @@ import pytest
 from ea.db.unit_of_work import BATCH_SIZE, MAX_REFUSED_ROWS
 from ea.domain.analytics import Dimension, RawGroup, group_elements
 from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
+from ea.domain.archimate import ElementType
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
     AuditEvent,
@@ -115,6 +116,7 @@ from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
 #: when the tests happen to run.
@@ -392,6 +394,8 @@ class InMemoryRepository:
         self.relationships: dict[UUID, Relationship] = {}
         #: The last `as_of` a read was asked with, for a test to see it travel.
         self.last_as_of: date | None = None
+        #: The timeline reads made, so a test can show a refusal came before any of them.
+        self.reads: list[str] = []
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
@@ -694,6 +698,92 @@ class InMemoryRepository:
             else [self.elements[i] for i in scope if i in self.elements]
         )
         return group_elements(inside, dimensions, metric_key)
+
+    # --- Time: the reads behind the plateaus and the roadmap (docs/adr/0061) ---
+
+    def _members(self, plateau_id: UUID) -> list[Element]:
+        ids = {
+            link.target_id
+            for link in self.relationships.values()
+            if link.source_id == plateau_id
+            and link.relationship_type in (R.COMPOSITION, R.AGGREGATION)
+        }
+        found = [self.elements[i] for i in ids if i in self.elements]
+        return sorted(found, key=lambda e: (e.name.lower(), str(e.id)))
+
+    async def plateaus(self, *, limit: int) -> tuple[tuple[Element, int], ...]:
+        self.reads.append("plateaus")
+        found = [e for e in self.elements.values() if e.element_type is ElementType.PLATEAU]
+        return tuple((e, len(self._members(e.id))) for e in found)[:limit]
+
+    async def members_of(self, plateau_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        self.reads.append("members_of")
+        return tuple(self._members(plateau_id))[:limit]
+
+    async def gaps_between(self, a_id: UUID, b_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        self.reads.append("gaps_between")
+        gaps = []
+        for element in self.elements.values():
+            if element.element_type is not ElementType.GAP:
+                continue
+            ends = {
+                link.target_id if link.source_id == element.id else link.source_id
+                for link in self.relationships.values()
+                if link.relationship_type is R.ASSOCIATION
+                and element.id in (link.source_id, link.target_id)
+            }
+            if {a_id, b_id} <= ends:
+                gaps.append(element)
+        return tuple(sorted(gaps, key=lambda e: (e.name.lower(), str(e.id))))[:limit]
+
+    async def roadmap_elements(
+        self,
+        element_types: Sequence[ElementType],
+        start: date | None,
+        end: date | None,
+        *,
+        limit: int,
+    ) -> tuple[Element, ...]:
+        self.reads.append("roadmap_elements")
+        window = Lifespan(start, end)
+        found = [
+            e
+            for e in self.elements.values()
+            if e.element_type in element_types and Lifespan.read(e.properties).overlaps(window)
+        ]
+        return tuple(sorted(found, key=lambda e: (e.name.lower(), str(e.id))))[:limit]
+
+    async def roadmap_links(
+        self, element_ids: Sequence[UUID], *, limit: int
+    ) -> tuple[Relationship, ...]:
+        self.reads.append("roadmap_links")
+        ids = set(element_ids)
+        kinds = (R.COMPOSITION, R.AGGREGATION, R.TRIGGERING, R.REALIZATION)
+        found = [
+            link
+            for link in self.relationships.values()
+            if link.source_id in ids and link.target_id in ids and link.relationship_type in kinds
+        ]
+        return tuple(found)[:limit]
+
+    async def lock_gap_pair(self, a_id: UUID, b_id: UUID) -> None:
+        return None
+
+    @asynccontextmanager
+    async def transaction(self, *, commit: bool) -> AsyncIterator[Transaction]:
+        """A rollback worth the name: what the block wrote is undone when it raises."""
+        elements, links = dict(self.elements), dict(self.relationships)
+        events = len(self.audit_log.events)
+        handle = Transaction(commit=commit)
+        try:
+            yield handle
+        except BaseException:
+            handle.commit = False
+            raise
+        finally:
+            if not handle.commit:
+                self.elements, self.relationships = elements, links
+                del self.audit_log.events[events:]
 
     # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
 
@@ -1930,6 +2020,12 @@ def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamSe
     an attribute of an element, not a second store (docs/adr/0020).
     """
     return IpamService(service, repository)
+
+
+@pytest.fixture
+def timeline(repository: InMemoryRepository, service: ArchitectureService) -> TimelineService:
+    """The time use cases over the same graph double, which answers `TimelineRepository` too."""
+    return TimelineService(service, repository)
 
 
 @pytest.fixture

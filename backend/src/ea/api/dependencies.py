@@ -23,6 +23,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 
 
 def architecture_service_of(app: FastAPI) -> ArchitectureService:
@@ -270,3 +271,23 @@ def get_analysis_service(request: Request) -> AnalysisService:
 
 
 Analysis = Annotated[AnalysisService, Depends(get_analysis_service)]
+
+
+def timeline_service_of(app: FastAPI) -> TimelineService:
+    """The plateau, gap and roadmap use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled with a doubled architecture service and no
+    `TimelineRepository` behind it: a wiring fault and a 500, never an empty roadmap.
+    """
+    service: TimelineService | None = getattr(app.state, "timeline_service", None)
+    if service is None:
+        msg = "no timeline service on the application — was it assembled without a graph?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_timeline_service(request: Request) -> TimelineService:
+    return timeline_service_of(request.app)
+
+
+Timeline = Annotated[TimelineService, Depends(get_timeline_service)]

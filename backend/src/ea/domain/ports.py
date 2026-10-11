@@ -571,6 +571,52 @@ class IpamRepository(Protocol):
         ...
 
 
+class TimelineRepository(Protocol):
+    """The reads behind the plateaus, the gap and the roadmap, and the unit of the gap's write.
+
+    Every read takes a `limit` and applies it in SQL: the service asks for one more than its
+    ceiling and refuses the question when it gets it (docs/adr/0061).
+    """
+
+    async def plateaus(self, *, limit: int) -> tuple[tuple[Element, int], ...]:
+        """Plateaus with the number of elements each composes or aggregates; at most `limit`."""
+        ...
+
+    async def members_of(self, plateau_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        """The elements a plateau composes or aggregates, by name; at most `limit`."""
+        ...
+
+    async def gaps_between(self, a_id: UUID, b_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        """The `gap` elements associated to both plateaus, whichever way; at most `limit`."""
+        ...
+
+    async def roadmap_elements(
+        self,
+        element_types: Sequence[ElementType],
+        start: date | None,
+        end: date | None,
+        *,
+        limit: int,
+    ) -> tuple[Element, ...]:
+        """Elements of those types whose validity overlaps `[start, end]` (open ends are
+        open), undated ones included; at most `limit`."""
+        ...
+
+    async def roadmap_links(
+        self, element_ids: Sequence[UUID], *, limit: int
+    ) -> tuple[Relationship, ...]:
+        """Containment, triggering and realization links with both ends among `element_ids`."""
+        ...
+
+    async def lock_gap_pair(self, a_id: UUID, b_id: UUID) -> None:
+        """Serialise the writers of a gap between these two plateaus until the transaction ends."""
+        ...
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases of the architecture service (docs/adr/0052)."""
+        ...
+
+
 class AnalysisRepository(Protocol):
     """The reads the matrix, the quality checks and the dashboards need.
 

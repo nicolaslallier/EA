@@ -41,7 +41,7 @@ from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
-from ea.db.unit_of_work import is_query_canceled, reading, work
+from ea.db.unit_of_work import is_query_canceled, reading, shared_transaction, work
 from ea.domain.analytics import (
     MAX_NUMBER_INPUT,
     NUMBER_PATTERN,
@@ -74,12 +74,13 @@ from ea.domain.ports import (
     Held,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
-from ea.domain.timeline import VALID_FROM, VALID_UNTIL
+from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
+    from contextlib import AbstractAsyncContextManager
     from datetime import date
     from uuid import UUID
 
@@ -87,6 +88,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.selectable import CTE
 
     from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.ports import Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -1168,6 +1170,125 @@ class PostgresArchitectureRepository:
                 session, [element.id for element in elements], relationship_types, as_of
             )
         return GraphView(elements=elements, relationships=links)
+
+    # --- Time: plateaus, gaps, roadmap (docs/adr/0061) -----------------------
+    # Every read carries its LIMIT in the statement: the service asks for one more than
+    # its ceiling and refuses the question when it gets it.
+
+    async def plateaus(self, *, limit: int) -> tuple[tuple[Element, int], ...]:
+        members = func.count(func.distinct(RelationshipRecord.target_id))
+        statement = (
+            select(ElementRecord, members)
+            .outerjoin(
+                RelationshipRecord,
+                and_(
+                    RelationshipRecord.source_id == ElementRecord.id,
+                    RelationshipRecord.relationship_type.in_([t.value for t in MEMBERSHIP]),
+                ),
+            )
+            .where(ElementRecord.element_type == ElementType.PLATEAU.value)
+            .group_by(ElementRecord.id)
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            rows = (await session.execute(statement)).all()
+        return tuple((element_from_row(row), int(count)) for row, count in rows)
+
+    async def members_of(self, plateau_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        statement = (
+            select(ElementRecord)
+            .join(RelationshipRecord, RelationshipRecord.target_id == ElementRecord.id)
+            .where(
+                RelationshipRecord.source_id == plateau_id,
+                RelationshipRecord.relationship_type.in_([t.value for t in MEMBERSHIP]),
+            )
+            .distinct()
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def gaps_between(self, a_id: UUID, b_id: UUID, *, limit: int) -> tuple[Element, ...]:
+        def touches(plateau_id: UUID) -> ColumnElement[bool]:
+            link = RelationshipRecord
+            return exists().where(
+                link.relationship_type == RelationshipType.ASSOCIATION.value,
+                or_(
+                    and_(link.source_id == ElementRecord.id, link.target_id == plateau_id),
+                    and_(link.target_id == ElementRecord.id, link.source_id == plateau_id),
+                ),
+            )
+
+        statement = (
+            select(ElementRecord)
+            .where(
+                ElementRecord.element_type == ElementType.GAP.value, touches(a_id), touches(b_id)
+            )
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def roadmap_elements(
+        self,
+        element_types: Sequence[ElementType],
+        start: date | None,
+        end: date | None,
+        *,
+        limit: int,
+    ) -> tuple[Element, ...]:
+        clauses: list[ColumnElement[bool]] = [
+            ElementRecord.element_type.in_([t.value for t in element_types])
+        ]
+        # Overlap with [start, end], an open end of a lifespan being open: an undated
+        # element satisfies both and is kept, as the roadmap lists it apart.
+        if end is not None:
+            begins = _day_of(ElementRecord, VALID_FROM)
+            clauses.append(or_(begins.is_(None), begins <= end.isoformat()))
+        if start is not None:
+            ends = _day_of(ElementRecord, VALID_UNTIL)
+            clauses.append(or_(ends.is_(None), ends >= start.isoformat()))
+        statement = (
+            select(ElementRecord)
+            .where(*clauses)
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(element_from_row(row) for row in await session.scalars(statement))
+
+    async def roadmap_links(
+        self, element_ids: Sequence[UUID], *, limit: int
+    ) -> tuple[Relationship, ...]:
+        if not element_ids:
+            return ()
+        ids = list(element_ids)
+        kinds = [t.value for t in (*MEMBERSHIP, *ROADMAP_EDGES)]
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                RelationshipRecord.source_id.in_(ids),
+                RelationshipRecord.target_id.in_(ids),
+                RelationshipRecord.relationship_type.in_(kinds),
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+            .limit(limit)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def lock_gap_pair(self, a_id: UUID, b_id: UUID) -> None:
+        """A transaction-scoped advisory lock on the unordered pair, released at COMMIT/ROLLBACK."""
+        first, second = sorted((str(a_id), str(b_id)))
+        key = func.hashtextextended(f"ea:gap:{first}:{second}", 0)
+        async with reading(self._sessions) as session:
+            await session.execute(select(func.pg_advisory_xact_lock(key)))
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        return shared_transaction(self._sessions, commit=commit)
 
     # --- IP address management (docs/adr/0020) ----------------------------
     # Deliberately unbounded: an occupancy figure computed from a page of the

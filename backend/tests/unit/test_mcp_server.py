@@ -51,6 +51,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.timeline import TimelineService
 from tests.conftest import (
     InMemoryAuditLog,
     InMemoryDiagrams,
@@ -75,6 +76,7 @@ def server(
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
     analysis: AnalysisService,
+    timeline: TimelineService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -88,6 +90,7 @@ def server(
         lambda: baseline_service,
         lambda: exchange_service,
         lambda: analysis,
+        lambda: timeline,
     )
 
 
@@ -103,6 +106,7 @@ def server_without_an_index(
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
     analysis: AnalysisService,
+    timeline: TimelineService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -116,6 +120,7 @@ def server_without_an_index(
         lambda: baseline_service,
         lambda: exchange_service,
         lambda: analysis,
+        lambda: timeline,
     )
 
 
@@ -351,8 +356,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 56
-        )  # fifty-one, the two exchange tools, the matrix, the check and the aggregate
+            len(names) == 58
+        )  # fifty-six, and the two time tools: the plateaus and the gap between two
         assert names == {
             "export_model",
             "import_model",
@@ -373,6 +378,8 @@ class TestTheToolset:
             "get_relationship_matrix",
             "check_model",
             "aggregate_model",
+            "list_plateaus",
+            "gap_between",
             "attach_document",
             "list_documents",
             "read_document",
@@ -734,6 +741,59 @@ class TestTime:
             assert [e["name"] for e in answer["elements"]] == ["db-01"]
             with pytest.raises(ToolError):
                 await call(server, tool, element_id=created["id"], as_of="2027-13-01")
+
+
+@pytest.mark.asyncio
+class TestThePlateauTools:
+    async def test_the_plateaus_are_listed_with_their_dates(self, server: MCPServer[Any]) -> None:
+        await call(
+            server,
+            "create_element",
+            element_type="plateau",
+            name="To-Be",
+            properties={"valid_from": "2028-01-01"},
+        )
+
+        plateaus = await call(server, "list_plateaus")
+
+        assert [(p["name"], p["valid_from"], p["member_count"]) for p in plateaus["result"]] == [
+            ("To-Be", "2028-01-01", 0)
+        ]
+
+    async def test_the_gap_is_read_without_writing_by_default(self, server: MCPServer[Any]) -> None:
+        a = await an_element(server, "plateau", "A")
+        b = await an_element(server, "plateau", "B")
+
+        answer = await call(server, "gap_between", a=a["id"], b=b["id"])
+
+        assert answer["gaps"] == []
+        assert (await call(server, "list_elements"))["total"] == 2  # the two plateaus, no gap
+
+    async def test_create_gap_draws_it_and_says_so(self, server: MCPServer[Any]) -> None:
+        a = await an_element(server, "plateau", "A")
+        b = await an_element(server, "plateau", "B")
+
+        answer = await call(server, "gap_between", a=a["id"], b=b["id"], create_gap=True)
+
+        assert [g["name"] for g in answer["gaps"]] == ["Écart A → B"]
+
+    async def test_a_reader_is_refused_when_asking_to_draw_one(
+        self, server: MCPServer[Any]
+    ) -> None:
+        a = await an_element(server, "plateau", "A")
+        b = await an_element(server, "plateau", "B")
+
+        with acting_as(a_reader()), pytest.raises(ToolError):
+            await call(server, "gap_between", a=a["id"], b=b["id"], create_gap=True)
+
+    async def test_the_tool_is_annotated_as_a_write_because_it_may_write(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+
+        assert tools["list_plateaus"].annotations.read_only_hint is True  # type: ignore[union-attr]
+        assert tools["gap_between"].annotations.read_only_hint is False  # type: ignore[union-attr]
+        assert "create_gap" in (tools["gap_between"].description or "")
 
 
 @pytest.mark.asyncio

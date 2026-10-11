@@ -2097,6 +2097,42 @@
         "title": "FindingRead",
         "type": "object"
       },
+      "GapCreate": {
+        "additionalProperties": false,
+        "description": "Draw the gap between two plateaus.",
+        "properties": {
+          "a": {
+            "format": "uuid",
+            "title": "A",
+            "type": "string"
+          },
+          "b": {
+            "format": "uuid",
+            "title": "B",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default: \u00ab \u00c9cart <a> \u2192 <b> \u00bb.",
+            "title": "Name"
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "title": "GapCreate",
+        "type": "object"
+      },
       "GraphRead": {
         "description": "A sub-graph: the nodes and the edges between them, ready to be drawn.",
         "properties": {
@@ -2875,6 +2911,111 @@
         "title": "PackageUpdate",
         "type": "object"
       },
+      "PlateauGapRead": {
+        "description": "What changes between plateau `a` and plateau `b`, and the gaps already drawn.",
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/ElementRead"
+          },
+          "b": {
+            "$ref": "#/components/schemas/ElementRead"
+          },
+          "common": {
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Common",
+            "type": "array"
+          },
+          "gaps": {
+            "description": "The gap elements already associated to both.",
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "only_in_a": {
+            "description": "What leaves: in `a`, not in `b`.",
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Only In A",
+            "type": "array"
+          },
+          "only_in_b": {
+            "description": "What arrives: in `b`, not in `a`.",
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Only In B",
+            "type": "array"
+          }
+        },
+        "required": [
+          "a",
+          "b",
+          "only_in_a",
+          "only_in_b",
+          "common",
+          "gaps"
+        ],
+        "title": "PlateauGapRead",
+        "type": "object"
+      },
+      "PlateauRead": {
+        "description": "A plateau, with when it is reached and what it contains.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "member_count": {
+            "description": "Elements it composes or aggregates, counted once.",
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When this state is reached; none: undated.",
+            "title": "Valid From"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "valid_from",
+          "valid_until",
+          "member_count"
+        ],
+        "title": "PlateauRead",
+        "type": "object"
+      },
       "PropertyOp": {
         "enum": [
           "eq",
@@ -3431,6 +3572,147 @@
           }
         },
         "title": "RestoreRequest",
+        "type": "object"
+      },
+      "RoadmapEdgeRead": {
+        "properties": {
+          "relationship_type": {
+            "$ref": "#/components/schemas/RelationshipType"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "target_id",
+          "relationship_type"
+        ],
+        "title": "RoadmapEdgeRead",
+        "type": "object"
+      },
+      "RoadmapItemRead": {
+        "properties": {
+          "dated": {
+            "description": "False: listed apart, in the undated band.",
+            "title": "Dated",
+            "type": "boolean"
+          },
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plateau_ids": {
+            "description": "The plateaus of the roadmap that contain it.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Plateau Ids",
+            "type": "array"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "element_type",
+          "valid_from",
+          "valid_until",
+          "dated",
+          "plateau_ids"
+        ],
+        "title": "RoadmapItemRead",
+        "type": "object"
+      },
+      "RoadmapRead": {
+        "description": "Plateaus, work packages and deliverables with their dates, and the links between them.",
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapEdgeRead"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapItemRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "window_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Asked for, else the first date of the data.",
+            "title": "Window From"
+          },
+          "window_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window To"
+          }
+        },
+        "required": [
+          "items",
+          "edges",
+          "window_from",
+          "window_to"
+        ],
+        "title": "RoadmapRead",
         "type": "object"
       },
       "RuleCode": {
@@ -9417,6 +9699,245 @@
         ]
       }
     },
+    "/plateaus": {
+      "get": {
+        "description": "Every plateau, earliest first (a plateau with no start last), with its size.",
+        "operationId": "list_plateaus_plateaus_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlateauRead"
+                  },
+                  "title": "Response List Plateaus Plateaus Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Plateaus",
+        "tags": [
+          "timeline"
+        ]
+      }
+    },
+    "/plateaus/gap": {
+      "get": {
+        "description": "What leaves (`only_in_a`), arrives (`only_in_b`) and stays (`common`) from `a` to `b`.\n\nA plateau contains what it composes or aggregates. `gaps` lists the gap elements\nalready drawn between the two.",
+        "operationId": "read_plateau_gap_plateaus_gap_get",
+        "parameters": [
+          {
+            "description": "The plateau to start from.",
+            "in": "query",
+            "name": "a",
+            "required": true,
+            "schema": {
+              "description": "The plateau to start from.",
+              "format": "uuid",
+              "title": "A",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The plateau to reach.",
+            "in": "query",
+            "name": "b",
+            "required": true,
+            "schema": {
+              "description": "The plateau to reach.",
+              "format": "uuid",
+              "title": "B",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlateauGapRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Plateau Gap",
+        "tags": [
+          "timeline"
+        ]
+      },
+      "post": {
+        "description": "Draw the gap between two plateaus: a `gap` element associated to both.",
+        "operationId": "create_plateau_gap_plateaus_gap_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GapCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Plateau Gap",
+        "tags": [
+          "timeline"
+        ]
+      }
+    },
     "/quality": {
       "get": {
         "description": "Run the quality rules over the catalogue and page through the findings.\n\nComputed on every call \u2014 nothing is stored. The counts describe the whole\nrun; `severity` and `code` narrow the findings only.",
@@ -10360,6 +10881,103 @@
         "summary": "Delete Relationship",
         "tags": [
           "architecture"
+        ]
+      }
+    },
+    "/roadmap": {
+      "get": {
+        "description": "Plateaus, work packages and deliverables with their dates, and the links between them.\n\nThe window defaults to the bounds of the data. What has no date is returned too,\nflagged `dated: false`, for the SPA to list apart.",
+        "operationId": "read_roadmap_roadmap_get",
+        "parameters": [
+          {
+            "description": "First day shown (YYYY-MM-DD).",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day shown (YYYY-MM-DD).",
+              "title": "From"
+            }
+          },
+          {
+            "description": "Last day shown; at most 20 years after `from`.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day shown; at most 20 years after `from`.",
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoadmapRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Roadmap",
+        "tags": [
+          "timeline"
         ]
       }
     }

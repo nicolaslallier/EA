@@ -97,6 +97,7 @@ from ea.domain.saved_queries import (
     SavedQuerySummary,
 )
 from ea.domain.search import Passage
+from ea.domain.timeline import PlateauComparison, PlateauSummary, Roadmap
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 from ea.services.baselines import RestoreOutcome
 from ea.services.caller import current_caller
@@ -1779,4 +1780,111 @@ class HeatmapRead(BaseModel):
                 )
                 for b in aggregate.buckets
             ],
+        )
+
+
+# --- Time: plateaus, the gap between two, the roadmap (docs/adr/0061) -------------
+
+
+class PlateauRead(BaseModel):
+    """A plateau, with when it is reached and what it contains."""
+
+    id: UUID
+    name: str
+    valid_from: date | None = Field(description="When this state is reached; none: undated.")
+    valid_until: date | None
+    member_count: int = Field(description="Elements it composes or aggregates, counted once.")
+
+    @classmethod
+    def of(cls, summary: PlateauSummary) -> PlateauRead:
+        return cls(
+            id=summary.element.id,
+            name=summary.element.name,
+            valid_from=summary.lifespan.start,
+            valid_until=summary.lifespan.end,
+            member_count=summary.member_count,
+        )
+
+
+class PlateauGapRead(BaseModel):
+    """What changes between plateau `a` and plateau `b`, and the gaps already drawn."""
+
+    a: ElementRead
+    b: ElementRead
+    only_in_a: list[ElementRead] = Field(description="What leaves: in `a`, not in `b`.")
+    only_in_b: list[ElementRead] = Field(description="What arrives: in `b`, not in `a`.")
+    common: list[ElementRead]
+    gaps: list[ElementRead] = Field(description="The gap elements already associated to both.")
+
+    @classmethod
+    def of(cls, comparison: PlateauComparison) -> PlateauGapRead:
+        return cls(
+            a=ElementRead.of(comparison.a),
+            b=ElementRead.of(comparison.b),
+            only_in_a=[ElementRead.of(e) for e in comparison.diff.only_in_a],
+            only_in_b=[ElementRead.of(e) for e in comparison.diff.only_in_b],
+            common=[ElementRead.of(e) for e in comparison.diff.common],
+            gaps=[ElementRead.of(e) for e in comparison.gaps],
+        )
+
+
+class GapCreate(BaseModel):
+    """Draw the gap between two plateaus."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    a: UUID
+    b: UUID
+    name: Name | None = Field(default=None, description="Default: « Écart <a> → <b> ».")
+
+
+class RoadmapItemRead(BaseModel):
+    id: UUID
+    name: str
+    element_type: ElementType
+    valid_from: date | None
+    valid_until: date | None
+    dated: bool = Field(description="False: listed apart, in the undated band.")
+    plateau_ids: list[UUID] = Field(description="The plateaus of the roadmap that contain it.")
+
+
+class RoadmapEdgeRead(BaseModel):
+    source_id: UUID
+    target_id: UUID
+    relationship_type: RelationshipType
+
+
+class RoadmapRead(BaseModel):
+    """Plateaus, work packages and deliverables with their dates, and the links between them."""
+
+    items: list[RoadmapItemRead]
+    edges: list[RoadmapEdgeRead]
+    window_from: date | None = Field(description="Asked for, else the first date of the data.")
+    window_to: date | None
+
+    @classmethod
+    def of(cls, roadmap: Roadmap) -> RoadmapRead:
+        return cls(
+            items=[
+                RoadmapItemRead(
+                    id=item.element.id,
+                    name=item.element.name,
+                    element_type=item.element.element_type,
+                    valid_from=item.lifespan.start,
+                    valid_until=item.lifespan.end,
+                    dated=item.lifespan.is_dated,
+                    plateau_ids=list(item.plateau_ids),
+                )
+                for item in roadmap.items
+            ],
+            edges=[
+                RoadmapEdgeRead(
+                    source_id=e.source_id,
+                    target_id=e.target_id,
+                    relationship_type=e.relationship_type,
+                )
+                for e in roadmap.edges
+            ],
+            window_from=roadmap.window_from,
+            window_to=roadmap.window_to,
         )
