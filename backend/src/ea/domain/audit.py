@@ -233,6 +233,31 @@ def listed(ids: Sequence[UUID]) -> dict[str, Any]:
     return {"count": len(ids), "ids": [str(i) for i in ids[:AUDIT_LISTED_IDS]]}
 
 
+def cascaded_view(
+    *,
+    relationship_count: int,
+    relationships: Sequence[tuple[UUID, str]],
+    document_count: int,
+    document_ids: Sequence[UUID],
+    diagram_count: int,
+    diagram_ids: Sequence[UUID],
+) -> dict[str, Any]:
+    """What deleting an element took with it — one shape for every way an element is deleted.
+
+    Exact counts, and the first `AUDIT_LISTED_IDS` of each kind.
+    """
+    return {
+        "relationships": {
+            "count": relationship_count,
+            "items": [
+                {"id": str(link_id), "relationship_type": kind} for link_id, kind in relationships
+            ],
+        },
+        "documents": {"count": document_count, "ids": [str(i) for i in document_ids]},
+        "diagrams": {"count": diagram_count, "ids": [str(i) for i in diagram_ids]},
+    }
+
+
 def package_view(package: Package) -> dict[str, Any]:
     return {
         "id": str(package.id),

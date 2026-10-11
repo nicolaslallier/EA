@@ -829,13 +829,23 @@ class InMemoryBaselines:
             protected_ids=frozenset(self.protected),
             diagrams_present=frozenset(self.diagrams.diagrams),
         )
-        doomed = {e.id for e in plan.elements_to_delete}
-        lost = sum(
-            1
-            for d in (self.documents.documents.values() if self.documents else ())
-            if d.element_id in doomed
+        held: dict[UUID, list[UUID]] = {}
+        for d in sorted(
+            self.documents.documents.values() if self.documents else (), key=lambda d: str(d.id)
+        ):
+            held.setdefault(d.element_id, []).append(d.id)
+        return replace(
+            plan,
+            documents_lost=sum(len(held.get(e.id, ())) for e in plan.elements_to_delete),
+            cascades=tuple(
+                replace(
+                    c,
+                    document_count=len(held.get(c.element_id, ())),
+                    document_ids=tuple(held.get(c.element_id, ())[:100]),
+                )
+                for c in plan.cascades
+            ),
         )
-        return replace(plan, documents_lost=lost)
 
     async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
         return await self._plan(baseline_id, keep_new)

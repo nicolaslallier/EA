@@ -34,7 +34,7 @@ from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.audit import events_for
+from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.baselines import (
     Baseline,
     BaselineLimits,
@@ -234,15 +234,40 @@ async def _current_snapshot(session: AsyncSession) -> ModelSnapshot:
     )
 
 
-async def _count_documents(session: AsyncSession, element_ids: Sequence[UUID]) -> int:
+async def _documents_held(
+    session: AsyncSession, element_ids: Sequence[UUID]
+) -> dict[UUID, tuple[int, tuple[UUID, ...]]]:
+    """`{element: (exact count of documents, the first AUDIT_LISTED_IDS ids)}`, by aggregate.
+
+    One array parameter, not one per id: a long list must not meet the driver's bind limit.
+    """
     if not element_ids:
-        return 0
-    # One array parameter, not one per id: a long list must not meet the driver's bind limit.
+        return {}
     wanted = sql_cast(literal(list(element_ids), ARRAY(Uuid())), ARRAY(Uuid()))
-    return int(
-        await session.scalar(select(func.count()).where(ElementDocument.element_id == any_(wanted)))
-        or 0
+    counts = await session.execute(
+        select(ElementDocument.element_id, func.count())
+        .where(ElementDocument.element_id == any_(wanted))
+        .group_by(ElementDocument.element_id)
     )
+    ranked = (
+        select(
+            ElementDocument.element_id.label("element_id"),
+            ElementDocument.id.label("id"),
+            func.row_number()
+            .over(partition_by=ElementDocument.element_id, order_by=ElementDocument.id)
+            .label("rank"),
+        )
+        .where(ElementDocument.element_id == any_(wanted))
+        .subquery()
+    )
+    listed: dict[UUID, list[UUID]] = {}
+    for element_id, document_id in await session.execute(
+        select(ranked.c.element_id, ranked.c.id)
+        .where(ranked.c.rank <= AUDIT_LISTED_IDS)
+        .order_by(ranked.c.element_id, ranked.c.id)
+    ):
+        listed.setdefault(element_id, []).append(document_id)
+    return {element: (int(n), tuple(listed.get(element, ()))) for element, n in counts}
 
 
 async def _counts(session: AsyncSession, baseline_id: UUID) -> tuple[int, int, int]:
@@ -476,9 +501,18 @@ class PostgresBaselineRepository:
             protected_ids=await self._protected(session),
             diagrams_present=frozenset(await session.scalars(select(DiagramRecord.id))),
         )
+        held = await _documents_held(session, [e.id for e in plan.elements_to_delete])
         return replace(
             plan,
-            documents_lost=await _count_documents(session, [e.id for e in plan.elements_to_delete]),
+            documents_lost=sum(count for count, _ in held.values()),
+            cascades=tuple(
+                replace(
+                    cascade,
+                    document_count=held.get(cascade.element_id, (0, ()))[0],
+                    document_ids=held.get(cascade.element_id, (0, ()))[1],
+                )
+                for cascade in plan.cascades
+            ),
         )
 
     async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:

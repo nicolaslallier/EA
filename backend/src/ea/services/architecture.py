@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.audit import AuditAction, element_view, relationship_view
+from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
@@ -208,27 +208,17 @@ class ArchitectureService:
                     entity_id=element_id,
                     before={
                         **element_view(removal.element),
-                        # Exact counts, and the first `AUDIT_LISTED_IDS` of each.
-                        "cascaded": {
-                            "relationships": {
-                                "count": removal.relationship_count,
-                                "items": [
-                                    {
-                                        "id": str(link.id),
-                                        "relationship_type": link.relationship_type.value,
-                                    }
-                                    for link in removal.relationships
-                                ],
-                            },
-                            "documents": {
-                                "count": removal.documents.count,
-                                "ids": [str(i) for i in removal.documents.ids],
-                            },
-                            "diagrams": {
-                                "count": removal.diagrams.count,
-                                "ids": [str(i) for i in removal.diagrams.ids],
-                            },
-                        },
+                        "cascaded": cascaded_view(
+                            relationship_count=removal.relationship_count,
+                            relationships=[
+                                (link.id, link.relationship_type.value)
+                                for link in removal.relationships
+                            ],
+                            document_count=removal.documents.count,
+                            document_ids=removal.documents.ids,
+                            diagram_count=removal.diagrams.count,
+                            diagram_ids=removal.diagrams.ids,
+                        ),
                     },
                 ),
             )

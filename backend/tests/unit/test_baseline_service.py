@@ -8,7 +8,10 @@ import pytest
 
 from ea.core.logging import request_id
 from ea.domain.archimate import ElementType as E
+from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction
+from ea.domain.diagrams import Diagram, DiagramNode
+from ea.domain.documents import Document
 from ea.domain.errors import (
     BaselineNotFoundError,
     DuplicateBaselineError,
@@ -20,7 +23,14 @@ from ea.domain.errors import (
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
-from tests.conftest import FIXED_NOW, InMemoryAuditLog, InMemoryBaselines, a_reader
+from tests.conftest import (
+    FIXED_NOW,
+    InMemoryAuditLog,
+    InMemoryBaselines,
+    InMemoryDiagrams,
+    InMemoryDocuments,
+    a_reader,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -264,3 +274,80 @@ class TestRestoring:
         second = (await baseline_service.restore(baseline.id)).plan
 
         assert first == second
+
+
+class TestTheTrailSaysEverythingThatWentAndMoved:
+    async def test_a_deleted_element_lists_what_went_with_it_exactly_like_a_plain_delete(
+        self,
+        service: ArchitectureService,
+        baseline_service: BaselineService,
+        documents: InMemoryDocuments,
+        diagrams: InMemoryDiagrams,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        kept = await service.create_element(element_type=E.NODE, name="kept")
+        baseline = await baseline_service.create(name="empty-ish")
+        doomed = await service.create_element(element_type=E.NODE, name="doomed")
+        tie = await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=kept.id, target_id=doomed.id
+        )
+        note = Document.create(
+            element_id=doomed.id, filename="a.md", content="# A\n", now=FIXED_NOW
+        )
+        documents.documents[note.id] = note
+        view = Diagram.create(name="Vue", now=FIXED_NOW)
+        diagrams.diagrams[view.id] = view
+        diagrams.nodes[view.id] = (DiagramNode(doomed.id, 1, 2),)
+        audit_log.events.clear()
+
+        await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+
+        deleted = next(e for e in audit_log.events if e.action is AuditAction.ELEMENT_DELETED)
+        assert deleted.before is not None
+        assert deleted.before["cascaded"] == {
+            "relationships": {
+                "count": 1,
+                "items": [{"id": str(tie.id), "relationship_type": "association"}],
+            },
+            "documents": {"count": 1, "ids": [str(note.id)]},
+            "diagrams": {"count": 1, "ids": [str(view.id)]},
+        }
+        # The same shape as a plain delete, so one reader serves both.
+        again = await service.create_element(element_type=E.NODE, name="again")
+        audit_log.events.clear()
+        await service.delete_element(again.id)
+        plain = audit_log.events[0].before
+        assert plain is not None and set(plain["cascaded"]) == set(deleted.before["cascaded"])
+
+    async def test_the_boxes_a_restoration_moves_are_in_the_summary_with_their_old_place(
+        self,
+        service: ArchitectureService,
+        baseline_service: BaselineService,
+        diagrams: InMemoryDiagrams,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        element = await service.create_element(element_type=E.NODE, name="a")
+        view = Diagram.create(name="Vue", now=FIXED_NOW)
+        diagrams.diagrams[view.id] = view
+        diagrams.nodes[view.id] = (DiagramNode(element.id, 1, 2),)
+        baseline = await baseline_service.create(name="v1")
+        diagrams.nodes[view.id] = (DiagramNode(element.id, 9, 9),)
+        audit_log.events.clear()
+
+        await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+
+        (restored,) = audit_log.events
+        assert restored.action is AuditAction.BASELINE_RESTORED
+        assert restored.after is not None
+        box = {"x": 1, "y": 2, "width": 132.0, "height": 46.0}
+        assert restored.after["boxes_restored"] == {
+            "count": 1,
+            "items": [
+                {
+                    "diagram_id": str(view.id),
+                    "element_id": str(element.id),
+                    "before": {**box, "x": 9, "y": 9},
+                    "after": box,
+                }
+            ],
+        }

@@ -18,10 +18,18 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.audit import AuditAction, element_view, relationship_view
+from ea.domain.audit import (
+    AUDIT_LISTED_IDS,
+    AuditAction,
+    cascaded_view,
+    element_view,
+    relationship_view,
+)
 from ea.domain.baselines import (
     Baseline,
     BaselineDiff,
+    BoxSnapshot,
+    Cascade,
     RestorePlan,
     baseline_view,
     diff_snapshots,
@@ -188,6 +196,7 @@ class BaselineService:
                     "relationships_cascaded": plan.cascaded_relationships,
                     "documents_lost": plan.documents_lost,
                     "boxes_lost": plan.boxes_lost,
+                    "boxes_restored": self._boxes_restored(plan),
                     "warnings": list(plan.warnings),
                 },
             )
@@ -205,8 +214,13 @@ class BaselineService:
             )
             for u in plan.elements_to_update
         ]
+        cascades = {c.element_id: c for c in plan.cascades}
         events += [
-            about(AuditAction.ELEMENT_DELETED, e.id, before=element_view(e))
+            about(
+                AuditAction.ELEMENT_DELETED,
+                e.id,
+                before={**element_view(e), "cascaded": self._cascaded(cascades[e.id])},
+            )
             for e in plan.elements_to_delete
         ]
         events += [
@@ -218,3 +232,39 @@ class BaselineService:
             for r in plan.relationships_to_create
         ]
         return events
+
+    @staticmethod
+    def _cascaded(cascade: Cascade) -> dict[str, object]:
+        return cascaded_view(
+            relationship_count=cascade.relationship_count,
+            relationships=cascade.relationships,
+            document_count=cascade.document_count,
+            document_ids=cascade.document_ids,
+            diagram_count=cascade.box_count,
+            diagram_ids=cascade.diagram_ids,
+        )
+
+    @staticmethod
+    def _boxes_restored(plan: RestorePlan) -> dict[str, object]:
+        """The boxes put back, each with the place it had: a restoration upserts boxes, it
+        does not replace a layout, so this is the journal of what moved (exact count, the
+        first `AUDIT_LISTED_IDS` listed)."""
+
+        def place(box: BoxSnapshot) -> dict[str, float]:
+            return {"x": box.x, "y": box.y, "width": box.width, "height": box.height}
+
+        before = {(b.diagram_id, b.element_id): b for b in plan.boxes_overwritten}
+        return {
+            "count": len(plan.boxes_to_restore),
+            "items": [
+                {
+                    "diagram_id": str(box.diagram_id),
+                    "element_id": str(box.element_id),
+                    "before": place(old)
+                    if (old := before.get((box.diagram_id, box.element_id)))
+                    else None,
+                    "after": place(box),
+                }
+                for box in plan.boxes_to_restore[:AUDIT_LISTED_IDS]
+            ],
+        }

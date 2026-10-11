@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.audit import AUDIT_LISTED_IDS
 from ea.domain.baselines import BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.model import Element, Relationship
 
@@ -295,3 +296,45 @@ class TestBoxes:
         result = plan(ModelSnapshot((), ()), ModelSnapshot((doomed,), (), (box,)))
 
         assert result.boxes_lost == 1
+
+
+class TestWhatADeletionTakesAlong:
+    def test_links_and_boxes_are_listed_per_deleted_element_with_exact_counts(self) -> None:
+        kept, fresh = node("kept"), node("fresh")
+        tie = link(kept, fresh)
+        diagram = uuid4()
+        box = BoxSnapshot(diagram, fresh.id, 0, 0, 132, 46)
+
+        result = plan(ModelSnapshot((kept,), ()), ModelSnapshot((kept, fresh), (tie,), (box,)))
+
+        (cascade,) = result.cascades
+        assert cascade.element_id == fresh.id
+        assert (cascade.relationship_count, cascade.relationships) == (
+            1,
+            ((tie.id, "association"),),
+        )
+        assert (cascade.box_count, cascade.diagram_ids) == (1, (diagram,))
+
+    def test_a_hub_lists_at_most_the_audit_bound_but_counts_them_all(self) -> None:
+        kept, hub = node("kept"), node("hub")
+        spokes = [link(kept, hub) for _ in range(AUDIT_LISTED_IDS + 5)]
+
+        result = plan(ModelSnapshot((kept,), ()), ModelSnapshot((kept, hub), tuple(spokes)))
+
+        (cascade,) = result.cascades
+        assert cascade.relationship_count == AUDIT_LISTED_IDS + 5
+        assert len(cascade.relationships) == AUDIT_LISTED_IDS
+
+    def test_a_kept_element_has_no_cascade_and_an_overwritten_box_is_remembered(self) -> None:
+        a, diagram = node("a"), uuid4()
+        wanted = BoxSnapshot(diagram, a.id, 1, 2, 132, 46)
+        moved = BoxSnapshot(diagram, a.id, 9, 9, 132, 46)
+
+        result = plan(
+            ModelSnapshot((a,), (), (wanted,)),
+            ModelSnapshot((a,), (), (moved,)),
+            diagrams_present=frozenset({diagram}),
+        )
+
+        assert result.cascades == ()
+        assert result.boxes_overwritten == (moved,)

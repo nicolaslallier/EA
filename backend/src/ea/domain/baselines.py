@@ -10,14 +10,14 @@ readable path for a diff), and nothing about the tree of packages itself.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
 from ea.domain.archimate import validate_relationship
-from ea.domain.audit import FieldChange, diff_fields
+from ea.domain.audit import AUDIT_LISTED_IDS, FieldChange, diff_fields
 from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
@@ -325,6 +325,21 @@ class ElementUpdate:
 
 
 @dataclass(frozen=True, slots=True)
+class Cascade:
+    """What deleting one element takes along, as `delete_element` journals it: exact
+    counts, and the first `AUDIT_LISTED_IDS` of each kind. Documents are not part of a
+    baseline, so the repository fills them in, in the transaction."""
+
+    element_id: UUID
+    relationship_count: int = 0
+    relationships: tuple[tuple[UUID, str], ...] = ()  # (id, relationship type)
+    document_count: int = 0
+    document_ids: tuple[UUID, ...] = ()
+    box_count: int = 0
+    diagram_ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RestorePlan:
     """What a restoration would do, and everything it costs.
 
@@ -342,6 +357,10 @@ class RestorePlan:
     relationships_to_delete: tuple[Relationship, ...] = ()
     cascaded_relationships: int = 0
     boxes_to_restore: tuple[BoxSnapshot, ...] = ()
+    #: The boxes `boxes_to_restore` overwrites, as they are now.
+    boxes_overwritten: tuple[BoxSnapshot, ...] = ()
+    #: One per deleted element, in the order of `elements_to_delete`.
+    cascades: tuple[Cascade, ...] = ()
     documents_lost: int = 0
     boxes_lost: int = 0
     warnings: tuple[str, ...] = ()
@@ -371,6 +390,25 @@ def _element_order(element: Element) -> tuple[str, str]:
 
 def _link_order(link: Relationship) -> tuple[str, str]:
     return (link.relationship_type.value, str(link.id))
+
+
+def _cascade_of(
+    element: Element, links: Iterable[Relationship], boxes: Iterable[BoxSnapshot]
+) -> Cascade:
+    touching = sorted(
+        (link for link in links if element.id in (link.source_id, link.target_id)),
+        key=lambda link: (link.created_at, str(link.id)),
+    )
+    diagrams = sorted(box.diagram_id for box in boxes if box.element_id == element.id)
+    return Cascade(
+        element_id=element.id,
+        relationship_count=len(touching),
+        relationships=tuple(
+            (link.id, link.relationship_type.value) for link in touching[:AUDIT_LISTED_IDS]
+        ),
+        box_count=len(diagrams),
+        diagram_ids=tuple(diagrams[:AUDIT_LISTED_IDS]),
+    )
 
 
 def _claims(element: Element) -> set[tuple[str, ...]]:
@@ -505,6 +543,12 @@ def plan_restore(
         )
     )
     boxes_lost = sum(1 for box in current.boxes if box.element_id in deleted_ids)
+    overwritten = tuple(
+        current_boxes[(b.diagram_id, b.element_id)]
+        for b in boxes
+        if (b.diagram_id, b.element_id) in current_boxes
+    )
+    cascades = tuple(_cascade_of(element, cur_rel.values(), current.boxes) for element in to_delete)
 
     # Only for what the plan really writes: an element already at the root is not news.
     asked_for = {e.id: e.package_id for e in snapshot.elements}
@@ -553,6 +597,8 @@ def plan_restore(
         relationships_to_delete=tuple(sorted(links_to_delete, key=_link_order)),
         cascaded_relationships=cascaded,
         boxes_to_restore=boxes,
+        boxes_overwritten=overwritten,
+        cascades=cascades,
         boxes_lost=boxes_lost,
         warnings=tuple(warnings),
         blocked=blocked,

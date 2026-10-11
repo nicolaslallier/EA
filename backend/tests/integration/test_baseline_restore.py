@@ -344,3 +344,33 @@ class TestRestoringOverUniqueness:
             await model.baselines.apply_restore(
                 baseline.id, keep_new=True, expected=plan, now=LATER, audit=restored
             )
+
+
+async def test_the_journal_of_a_restoration_lets_one_rebuild_everything_that_disappeared(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.domain.audit import EntityKind
+    from ea.services.baselines import BaselineService
+
+    model = Model(engine_at_head)
+    empty = await model.baselines.create(a_baseline("empty"), audit=created)
+    await model.seed()
+    (note,) = await model.documents.list_for_element(model.left.id)
+    service = BaselineService(model.baselines, clock=lambda: LATER)
+
+    await service.restore(empty.id, dry_run=False, confirm=True)
+
+    page = await model.trail.page(
+        AuditFilter(entity_kind=EntityKind.ELEMENT, entity_id=model.left.id)
+    )
+    deleted = next(e for e in page.events if e.action is AuditAction.ELEMENT_DELETED)
+    assert deleted.before is not None
+    assert deleted.before["cascaded"] == {
+        "relationships": {
+            "count": 1,
+            "items": [{"id": str(model.link.id), "relationship_type": "association"}],
+        },
+        "documents": {"count": 1, "ids": [str(note.id)]},
+        "diagrams": {"count": 1, "ids": [str(model.diagram.id)]},
+    }
+    assert deleted.correlation == f"restore:{empty.id}"
