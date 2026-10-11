@@ -45,6 +45,7 @@ from ea.api.schemas import (
     AddressLocationRead,
     AddressRead,
     Against,
+    AggregateRead,
     AuditPageRead,
     AxisSelect,
     BaselineDiffRead,
@@ -53,6 +54,7 @@ from ea.api.schemas import (
     CursorToken,
     Depth,
     Description,
+    DimensionParam,
     Documentation,
     DocumentRead,
     DocumentSummaryRead,
@@ -102,6 +104,7 @@ from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
 from ea.api.schemas import PlanDigest as PlanDigestBounds
 from ea.api.schemas import Vrf as VrfBounds
+from ea.domain.analytics import Dimension, Metric
 from ea.domain.approval import Transition
 from ea.domain.archimate import (
     AccessType,
@@ -301,7 +304,11 @@ instead of calling `read_element_relations` for each element.
 `check_model` reads the quality of the model itself — elements linked to
 nothing, names that look like duplicates, missing descriptions or required
 properties, links the metamodel would refuse today. Run it before adding to the
-catalogue and after an import, and fix what it reports at the element it names.\
+catalogue and after an import, and fix what it reports at the element it names.
+
+`aggregate_model` totals the catalogue by layer, element type or an attribute
+such as `property:lifecycle`, optionally summing a numeric property like `cost`.
+Prefer it to listing elements and adding them up yourself.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -1673,6 +1680,26 @@ def build_mcp_server(
         """
         return QualityReportRead.of(
             await get_analysis().check(severity=severity, code=code, limit=limit, cursor=cursor)
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def aggregate_model(
+        by: DimensionParam,
+        metric: Metric = Metric.COUNT,
+        property_key: PropertyKey | None = None,
+    ) -> AggregateRead:
+        """Count or total the catalogue by a dimension: how many, how much, how risky.
+
+        `by` is `element_type`, `layer`, or `property:<key>` (for instance
+        `property:lifecycle` or `property:risk`). `metric` is `count`, or
+        `sum` / `avg` / `min` / `max` of the numeric property `property_key`
+        (for instance `cost`). A value that is not a readable number — "1 200 €"
+        — is not ignored in silence: it is counted in `unreadable`. Each bucket
+        carries a `level` from 0 to 4 for how high it ranks. This reads only.
+        """
+        return AggregateRead.of(
+            await get_analysis().aggregate(Dimension.parse(by), metric, property_key)
         )
 
     # --- The audit trail (docs/adr/0046) ----------------------------------

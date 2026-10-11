@@ -351,8 +351,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 55
-        )  # fifty-one, the two exchange tools, the matrix and the quality check
+            len(names) == 56
+        )  # fifty-one, the two exchange tools, the matrix, the check and the aggregate
         assert names == {
             "export_model",
             "import_model",
@@ -372,6 +372,7 @@ class TestTheToolset:
             "relationship_matrix_row",
             "get_relationship_matrix",
             "check_model",
+            "aggregate_model",
             "attach_document",
             "list_documents",
             "read_document",
@@ -1738,6 +1739,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("diff_baselines", "against", "/baselines/{baseline_id}/diff", "against"),
             ("check_model", "limit", "/quality", "limit"),
             ("check_model", "cursor", "/quality", "cursor"),
+            ("aggregate_model", "by", "/analytics/aggregate", "by"),
+            ("aggregate_model", "property_key", "/analytics/aggregate", "property"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -2190,3 +2193,44 @@ class TestCheckModel:
     async def test_a_limit_over_the_ceiling_is_refused(self, server: MCPServer[Any]) -> None:
         with pytest.raises(ToolError):
             await call(server, "check_model", limit=1001)
+
+
+@pytest.mark.asyncio
+class TestAggregateModel:
+    async def test_it_counts_by_layer(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "srv-01")
+        await an_element(server, "business_process", "Order")
+
+        result = await call(server, "aggregate_model", by="layer")
+
+        assert {b["key"]: b["count"] for b in result["buckets"]} == {"business": 1, "technology": 1}
+
+    async def test_it_sums_a_property_and_reports_the_unreadable(
+        self, server: MCPServer[Any]
+    ) -> None:
+        for name, cost in (("a", "100"), ("b", "n/a")):
+            await call(
+                server, "create_element", element_type="node", name=name, properties={"cost": cost}
+            )
+
+        result = await call(
+            server, "aggregate_model", by="layer", metric="sum", property_key="cost"
+        )
+
+        assert result["buckets"][0]["value"] == 100.0
+        assert result["unreadable"] == 1
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "aggregate_model")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is True
+
+    async def test_a_sum_without_a_property_says_what_is_missing(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="needs a property"):
+            await call(server, "aggregate_model", by="layer", metric="sum")
+
+    async def test_an_unknown_dimension_is_refused(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "aggregate_model", by="bogus")
