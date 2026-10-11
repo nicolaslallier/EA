@@ -354,3 +354,112 @@ class TestProperties:
             "duplicate_property",
             "unknown_property_definition",
         }
+
+
+def a_view(body: str, name: str = "V", identifier: str = "v") -> str:
+    return f'<view identifier="{identifier}" xsi:type="Diagram"><name>{name}</name>{body}</view>'
+
+
+def views_of(*views: str, elements: str = "") -> bytes:
+    return exchange_xml(
+        elements or el("a", "Node", "A"),
+        extra=f"<views><diagrams>{''.join(views)}</diagrams></views>",
+    )
+
+
+def box(identifier: str, ref: str, x: str, y: str, w: str = "100", h: str = "50") -> str:
+    return (
+        f'<node identifier="{identifier}" elementRef="{ref}" xsi:type="Element" '
+        f'x="{x}" y="{y}" w="{w}" h="{h}"/>'
+    )
+
+
+class TestViews:
+    def test_boxes_are_flattened_to_absolute_coordinates_and_shapes_are_counted(self) -> None:
+        model = parse_model((DATA / "views-model.xml").read_bytes())
+
+        (view,) = model.views
+        assert (view.identifier, view.name, view.description) == ("v1", "Overview", "Main picture")
+        by_element = {box.element: box for box in reversed(view.boxes)}  # the first one wins
+        # n1 sits inside the container at (100, 100): 10 + 100, 20 + 100
+        assert (by_element["e1"].x, by_element["e1"].y) == (110.0, 120.0)
+        assert (by_element["e1"].width, by_element["e1"].height) == (120.0, 55.0)
+        assert [b.element for b in view.boxes] == ["e1", "e2", "ghost", "e1"]
+        assert (view.connections_ignored, view.shapes_ignored) == (1, 2)
+
+    def test_a_box_with_a_coordinate_that_is_not_a_number_is_skipped_with_a_warning(self) -> None:
+        model = parse_model(views_of(a_view(box("n", "a", "oops", "0"))))
+
+        assert model.views[0].boxes == ()
+        assert "invalid_box" in codes(model)
+
+    def test_the_numbers_python_would_accept_are_left_to_the_domain_to_judge(self) -> None:
+        model = parse_model(
+            views_of(a_view(box("n", "a", "nan", "1e308") + box("m", "a", "inf", "0")))
+        )
+
+        assert len(model.views[0].boxes) == 2  # read as they are; `validate_box` refuses them
+
+    def test_a_view_without_an_identifier_or_with_a_repeated_one_is_rejected(self) -> None:
+        xml = exchange_xml(
+            extra='<views><diagrams><view identifier="v" xsi:type="Diagram"><name>A</name></view>'
+            '<view identifier="v" xsi:type="Diagram"><name>B</name></view>'
+            '<view xsi:type="Diagram"><name>C</name></view></diagrams></views>'
+        )
+
+        model = parse_model(xml)
+
+        assert [v.name for v in model.views] == ["A"]
+        assert {u.category for u in model.unreadable} == {Category.VIEWS}
+        assert {"duplicate_identifier", "missing_identifier"} <= set(codes(model))
+
+    def test_a_view_cannot_take_the_identifier_of_an_element(self) -> None:
+        model = parse_model(views_of(a_view("", identifier="a")))
+
+        assert model.views == () and "duplicate_identifier" in codes(model)
+
+    def test_views_after_the_elements_do_not_empty_the_model(self) -> None:
+        model = parse_model(
+            views_of(
+                a_view(box("n", "a", "1", "2")), a_view("", "W", "w"), elements=el("a", "Node", "A")
+            )
+        )
+
+        assert [e.name for e in model.elements] == ["A"] and len(model.views) == 2
+
+    def test_nodes_nested_beyond_the_ceiling_are_refused(self) -> None:
+        inner = "".join(
+            f'<node identifier="n{i}" xsi:type="Container" x="0" y="0" w="1" h="1">'
+            for i in range(201)
+        )
+        xml = views_of(a_view(inner + "</node>" * 201))
+
+        with pytest.raises(InvalidExchangeFileError, match="nested"):
+            parse_model(xml)
+
+    def test_a_view_with_too_many_nodes_is_refused_before_it_is_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_NODES_PER_VIEW", 3)
+        boxes = "".join(box(f"n{i}", "a", "0", "0") for i in range(4))
+
+        with pytest.raises(InvalidExchangeFileError, match="nodes in one view"):
+            parse_model(views_of(a_view(boxes)))
+
+    def test_too_many_views_are_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_EXCHANGE_VIEWS", 2)
+
+        with pytest.raises(InvalidExchangeFileError, match="at most 2 views"):
+            parse_model(views_of(*[a_view("", f"V{i}", f"v{i}") for i in range(3)]))
+
+    def test_too_many_boxes_in_all_are_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_FILE_VIEW_BOXES", 3)
+        boxes = "".join(box(f"n{i}", "a", "0", "0") for i in range(2))
+
+        with pytest.raises(InvalidExchangeFileError, match="at most 3 boxes"):
+            parse_model(views_of(a_view(boxes, "A", "v1"), a_view(boxes, "B", "v2")))
+
+    def test_the_views_memory_is_let_go_as_it_is_read(self) -> None:
+        many = [a_view(box(f"n{i}", "a", "0", "0"), f"V{i}", f"v{i}") for i in range(200)]
+
+        assert len(parse_model(views_of(*many)).views) == 200

@@ -26,6 +26,11 @@ DEFAULT_BOX_WIDTH: Final = 132.0
 DEFAULT_BOX_HEIGHT: Final = 46.0
 
 
+def validate_diagram_name(name: str) -> str:
+    """Trimmed, 1..200 characters, no NUL: the name a diagram can carry."""
+    return _clean_name(name)
+
+
 def _clean_name(name: str) -> str:
     reject_nul(name, "a diagram name")
     cleaned = name.strip()

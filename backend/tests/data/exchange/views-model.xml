@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" identifier="id-views">
+  <name>Views</name>
+  <elements>
+    <element identifier="e1" xsi:type="BusinessActor"><name>Alice</name></element>
+    <element identifier="e2" xsi:type="Node"><name>srv</name></element>
+  </elements>
+  <relationships>
+    <relationship identifier="r1" source="e1" target="e2" xsi:type="Association"/>
+  </relationships>
+  <views>
+    <diagrams>
+      <view identifier="v1" xsi:type="Diagram">
+        <name>Overview</name>
+        <documentation>Main picture</documentation>
+        <node identifier="n0" xsi:type="Container" x="100" y="100" w="400" h="300">
+          <node identifier="n1" elementRef="e1" xsi:type="Element" x="10" y="20" w="120" h="55"/>
+          <node identifier="nl" xsi:type="Label" x="5" y="5" w="50" h="20"/>
+        </node>
+        <node identifier="n2" elementRef="e2" xsi:type="Element" x="300" y="40" w="120" h="55"/>
+        <node identifier="n3" elementRef="ghost" xsi:type="Element" x="0" y="0" w="100" h="50"/>
+        <node identifier="n4" elementRef="e1" xsi:type="Element" x="1" y="1" w="100" h="50"/>
+        <connection identifier="c1" relationshipRef="r1" xsi:type="Relationship" source="n1" target="n2"/>
+      </view>
+    </diagrams>
+  </views>
+</model>

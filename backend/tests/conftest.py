@@ -1424,8 +1424,9 @@ class InMemoryExchange:
         rows: Sequence[Row],
         apply: Callable[[Row], Awaitable[None]],
         *,
-        max_refused: int = MAX_REFUSED_ROWS,
+        max_refused: int | None = None,
     ) -> list[RowRefusal]:
+        max_refused = MAX_REFUSED_ROWS if max_refused is None else max_refused
         refused: list[RowRefusal] = []
         start = 0
         while start < len(rows):
@@ -1745,9 +1746,11 @@ def exchange_store(
 
 @pytest.fixture
 def exchange_service(
-    exchange_store: InMemoryExchange, service: ArchitectureService
+    exchange_store: InMemoryExchange, service: ArchitectureService, diagram_service: DiagramService
 ) -> ExchangeService:
-    return ExchangeService(exchange_store, service, clock=lambda: FIXED_NOW)
+    return ExchangeService(
+        exchange_store, service, diagrams=diagram_service, clock=lambda: FIXED_NOW
+    )
 
 
 @pytest.fixture

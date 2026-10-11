@@ -37,16 +37,21 @@ from ea.domain.exchange import (
     JUNCTION_NAMES,
     MAX_ATTRIBUTES_PER_NODE,
     MAX_EXCHANGE_ITEMS,
+    MAX_EXCHANGE_VIEWS,
+    MAX_FILE_VIEW_BOXES,
     MAX_LIVE_NODES,
     MAX_NESTING_DEPTH,
     MAX_NODES_PER_ITEM,
+    MAX_NODES_PER_VIEW,
     MAX_PROPERTIES_PER_OBJECT,
     MAX_SILENT_BYTES,
+    MAX_VIEW_DEPTH,
     MODEL_IDENTIFIER,
     MODIFIER_KEY,
     NAMESPACE,
     PROPERTY_DEFINITION_PREFIX,
     Category,
+    ExchangeBox,
     ExchangeElement,
     ExchangeModel,
     ExchangeRelationship,
@@ -286,6 +291,10 @@ class _Reading:
     elements: list[_Slot] = field(default_factory=list)
     links: list[_Slot] = field(default_factory=list)
     definitions: dict[str, str] = field(default_factory=dict)
+    views: list[tuple[ExchangeView, list[Issue]]] = field(default_factory=list)
+    lost_views: list[tuple[Unreadable, Issue]] = field(default_factory=list)
+    view_count: int = 0
+    view_boxes: int = 0
     items: int = 0
 
     def count_item(self) -> None:
@@ -565,11 +574,22 @@ def _read(data: bytes) -> _Reading:
                 in_item += 1
                 if in_item > MAX_NODES_PER_ITEM:
                     raise _refuse(f"too many nodes in one object (at most {MAX_NODES_PER_ITEM})")
+            elif len(nodes) == 4 and tags[1] == _q("views"):
+                in_item = 0
+                at_item_start = live
+            elif len(nodes) > 4 and tags[1] == _q("views"):
+                in_item += 1
+                if in_item > MAX_NODES_PER_VIEW:
+                    raise _refuse(f"too many nodes in one view (at most {MAX_NODES_PER_VIEW})")
             if live > MAX_LIVE_NODES:
                 raise _refuse(f"too many nodes held at once (at most {MAX_LIVE_NODES})")
             continue
         depth = len(nodes)
-        if depth == 3:
+        if depth == 4 and tags[1:3] == [_q("views"), _q("diagrams")] and tags[3] == _q("view"):
+            _read_view(node, reading)
+            nodes[2].clear()  # forget the views handled: memory stays flat
+            live = 0
+        elif depth == 3:
             section, tag = tags[1], tags[2]
             if section == _q("elements") and tag == _q("element"):
                 reading.count_item()
@@ -595,6 +615,78 @@ def _read(data: bytes) -> _Reading:
         tags.pop()
         nodes.pop()
     return reading
+
+
+def _read_view(node: Element, reading: _Reading) -> None:
+    reading.view_count += 1
+    if reading.view_count > MAX_EXCHANGE_VIEWS:
+        raise _refuse(f"an exchange file holds at most {MAX_EXCHANGE_VIEWS} views")
+    path = f"views/diagrams/view[{reading.view_count}]"
+    identifier = node.get("identifier") or ""
+    if not identifier or identifier in reading.seen:
+        code = "missing_identifier" if not identifier else "duplicate_identifier"
+        issue = Issue(
+            Severity.ERROR,
+            code,
+            "this view has no usable identifier; it is ignored",
+            identifier or None,
+            path=path,
+        )
+        reading.lost_views.append(
+            (Unreadable(Category.VIEWS, identifier or path, cascade=False), issue)
+        )
+        return
+    reading.seen.add(identifier)
+    issues: list[Issue] = []
+    boxes, connections, shapes = _boxes(node, issues)
+    reading.view_boxes += len(boxes)
+    if reading.view_boxes > MAX_FILE_VIEW_BOXES:
+        raise _refuse(f"the views of a file hold at most {MAX_FILE_VIEW_BOXES} boxes")
+    view = ExchangeView(
+        identifier=identifier,
+        name=_text_of(node, "name", issues),
+        boxes=tuple(boxes),
+        description=_text_of(node, "documentation", issues),
+        connections_ignored=connections,
+        shapes_ignored=shapes,
+        path=path,
+    )
+    node.clear()
+    reading.views.append((view, issues))
+
+
+def _boxes(view: Element, issues: list[Issue]) -> tuple[list[ExchangeBox], int, int]:
+    """The boxes of a view in absolute coordinates; shapes and connections only counted.
+
+    Iterative, with the depth bounded, so a file nested a hundred thousand levels deep cannot
+    exhaust the interpreter's stack. Numbers are read as they are: `nan`, `inf` and `1e308`
+    parse, and are refused by the domain (`validate_box`), which owns the bounds.
+    """
+    boxes: list[ExchangeBox] = []
+    shapes = 0
+    stack = [(child, 0.0, 0.0, 1) for child in reversed(view.findall(_q("node")))]
+    while stack:
+        node, dx, dy, depth = stack.pop()
+        if depth > MAX_VIEW_DEPTH:
+            raise _refuse(f"view nodes are nested more than {MAX_VIEW_DEPTH} levels deep")
+        try:
+            x, y = float(node.get("x", "0")) + dx, float(node.get("y", "0")) + dy
+            width, height = float(node.get("w", "0")), float(node.get("h", "0"))
+        except ValueError:
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "invalid_box",
+                    "a node has a coordinate that is not a number; skipped",
+                )
+            )
+            continue
+        if node.get(_XSI_TYPE) == "Element" and node.get("elementRef"):
+            boxes.append(ExchangeBox(node.get("elementRef", ""), x, y, width, height))
+        else:
+            shapes += 1
+        stack.extend((child, x, y, depth + 1) for child in reversed(node.findall(_q("node"))))
+    return boxes, len(view.findall(_q("connection"))), shapes
 
 
 def _read_definition(node: Element, reading: _Reading) -> None:
@@ -679,7 +771,18 @@ def parse_model(data: bytes) -> ExchangeModel:
                     path=slot.path,
                 )
             )
-    return ExchangeModel(tuple(elements), tuple(links), tuple(unreadable), tuple(issues))
+    views: list[ExchangeView] = []
+    for lost, why in reading.lost_views:
+        unreadable.append(lost)
+        issues.append(why)
+    for view, local in reading.views:
+        views.append(view)
+        issues.extend(
+            Issue(i.severity, i.code, i.message, view.identifier, path=view.path) for i in local
+        )
+    return ExchangeModel(
+        tuple(elements), tuple(links), tuple(unreadable), tuple(issues), tuple(views)
+    )
 
 
 def _located(issue: Issue, draft: _Draft) -> Issue:

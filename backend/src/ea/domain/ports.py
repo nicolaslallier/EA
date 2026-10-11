@@ -788,9 +788,16 @@ class ExchangeRepository(Protocol):
         ...
 
     async def apply_rows[Row](
-        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+        self,
+        rows: Sequence[Row],
+        apply: Callable[[Row], Awaitable[None]],
+        *,
+        max_refused: int | None = None,
     ) -> list[RowRefusal]:
         """Apply each row in the transaction; a refused row is skipped, the others stay.
+
+        `max_refused` is what this call may still refuse (the default is the whole budget of
+        an import, `MAX_REFUSED_ROWS`): an import that calls this twice shares one budget.
 
         Rows run in batches of one `SAVEPOINT`, and a refusal replays the rows of its batch
         that precede it: `apply` must be re-runnable, deriving its state from what it does now.

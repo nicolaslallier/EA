@@ -109,7 +109,7 @@ IMPORT_ERRORS: dict[int | str, dict[str, type[ErrorResponse]]] = {
 #: refused, not ignored: an unknown field is a client that believes it asked for something
 #: the server will not do, and a file of the other format is a client that sent the wrong one.
 SHARED_FIELDS = frozenset({"format", "dry_run", "on_conflict", "strict"})
-XML_FIELDS = frozenset({"file"})
+XML_FIELDS = frozenset({"file", "with_views"})
 CSV_FIELDS = frozenset({"elements", "relations", "properties", "safe_cells"})
 IMPORT_FIELDS = SHARED_FIELDS | XML_FIELDS | CSV_FIELDS
 
@@ -155,6 +155,9 @@ async def import_model(
     strict: Annotated[
         bool, Form(description="If any row is refused, write nothing at all.")
     ] = False,
+    with_views: Annotated[
+        bool, Form(description="XML only. Recreate the views of the file (their boxes).")
+    ] = True,
     safe_cells: Annotated[
         bool,
         Form(description="CSV only. Give back a cell the export had prefixed with `'`."),
@@ -186,7 +189,11 @@ async def import_model(
     report = await exchanges.import_exchange(
         content,
         ImportOptions(
-            dry_run=dry_run, on_conflict=on_conflict, strict=strict, safe_cells=safe_cells
+            dry_run=dry_run,
+            on_conflict=on_conflict,
+            strict=strict,
+            safe_cells=safe_cells,
+            with_views=with_views,
         ),
     )
     return ImportReportRead.of(report)

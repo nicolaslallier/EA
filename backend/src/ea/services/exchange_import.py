@@ -21,16 +21,19 @@ refusal is a *raise*, never a result, whenever a write may have preceded it.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 from ea.domain.approval import reviewed_after_change
 from ea.domain.archimate import ElementType, RelationshipType
+from ea.domain.diagrams import MAX_DIAGRAM_NAME_LENGTH, DiagramNode, validate_diagram_name
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     CyclicContainmentError,
     DomainError,
+    DuplicateDiagramError,
     DuplicateElementError,
     ElementLockedError,
     ElementNotFoundError,
@@ -38,12 +41,16 @@ from ea.domain.errors import (
     RowRefusedError,
 )
 from ea.domain.exchange import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_REFUSED_ROWS,
+    MAX_VIEW_BOXES,
     SOURCE_ID,
     Category,
     ConflictPolicy,
     ExchangeElement,
     ExchangeModel,
     ExchangeRelationship,
+    ExchangeView,
     ImportOptions,
     Issue,
     Outcome,
@@ -52,15 +59,17 @@ from ea.domain.exchange import (
     Unreadable,
     accept_element,
     accept_link,
+    validate_box,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping, MutableSet
+    from collections.abc import MutableMapping, MutableSet, Sequence
 
     from ea.domain.ports import ExchangeRepository
     from ea.services.architecture import ArchitectureService
+    from ea.services.diagrams import DiagramService
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +81,7 @@ _CODES: Final[dict[type[Exception], str]] = {
     AddressAlreadyAssignedError: "address_taken",
     ElementNotFoundError: "unknown_end",
     ElementLockedError: "element_locked",
+    DuplicateDiagramError: "duplicate_view",
 }
 _MISSING: Final = object()
 _ADDED: Final = object()
@@ -156,6 +166,8 @@ class _State:
     links: set[LinkKey]
     approved: set[UUID]
     ids: dict[str, UUID] = field(default_factory=dict)
+    #: Diagram names taken: the catalogue's, then this import's (through the ledger).
+    diagram_names: set[str] = field(default_factory=set)
     created: set[ElementKey] = field(default_factory=set)
     added_links: set[LinkKey] = field(default_factory=set)
     #: File identifiers whose row was refused. Deliberately outside the ledger: a refused
@@ -168,10 +180,22 @@ class _State:
 
 
 @dataclass(frozen=True, slots=True)
+class _ViewStep:
+    """A view ready to be written: judged in memory, its boxes already resolved to elements
+    that exist. Writing it can only be refused by the database."""
+
+    view: ExchangeView
+    name: str
+    description: str
+    nodes: tuple[DiagramNode, ...]
+    notes: tuple[Issue, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _Row:
     index: int  # position in the file; the report follows it
     category: Category
-    item: ExchangeElement | ExchangeRelationship  # one or the other, never neither
+    item: ExchangeElement | ExchangeRelationship | _ViewStep
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +205,11 @@ class _Result:
     issues: tuple[Issue, ...] = ()
 
 
-def _located(issue: Issue, item: ExchangeElement | ExchangeRelationship) -> Issue:
+def _located(issue: Issue, item: ExchangeElement | ExchangeRelationship | _ViewStep) -> Issue:
+    if isinstance(item, _ViewStep):
+        return Issue(
+            issue.severity, issue.code, issue.message, item.view.identifier, None, item.view.path
+        )
     return Issue(issue.severity, issue.code, issue.message, item.identifier, item.line, item.path)
 
 
@@ -222,12 +250,19 @@ class ImportRun:
         repository: ExchangeRepository,
         architecture: ArchitectureService,
         options: ImportOptions,
+        *,
+        diagrams: DiagramService | None = None,
     ) -> None:
         self._repository = repository
         self._architecture = architecture
         self._options = options
+        self._diagrams = diagrams
         self._ledger = _Ledger()
         self._results: dict[int, _Result] = {}
+        #: The next position in the report; both phases number their rows from it.
+        self._position = 0
+        #: Diagrams of the catalogue when the import began: `(name, id)`.
+        self._existing_diagrams: list[tuple[str, UUID]] = []
 
     async def run(self, model: ExchangeModel, report: ReportBuilder) -> None:
         known = await self._repository.known_elements()
@@ -247,17 +282,28 @@ class ImportRun:
         async def apply(row: _Row) -> None:
             await self._apply(row, state)
 
-        for refusal in await self._repository.apply_rows(rows, apply):
-            row = rows[refusal.index]
-            item = row.item
-            self._results[row.index] = _Result(
-                row.category, Outcome.REJECTED, (_located(refusal_issue(refusal.error, ""), item),)
+        refusals = await self._repository.apply_rows(rows, apply)
+        for refusal in refusals:
+            self._refuse_row(rows[refusal.index], refusal.error)
+        # The second phase: what hangs on the elements, written once their fate is known.
+        # It shares the first one's budget of refusals.
+        steps = await self._plan_structure(model, state)
+        if steps:
+            more = await self._repository.apply_rows(
+                steps, apply, max_refused=max(0, MAX_REFUSED_ROWS - len(refusals))
             )
+            for refusal in more:
+                self._refuse_row(steps[refusal.index], refusal.error)
         for index in sorted(self._results):
             result = self._results[index]
             report.count(result.category, result.outcome)
             for issue in result.issues:
                 report.add(issue, result.category)
+
+    def _refuse_row(self, row: _Row, error: Exception) -> None:
+        self._results[row.index] = _Result(
+            row.category, Outcome.REJECTED, (_located(refusal_issue(error, ""), row.item),)
+        )
 
     # --- Before the first write: what the domain can judge alone ------------------
 
@@ -269,7 +315,7 @@ class ImportRun:
 
     def _plan(self, model: ExchangeModel, state: _State) -> list[_Row]:
         rows: list[_Row] = []
-        index = 0
+        index = self._position
         ends: dict[str, tuple[ElementType, object]] = {}
         held = _held_by_the_catalogue(state)
         creating: set[ElementKey] = set()
@@ -308,6 +354,7 @@ class ImportRun:
             else:
                 rows.append(_Row(index, Category.RELATIONSHIPS, judged))
             index += 1
+        self._position = index
         return rows
 
     def _reject(
@@ -315,7 +362,7 @@ class ImportRun:
         index: int,
         category: Category,
         issue: Issue,
-        item: ExchangeElement | ExchangeRelationship,
+        item: ExchangeElement | ExchangeRelationship | _ViewStep,
     ) -> None:
         self._results[index] = _Result(category, Outcome.REJECTED, (_located(issue, item),))
 
@@ -373,6 +420,8 @@ class ImportRun:
         touched: set[UUID] = set()
         for row in rows:
             item = row.item
+            if isinstance(item, _ViewStep):
+                continue
             names = (
                 [item.identifier]
                 if isinstance(item, ExchangeElement)
@@ -388,8 +437,10 @@ class ImportRun:
         try:
             if isinstance(row.item, ExchangeElement):
                 result = await self._element(row, row.item, state)
-            else:
+            elif isinstance(row.item, ExchangeRelationship):
                 result = await self._link(row, row.item, state)
+            else:
+                result = await self._view(row, row.item, state)
         except Exception as error:
             if isinstance(row.item, ExchangeElement):
                 state.refused.add(row.item.identifier)
@@ -541,3 +592,178 @@ class ImportRun:
                 self._ledger.discard(state.approved, end)
                 issues_made.append(self._reopened(item))
         return _Result(row.category, Outcome.CREATED, tuple(issues_made))
+
+    # --- What hangs on the elements: views (and, below, packages) -------------------
+
+    async def _plan_structure(self, model: ExchangeModel, state: _State) -> list[_Row]:
+        """Judge in memory everything the second phase will write, then number its rows.
+
+        The first phase is over: which identifiers name an element, and which were refused,
+        is final. So a box is resolved here, to an element that exists, and what the database
+        is left to refuse is a name taken a moment ago or a lost race, not a bad file.
+        """
+        rows: list[_Row] = []
+        rows.extend(await self._plan_views(model, state))
+        return rows
+
+    def _take(self) -> int:
+        index = self._position
+        self._position += 1
+        return index
+
+    async def _plan_views(self, model: ExchangeModel, state: _State) -> list[_Row]:
+        rows: list[_Row] = []
+        if model.views and self._options.with_views and self._diagrams is not None:
+            existing = await self._diagrams.list_diagrams()
+            self._existing_diagrams = [(d.name, d.id) for d in existing]
+            state.diagram_names.update(d.name for d in existing)
+        for view in model.views:
+            index = self._take()
+            if not self._options.with_views or self._diagrams is None:
+                issues: tuple[Issue, ...] = ()
+                if self._options.with_views:
+                    issues = (
+                        Issue(
+                            Severity.INFO,
+                            "views_not_available",
+                            "this deployment cannot store views; ignored",
+                            view.identifier,
+                            None,
+                            view.path,
+                        ),
+                    )
+                self._results[index] = _Result(Category.VIEWS, Outcome.IGNORED, issues)
+                continue
+            judged = self._judge_view(view, state)
+            if isinstance(judged, Issue):
+                self._results[index] = _Result(Category.VIEWS, Outcome.REJECTED, (judged,))
+            else:
+                rows.append(_Row(index, Category.VIEWS, judged))
+        return rows
+
+    @staticmethod
+    def _judge_view(view: ExchangeView, state: _State) -> Issue | _ViewStep:
+        """Why this view can never be written, or the view as the diagram service may take it."""
+
+        def note(severity: Severity, code: str, message: str) -> Issue:
+            return Issue(severity, code, message, view.identifier, None, view.path)
+
+        if len(view.boxes) > MAX_VIEW_BOXES:
+            return note(
+                Severity.ERROR, "view_too_large", f"a view has at most {MAX_VIEW_BOXES} boxes"
+            )
+        name, description = view.name.strip(), view.description.strip()
+        if not name:
+            return note(Severity.ERROR, "blank_name", "a view needs a name")
+        if "\x00" in name or "\x00" in description:
+            return note(Severity.ERROR, "nul_character", "a view cannot contain a NUL character")
+        if len(description) > MAX_DESCRIPTION_LENGTH:
+            return note(
+                Severity.ERROR, "description_too_long", "the description of a view is too long"
+            )
+        try:
+            name = validate_diagram_name(name)
+        except ValueError:
+            return note(Severity.ERROR, "name_too_long", "the name of a view is too long")
+        notes: list[Issue] = list(_ignored_notes(view))
+        nodes: list[DiagramNode] = []
+        placed: set[UUID] = set()
+        for box in view.boxes:
+            target = None if box.element in state.refused else state.resolve(box.element)
+            if target is None:
+                notes.append(
+                    note(
+                        Severity.WARNING,
+                        "box_omitted",
+                        "a box shows an element that was not imported; omitted",
+                    )
+                )
+                continue
+            try:
+                validate_box(box)
+            except RowRefusedError as refusal:
+                notes.append(
+                    note(Severity.WARNING, refusal.code, f"{refusal}; this box is omitted")
+                )
+                continue
+            if target in placed:
+                notes.append(
+                    note(
+                        Severity.WARNING,
+                        "box_duplicate",
+                        "an element is drawn twice on this view; the first box is kept",
+                    )
+                )
+                continue
+            placed.add(target)
+            nodes.append(DiagramNode(target, box.x, box.y, box.width, box.height))
+        return _ViewStep(view, name, description, tuple(nodes), tuple(notes))
+
+    async def _view(self, row: _Row, step: _ViewStep, state: _State) -> _Result:
+        """Write a view, or find it already there: same name (or its import-suffixed copy) and
+        the same boxes. Anything else gets the first free name, ` (import N)`."""
+        diagrams = self._diagrams
+        if diagrams is None:  # pragma: no cover - a step exists only when there is a service
+            msg = "no diagram service"
+            raise RuntimeError(msg)
+        ours = _layout_key(step.nodes)
+        family = re.compile(r"\A" + re.escape(step.name) + r"( \(import [0-9]+\))?\Z")
+        for name, diagram_id in self._existing_diagrams:
+            if (
+                family.fullmatch(name)
+                and _layout_key((await diagrams.open(diagram_id)).nodes) == ours
+            ):
+                return _Result(row.category, Outcome.REUSED, step.notes)
+        name = _free_name(step.name, state.diagram_names)
+        diagram = await diagrams.create(name=name, description=step.description)
+        self._ledger.add(state.diagram_names, name)
+        await diagrams.replace_layout(diagram.id, list(step.nodes))
+        return _Result(row.category, Outcome.CREATED, step.notes)
+
+
+def _ignored_notes(view: ExchangeView) -> tuple[Issue, ...]:
+    notes: list[Issue] = []
+    if view.connections_ignored:
+        notes.append(
+            Issue(
+                Severity.INFO,
+                "connections_ignored",
+                f"{view.connections_ignored} connection(s) not imported: "
+                "a view link is never a fact",
+                view.identifier,
+                None,
+                view.path,
+            )
+        )
+    if view.shapes_ignored:
+        notes.append(
+            Issue(
+                Severity.INFO,
+                "shapes_ignored",
+                f"{view.shapes_ignored} container(s) or label(s) not imported",
+                view.identifier,
+                None,
+                view.path,
+            )
+        )
+    return tuple(notes)
+
+
+def _layout_key(nodes: Sequence[DiagramNode]) -> frozenset[tuple[UUID, int, int, int, int]]:
+    """A layout as an exchange file can say it: whole units, one box per element."""
+    return frozenset(
+        (n.element_id, round(n.x), round(n.y), round(n.width), round(n.height)) for n in nodes
+    )
+
+
+_NAME_ATTEMPTS: Final = 1_000
+
+
+def _free_name(base: str, taken: set[str]) -> str:
+    """`base`, or `base (import 2)`, `(import 3)`... cut so that the whole fits a diagram name."""
+    for attempt in range(1, _NAME_ATTEMPTS):
+        suffix = "" if attempt == 1 else f" (import {attempt})"
+        name = base[: MAX_DIAGRAM_NAME_LENGTH - len(suffix)] + suffix
+        if name not in taken:
+            return name
+    raise RowRefusedError("name_exhausted", "no free name for this view")

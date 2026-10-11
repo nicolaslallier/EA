@@ -8,6 +8,7 @@ and carries values between a file and the service (docs/adr/0048).
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
@@ -347,6 +348,23 @@ MAX_LIVE_NODES: Final = 100_000
 MAX_SILENT_BYTES: Final = 1024 * 1024
 
 
+#: Views. A view a person can still read holds 500 boxes (`api/schemas.MAX_DIAGRAM_NODES`, tied
+#: by a test); the rest bound what a file may make the reader hold.
+MAX_VIEW_BOXES: Final = 500
+#: Levels of containers inside a view.
+MAX_VIEW_DEPTH: Final = 200
+#: Nodes (boxes, containers, labels, connections) of one view: past it, it is not a diagram.
+MAX_NODES_PER_VIEW: Final = 10_000
+MAX_EXCHANGE_VIEWS: Final = 5_000
+#: Boxes of all the views of a file, held until the import judges them.
+MAX_FILE_VIEW_BOXES: Final = 100_000
+#: How far from the origin a box may sit, and how small and large it may be: the bounds of
+#: `api/schemas` (`MAX_COORDINATE`, `MIN_BOX_SIZE`, `MAX_BOX_SIZE`), tied by a test.
+MAX_VIEW_COORDINATE: Final = 100_000
+MIN_VIEW_BOX_SIZE: Final = 20
+MAX_VIEW_BOX_SIZE: Final = 5_000
+
+
 class Severity(StrEnum):
     ERROR = "error"
     WARNING = "warning"
@@ -393,6 +411,7 @@ class ExchangeModel:
     relationships: tuple[ExchangeRelationship, ...] = ()
     unreadable: tuple[Unreadable, ...] = ()
     issues: tuple[Issue, ...] = ()
+    views: tuple[ExchangeView, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +465,9 @@ def fold_properties(pairs: Iterable[tuple[str, str]]) -> FoldedProperties:
 
 # --- Importing -----------------------------------------------------------------
 
+#: Refused rows an import tolerates (each costs a replay of the rows before it in its batch):
+#: shared by the two phases of an import, the elements and links first, then the structure.
+MAX_REFUSED_ROWS: Final = 100
 #: Lines of the report kept per category; the counts stay exact whatever is cut.
 MAX_REPORT_ISSUES: Final = 1_000
 #: The HTTP schema's bounds (`api/schemas.py`), restated here because the domain may not
@@ -474,6 +496,8 @@ class ImportOptions:
     strict: bool = False
     #: CSV only: give back a cell the export had prefixed with `'` (docs/adr/0051).
     safe_cells: bool = True
+    #: XML only: recreate the views of the file (their boxes; never a link).
+    with_views: bool = True
 
 
 def digest_of(*parts: bytes) -> str:
@@ -690,6 +714,22 @@ def validate_link(
         )
     except IllegalRelationshipError as refusal:
         raise RowRefusedError("relationship_not_allowed", str(refusal)) from None
+
+
+def validate_box(box: ExchangeBox) -> None:
+    """Refuse a box the HTTP layout would refuse: a coordinate or a size that is not a finite
+    number inside the bounds. `float()` reads `nan`, `inf` and `1e308`; none is a place."""
+    for value in (box.x, box.y):
+        if not math.isfinite(value) or abs(value) > MAX_VIEW_COORDINATE:
+            raise RowRefusedError(
+                "invalid_coordinate", f"a box sits within {MAX_VIEW_COORDINATE} units of the origin"
+            )
+    for value in (box.width, box.height):
+        if not math.isfinite(value) or not MIN_VIEW_BOX_SIZE <= value <= MAX_VIEW_BOX_SIZE:
+            raise RowRefusedError(
+                "invalid_box_size",
+                f"a box is between {MIN_VIEW_BOX_SIZE} and {MAX_VIEW_BOX_SIZE} units on each side",
+            )
 
 
 def accept_element(item: ExchangeElement) -> ExchangeElement:

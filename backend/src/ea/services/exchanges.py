@@ -55,6 +55,7 @@ from ea.services.exchange_import import ImportRun
 if TYPE_CHECKING:
     from ea.domain.ports import ExchangeRepository, ExportSnapshot
     from ea.services.architecture import ArchitectureService
+    from ea.services.diagrams import DiagramService
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +115,10 @@ class ExchangeService:
         clock: Clock = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
         parser: Callable[[bytes], ExchangeModel] = parse_model,
+        diagrams: DiagramService | None = None,
     ) -> None:
         self._parse = parser
+        self._diagrams = diagrams
         self._repository = repository
         self._architecture = architecture
         self._max_bytes = max_bytes
@@ -150,7 +153,9 @@ class ExchangeService:
         async with self._repository.transaction(commit=not options.dry_run) as transaction:
             quiet = names_in_logs.set(False)  # the rows' log lines must not quote the file
             try:
-                await ImportRun(self._repository, self._architecture, options).run(model, report)
+                await ImportRun(
+                    self._repository, self._architecture, options, diagrams=self._diagrams
+                ).run(model, report)
             finally:
                 names_in_logs.reset(quiet)
             if options.strict and report.has_rejections():

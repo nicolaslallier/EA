@@ -349,3 +349,53 @@ def test_the_three_files_are_named_in_a_fixed_order() -> None:
     from ea.domain.exchange import CSV_FILES
 
     assert CSV_FILES == ("elements.csv", "relations.csv", "properties.csv")
+
+
+class TestBoxes:
+    @pytest.mark.parametrize(
+        ("x", "y", "w", "h", "code"),
+        [
+            (float("nan"), 0, 100, 50, "invalid_coordinate"),
+            (0, float("inf"), 100, 50, "invalid_coordinate"),
+            (-float("inf"), 0, 100, 50, "invalid_coordinate"),
+            (1e308, 0, 100, 50, "invalid_coordinate"),
+            (0, -100_001, 100, 50, "invalid_coordinate"),
+            (0, 0, 0, 50, "invalid_box_size"),
+            (0, 0, 100, -1, "invalid_box_size"),
+            (0, 0, 19, 50, "invalid_box_size"),
+            (0, 0, 100, 5_001, "invalid_box_size"),
+            (0, 0, float("nan"), 50, "invalid_box_size"),
+            (0, 0, 1e308, 50, "invalid_box_size"),
+        ],
+    )
+    def test_a_box_outside_the_bounds_is_refused_with_a_stable_code(
+        self, x: float, y: float, w: float, h: float, code: str
+    ) -> None:
+        from ea.domain.exchange import ExchangeBox, validate_box
+
+        with pytest.raises(RowRefusedError) as raised:
+            validate_box(ExchangeBox("a", x, y, w, h))
+
+        assert raised.value.code == code
+
+    def test_the_bounds_themselves_are_allowed(self) -> None:
+        from ea.domain.exchange import ExchangeBox, validate_box
+
+        validate_box(ExchangeBox("a", -100_000, 100_000, 20, 5_000))
+
+    def test_the_bounds_are_the_ones_the_http_layout_declares(self) -> None:
+        from ea.api.schemas import (
+            MAX_BOX_SIZE,
+            MAX_COORDINATE,
+            MAX_DIAGRAM_NODES,
+            MIN_BOX_SIZE,
+        )
+        from ea.domain.exchange import (
+            MAX_VIEW_BOX_SIZE,
+            MAX_VIEW_BOXES,
+            MAX_VIEW_COORDINATE,
+            MIN_VIEW_BOX_SIZE,
+        )
+
+        assert (MAX_VIEW_BOXES, MAX_VIEW_COORDINATE) == (MAX_DIAGRAM_NODES, MAX_COORDINATE)
+        assert (MIN_VIEW_BOX_SIZE, MAX_VIEW_BOX_SIZE) == (MIN_BOX_SIZE, MAX_BOX_SIZE)

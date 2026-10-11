@@ -141,9 +141,15 @@ class PostgresExchangeRepository:
         return shared_transaction(self._sessions, commit=commit, exclusive=True)
 
     async def apply_rows[Row](
-        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+        self,
+        rows: Sequence[Row],
+        apply: Callable[[Row], Awaitable[None]],
+        *,
+        max_refused: int | None = None,
     ) -> list[RowRefusal]:
-        return await apply_rows(rows, apply)
+        if max_refused is None:
+            return await apply_rows(rows, apply)
+        return await apply_rows(rows, apply, max_refused=max_refused)
 
     @staticmethod
     def _inside_a_transaction() -> None:

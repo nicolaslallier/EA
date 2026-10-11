@@ -39,6 +39,7 @@ from ea.domain.errors import (
     TooManyRefusedRowsError,
     WriteConflictError,
 )
+from ea.domain.exchange import MAX_REFUSED_ROWS
 from ea.domain.ports import RowRefusal, Transaction
 
 if TYPE_CHECKING:
@@ -55,8 +56,6 @@ IMPORT_LOCK: Final = 0x45414958
 #: it ends, even once released, and PostgreSQL stops tracking sub-transactions at 64 per
 #: transaction (it then slows every other session's snapshots): 50 000 rows / 1 000 = 50.
 BATCH_SIZE: Final = 1_000
-#: Refused rows an import tolerates. Each costs a replay of the rows before it in its batch.
-MAX_REFUSED_ROWS: Final = 100
 
 #: What a row can be refused with. Anything else (a lost lock, a missing role) is not its fault.
 _ROW_REFUSALS: Final = (DomainError, IntegrityError, DataError)

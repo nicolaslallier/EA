@@ -248,6 +248,7 @@ def _lifespan(
             metadata_store = file_metadata
             audit_store = audit
             baseline_store = baselines
+            exchange_store: ExchangeRepository | None = None
             if settings.postgres_enabled:
                 engine = create_api_engine(settings)
                 stack.push_async_callback(engine.dispose)
@@ -288,11 +289,7 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
-                    app.state.exchange_service = ExchangeService(
-                        exchanges or PostgresExchangeRepository(app.state.db_sessions),
-                        app.state.architecture_service,
-                        max_bytes=settings.exchange_max_bytes,
-                    )
+                    exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
@@ -324,6 +321,13 @@ def _lifespan(
             if diagram_store is not None:
                 app.state.diagram_service = DiagramService(
                     diagram_store, architecture_service_of(app), packages=package_store
+                )
+            if exchange_store is not None:
+                app.state.exchange_service = ExchangeService(
+                    exchange_store,
+                    architecture_service_of(app),
+                    diagrams=getattr(app.state, "diagram_service", None),
+                    max_bytes=settings.exchange_max_bytes,
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -584,13 +588,16 @@ def create_app(
             app.state.saved_query_service = SavedQueryService(
                 queries, packages, architecture_service
             )
-        if exchanges is not None:
-            app.state.exchange_service = ExchangeService(
-                exchanges, architecture_service, max_bytes=settings.exchange_max_bytes
-            )
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
                 diagrams, architecture_service, packages=packages
+            )
+        if exchanges is not None:
+            app.state.exchange_service = ExchangeService(
+                exchanges,
+                architecture_service,
+                diagrams=getattr(app.state, "diagram_service", None),
+                max_bytes=settings.exchange_max_bytes,
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
