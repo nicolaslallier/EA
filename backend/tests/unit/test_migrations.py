@@ -317,3 +317,19 @@ def test_the_audit_table_names_its_entity_without_a_foreign_key() -> None:
         "ix_audit_events_actor_sub",
     }
     assert table.primary_key.name == "pk_audit_events"
+
+
+def test_revision_0012_follows_0011() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0012")
+
+    assert revision is not None
+    assert revision.down_revision == "0011"
+
+
+def test_a_baseline_references_nothing_but_its_own_header() -> None:
+    """A copy that outlives its elements, packages and diagrams (docs/adr/0045)."""
+    for name in ("baseline_elements", "baseline_relationships", "baseline_boxes"):
+        (foreign_key,) = Base.metadata.tables[name].foreign_keys
+        assert foreign_key.column.table.name == "baselines"
+        assert foreign_key.ondelete == "CASCADE"
+    assert not Base.metadata.tables["baselines"].foreign_keys
