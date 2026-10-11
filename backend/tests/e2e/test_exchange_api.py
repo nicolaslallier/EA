@@ -6,7 +6,7 @@ import hashlib
 import io
 import zipfile
 from collections.abc import AsyncIterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -21,6 +21,7 @@ from tests.conftest import (
     InMemoryExchange,
     InMemoryPackages,
     InMemoryRepository,
+    InMemorySavedQueries,
     StaticVerifier,
     a_reader,
     an_editor,
@@ -36,6 +37,7 @@ async def client(
     exchange_store: InMemoryExchange,
     diagrams: InMemoryDiagrams,
     packages: InMemoryPackages,
+    saved_queries: InMemorySavedQueries,
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         Settings(debug=True, auth_enabled=False),
@@ -43,6 +45,7 @@ async def client(
         exchanges=exchange_store,  # type: ignore[arg-type]
         diagrams=diagrams,  # type: ignore[arg-type]
         packages=packages,  # type: ignore[arg-type]
+        queries=saved_queries,  # type: ignore[arg-type]
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -817,3 +820,105 @@ class TestPackagesOverHttp:
         )
 
         assert response.status_code == 422
+
+
+class TestScopesOverHttp:
+    async def test_the_model_export_declares_no_skipped_view(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.get("/exchanges/export")
+
+        assert response.headers["x-export-skipped-views"] == "0"
+
+    async def test_a_package_scope_exports_the_package_and_declares_the_views_it_left(
+        self,
+        client: httpx.AsyncClient,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+    ) -> None:
+        import dataclasses
+
+        top = (await client.post("/packages", json={"name": "Top"})).json()["id"]
+        inside = await service.create_element(element_type=E.NODE, name="in")
+        outside = await service.create_element(element_type=E.NODE, name="out")
+        repository.elements[inside.id] = dataclasses.replace(inside, package_id=UUID(top))
+        view = (await client.post("/diagrams", json={"name": "straddling"})).json()["id"]
+        nodes = [
+            {"element_id": str(e.id), "x": 0, "y": 0, "width": 100, "height": 50}
+            for e in (inside, outside)
+        ]
+        await client.put(f"/diagrams/{view}/layout", json={"nodes": nodes})
+
+        response = await client.get(
+            "/exchanges/export", params={"scope": "package", "package_id": top}
+        )
+
+        assert response.status_code == 200
+        assert response.headers["x-export-skipped-views"] == "1"
+        assert "in" in response.text and ">out<" not in response.text
+        assert "-package-" in response.headers["content-disposition"]
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"scope": "package"},
+            {"scope": "query"},
+            {"scope": "model", "package_id": "00000000-0000-0000-0000-000000000001"},
+            {"scope": "package", "package_id": "00000000-0000-0000-0000-000000000001"},
+            {"scope": "query", "query_id": "00000000-0000-0000-0000-000000000001"},
+            {
+                "scope": "package",
+                "package_id": "00000000-0000-0000-0000-000000000001",
+                "query_id": "00000000-0000-0000-0000-000000000002",
+            },
+        ],
+    )
+    async def test_an_ill_formed_or_unknown_scope_is_a_typed_422(
+        self, client: httpx.AsyncClient, params: dict[str, str]
+    ) -> None:
+        response = await client.get("/exchanges/export", params=params)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "unknown_scope"
+
+    async def test_an_id_that_is_not_a_uuid_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.get(
+            "/exchanges/export", params={"scope": "package", "package_id": "not-a-uuid"}
+        )
+
+        assert response.status_code == 422
+
+    async def test_a_saved_query_that_cannot_be_read_is_a_422_not_a_500(
+        self, client: httpx.AsyncClient, saved_queries: InMemorySavedQueries
+    ) -> None:
+        saved = (
+            await client.post(
+                "/queries",
+                json={
+                    "name": "q",
+                    "query": {
+                        "version": 1,
+                        "element_types": ["node"],
+                        "layers": [],
+                        "text": None,
+                        "package_id": None,
+                        "include_subpackages": True,
+                        "root_only": False,
+                        "properties": [],
+                        "relations": [],
+                        "order": "name",
+                        "limit": 50,
+                        "offset": 0,
+                    },
+                },
+            )
+        ).json()
+        saved_queries.corrupt.add(UUID(saved["id"]))
+
+        response = await client.get(
+            "/exchanges/export", params={"scope": "query", "query_id": saved["id"]}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "unknown_scope"
+        assert "version" not in response.text

@@ -23,6 +23,7 @@ from ea.domain.errors import DomainError, IllegalRelationshipError, RowRefusedEr
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, is_property_key
 from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, validate_package_name
+from ea.domain.query import ElementQuery
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
 EXPORT_PAGE_SIZE: Final = 1_000
@@ -61,6 +62,8 @@ class ExchangeFormat(StrEnum):
 
 class ScopeKind(StrEnum):
     MODEL = "model"
+    PACKAGE = "package"
+    QUERY = "query"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,12 @@ class ExportScope:
     kind: ScopeKind = ScopeKind.MODEL
     package_id: UUID | None = None
     query_id: UUID | None = None
+    #: `package`: the sub-packages come too (the default), or only the package itself.
+    include_subpackages: bool = True
+    #: What the service resolved from the ids above — never sent by a client: the packages whose
+    #: elements are in scope, or the saved query's filter. The snapshot reads these.
+    package_ids: frozenset[UUID] | None = None
+    query: ElementQuery | None = None
 
     @property
     def label(self) -> str:

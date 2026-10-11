@@ -1284,6 +1284,27 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
     return product / norms if norms else 0.0
 
 
+def scoped_elements(repository: InMemoryRepository, scope: ExportScope) -> set[UUID] | None:
+    """The ids a scope selects, or None for the whole model — what the SQL `WHERE` selects.
+
+    A saved query is applied for the criteria the tests use (types, layers, text, root);
+    the rest of `ElementQuery` is covered against PostgreSQL.
+    """
+    if scope.package_ids is not None:
+        return {e.id for e in repository.elements.values() if e.package_id in scope.package_ids}
+    if scope.query is not None:
+        query = scope.query
+        return {
+            e.id
+            for e in repository.elements.values()
+            if (not query.element_types or e.element_type in query.element_types)
+            and (not query.layers or e.element_type.layer in query.layers)
+            and (not query.text or query.text.lower() in e.name.lower())
+            and (not query.root_only or e.package_id is None)
+        }
+    return None
+
+
 class _MemorySnapshot:
     """The pages the PostgreSQL snapshot would give, sorted the way its SQL sorts."""
 
@@ -1292,16 +1313,22 @@ class _MemorySnapshot:
         repository: InMemoryRepository,
         diagrams: InMemoryDiagrams | None = None,
         packages: InMemoryPackages | None = None,
+        scope: ExportScope | None = None,
     ) -> None:
         self._repository = repository
         self._diagrams = diagrams
         self._packages = packages
+        self._scope = scope or ExportScope()
+        self.inside = scoped_elements(repository, self._scope)
 
     async def packages(self) -> tuple[PackageNode, ...]:
         if self._packages is None:
             return ()
+        wanted = self._scope.package_ids
         return tuple(
-            PackageNode(p.id, p.parent_id, p.name) for p in self._packages.packages.values()
+            PackageNode(p.id, p.parent_id, p.name)
+            for p in self._packages.packages.values()
+            if wanted is None or p.id in wanted
         )
 
     @staticmethod
@@ -1310,7 +1337,11 @@ class _MemorySnapshot:
 
     async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]:
         ordered = sorted(
-            self._repository.elements.values(),
+            (
+                e
+                for e in self._repository.elements.values()
+                if self.inside is None or e.id in self.inside
+            ),
             key=lambda e: (e.element_type.value, e.name, self._identifier(e)),
         )
         return tuple(ordered[offset : offset + limit])
@@ -1331,7 +1362,15 @@ class _MemorySnapshot:
                 str(link.id),
             )
 
-        ordered = sorted(self._repository.relationships.values(), key=key)
+        ordered = sorted(
+            (
+                link
+                for link in self._repository.relationships.values()
+                if self.inside is None
+                or (link.source_id in self.inside and link.target_id in self.inside)
+            ),
+            key=key,
+        )
         return tuple(ordered[offset : offset + limit])
 
     async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
@@ -1339,7 +1378,15 @@ class _MemorySnapshot:
             return ()
         diagrams = self._diagrams
         elements = self._repository.elements
-        ordered = sorted(diagrams.diagrams.values(), key=lambda d: (d.name, str(d.id)))
+        ordered = sorted(
+            (
+                d
+                for d in diagrams.diagrams.values()
+                if self.inside is None
+                or all(n.element_id in self.inside for n in diagrams.nodes.get(d.id, ()))
+            ),
+            key=lambda d: (d.name, str(d.id)),
+        )
 
         def boxes(diagram_id: UUID) -> tuple[ExportedBox, ...]:
             placed = sorted(
@@ -1391,7 +1438,7 @@ class InMemoryExchange:
 
     @asynccontextmanager
     async def snapshot(self, scope: ExportScope) -> AsyncIterator[_MemorySnapshot]:
-        yield _MemorySnapshot(self.repository, self.diagrams, self.packages)
+        yield _MemorySnapshot(self.repository, self.diagrams, self.packages, scope)
 
     def _copy(self) -> dict[str, Any]:
         """Everything an import may write: the graph, the audit log, the views, the packages."""
@@ -1485,6 +1532,16 @@ class InMemoryExchange:
         return frozenset(
             (link.relationship_type, link.source_id, link.target_id)
             for link in self.repository.relationships.values()
+        )
+
+    async def count_skipped_views(self, scope: ExportScope) -> int:
+        inside = scoped_elements(self.repository, scope)
+        if inside is None or self.diagrams is None:
+            return 0
+        diagrams = self.diagrams
+        return sum(
+            any(n.element_id not in inside for n in diagrams.nodes.get(d.id, ()))
+            for d in diagrams.diagrams.values()
         )
 
     async def lock_package_tree(self) -> None:
@@ -1764,10 +1821,19 @@ def exchange_store(
 
 @pytest.fixture
 def exchange_service(
-    exchange_store: InMemoryExchange, service: ArchitectureService, diagram_service: DiagramService
+    exchange_store: InMemoryExchange,
+    service: ArchitectureService,
+    diagram_service: DiagramService,
+    package_service: PackageService,
+    saved_query_service: SavedQueryService,
 ) -> ExchangeService:
     return ExchangeService(
-        exchange_store, service, diagrams=diagram_service, clock=lambda: FIXED_NOW
+        exchange_store,
+        service,
+        diagrams=diagram_service,
+        packages=package_service,
+        queries=saved_query_service,
+        clock=lambda: FIXED_NOW,
     )
 
 

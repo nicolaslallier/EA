@@ -816,6 +816,10 @@ class ExchangeRepository(Protocol):
         """`(type, source, target)` of every link, to tell a new link from an existing one."""
         ...
 
+    async def count_skipped_views(self, scope: ExportScope) -> int:
+        """Views a scoped export leaves out because a box shows an element outside it."""
+        ...
+
     async def lock_package_tree(self) -> None:
         """Take the package tree's lock, before any element lock, as a package write does."""
         ...

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, Text, cast, func, select
+from sqlalchemy import ColumnElement, Text, cast, exists, func, select
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
@@ -22,7 +22,9 @@ from ea.db.models.package import PackageRecord
 from ea.db.unit_of_work import apply_rows, in_unit, reading, shared_transaction
 from ea.domain.archimate import RelationshipType
 from ea.domain.exchange import SOURCE_ID, ExportedBox, ExportedView, PackageNode
+from ea.domain.ports import ElementFilter
 from ea.repositories.architecture_store import (
+    _matching,
     element_from_row,
     lock_elements,
     relationship_from_row,
@@ -52,13 +54,37 @@ def _identifier(record: Any) -> ColumnElement[str]:
     return func.coalesce(declared, func.concat("id-", cast(record.id, Text)))
 
 
+def _scope_clauses(scope: ExportScope) -> list[ColumnElement[bool]]:
+    """What an element must satisfy to be in the export: the package subtree resolved by the
+    service, or the saved query's filter through the one SQL path every listing uses."""
+    if scope.package_ids is not None:
+        return [ElementRecord.package_id.in_(scope.package_ids)]
+    if scope.query is not None:
+        return _matching(ElementFilter.from_query(scope.query))
+    return []
+
+
+def _leaving_the_scope(inside: Any) -> ColumnElement[bool]:
+    """A diagram with a box on an element that is not in scope."""
+    return exists().where(
+        DiagramNodeRecord.diagram_id == DiagramRecord.id,
+        DiagramNodeRecord.element_id.not_in(inside),
+    )
+
+
 class _Snapshot:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, scope: ExportScope) -> None:
         self._session = session
+        self._scope = scope
+        self._clauses = _scope_clauses(scope)
+
+    def _inside(self) -> Any:
+        return select(ElementRecord.id).where(*self._clauses)
 
     async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]:
         statement = (
             select(ElementRecord)
+            .where(*self._clauses)
             .order_by(ElementRecord.element_type, ElementRecord.name, _identifier(ElementRecord))
             .offset(offset)
             .limit(limit)
@@ -71,6 +97,8 @@ class _Snapshot:
             select(RelationshipRecord)
             .join(source, source.id == RelationshipRecord.source_id)
             .join(target, target.id == RelationshipRecord.target_id)
+            # A link is exported only if both of its ends are: never an end outside the scope.
+            .where(*self._ends_inside())
             .order_by(
                 source.element_type,
                 source.name,
@@ -86,16 +114,28 @@ class _Snapshot:
         )
         return tuple(relationship_from_row(row) for row in await self._session.scalars(statement))
 
+    def _ends_inside(self) -> list[ColumnElement[bool]]:
+        if not self._clauses:
+            return []
+        inside = self._inside()
+        return [
+            RelationshipRecord.source_id.in_(inside),
+            RelationshipRecord.target_id.in_(inside),
+        ]
+
     async def packages(self) -> tuple[PackageNode, ...]:
-        rows = await self._session.execute(
-            select(PackageRecord.id, PackageRecord.parent_id, PackageRecord.name)
-        )
+        statement = select(PackageRecord.id, PackageRecord.parent_id, PackageRecord.name)
+        if self._scope.package_ids is not None:
+            statement = statement.where(PackageRecord.id.in_(self._scope.package_ids))
+        rows = await self._session.execute(statement)
         return tuple(PackageNode(*row) for row in rows)
 
     async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
+        whole = [~_leaving_the_scope(self._inside())] if self._clauses else []
         diagrams = (
             await self._session.execute(
                 select(DiagramRecord.id, DiagramRecord.name, DiagramRecord.description)
+                .where(*whole)
                 .order_by(DiagramRecord.name, DiagramRecord.id)
                 .offset(offset)
                 .limit(limit)
@@ -133,7 +173,6 @@ class PostgresExchangeRepository:
         # ponytail: OFFSET/LIMIT inside one snapshot — O(n²/page), fine for a catalogue of
         # tens of thousands of rows; switch to a keyset when it grows. The scope is
         # read from lot 4 on; this lot serves the whole model.
-        del scope
         async with self._sessions() as session:
             await session.connection(
                 execution_options={
@@ -143,7 +182,18 @@ class PostgresExchangeRepository:
             )
             # A snapshot starts at the first statement, not at `connection()`.
             await session.execute(select(1))
-            yield _Snapshot(session)
+            yield _Snapshot(session, scope)
+
+    async def count_skipped_views(self, scope: ExportScope) -> int:
+        clauses = _scope_clauses(scope)
+        if not clauses:
+            return 0
+        inside = select(ElementRecord.id).where(*clauses)
+        statement = (
+            select(func.count()).select_from(DiagramRecord).where(_leaving_the_scope(inside))
+        )
+        async with self._sessions() as session:
+            return int((await session.execute(statement)).scalar_one())
 
     def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
         return shared_transaction(self._sessions, commit=commit, exclusive=True)

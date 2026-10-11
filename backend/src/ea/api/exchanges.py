@@ -65,9 +65,19 @@ def _scope_of(name: str) -> ScopeKind:
 async def export_model(
     exchanges: Exchanges,
     export_format: Annotated[ExchangeFormat, Query(alias="format")] = ExchangeFormat.ARCHIMATE_XML,
-    scope: Annotated[str, Query(description="What to export: `model` (the whole catalogue).")] = (
-        ScopeKind.MODEL.value
-    ),
+    scope: Annotated[
+        str,
+        Query(description="What to export: `model` (the whole catalogue), `package` or `query`."),
+    ] = (ScopeKind.MODEL.value),
+    package_id: Annotated[
+        UUID | None, Query(description="`scope=package`: the package to export.")
+    ] = None,
+    query_id: Annotated[
+        UUID | None, Query(description="`scope=query`: the saved query whose elements to export.")
+    ] = None,
+    include_subpackages: Annotated[
+        bool, Query(description="`scope=package`: the sub-packages come too.")
+    ] = True,
     with_views: Annotated[bool, Query()] = True,
     safe_cells: Annotated[
         bool,
@@ -83,7 +93,12 @@ async def export_model(
     export = await exchanges.export(
         ExportRequest(
             format=export_format,
-            scope=ExportScope(kind=_scope_of(scope)),
+            scope=ExportScope(
+                kind=_scope_of(scope),
+                package_id=package_id,
+                query_id=query_id,
+                include_subpackages=include_subpackages,
+            ),
             with_views=with_views,
             safe_cells=safe_cells,
         )
@@ -94,6 +109,7 @@ async def export_model(
         headers={
             "Content-Disposition": attachment(export.filename),
             "X-Content-Type-Options": "nosniff",
+            "X-Export-Skipped-Views": str(export.skipped_views),
             **({"X-Export-Cells": export.cells} if export.cells else {}),
         },
     )

@@ -30,8 +30,10 @@ from ea.domain.exchange import (
     ExportScope,
     ImportContent,
     ImportOptions,
+    ScopeKind,
 )
 from ea.domain.ports import ElementFilter
+from ea.domain.query import ElementQuery
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
@@ -552,3 +554,209 @@ class TestOrganizationsInTheExport:
         root = DefusedET.fromstring(await exported(exchange_service))
 
         assert root.find("x:organizations", NS) is None
+
+
+class TestScopes:
+    async def arranged(  # type: ignore[no-untyped-def]
+        self, service, package_service, repository
+    ):
+        top = (await package_service.create(name="Top")).package.id
+        child = (await package_service.create(name="Child", parent_id=top)).package.id
+        other = (await package_service.create(name="Other")).package.id
+        made = {}
+        for name, package in (("in", top), ("deep", child), ("out", other), ("loose", None)):
+            element = await service.create_element(
+                element_type=E.NODE, name=name, properties={SOURCE_ID: f"n-{name}"}
+            )
+            repository.elements[element.id] = dataclasses.replace(element, package_id=package)
+            made[name] = repository.elements[element.id]
+        return top, child, made
+
+    def names(self, root) -> set[str]:  # type: ignore[no-untyped-def]
+        return {
+            e.find("x:name", NS).text  # type: ignore[union-attr]
+            for e in root.findall("x:elements/x:element", NS)
+        }
+
+    async def test_a_package_scope_exports_its_subtree_and_the_links_inside_it(
+        self, service, package_service, exchange_service, repository
+    ) -> None:  # type: ignore[no-untyped-def]
+        top, _, made = await self.arranged(service, package_service, repository)
+        await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=made["in"].id, target_id=made["deep"].id
+        )
+        await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=made["in"].id, target_id=made["out"].id
+        )
+
+        request = ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=top))
+        root = DefusedET.fromstring(await exported(exchange_service, request))
+
+        assert self.names(root) == {"in", "deep"}
+        links = root.findall("x:relationships/x:relationship", NS)
+        assert len(links) == 1  # the one with an end outside the scope is not written
+        assert {link.get("source") for link in links} == {"n-in"}
+        assert root.find("x:organizations/x:item/x:label", NS).text == "Top"  # type: ignore[union-attr]
+        assert root.find("x:organizations/x:item/x:item/x:label", NS).text == "Child"  # type: ignore[union-attr]
+        assert len(root.findall("x:organizations/x:item", NS)) == 1  # nothing of "Other"
+
+    async def test_without_the_subpackages_only_that_package_is_exported(
+        self, service, package_service, exchange_service, repository
+    ) -> None:  # type: ignore[no-untyped-def]
+        top, _, _ = await self.arranged(service, package_service, repository)
+
+        request = ExportRequest(
+            scope=ExportScope(ScopeKind.PACKAGE, package_id=top, include_subpackages=False)
+        )
+        root = DefusedET.fromstring(await exported(exchange_service, request))
+
+        assert self.names(root) == {"in"}
+
+    async def test_a_view_with_a_box_outside_the_scope_is_left_out_and_counted(
+        self, service, package_service, diagram_service, exchange_service, repository
+    ) -> None:  # type: ignore[no-untyped-def]
+        top, _, made = await self.arranged(service, package_service, repository)
+        whole = await diagram_service.create(name="whole")
+        await diagram_service.replace_layout(whole.id, [DiagramNode(made["in"].id, 0, 0)])
+        straddling = await diagram_service.create(name="straddling")
+        await diagram_service.replace_layout(
+            straddling.id, [DiagramNode(made["in"].id, 0, 0), DiagramNode(made["out"].id, 5, 5)]
+        )
+        request = ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=top))
+
+        export = await exchange_service.export(request)
+        root = DefusedET.fromstring(b"".join([c async for c in export.chunks]))
+
+        views = [v.get("identifier") for v in root.findall("x:views/x:diagrams/x:view", NS)]
+        assert views == ["view-whole"]
+        assert export.skipped_views == 1
+
+    async def test_the_whole_model_skips_no_view(self, exchange_service: ExchangeService) -> None:
+        export = await exchange_service.export(ExportRequest())
+        await export.chunks.aclose()  # type: ignore[attr-defined]
+
+        assert export.skipped_views == 0
+
+    async def test_a_query_scope_exports_what_the_saved_query_finds(
+        self, service, package_service, saved_query_service, exchange_service, repository
+    ) -> None:  # type: ignore[no-untyped-def]
+        _, _, made = await self.arranged(service, package_service, repository)
+        actor = await service.create_element(element_type=E.BUSINESS_ACTOR, name="Alice")
+        await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=made["in"].id, target_id=made["deep"].id
+        )
+        await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=made["in"].id, target_id=actor.id
+        )
+        saved = await saved_query_service.create(
+            name="nodes", query=ElementQuery(element_types=(E.NODE,))
+        )
+
+        request = ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=saved.id))
+        root = DefusedET.fromstring(await exported(exchange_service, request))
+
+        assert self.names(root) == {"in", "deep", "out", "loose"}  # never Alice
+        assert len(root.findall("x:relationships/x:relationship", NS)) == 1
+        labels = {
+            i.find("x:label", NS).text for i in root.findall("x:organizations/x:item[x:label]", NS)
+        }  # type: ignore[union-attr]
+        assert labels == {"Top", "Other"}  # the whole skeleton of the tree
+
+    async def test_csv_follows_the_scope_too(
+        self, service, package_service, exchange_service, repository
+    ) -> None:  # type: ignore[no-untyped-def]
+        top, _, made = await self.arranged(service, package_service, repository)
+        await service.connect(
+            relationship_type=R.ASSOCIATION, source_id=made["in"].id, target_id=made["out"].id
+        )
+
+        archive = zipfile.ZipFile(
+            io.BytesIO(
+                await zip_of(
+                    exchange_service,
+                    ExportRequest(
+                        format=ExchangeFormat.CSV,
+                        scope=ExportScope(ScopeKind.PACKAGE, package_id=top),
+                    ),
+                )
+            )
+        )
+
+        assert b"out" not in archive.read("elements.csv")
+        assert archive.read("relations.csv").count(b"\r\n") == 1  # the header alone
+
+    async def test_an_unknown_package_is_an_unknown_scope(self, exchange_service) -> None:  # type: ignore[no-untyped-def]
+        with pytest.raises(UnknownScopeError):
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=uuid4()))
+            )
+
+    async def test_an_unknown_saved_query_is_an_unknown_scope(self, exchange_service) -> None:  # type: ignore[no-untyped-def]
+        with pytest.raises(UnknownScopeError):
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=uuid4()))
+            )
+
+    async def test_a_saved_query_naming_a_vanished_package_is_an_unknown_scope(
+        self, saved_query_service, exchange_service, saved_queries
+    ) -> None:  # type: ignore[no-untyped-def]
+        saved = await saved_query_service.create(name="stale", query=ElementQuery())
+        saved_queries.queries[saved.id] = dataclasses.replace(
+            saved, query=ElementQuery(package_id=uuid4())
+        )
+
+        with pytest.raises(UnknownScopeError):
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=saved.id))
+            )
+
+    async def test_a_saved_query_that_cannot_be_read_is_an_unknown_scope_not_a_500(
+        self, saved_query_service, exchange_service, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        async def unreadable(query_id):  # type: ignore[no-untyped-def]
+            raise ValueError("stored query is corrupt: SECRET")
+
+        monkeypatch.setattr(saved_query_service, "get", unreadable)
+
+        with pytest.raises(UnknownScopeError) as raised:
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=uuid4()))
+            )
+
+        assert "SECRET" not in str(raised.value)
+
+    async def test_a_stored_query_of_a_version_nobody_reads_is_an_unknown_scope(
+        self, saved_query_service, exchange_service, saved_queries
+    ) -> None:  # type: ignore[no-untyped-def]
+        saved = await saved_query_service.create(name="old", query=ElementQuery())
+        saved_queries.corrupt.add(saved.id)
+
+        with pytest.raises(UnknownScopeError) as raised:
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=saved.id))
+            )
+
+        assert "version" not in str(raised.value)
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            ExportScope(ScopeKind.PACKAGE),
+            ExportScope(ScopeKind.QUERY),
+            ExportScope(ScopeKind.MODEL, package_id=uuid4()),
+            ExportScope(ScopeKind.MODEL, query_id=uuid4()),
+            ExportScope(ScopeKind.PACKAGE, package_id=uuid4(), query_id=uuid4()),
+            ExportScope(ScopeKind.QUERY, package_id=uuid4(), query_id=uuid4()),
+        ],
+    )
+    async def test_an_ill_formed_scope_is_refused(self, exchange_service, scope) -> None:  # type: ignore[no-untyped-def]
+        with pytest.raises(UnknownScopeError):
+            await exchange_service.export(ExportRequest(scope=scope))
+
+    async def test_a_scope_is_a_read_for_a_reader_and_nothing_for_nobody(
+        self, service, package_service, exchange_service, repository, nobody_calling
+    ) -> None:  # type: ignore[no-untyped-def]
+        with pytest.raises(NotAuthenticatedError):
+            await exchange_service.export(
+                ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=uuid4()))
+            )

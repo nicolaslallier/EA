@@ -16,12 +16,17 @@ import time
 import weakref
 import zipfile
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.errors import ExchangeFileTooLargeError, ImportInProgressError, UnknownScopeError
+from ea.domain.errors import (
+    DomainError,
+    ExchangeFileTooLargeError,
+    ImportInProgressError,
+    UnknownScopeError,
+)
 from ea.domain.exchange import (
     CSV_FILES,
     EXPORT_PAGE_SIZE,
@@ -35,18 +40,21 @@ from ea.domain.exchange import (
     ExchangeRelationship,
     ExchangeView,
     ExportRequest,
+    ExportScope,
     IdentifierRegistry,
     ImportContent,
     ImportOptions,
     ImportReport,
     Issue,
     ReportBuilder,
+    ScopeKind,
     Severity,
     build_organization,
     exchange_element_of,
     exchange_relationship_of,
     xml_identifier,
 )
+from ea.domain.packages import descendants_of
 from ea.formats.archimate_xml import buffered, parse_model, render_model
 from ea.formats.csv_files import parse_csv, render_csv
 from ea.services.caller import names_in_logs, require_caller, require_editor
@@ -56,9 +64,11 @@ from ea.services.exchange_import import ImportRun
 if TYPE_CHECKING:
     from ea.domain.exchange import PackageNode
     from ea.domain.ports import ExchangeRepository, ExportSnapshot
+    from ea.domain.query import ElementQuery
     from ea.services.architecture import ArchitectureService
     from ea.services.diagrams import DiagramService
     from ea.services.packages import PackageService
+    from ea.services.saved_queries import SavedQueryService
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +130,9 @@ class ExchangeService:
         parser: Callable[[bytes], ExchangeModel] = parse_model,
         diagrams: DiagramService | None = None,
         packages: PackageService | None = None,
+        queries: SavedQueryService | None = None,
     ) -> None:
+        self._queries = queries
         self._parse = parser
         self._diagrams = diagrams
         self._packages = packages
@@ -247,19 +259,71 @@ class ExchangeService:
 
     async def export(self, request: ExportRequest) -> Export:
         require_caller()
-        if request.scope.package_id is not None or request.scope.query_id is not None:
-            msg = "this scope is not available: only the whole model can be exported"
-            raise UnknownScopeError(msg)
+        request = replace(request, scope=await self._resolve(request.scope))
         is_csv = request.format is ExchangeFormat.CSV
         extension = "zip" if is_csv else "xml"
         raw = is_csv and not request.safe_cells
         label = "-raw" if raw else ""
+        wants_views = request.with_views and not is_csv
         return Export(
             filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}.{extension}",
             cells=("raw" if raw else "safe") if is_csv else None,
             media_type="application/zip" if is_csv else "application/xml",
             chunks=self._csv(request) if is_csv else self._xml(request),
+            skipped_views=(
+                await self._repository.count_skipped_views(request.scope) if wants_views else 0
+            ),
         )
+
+    async def _resolve(self, scope: ExportScope) -> ExportScope:
+        """Turn the ids a client sent into what the snapshot filters on.
+
+        The client names a package or a saved query; it never supplies the filter itself.
+        Whatever cannot be resolved (an unknown package, a saved query that is gone, was
+        written by another version or names a package that vanished) is the same typed
+        refusal: a 422 `unknown_scope`, with no word of what was stored.
+        """
+        has_package, has_query = scope.package_id is not None, scope.query_id is not None
+        if (scope.kind is ScopeKind.MODEL and (has_package or has_query)) or (
+            scope.kind is ScopeKind.PACKAGE and (not has_package or has_query)
+        ):
+            msg = "this scope takes its own id: `package_id` for a package, `query_id` for a query"
+            raise UnknownScopeError(msg)
+        if scope.kind is ScopeKind.QUERY and (not has_query or has_package):
+            msg = "this scope takes its own id: `package_id` for a package, `query_id` for a query"
+            raise UnknownScopeError(msg)
+        if scope.kind is ScopeKind.PACKAGE and scope.package_id is not None:
+            return replace(scope, package_ids=await self._subtree(scope))
+        if scope.kind is ScopeKind.QUERY and scope.query_id is not None:
+            return replace(scope, query=await self._saved_query(scope.query_id))
+        return scope
+
+    async def _subtree(self, scope: ExportScope) -> frozenset[UUID]:
+        if self._packages is None or scope.package_id is None:
+            msg = "packages are not available on this deployment"
+            raise UnknownScopeError(msg)
+        tree = {s.package.id: s.package for s in await self._packages.list_packages()}
+        if scope.package_id not in tree:
+            msg = "no such package"
+            raise UnknownScopeError(msg)
+        below = descendants_of(scope.package_id, tree) if scope.include_subpackages else frozenset()
+        return frozenset({scope.package_id, *below})
+
+    async def _saved_query(self, query_id: UUID) -> ElementQuery:
+        if self._queries is None:
+            msg = "saved queries are not available on this deployment"
+            raise UnknownScopeError(msg)
+        try:
+            query = (await self._queries.get(query_id)).query
+            tree = await self._packages.list_packages() if self._packages is not None else ()
+        except (DomainError, ValueError, KeyError, TypeError):
+            # The stored text is a person's and the reason is not for the caller.
+            msg = "no such saved query, or it cannot be read"
+            raise UnknownScopeError(msg) from None
+        if query.package_id is not None and query.package_id not in {s.package.id for s in tree}:
+            msg = "the saved query names a package that no longer exists"
+            raise UnknownScopeError(msg)
+        return query
 
     async def _xml(self, request: ExportRequest) -> AsyncIterator[bytes]:
         dropped: dict[str, int] = {}
