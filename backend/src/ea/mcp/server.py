@@ -55,6 +55,8 @@ from ea.api.schemas import (
     CursorToken,
     Depth,
     Description,
+    DiagramRead,
+    DiagramSummaryRead,
     DimensionParam,
     Documentation,
     DocumentRead,
@@ -152,6 +154,7 @@ from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.caller import require_editor
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
@@ -321,7 +324,12 @@ and `impact_of` reads the model as it is on a day. A plateau is a state of the
 architecture, containing what it composes or aggregates: `list_plateaus` lists
 them by date, `gap_between` says what leaves, arrives and stays from one to
 another. Never work that out by hand. `create_gap=true` also draws the `gap`
-element — it writes, so ask first.\
+element — it writes, so ask first.
+
+A diagram is a saved *view* of the catalogue: `list_diagrams` names them and
+`get_diagram` opens one with its boxes, notes, groups and routed links. A group on
+a diagram means "drawn together", never a relationship, and there is no tool that
+moves a box: a layout is a person's gesture, not data to compute.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -336,6 +344,7 @@ BaselineProvider = Callable[[], BaselineService]
 ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
+DiagramProvider = Callable[[], DiagramService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -359,6 +368,9 @@ AsOfArgument = Annotated[
 Properties = Annotated[
     dict[str, str] | None,
     Field(description="Free-form attributes, e.g. owner or criticality. Keys are identifiers."),
+]
+DiagramId = Annotated[
+    UUID, Field(description="The id of a saved diagram, as `list_diagrams` reports it.")
 ]
 DocumentId = Annotated[
     UUID, Field(description="The id of a document, as `list_documents` reports it.")
@@ -628,15 +640,16 @@ def build_mcp_server(
     get_exchanges: ExchangeProvider,
     get_analysis: AnalysisProvider,
     get_timeline: TimelineProvider,
+    get_diagrams: DiagramProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the eleven services.
+    """Assemble the tool set over the twelve services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines, the exchanges, the analyses and the time.
+    queries, the audit trail, the baselines, the exchanges, the analyses, the time and the diagrams.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -648,7 +661,7 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis` and `get_timeline` are required for the same reason.
+    `get_analysis`, `get_timeline` and `get_diagrams` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -936,6 +949,29 @@ def build_mcp_server(
         )
 
     # --- Time (docs/adr/0061) ---------------------------------------------
+
+    # --- Diagrams (read only: geometry is not an agent's work) -------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_diagrams() -> list[DiagramSummaryRead]:
+        """The saved diagrams: id, name, description and how many boxes each holds.
+
+        A diagram is a *view* of the catalogue - which elements are drawn and
+        where - and owns no fact. Start here to find the id `get_diagram` wants.
+        """
+        return [DiagramSummaryRead.of(d) for d in await get_diagrams().list_diagrams()]
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_diagram(diagram_id: DiagramId) -> DiagramRead:
+        """One diagram opened: its boxes with the elements they show, its notes, groups and
+        routed links, and the relationships between the elements drawn.
+
+        Read it to answer "what does this schema show". There is no tool that
+        moves a box: a layout is a person's gesture, not data to compute.
+        """
+        return DiagramRead.of(await get_diagrams().open(diagram_id))
 
     @server.tool(annotations=READS)
     @speaking_plainly

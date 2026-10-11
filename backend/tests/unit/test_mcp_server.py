@@ -77,6 +77,7 @@ def server(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    diagram_service: DiagramService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -91,6 +92,7 @@ def server(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: diagram_service,
     )
 
 
@@ -107,6 +109,7 @@ def server_without_an_index(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    diagram_service: DiagramService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -121,6 +124,7 @@ def server_without_an_index(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: diagram_service,
     )
 
 
@@ -356,9 +360,11 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 58
-        )  # fifty-six, and the two time tools: the plateaus and the gap between two
+            len(names) == 60
+        )  # fifty-eight, and the two that read a diagram: the list and one opened
         assert names == {
+            "list_diagrams",
+            "get_diagram",
             "export_model",
             "import_model",
             "create_element",
@@ -2336,3 +2342,37 @@ class TestAggregateModel:
     async def test_an_unknown_dimension_is_refused(self, server: MCPServer[Any]) -> None:
         with pytest.raises(ToolError):
             await call(server, "aggregate_model", by="bogus")
+
+
+@pytest.mark.asyncio
+class TestDiagrams:
+    async def test_the_diagrams_are_listed_and_one_is_read_with_its_scene(
+        self, server: MCPServer[Any], diagram_service: DiagramService
+    ) -> None:
+        created = await diagram_service.create(name="Paysage applicatif")
+
+        listed = await call(server, "list_diagrams")
+        opened = await call(server, "get_diagram", diagram_id=str(created.id))
+
+        assert [d["name"] for d in listed["result"]] == ["Paysage applicatif"]
+        assert (opened["revision"], opened["nodes"], opened["objects"], opened["edges"]) == (
+            0,
+            [],
+            [],
+            [],
+        )
+
+    async def test_an_unknown_diagram_is_named_in_the_message(self, server: MCPServer[Any]) -> None:
+        missing = uuid4()
+
+        with pytest.raises(ToolError) as failure:
+            await call(server, "get_diagram", diagram_id=str(missing))
+
+        assert str(missing) in str(failure.value)
+
+    async def test_both_tools_only_read(self, server: MCPServer[Any]) -> None:
+        tools = {t.name: t for t in await server.list_tools()}
+
+        for name in ("list_diagrams", "get_diagram"):
+            assert tools[name].annotations is not None
+            assert tools[name].annotations.read_only_hint is True  # type: ignore[union-attr]
