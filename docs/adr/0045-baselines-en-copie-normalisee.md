@@ -108,9 +108,8 @@ Limites connues, dites sans détour :
   jusqu'à 64 Mo ; l'espace croît avec leur nombre. Limite connue, à surveiller
   (et à purger à la main) ; un plafond ou une rétention seraient une décision
   à part.
-- Le diff d'un très gros modèle n'est pas paginé côté API (le plan, lui, est
-  borné) ; le SPA n'affiche que les cent premières lignes de chaque colonne
-  jusqu'à ce qu'on demande le reste.
+- La réponse du diff n'est ni paginée ni bornée en octets : avec les bornes de capture (20 000 éléments, 100 000 relations, 100 000 boîtes, 64 Mo par baseline), deux baselines entièrement différentes donnent au pire une réponse de l'ordre de 100 à 130 Mo construite en mémoire côté serveur ; cas jugé irréaliste pour un catalogue d'architecture, limite connue. Le SPA n'affiche que les cent premières lignes de chaque colonne jusqu'à ce qu'on demande le reste.
+- L'écran montre les 20 premiers éléments par sorte et des comptes pour les liens (jamais nommés), mais le digest et la confirmation portent sur le plan COMPLET : la personne confirme le plan entier dont elle ne voit qu'un extrait ; le journal permet de reconstituer l'effet.
 - **La porte `protected_ids` est vide jusqu'à la tâche d'approbation** (lot
   suivant, `docs/adr` à venir) : aujourd'hui aucun élément n'est protégé, donc
   `restore_blocked` ne se produit pas en pratique. L'écran affiche
