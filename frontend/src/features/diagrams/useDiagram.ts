@@ -70,6 +70,8 @@ export function useDiagram() {
   const revisions = new Map<string, number>()
   /** What the server answered to our own saves: the only revision a queued save may inherit. */
   const savedRevisions = new Map<string, number>()
+  /** The server judged the last save invalid (422): nothing is sent until the user reloads. */
+  const refused = ref(false)
   /** Boxes whose element is out of period on the day asked: greyed, never removed (docs/adr/0060). */
   const inactiveIds = ref<string[]>([])
   const read = useLatestRequest()
@@ -208,6 +210,12 @@ export function useDiagram() {
           return
         }
         saveError.value = messageOf(caught)
+        if (caught instanceof ApiError && caught.status === 422) {
+          // Invalid is not transient (an element of the scene is gone): resending the same
+          // scene would fail the same way, so stop and let the user reload.
+          refused.value = true
+          return
+        }
         // Still unsaved: the next edit, close, switch or unmount sends it again.
         // Nothing retries on its own, so a server that keeps refusing is not
         // hammered in a loop.
@@ -223,8 +231,8 @@ export function useDiagram() {
 
   /** Save the layout once the edits pause. */
   function persist(): void {
-    if (live.value) {
-      return // a live view stores nothing: it is recomputed at every opening
+    if (live.value || refused.value) {
+      return // a live view stores nothing; a refused scene is not resent edit after edit
     }
     pending = true
     autosave.call()
@@ -238,6 +246,7 @@ export function useDiagram() {
 
   /** Replace everything on screen with what the server answered (a read, a freeze, a thaw). */
   function applyAnswer(answer: DiagramRead): void {
+    refused.value = false
     diagram.value = answer
     nodes.value = answer.nodes
     elements.value = answer.elements
@@ -285,6 +294,11 @@ export function useDiagram() {
         // loaded: whatever was changed there goes to *that* diagram before its
         // boxes are replaced. `saveNow` snapshots synchronously, so it does.
         void flush()
+        // A read answered before this tab's own save landed describes an older scene:
+        // applying it would bring back what was just stored over, under a fresher token.
+        if (answer.revision < (savedRevisions.get(answer.id) ?? 0)) {
+          return
+        }
         applyAnswer(answer)
       },
       () => {
@@ -792,6 +806,7 @@ export function useDiagram() {
     refresh,
     applyDiff,
     conflict,
+    refused,
     reloaded,
     reloadAfterConflict,
     pasteMine,

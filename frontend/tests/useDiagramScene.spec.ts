@@ -298,3 +298,76 @@ describe('useDiagram — a revision conflict', () => {
     expect(editor.objects.value).toEqual([])
   })
 })
+
+describe('useDiagram — a save the server refuses as invalid (422)', () => {
+  const INVALID: Route = {
+    method: 'PUT',
+    path: `/diagrams/${DIAGRAM_ID}/layout`,
+    status: 422,
+    body: { error: 'unknown_layout_element', detail: 'an element of the layout does not exist' },
+  }
+
+  it('stops saving, says why and offers the reload instead of retrying on every edit', async () => {
+    const { calls, editor } = await opened([READ(), INVALID])
+
+    editor.addObject('note', { x: 0, y: 0 })
+    await pause()
+    editor.addObject('note', { x: 50, y: 0 })
+    await pause()
+    await editor.flush()
+
+    expect(saves(calls)).toHaveLength(1) // not one per edit
+    expect(editor.refused.value).toBe(true)
+    expect(editor.saveError.value).toContain('does not exist')
+
+    stubApi([READ({ revision: 7 }), SAVE])
+    await editor.reloadAfterConflict()
+    expect(editor.refused.value).toBe(false)
+    expect(editor.revision.value).toBe(7)
+  })
+})
+
+describe('useDiagram — a read that comes back after my own save', () => {
+  it('is ignored when it is older than the revision this tab just stored', async () => {
+    let release: (response: Response) => void = () => undefined
+    let gets = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init)
+        if (request.method === 'PUT') {
+          return new Response(null, { status: 204, headers: { 'X-Diagram-Revision': '1' } })
+        }
+        gets += 1
+        if (gets === 1) {
+          return new Response(JSON.stringify(aDiagram()), {
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      }),
+    )
+    const editor = useDiagram()
+    await editor.open(DIAGRAM_ID)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    const reading = editor.open(DIAGRAM_ID) // a second read of the same scene, still in flight
+    await vi.waitFor(() => expect(gets).toBe(2))
+    editor.addObject('note', { x: 0, y: 0 })
+    await pause()
+    expect(editor.revision.value).toBe(1)
+
+    // The read was answered before my save landed: revision 0, without my note.
+    release(
+      new Response(JSON.stringify(aDiagram({ revision: 0 })), {
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    await reading
+
+    expect(editor.revision.value).toBe(1)
+    expect(editor.objects.value).toHaveLength(1)
+  })
+})
