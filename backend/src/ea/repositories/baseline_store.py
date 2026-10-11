@@ -34,6 +34,7 @@ from ea.db.models.baseline import (
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
+from ea.db.unit_of_work import reading, work
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.baselines import (
@@ -413,7 +414,7 @@ class PostgresBaselineRepository:
     @asynccontextmanager
     async def _at_one_instant(self) -> AsyncIterator[AsyncSession]:
         """A read-only session whose every statement sees the same snapshot."""
-        async with self._sessions() as session:
+        async with reading(self._sessions, alone=True) as session:
             await session.connection(
                 execution_options={
                     "isolation_level": "REPEATABLE READ",
@@ -424,19 +425,19 @@ class PostgresBaselineRepository:
 
     async def list_all(self) -> tuple[Baseline, ...]:
         statement = _counted().order_by(BaselineRecord.name, BaselineRecord.id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(_baseline(*row) for row in await session.execute(statement))
 
     async def get(self, baseline_id: UUID) -> Baseline | None:
         statement = _counted().where(BaselineRecord.id == baseline_id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             found = (await session.execute(statement)).first()
             return _baseline(*found) if found is not None else None
 
     async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
         id_column = literal(baseline.id, Uuid())
         paths = _paths()
-        async with self._sessions.begin() as session:
+        async with work(self._sessions, alone=True) as session:
             # Before any statement: the snapshot every `INSERT … SELECT` below shares.
             await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             await self._guard_live(session, diagrams=False)
@@ -482,7 +483,7 @@ class PostgresBaselineRepository:
         return stored
 
     async def delete(self, baseline_id: UUID, *, audit: AuditOf[Baseline]) -> bool:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             row = await session.get(BaselineRecord, baseline_id, with_for_update=True)
             if row is None:
                 return False
@@ -558,7 +559,7 @@ class PostgresBaselineRepository:
         blocked: tuple[Element, ...] = ()
         try:
             try:
-                async with self._sessions.begin() as session:
+                async with work(self._sessions, alone=True) as session:
                     await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
                     plan = await self._plan(session, baseline_id, keep_new=keep_new)
                     blocked = plan.blocked

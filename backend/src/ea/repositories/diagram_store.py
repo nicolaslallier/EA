@@ -17,6 +17,7 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
+from ea.db.unit_of_work import reading, work
 from ea.domain.audit import events_for
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError, PackageNotFoundError
@@ -83,12 +84,12 @@ class PostgresDiagramRepository:
             statement = statement.where(DiagramRecord.package_id.is_(None))
         elif package_ids is not None:
             statement = statement.where(DiagramRecord.package_id.in_(package_ids))
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(_to_diagram(row, count) for row, count in await session.execute(statement))
 
     async def get(self, diagram_id: UUID) -> Diagram | None:
         statement = _summaries().where(DiagramRecord.id == diagram_id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             found = (await session.execute(statement)).first()
             return _to_diagram(found[0], found[1]) if found is not None else None
 
@@ -104,7 +105,7 @@ class PostgresDiagramRepository:
             .where(DiagramNodeRecord.diagram_id == diagram_id)
             .order_by(DiagramNodeRecord.element_id)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             rows = await session.execute(statement)
             return tuple(
                 DiagramNode(element_id=row[0], x=row[1], y=row[2], width=row[3], height=row[4])
@@ -113,7 +114,7 @@ class PostgresDiagramRepository:
 
     async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             session.add(
                 DiagramRecord(
                     id=diagram.id,
@@ -132,7 +133,7 @@ class PostgresDiagramRepository:
         return diagram
 
     async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             row = await session.get(DiagramRecord, diagram.id, with_for_update=True)
             if row is None:
                 # Deleted between the service reading it and this write.
@@ -152,7 +153,7 @@ class PostgresDiagramRepository:
 
     async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool:
         """Its nodes follow by the foreign key."""
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
             if row is None:
                 return False
@@ -169,7 +170,7 @@ class PostgresDiagramRepository:
         now: datetime,
         audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             # `FOR UPDATE` queues concurrent saves of one diagram (autosave fires
             # on every drag): unlocked, the second DELETE cannot see the rows the
             # first INSERT committed, and its own INSERT hits the primary key.

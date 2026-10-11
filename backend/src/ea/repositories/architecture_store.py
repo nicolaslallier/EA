@@ -39,6 +39,7 @@ from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
+from ea.db.unit_of_work import reading, work
 from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
@@ -597,14 +598,14 @@ class PostgresArchitectureRepository:
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
         element = replace(element, last_modified_by_sub=author_of(events))
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
             write_events(session, events)
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(ElementRecord, element_id)
             return element_from_row(row) if row is not None else None
 
@@ -616,12 +617,12 @@ class PostgresArchitectureRepository:
             .offset(criteria.offset)
             .limit(criteria.limit)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(element_from_row(row) for row in await session.scalars(statement))
 
     async def count_elements(self, criteria: ElementFilter) -> int:
         statement = select(func.count()).select_from(ElementRecord).where(*_matching(criteria))
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return int((await session.execute(statement)).scalar_one())
 
     @replayable
@@ -653,7 +654,7 @@ class PostgresArchitectureRepository:
         *,
         content: bool,
     ) -> Element:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             # `FOR UPDATE`: the row the patch is applied to — its content, its review
             # state, its revision, its last author — is the latest committed one, and a
             # concurrent writer or transition waits for our commit.
@@ -701,7 +702,7 @@ class PostgresArchitectureRepository:
         other ends are locked with it, in `lock_order`, and put to `ends` like the
         ends of a `disconnect`: a locked one refuses the whole deletion.
         """
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             neighbours = await _other_ends(session, element_id)
             rows = await lock_elements(session, {element_id, *neighbours}, key_only=False)
             row = rows.get(element_id)
@@ -740,7 +741,7 @@ class PostgresArchitectureRepository:
         ends: EndsReview | None = None,
     ) -> Relationship:
         events = events_for(audit, relationship)
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             reviewed = (
                 await _review_ends(
                     session,
@@ -768,7 +769,7 @@ class PostgresArchitectureRepository:
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(RelationshipRecord, relationship_id)
             return relationship_from_row(row) if row is not None else None
 
@@ -793,7 +794,7 @@ class PostgresArchitectureRepository:
             .offset(offset)
             .limit(limit)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
     @replayable
@@ -804,7 +805,7 @@ class PostgresArchitectureRepository:
         audit: AuditOf[Relationship],
         ends: EndsReview | None = None,
     ) -> bool:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             # The ends first, then the link: deleting an element locks its row and
             # then its links, so this is the one order that cannot deadlock.
             found = await session.get(RelationshipRecord, relationship_id)
@@ -839,7 +840,7 @@ class PostgresArchitectureRepository:
         *,
         relationship_types: Sequence[RelationshipType] = (),
     ) -> GraphView:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(ElementRecord, element_id)
             if row is None:
                 return GraphView(elements=(), relationships=())
@@ -891,7 +892,7 @@ class PostgresArchitectureRepository:
     async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
         if not element_ids:
             return GraphView(elements=(), relationships=())
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             found = await session.scalars(
                 select(ElementRecord)
                 .where(ElementRecord.id.in_(list(element_ids)))
@@ -921,7 +922,7 @@ class PostgresArchitectureRepository:
             .where(RelationshipRecord.relationship_type.in_(_CONTAINMENT))
         )
         statement = select(func.count()).select_from(below).where(below.c.id == source_id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return bool((await session.execute(statement)).scalar_one())
 
     async def _view_of_walk(
@@ -934,7 +935,7 @@ class PostgresArchitectureRepository:
             .group_by(ElementRecord.id)
             .order_by(func.min(walk.c.hops), ElementRecord.name, ElementRecord.id)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             elements = tuple(element_from_row(row) for row in await session.scalars(statement))
             links = await _links_within(
                 session, [element.id for element in elements], relationship_types
@@ -952,12 +953,12 @@ class PostgresArchitectureRepository:
             .where(_has(PREFIX_PROPERTY))
             .order_by(_text_of(PREFIX_PROPERTY), ElementRecord.name)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(element_from_row(row) for row in await session.scalars(statement))
 
     async def addressed_elements(self) -> tuple[Element, ...]:
         statement = select(ElementRecord).where(_has(ADDRESS_PROPERTY)).order_by(ElementRecord.name)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(element_from_row(row) for row in await session.scalars(statement))
 
     async def element_at(self, address: str, *, vrf: str) -> Element | None:
@@ -968,6 +969,6 @@ class PostgresArchitectureRepository:
             _text_of(VRF_PROPERTY) == vrf,
             _text_of(ADDRESS_PROPERTY) == address,
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = (await session.scalars(statement)).first()
             return element_from_row(row) if row is not None else None

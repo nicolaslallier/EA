@@ -5,7 +5,7 @@ source *text*, so the last tests can show them failing on a made-up unaudited
 module — a guard that has never been seen to fail guards nothing.
 
 What it enforces:
-- A repository method that writes (opens `_sessions.begin()`, commits, adds,
+- A repository method that writes (opens `work(self._sessions)`, commits, adds,
   executes an INSERT/UPDATE/DELETE, or calls a private helper that does)
   takes `audit` as a required keyword-only parameter — on the PostgreSQL class,
   on the port and on the in-memory double.
@@ -109,8 +109,8 @@ def _direct_writer(node: ast.AST) -> bool:
                 return True
             if function.attr == "delete" and "session" in ast.unparse(function.value):
                 return True
-        if isinstance(function, ast.Name) and function.id in WRITING_STATEMENTS:
-            return True
+        if isinstance(function, ast.Name) and function.id in WRITING_STATEMENTS | {"work"}:
+            return True  # `work(self._sessions)` is the one way to open a write (adr/0050)
     return False
 
 

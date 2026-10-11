@@ -15,16 +15,12 @@ from typing import Any
 
 from sqlalchemy.exc import DBAPIError
 
+from ea.db.unit_of_work import condemn_unit, is_serialization_failure
 from ea.domain.errors import WriteConflictError
 
+__all__ = ["is_serialization_failure", "replayable"]  # the test of the state lives here too
+
 logger = logging.getLogger(__name__)
-
-
-def is_serialization_failure(error: DBAPIError) -> bool:
-    """SQLSTATE 40001 (and 40P01, a deadlock) — carried by the driver's own exception."""
-    cause = getattr(error.orig, "__cause__", None)
-    code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
-    return code in ("40001", "40P01")
 
 
 def replayable[**Params, R](
@@ -39,6 +35,9 @@ def replayable[**Params, R](
         except DBAPIError as error:
             if not is_serialization_failure(error):
                 raise
+            # Inside an import there is nothing to replay *here*: the transaction is
+            # aborted, the whole import is what runs again (docs/adr/0050).
+            condemn_unit()
             logger.warning(
                 "write conflict, to be replayed",
                 extra={"action": "write_conflict", "writer": write.__qualname__},

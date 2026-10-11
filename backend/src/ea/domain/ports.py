@@ -32,6 +32,13 @@ if TYPE_CHECKING:
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
+@dataclass(slots=True)
+class Transaction:
+    """The handle of a shared transaction: set `commit` to `False` to roll it back instead."""
+
+    commit: bool = True
+
+
 @dataclass(frozen=True, slots=True)
 class GraphView:
     """A connected slice of the repository: the nodes and the edges between them.
