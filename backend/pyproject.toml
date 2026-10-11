@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.0",
     "asyncpg>=0.30",
+    # Parses untrusted exchange files without DTDs, entities or external
+    # references — docs/adr/0049.
+    "defusedxml>=0.7.1",
     "fastapi>=0.115",
     # The embedding service is reached over HTTP, and it is the only outbound
     # call this process makes — see docs/adr/0019.
@@ -33,12 +36,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "bandit[toml]>=1.9.4",
+    # XSD validation of the export, in tests only — docs/adr/0049.
+    "lxml>=5.3",
     "mypy>=1.11",
     "pip-audit>=2.9",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
     "ruff>=0.16.8",
+    # The stubs `mypy --strict` needs for defusedxml.
+    "types-defusedxml>=0.7",
 ]
 
 [build-system]
