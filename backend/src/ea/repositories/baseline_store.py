@@ -11,6 +11,7 @@ elements, packages and diagrams it remembers.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -42,6 +43,7 @@ from ea.domain.baselines import (
     ModelSize,
     ModelSnapshot,
     plan_restore,
+    refusal_context,
     refuse_oversize,
 )
 from ea.domain.errors import (
@@ -73,6 +75,8 @@ if TYPE_CHECKING:
 
     from ea.domain.audit import AuditOf
     from ea.domain.baselines import RestorePlan
+
+logger = logging.getLogger(__name__)
 
 NAME_TAKEN: Final = "uq_baselines_name"
 #: Per row, on top of its text: so a model of many small rows is bounded too.
@@ -537,28 +541,48 @@ class PostgresBaselineRepository:
         a refusal, and a serialization failure is the same replayable
         `RestoreConflictError` — read the plan again and retry.
         """
+        blocked: tuple[Element, ...] = ()
         try:
-            async with self._sessions.begin() as session:
-                await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
-                plan = await self._plan(session, baseline_id, keep_new=keep_new)
-                if plan.is_blocked:
-                    names = ", ".join(repr(e.name) for e in plan.blocked)
-                    msg = f"the restoration would touch protected elements: {names}"
-                    raise RestoreBlockedError(msg)
-                if plan != expected:
-                    msg = "the model changed since the plan was read: read the plan again"
-                    raise RestoreConflictError(msg)
-                # The plan read rows as objects; the writes below are statements.
-                session.expunge_all()
-                await _write(session, plan, now)
-                write_events(session, events_for(audit, plan))
-        except DBAPIError as error:
-            if _is_serialization_failure(error):
-                msg = "the catalogue changed during the restoration: read the plan again"
-                raise RestoreConflictError(msg) from error
-            if isinstance(error, IntegrityError) and (constraint_of(error) or "").startswith("fk_"):
-                msg = "something the plan relies on was removed meanwhile: read the plan again"
-                raise RestoreConflictError(msg) from error
+            try:
+                async with self._sessions.begin() as session:
+                    await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+                    plan = await self._plan(session, baseline_id, keep_new=keep_new)
+                    blocked = plan.blocked
+                    if plan.is_blocked:
+                        names = ", ".join(repr(e.name) for e in plan.blocked)
+                        msg = f"the restoration would touch protected elements: {names}"
+                        raise RestoreBlockedError(msg)
+                    if plan != expected:
+                        msg = "the model changed since the plan was read: read the plan again"
+                        raise RestoreConflictError(msg)
+                    # The plan read rows as objects; the writes below are statements.
+                    session.expunge_all()
+                    await _write(session, plan, now)
+                    write_events(session, events_for(audit, plan))
+            except DBAPIError as error:
+                if _is_serialization_failure(error):
+                    msg = "the catalogue changed during the restoration: read the plan again"
+                    raise RestoreConflictError(msg) from error
+                if isinstance(error, IntegrityError) and (constraint_of(error) or "").startswith(
+                    "fk_"
+                ):
+                    msg = "something the plan relies on was removed meanwhile: read the plan again"
+                    raise RestoreConflictError(msg) from error
+                raise
+        except (RestoreBlockedError, RestoreConflictError) as refusal:
+            # The transaction is rolled back, so there is no audit event: the log is the trace.
+            logger.warning(
+                "restoration refused: %s",
+                refusal,
+                extra={
+                    "action": (
+                        "restore_blocked"
+                        if isinstance(refusal, RestoreBlockedError)
+                        else "restore_conflict"
+                    ),
+                    **refusal_context(baseline_id, blocked),
+                },
+            )
             raise
 
 

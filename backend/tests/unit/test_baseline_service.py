@@ -252,6 +252,31 @@ class TestRestoring:
         assert (await service.get_element(edited.id)).name == "invoicing"
         assert audit_log.events == []
 
+    async def test_a_refusal_leaves_a_bounded_structured_warning_and_no_event(
+        self,
+        service: ArchitectureService,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+        audit_log: InMemoryAuditLog,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        many = [await service.create_element(element_type=E.NODE, name=f"n{i}") for i in range(15)]
+        baseline = await baseline_service.create(name="v1")
+        for element in many:
+            await service.update_element(element.id, name=f"{element.name}-late")
+            baseline_store.protected.add(element.id)
+        audit_log.events.clear()
+
+        with caplog.at_level("WARNING"), pytest.raises(RestoreBlockedError):
+            await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+
+        (record,) = [r for r in caplog.records if getattr(r, "action", "") == "restore_blocked"]
+        assert record.levelname == "WARNING"
+        assert record.baseline_id == str(baseline.id)  # type: ignore[attr-defined]
+        assert record.blocked_count == 15  # type: ignore[attr-defined]
+        assert len(record.blocked) == 10  # type: ignore[attr-defined]  # bounded, not a list of 15
+        assert audit_log.events == []
+
     async def test_a_reader_may_not_even_ask_for_a_plan(
         self, baseline_service: BaselineService
     ) -> None:

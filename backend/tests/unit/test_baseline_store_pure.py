@@ -167,6 +167,23 @@ class TestApplyingAPlan:
             "INSERT diagram_nodes",
         ]
 
+    async def test_every_refusal_is_logged_before_it_is_raised(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        blocked, stale = RestorePlan(blocked=(node("locked"),)), the_whole_plan()
+
+        with caplog.at_level("WARNING"):
+            for plan, expected, error in (
+                (blocked, RestorePlan(), RestoreBlockedError),
+                (stale, RestorePlan(), RestoreConflictError),
+            ):
+                with pytest.raises(error):
+                    await apply(repository(RecordingSession(), plan), expected)
+
+        actions = [getattr(r, "action", None) for r in caplog.records]
+        assert actions == ["restore_blocked", "restore_conflict"]
+        assert caplog.records[0].blocked_count == 1  # type: ignore[attr-defined]
+
     async def test_a_name_taken_meanwhile_names_the_element(self) -> None:
         session = RecordingSession()
         session.flush_raises = IntegrityError(

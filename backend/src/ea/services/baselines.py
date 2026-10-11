@@ -33,6 +33,7 @@ from ea.domain.baselines import (
     RestorePlan,
     baseline_view,
     diff_snapshots,
+    refusal_context,
 )
 from ea.domain.errors import BaselineNotFoundError, RestoreBlockedError
 from ea.services.audit import AuditTrail
@@ -154,6 +155,10 @@ class BaselineService:
         if dry_run:
             return RestoreOutcome(plan, applied=False)
         if plan.is_blocked:
+            logger.warning(
+                "restoration refused: protected elements",
+                extra={"action": "restore_blocked", **refusal_context(baseline_id, plan.blocked)},
+            )
             names = ", ".join(repr(e.name) for e in plan.blocked)
             msg = f"the restoration would touch protected elements: {names}. Unlock them first"
             raise RestoreBlockedError(msg)

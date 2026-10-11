@@ -392,6 +392,19 @@ def _link_order(link: Relationship) -> tuple[str, str]:
     return (link.relationship_type.value, str(link.id))
 
 
+#: How many blocked elements a log line names; the count beside them is exact.
+LOGGED_BLOCKED: Final = 10
+
+
+def refusal_context(baseline_id: UUID, blocked: Sequence[Element] = ()) -> dict[str, Any]:
+    """The structured fields of a refused restoration's log line — bounded, never a full list."""
+    return {
+        "baseline_id": str(baseline_id),
+        "blocked_count": len(blocked),
+        "blocked": [{"id": str(e.id), "name": e.name} for e in blocked[:LOGGED_BLOCKED]],
+    }
+
+
 def _cascade_of(
     element: Element, links: Iterable[Relationship], boxes: Iterable[BoxSnapshot]
 ) -> Cascade:
