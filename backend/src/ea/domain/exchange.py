@@ -26,6 +26,11 @@ EXPORT_LANGUAGE: Final = "fr"
 #: One namespace for the whole 3.x family; 3.1 and 3.2 differ by schema location.
 NAMESPACE: Final = "http://www.opengroup.org/xsd/archimate/3.0/"
 
+#: The `identifier` of the `<model>` itself and the prefix of a property definition's: no
+#: element or relationship may take either, or the file would hold one `xs:ID` twice.
+MODEL_IDENTIFIER: Final = "id-ea-model"
+PROPERTY_DEFINITION_PREFIX: Final = "propid-"
+
 SOURCE_ID: Final = "source_id"
 DESCRIPTION_KEY: Final = "ea.description"
 RESERVED_PREFIX: Final = "ea."
