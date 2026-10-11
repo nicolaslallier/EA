@@ -294,3 +294,26 @@ def test_the_saved_queries_table_has_a_unique_name_and_a_jsonb_query() -> None:
     assert {c.name for c in table.constraints if c.name} >= {"uq_saved_queries_name"}
     assert table.c.query.type.__class__.__name__ == "JSONB"
     assert not table.c.query.nullable
+
+
+def test_revision_0011_follows_0010() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0011")
+
+    assert revision is not None
+    assert revision.down_revision == "0010"
+
+
+def test_the_audit_table_names_its_entity_without_a_foreign_key() -> None:
+    """An event must outlive what it describes (docs/adr/0044)."""
+    table = Base.metadata.tables["audit_events"]
+
+    assert not table.foreign_keys
+    assert table.c.entity_id.nullable is True
+    assert table.c.request_id.nullable is False
+    assert table.c.channel.nullable is False
+    assert {index.name for index in table.indexes} == {
+        "ix_audit_events_entity",
+        "ix_audit_events_at",
+        "ix_audit_events_actor_sub",
+    }
+    assert table.primary_key.name == "pk_audit_events"
