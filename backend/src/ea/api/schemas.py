@@ -1054,7 +1054,9 @@ class ViewSource(_Input):
     def placed(self) -> PlacedSource:
         if self.query_id is not None:
             return QuerySource(self.query_id)
-        assert self.package_id is not None
+        if self.package_id is None:
+            msg = "a source names a saved query or a package"
+            raise ValueError(msg)
         return PackageSource(self.package_id, self.recursive)
 
 

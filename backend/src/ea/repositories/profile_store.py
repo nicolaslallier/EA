@@ -210,7 +210,8 @@ class PostgresProfileRepository:
         async with work(self._sessions) as session:
             before = await _profile_of(session, profile.id, lock=True)
             row = await session.get(ProfileRecord, profile.id)
-            assert row is not None
+            if row is None:  # the locked read above found it: only a concurrent delete
+                raise ProfileNotFoundError(str(profile.id))
             row.name = profile.name
             row.description = profile.description
             row.updated_at = profile.updated_at

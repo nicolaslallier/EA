@@ -466,7 +466,8 @@ def plan_instantiation(
             to_create.append((slot, binding.create_name.strip()))
             continue
         element_id = binding.element_id
-        assert element_id is not None
+        if element_id is None:  # unreachable: a binding with nothing was skipped above
+            continue
         actual = element_types.get(element_id)
         if actual is not slot.element_type:
             msg = (
