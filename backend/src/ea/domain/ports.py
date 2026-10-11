@@ -6,7 +6,7 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -43,6 +43,14 @@ class GraphView:
     @property
     def is_empty(self) -> bool:
         return not self.elements
+
+
+@dataclass(frozen=True, slots=True)
+class ElementChange:
+    """An element as the repository found it under its lock, and as the patch left it."""
+
+    before: Element
+    after: Element
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +141,20 @@ class ArchitectureRepository(Protocol):
 
     async def count_elements(self, criteria: ElementFilter) -> int: ...
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
-        """Persist an already-existing element, overwriting its stored form.
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        """Apply `change` — a pure function — to the element read under its lock.
 
-        `audit` may be a function of the stored element, called in the transaction.
+        Applied in the writer's own transaction, so a concurrent writer's change to
+        another field is never undone by a copy read earlier. Only the columns the
+        patch really changes are written; a patch that changes nothing writes
+        nothing, not even an event (`audit` is not called). `audit` may be a
+        function of the `ElementChange`, called in the transaction.
         """
         ...
 

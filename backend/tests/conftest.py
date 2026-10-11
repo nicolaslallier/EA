@@ -9,7 +9,15 @@ import math
 import os
 import re
 import socket
-from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -51,7 +59,14 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
-from ea.domain.ports import ElementFilter, ElementRemoval, GraphView, Held, PackageRemoval
+from ea.domain.ports import (
+    ElementChange,
+    ElementFilter,
+    ElementRemoval,
+    GraphView,
+    Held,
+    PackageRemoval,
+)
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -347,14 +362,24 @@ class InMemoryRepository:
     async def count_elements(self, criteria: ElementFilter) -> int:
         return len(self.elements)
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
-        if element.id not in self.elements:
-            raise ElementNotFoundError(str(element.id))
-        self._refuse_a_taken_address(element)
-        events = events_for(audit, self.elements[element.id])
-        self.elements[element.id] = element
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        if element_id not in self.elements:
+            raise ElementNotFoundError(str(element_id))
+        before = self.elements[element_id]
+        after = change(before)
+        if replace(after, updated_at=before.updated_at) == before:
+            return before  # nothing observable changed: no write, no event
+        self._refuse_a_taken_address(after)
+        events = events_for(audit, ElementChange(before, after))
+        self.elements[element_id] = after
         self.audit_log.append(events)
-        return element
+        return after
 
     def _refuse_a_taken_address(self, element: Element) -> None:
         """Stand in for the `(vrf, ip_address)` partial unique index.

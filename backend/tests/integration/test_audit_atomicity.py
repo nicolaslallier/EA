@@ -89,7 +89,11 @@ async def test_a_save_and_a_link_write_their_events_with_them(engine_at_head: As
     await graph.add_element(right, audit=())
 
     renamed = left.rename("a2", now=NOW)
-    await graph.save_element(renamed, audit=(event_for(AuditAction.ELEMENT_UPDATED, left.id),))
+    await graph.update_element(
+        left.id,
+        lambda stored: stored.rename("a2", now=NOW),
+        audit=(event_for(AuditAction.ELEMENT_UPDATED, left.id),),
+    )
     link = Relationship.between(R.ASSOCIATION, renamed, right, now=NOW)
     await graph.add_relationship(
         link, audit=(event_for(AuditAction.RELATIONSHIP_CREATED, link.id),)

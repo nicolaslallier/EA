@@ -48,12 +48,12 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import ElementFilter, ElementRemoval, GraphView
+from ea.domain.ports import ElementChange, ElementFilter, ElementRemoval, GraphView
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -450,20 +450,35 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+    async def update_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
         async with self._sessions.begin() as session:
-            # `FOR UPDATE`: the row the event calls "before" is the one this
-            # write replaces, and a concurrent writer waits for our commit.
-            row = await session.get(ElementRecord, element.id, with_for_update=True)
+            # `FOR UPDATE`: the row the patch is applied to is the latest committed
+            # one, and a concurrent writer waits for our commit.
+            row = await session.get(ElementRecord, element_id, with_for_update=True)
             if row is None:
-                msg = f"no element with id {element.id}"
+                msg = f"no element with id {element_id}"
                 raise ElementNotFoundError(msg)
             before = element_from_row(row)
-            for column, value in element_row(element).items():
+            after = change(before)
+            wanted, stored = element_row(after), element_row(before)
+            changed = {
+                column: value
+                for column, value in wanted.items()
+                if column != "updated_at" and stored[column] != value
+            }
+            if not changed:
+                return before
+            for column, value in {**changed, "updated_at": after.updated_at}.items():
                 setattr(row, column, value)
-            await _flush_refusing(session, element)
-            write_events(session, events_for(audit, before))
-        return element
+            await _flush_refusing(session, after)
+            write_events(session, events_for(audit, ElementChange(before, after)))
+        return after
 
     async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
         """Its relationships follow by the foreign keys.

@@ -21,7 +21,7 @@ from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction, AuditFilter, EntityKind
 from ea.domain.errors import ElementNotFoundError
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import ElementRemoval
+from ea.domain.ports import ElementChange, ElementRemoval
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.audit_store import PostgresAuditRepository
 from ea.services.architecture import ArchitectureService
@@ -76,8 +76,8 @@ async def test_the_audit_callable_receives_the_row_read_under_the_lock(
     )
     seen: list[object] = []
 
-    def on_save(before: Element) -> tuple[()]:
-        seen.append(before)
+    def on_save(change: ElementChange) -> tuple[()]:
+        seen.append(change.before)
         return ()
 
     def on_removal(before: ElementRemoval) -> tuple[()]:
@@ -88,7 +88,7 @@ async def test_the_audit_callable_receives_the_row_read_under_the_lock(
         seen.append(before)
         return ()
 
-    await graph.save_element(left.rename("a2", now=START), audit=on_save)
+    await graph.update_element(left.id, lambda e: e.rename("a2", now=START), audit=on_save)
     await graph.delete_relationship(link.id, audit=on_unlink)
     await graph.delete_element(right.id, audit=on_removal)
 
@@ -101,9 +101,7 @@ async def test_the_audit_callable_receives_the_row_read_under_the_lock(
     assert not await graph.delete_element(uuid4(), audit=on_removal)
     assert len(seen) == 3
     with pytest.raises(ElementNotFoundError):
-        await graph.save_element(
-            Element.create(element_type=E.NODE, name="ghost", now=START), audit=on_save
-        )
+        await graph.update_element(uuid4(), lambda e: e.rename("ghost", now=START), audit=on_save)
     assert len(seen) == 3
 
 
@@ -160,10 +158,12 @@ async def test_an_event_that_cannot_be_built_leaves_no_write(engine_at_head: Asy
     element = Element.create(element_type=E.NODE, name="a", now=START)
     await graph.add_element(element, audit=())
 
-    def refuses(_: Element) -> tuple[()]:
+    def refuses(_: ElementChange) -> tuple[()]:
         raise RuntimeError("no caller")
 
     with pytest.raises(RuntimeError):
-        await graph.save_element(element.rename("changed", now=START), audit=refuses)
+        await graph.update_element(
+            element.id, lambda e: e.rename("changed", now=START), audit=refuses
+        )
 
     assert (await graph.get_element(element.id)).name == "a"  # type: ignore[union-attr]

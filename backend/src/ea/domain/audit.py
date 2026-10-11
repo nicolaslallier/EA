@@ -93,7 +93,9 @@ def _flatten(value: Mapping[str, Any] | None, prefix: str = "") -> dict[str, Any
     flat: dict[str, Any] = {}
     for key, item in (value or {}).items():
         path = f"{prefix}{key}"
-        if isinstance(item, Mapping) and item:
+        if isinstance(item, Mapping):
+            # An empty map has no entry of its own: `{}` -> `{"owner": ...}` is one
+            # change, `properties.owner`, not two.
             flat.update(_flatten(item, f"{path}."))
         else:
             flat[path] = item

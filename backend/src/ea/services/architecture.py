@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
+        ElementChange,
         ElementFilter,
         ElementRemoval,
         GraphView,
@@ -130,42 +131,47 @@ class ArchitectureService:
         an edit.
         """
         require_editor()
+        # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
         properties = validate_ipam_properties(current.element_type, properties)
-        now = self._now()
-        updated = current
-        if name is not None:
-            updated = updated.rename(name, now=now)
-        if properties is not None:
-            updated = updated.with_properties(properties, now=now)
-        if description is not None or documentation is not None:
-            updated = replace(
-                updated,
-                updated_at=now,
-                description=(
-                    reject_nul(description, "a description").strip()
-                    if description is not None
-                    else updated.description
-                ),
-                documentation=(
-                    reject_nul(documentation, "a documentation").strip()
-                    if documentation is not None
-                    else updated.documentation
-                ),
-            )
 
-        def events(before: Element) -> tuple[AuditEvent, ...]:
-            # Called by the repository in the transaction, on the row it replaces.
+        def patch(stored: Element) -> Element:
+            """Pure; the repository applies it to the row it holds under lock."""
+            now = self._now()
+            updated = stored
+            if name is not None:
+                updated = updated.rename(name, now=now)
+            if properties is not None:
+                updated = updated.with_properties(properties, now=now)
+            if description is not None or documentation is not None:
+                updated = replace(
+                    updated,
+                    updated_at=now,
+                    description=(
+                        reject_nul(description, "a description").strip()
+                        if description is not None
+                        else updated.description
+                    ),
+                    documentation=(
+                        reject_nul(documentation, "a documentation").strip()
+                        if documentation is not None
+                        else updated.documentation
+                    ),
+                )
+            return updated
+
+        def events(change: ElementChange) -> tuple[AuditEvent, ...]:
+            # Called by the repository in the transaction, on the row it patched.
             return (
                 self._trail.event(
                     AuditAction.ELEMENT_UPDATED,
-                    entity_id=before.id,
-                    before=element_view(before),
-                    after=element_view(updated),
+                    entity_id=change.before.id,
+                    before=element_view(change.before),
+                    after=element_view(change.after),
                 ),
             )
 
-        stored = await self._repository.save_element(updated, audit=events)
+        stored = await self._repository.update_element(element_id, patch, audit=events)
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,

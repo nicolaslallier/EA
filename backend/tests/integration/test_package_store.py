@@ -186,7 +186,7 @@ class TestMovingElements:
         stale = await world.element("a")
         await world.packages.move_elements([stale.id], finance.id, audit=())
 
-        await world.graph.save_element(stale.rename("a2", now=NOW), audit=())
+        await world.graph.update_element(stale.id, lambda e: e.rename("a2", now=NOW), audit=())
 
         stored = await world.graph.get_element(stale.id)
         assert stored is not None

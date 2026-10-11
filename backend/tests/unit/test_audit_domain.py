@@ -55,6 +55,11 @@ class TestDiffFields:
             FieldChange("properties.owner", "ops", "dev"),
         )
 
+    def test_an_empty_map_filling_up_is_only_its_new_keys(self) -> None:
+        assert diff_fields({"properties": {}}, {"properties": {"owner": "ops"}}) == (
+            FieldChange("properties.owner", None, "ops"),
+        )
+
     def test_a_creation_has_everything_as_new_and_a_deletion_as_gone(self) -> None:
         assert diff_fields(None, {"name": "A"}) == (FieldChange("name", None, "A"),)
         assert diff_fields({"name": "A"}, None) == (FieldChange("name", "A", None),)

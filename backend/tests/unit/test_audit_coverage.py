@@ -95,7 +95,7 @@ def test_the_expected_writes_are_found() -> None:
     found = {cls.__name__: _writes(cls) for cls in AUDITED_STORES}
     assert found["PostgresArchitectureRepository"] == {
         "add_element",
-        "save_element",
+        "update_element",
         "delete_element",
         "add_relationship",
         "delete_relationship",
