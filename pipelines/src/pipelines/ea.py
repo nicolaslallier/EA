@@ -54,6 +54,19 @@ class Written:
 
 
 @dataclass(frozen=True)
+class StaleReference:
+    """An external reference whose cache is old — identified, never described.
+
+    Only the id and where it points (target, kind): the cached title is a third party's text,
+    and a flow has no use for it (docs/adr/0063).
+    """
+
+    id: UUID
+    target: str
+    kind: str
+
+
+@dataclass(frozen=True)
 class Metamodel:
     """The type values a flow may pass to `ensure_element` / `ensure_relationship`."""
 
@@ -175,6 +188,27 @@ class EaClient:
         if response.status_code != httpx.codes.OK:
             _raise_for_unexpected_status(response)
         return Written(element_id, "completed")
+
+    def stale_external_references(self, limit: int) -> list[StaleReference]:
+        """`GET /external-references/stale`: the references whose cache is older than a day."""
+        response = self.http.get("/external-references/stale", params={"limit": limit})
+        if response.status_code != httpx.codes.OK:
+            _raise_for_unexpected_status(response)
+        return [
+            StaleReference(UUID(item["id"]), str(item["target"]), str(item["kind"]))
+            for item in response.json()
+        ]
+
+    def refresh_external_reference(self, reference_id: UUID | str) -> bool:
+        """`POST /external-references/{id}/refresh`; True when the line is fresh afterwards.
+
+        The server asks the provider itself (this client holds no token for any of them). A
+        provider that is down answers 200 with `stale: true`, which is not an error.
+        """
+        response = self.http.post(f"/external-references/{reference_id}/refresh")
+        if response.status_code != httpx.codes.OK:
+            _raise_for_unexpected_status(response)
+        return response.json()["stale"] is False
 
     def ensure_relationship(
         self, relationship_type: str, source_id: UUID, target_id: UUID
