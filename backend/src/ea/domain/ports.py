@@ -25,6 +25,7 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
+    from ea.domain.audit import AuditEvent
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
@@ -42,6 +43,14 @@ class GraphView:
     @property
     def is_empty(self) -> bool:
         return not self.elements
+
+
+@dataclass(frozen=True, slots=True)
+class Attachments:
+    """What the foreign keys of revision 0006 take with an element, besides its links."""
+
+    document_ids: tuple[UUID, ...] = ()
+    diagram_ids: tuple[UUID, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +99,9 @@ class ArchitectureRepository(Protocol):
     have to declare `async def`.
     """
 
-    async def add_element(self, element: Element) -> Element: ...
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+        """Store a new element; `audit` is inserted in the same transaction."""
+        ...
 
     async def get_element(self, element_id: UUID) -> Element | None: ...
 
@@ -98,15 +109,20 @@ class ArchitectureRepository(Protocol):
 
     async def count_elements(self, criteria: ElementFilter) -> int: ...
 
-    async def save_element(self, element: Element) -> Element:
+    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
         """Persist an already-existing element, overwriting its stored form."""
         ...
 
-    async def delete_element(self, element_id: UUID) -> bool:
-        """Remove an element and every relationship attached to it."""
+    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
+        """Remove an element and every relationship attached to it.
+
+        `audit` is written only if a row was deleted; `False` writes nothing.
+        """
         ...
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship: ...
+    async def add_relationship(
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+    ) -> Relationship: ...
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None: ...
 
@@ -119,7 +135,13 @@ class ArchitectureRepository(Protocol):
         offset: int = 0,
     ) -> tuple[Relationship, ...]: ...
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool: ...
+    async def delete_relationship(
+        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+    ) -> bool: ...
+
+    async def attachments_of(self, element_id: UUID) -> Attachments:
+        """The documents and diagrams that follow this element when it is deleted."""
+        ...
 
     async def relations_of(
         self,

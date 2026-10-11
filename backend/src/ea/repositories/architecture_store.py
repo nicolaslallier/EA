@@ -34,6 +34,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
+from ea.db.models.diagram import DiagramNodeRecord
+from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import (
@@ -45,8 +47,9 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.ports import Attachments, ElementFilter, GraphView
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
+from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,6 +57,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
+
+    from ea.domain.audit import AuditEvent
 
 logger = logging.getLogger(__name__)
 
@@ -396,10 +401,11 @@ class PostgresArchitectureRepository:
 
     # --- Elements ---------------------------------------------------------
 
-    async def add_element(self, element: Element) -> Element:
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
         async with self._sessions.begin() as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
+            write_events(session, audit)
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -423,7 +429,7 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
-    async def save_element(self, element: Element) -> Element:
+    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
         async with self._sessions.begin() as session:
             row = await session.get(ElementRecord, element.id)
             if row is None:
@@ -432,19 +438,25 @@ class PostgresArchitectureRepository:
             for column, value in element_row(element).items():
                 setattr(row, column, value)
             await _flush_refusing(session, element)
+            write_events(session, audit)
         return element
 
-    async def delete_element(self, element_id: UUID) -> bool:
+    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
         """Its relationships follow by the foreign keys."""
         async with self._sessions.begin() as session:
             deleted = await session.execute(
                 delete(ElementRecord).where(ElementRecord.id == element_id)
             )
-        return bool(_rows_affected(deleted))
+            if not _rows_affected(deleted):
+                return False
+            write_events(session, audit)
+        return True
 
     # --- Relationships ----------------------------------------------------
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship:
+    async def add_relationship(
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+    ) -> Relationship:
         async with self._sessions.begin() as session:
             session.add(RelationshipRecord(**relationship_row(relationship)))
             try:
@@ -457,6 +469,7 @@ class PostgresArchitectureRepository:
                     "one of them does not exist"
                 )
                 raise ElementNotFoundError(msg) from error
+            write_events(session, audit)
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
@@ -488,12 +501,30 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool:
+    async def delete_relationship(
+        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+    ) -> bool:
         async with self._sessions.begin() as session:
             deleted = await session.execute(
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )
-        return bool(_rows_affected(deleted))
+            if not _rows_affected(deleted):
+                return False
+            write_events(session, audit)
+        return True
+
+    async def attachments_of(self, element_id: UUID) -> Attachments:
+        documents = select(ElementDocument.id).where(ElementDocument.element_id == element_id)
+        diagrams = select(DiagramNodeRecord.diagram_id).where(
+            DiagramNodeRecord.element_id == element_id
+        )
+        async with self._sessions() as session:
+            return Attachments(
+                document_ids=tuple(await session.scalars(documents.order_by(ElementDocument.id))),
+                diagram_ids=tuple(
+                    await session.scalars(diagrams.order_by(DiagramNodeRecord.diagram_id))
+                ),
+            )
 
     # --- Traversals -------------------------------------------------------
 

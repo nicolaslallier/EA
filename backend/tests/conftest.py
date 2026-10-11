@@ -42,7 +42,7 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
-from ea.domain.ports import ElementFilter, GraphView
+from ea.domain.ports import Attachments, ElementFilter, GraphView
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -323,9 +323,10 @@ class InMemoryRepository:
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
 
-    async def add_element(self, element: Element) -> Element:
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
+        self.audit_log.append(audit)
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -337,11 +338,12 @@ class InMemoryRepository:
     async def count_elements(self, criteria: ElementFilter) -> int:
         return len(self.elements)
 
-    async def save_element(self, element: Element) -> Element:
+    async def save_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
         if element.id not in self.elements:
             raise ElementNotFoundError(str(element.id))
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
+        self.audit_log.append(audit)
         return element
 
     def _refuse_a_taken_address(self, element: Element) -> None:
@@ -370,12 +372,21 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    async def delete_element(self, element_id: UUID) -> bool:
-        return self.elements.pop(element_id, None) is not None
+    async def delete_element(self, element_id: UUID, *, audit: Sequence[AuditEvent] = ()) -> bool:
+        if self.elements.pop(element_id, None) is None:
+            return False
+        self.audit_log.append(audit)
+        return True
 
-    async def add_relationship(self, relationship: Relationship) -> Relationship:
+    async def add_relationship(
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+    ) -> Relationship:
         self.relationships[relationship.id] = relationship
+        self.audit_log.append(audit)
         return relationship
+
+    async def attachments_of(self, element_id: UUID) -> Attachments:
+        return Attachments()
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
         return self.relationships.get(relationship_id)
@@ -390,8 +401,13 @@ class InMemoryRepository:
     ) -> tuple[Relationship, ...]:
         return tuple(self.relationships.values())
 
-    async def delete_relationship(self, relationship_id: UUID) -> bool:
-        return self.relationships.pop(relationship_id, None) is not None
+    async def delete_relationship(
+        self, relationship_id: UUID, *, audit: Sequence[AuditEvent] = ()
+    ) -> bool:
+        if self.relationships.pop(relationship_id, None) is None:
+            return False
+        self.audit_log.append(audit)
+        return True
 
     async def relations_of(
         self, element_id: UUID, *, relationship_types: Sequence[R] = ()
