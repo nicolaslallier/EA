@@ -5,6 +5,8 @@ import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type MatrixRead = components['schemas']['MatrixRead']
+type MatrixCellDetailRead = components['schemas']['MatrixCellDetailRead']
 type PackageRead = components['schemas']['PackageRead']
 type DocumentSummaryRead = components['schemas']['DocumentSummaryRead']
 type DocumentRead = components['schemas']['DocumentRead']
@@ -509,6 +511,42 @@ export function anIssue(overrides: Partial<ImportReportRead['issues'][number]> =
     source_id: 'r-1',
     line: null,
     path: null,
+    ...overrides,
+  }
+}
+
+/** A grid as `POST /matrix` returns it — two rows, two columns, one link. */
+export function aGrid(overrides: Partial<MatrixRead> = {}): MatrixRead {
+  return {
+    rows: [
+      { id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'Invoice API', element_type: 'application_service', layer: 'application' },
+      { id: 'cccccccc-3333-4333-8333-333333333333', name: 'Billing', element_type: 'application_component', layer: 'application' },
+    ],
+    cols: [
+      { id: 'bbbbbbbb-2222-4222-8222-222222222222', name: 'Order to cash', element_type: 'business_process', layer: 'business' },
+    ],
+    rows_total: 2,
+    cols_total: 1,
+    truncated: false,
+    cells: [
+      {
+        source_id: 'aaaaaaaa-1111-4111-8111-111111111111',
+        target_id: 'bbbbbbbb-2222-4222-8222-222222222222',
+        links: [aRelationship()],
+      },
+    ],
+    blocked: [],
+    ...overrides,
+  }
+}
+
+/** One cell as `GET /matrix/cell` returns it. */
+export function aCellDetail(overrides: Partial<MatrixCellDetailRead> = {}): MatrixCellDetailRead {
+  return {
+    source_id: 'aaaaaaaa-1111-4111-8111-111111111111',
+    target_id: 'bbbbbbbb-2222-4222-8222-222222222222',
+    links: [aRelationship()],
+    allowed: ['serving', 'association'],
     ...overrides,
   }
 }
