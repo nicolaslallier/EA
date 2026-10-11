@@ -4,7 +4,8 @@
 # rend jamais son résultat. Un runner de dépôt ne sert que ce dépôt.
 #
 # Lire le workflow .github/workflows/deploy.yml avant de toucher à qui peut
-# fusionner dans main : ce runner tient le socket Docker (root sur l'hôte).
+# fusionner dans main. Le runner ne monte plus le socket Docker (docs/adr/0045) :
+# il appelle Portainer par son URL, et ne tient que la CA de l'Infra, en lecture.
 name: ea-runner
 
 services:
@@ -27,9 +28,9 @@ services:
       # jamais dans la stack.
       ACCESS_TOKEN: ${GH_RUNNER_TOKEN:?GH_RUNNER_TOKEN dans .runner.env (make runner-env)}
     volumes:
-      # Root sur le démon Docker : c'est ce qui permet à portainer-stack.sh de
-      # lancer son conteneur curl sur infra-net.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # La CA de l'Infra, pour que portainer-stack.sh vérifie le certificat de
+      # PORTAINER_URL. INFRA_CA_CERT (chemin sur l'hôte) dans .runner.env.
+      - ${INFRA_CA_CERT:?INFRA_CA_CERT dans .runner.env (chemin de infra-ca.crt)}:/etc/ea/infra-ca.crt:ro
       - runner-work:/_work
 
 volumes:
