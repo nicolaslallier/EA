@@ -353,3 +353,50 @@ class InvalidTimelineError(DomainError):
 
 class DuplicateGapError(DomainError):
     """A gap already stands between those two plateaus."""
+
+
+class ExternalReferenceNotFoundError(DomainError):
+    """No external reference carries this id."""
+
+
+class DuplicateExternalReferenceError(DomainError):
+    """This element already cites this external object (docs/adr/0063)."""
+
+
+class InvalidExternalReferenceError(DomainError):
+    """The text is not an identifier or an address the server accepts for that kind."""
+
+
+class UnknownExternalTargetError(DomainError):
+    """The caller named a target the configuration does not declare (or it is not active)."""
+
+
+class ExternalRefusedError(DomainError):
+    """The provider answered, and the object is not there (or not ours to read)."""
+
+
+class ExternalUnavailableError(DomainError):
+    """The provider could not be asked, or answered nothing usable.
+
+    Its message never names the host, the token or the provider's own words:
+    those go to the log, where an unauthenticated caller cannot read them.
+    """
+
+
+class ExternalBusyError(DomainError):
+    """As many calls to third-party systems are in flight as this process allows."""
+
+
+class ExternalWriteFailedError(DomainError):
+    """The provider answered a write with a refusal or an error (a 502).
+
+    Never carries the provider's body: it is third-party text.
+    """
+
+
+class ExternalWriteTimeoutError(DomainError):
+    """The provider did not answer a write in time (a 504) — the object may exist anyway.
+
+    A write that is not idempotent is never retried by the server: the caller checks the
+    provider before trying again.
+    """

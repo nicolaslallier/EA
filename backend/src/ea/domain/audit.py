@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 from ea.domain.errors import InvalidCursorError
+from ea.domain.external import ExternalReference
 from ea.domain.model import Element, Relationship
 from ea.domain.query import to_json
 
@@ -45,6 +46,7 @@ class EntityKind(StrEnum):
     DIAGRAM = "diagram"
     DOCUMENT = "document"
     BASELINE = "baseline"
+    EXTERNAL_REFERENCE = "external_reference"
 
 
 class AuditChannel(StrEnum):
@@ -86,6 +88,9 @@ class AuditAction(StrEnum):
     BASELINE_CREATED = "baseline.created"
     BASELINE_DELETED = "baseline.deleted"
     BASELINE_RESTORED = "baseline.restored"
+    EXTERNAL_REFERENCE_LINKED = "external_reference.linked"
+    EXTERNAL_REFERENCE_UNLINKED = "external_reference.unlinked"
+    EXTERNAL_REFERENCE_REFRESHED = "external_reference.refreshed"
 
     @property
     def kind(self) -> EntityKind:
@@ -235,6 +240,24 @@ def document_view(document: Document) -> dict[str, Any]:
         "filename": document.filename,
         "byte_size": len(raw),
         "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def external_reference_view(reference: ExternalReference) -> dict[str, Any]:
+    """The link and its state — the title only as a length and a digest.
+
+    A title is a third party's text: the trail keeps that it changed, not what it said.
+    """
+    title = reference.title.encode()
+    return {
+        "id": str(reference.id),
+        "element_id": str(reference.element_id),
+        "kind": reference.kind.value,
+        "target": reference.target,
+        "external_id": reference.external_id,
+        "status": reference.status.value,
+        "title_length": len(reference.title),
+        "title_sha256": hashlib.sha256(title).hexdigest(),
     }
 
 
