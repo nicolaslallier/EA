@@ -35,6 +35,7 @@ from ea.repositories import (
     diagram_store,
     document_store,
     package_store,
+    profile_store,
     saved_query_store,
 )
 
@@ -57,6 +58,10 @@ AUDITED_STORES = {
     package_store.PostgresPackageRepository: (
         ports.PackageRepository,
         conftest_module.InMemoryPackages,
+    ),
+    profile_store.PostgresProfileRepository: (
+        ports.ProfileRepository,
+        conftest_module.InMemoryProfiles,
     ),
     saved_query_store.PostgresSavedQueryRepository: (
         ports.SavedQueryRepository,
@@ -275,6 +280,15 @@ def test_the_expected_writes_are_found() -> None:
     assert found["PostgresDocumentRepository"] == {"add", "replace", "delete"}
     assert found["PostgresDiagramRepository"] == {"add", "save", "delete", "replace_layout"}
     assert found["PostgresPackageRepository"] == {"add", "save", "delete", "move_elements"}
+    assert found["PostgresProfileRepository"] == {
+        "add_profile",
+        "save_profile",
+        "delete_profile",
+        "add_stereotype",
+        "replace_stereotype",
+        "delete_stereotype",
+        "set_for_element",
+    }
     assert found["PostgresSavedQueryRepository"] == {"add", "save", "delete"}
     assert found["PostgresBaselineRepository"] == {"create", "delete", "apply_restore"}
 

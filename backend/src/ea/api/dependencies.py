@@ -22,6 +22,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -86,6 +87,22 @@ def get_diagram_service(request: Request) -> DiagramService:
 
 
 Diagrams = Annotated[DiagramService, Depends(get_diagram_service)]
+
+
+def profile_service_of(app: FastAPI) -> ProfileService:
+    """The profile use cases the lifespan attached, or a clear failure (docs/adr/0064)."""
+    service: ProfileService | None = getattr(app.state, "profile_service", None)
+    if service is None:
+        msg = "no profile service on the application - is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_profile_service(request: Request) -> ProfileService:
+    return profile_service_of(request.app)
+
+
+Profiles = Annotated[ProfileService, Depends(get_profile_service)]
 
 
 def package_service_of(app: FastAPI) -> PackageService:

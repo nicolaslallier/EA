@@ -33,7 +33,7 @@ MAX_NAME_LENGTH: Final = 100
 MAX_LABEL_LENGTH: Final = 100
 MAX_HELP_LENGTH: Final = 300
 MAX_PROPERTY_VALUE_LENGTH: Final = 500
-MAX_PATTERN_LENGTH: Final = 200
+MAX_TEMPLATE_LENGTH: Final = 64
 MAX_ALLOWED_VALUES: Final = 50
 MAX_PROPERTIES_PER_STEREOTYPE: Final = 30
 MAX_STEREOTYPES_PER_PROFILE: Final = 100
@@ -41,10 +41,8 @@ MAX_STEREOTYPES_PER_PROFILE: Final = 100
 #: Keys other conventions already read in `properties`: the IP addressing (docs/adr/0020)
 #: and the validity dates (docs/adr/0059). A stereotype cannot redefine their format.
 RESERVED_KEYS: Final = IPAM_PROPERTIES | frozenset({"valid_from", "valid_until"})
-#: Values checked by a pattern are shorter still: the cost of a match grows with the
-#: number of unbounded repetitions in the pattern and with the length of the value.
-MAX_PATTERNED_VALUE_LENGTH: Final = 200
-MAX_UNBOUNDED_REPETITIONS: Final = 3
+#: A value checked by a template is short too: the cost of a match is the product of the two.
+MAX_TEMPLATED_VALUE_LENGTH: Final = 256
 
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -67,7 +65,7 @@ class IconKey(StrEnum):
 class PropertyKind(StrEnum):
     FREE = "free"
     ENUM = "enum"
-    PATTERN = "pattern"
+    TEMPLATE = "template"
 
 
 def _named(value: str, what: str, limit: int) -> str:
@@ -78,87 +76,47 @@ def _named(value: str, what: str, limit: int) -> str:
     return cleaned
 
 
-def _refuse_catastrophic(pattern: str) -> None:
-    """Refuse the shapes whose backtracking can explode: a quantified group that holds
-    a quantifier or an alternation, and back-references.
+def check_template(template: str) -> None:
+    """A template is short text where `*` is any run, `?` any one character and `#` one digit.
 
-    Deliberately stricter than the regex language: `(jpg|png)+` is refused too.
-    A subset that is certainly linear beats a dependency (`re2`) for a field
-    whose values are short.
+    No regular expression is ever run on a user's behalf: a hostile pattern cannot be told
+    from a good one by reading it (docs/adr/0064), so there is none. Matching is the
+    two-pointer algorithm below, at most `len(template) * len(value)` steps.
     """
-    holds: list[bool] = []  # per open group: a quantifier or a `|` is inside it
-    in_class = False
-    index = 0
-    while index < len(pattern):
-        char = pattern[index]
-        if char == "\\":
-            following = pattern[index + 1 : index + 2]
-            if following.isdigit() and following != "0":
-                msg = "a pattern cannot use back-references"
-                raise ValueError(msg)
-            index += 2
-            continue
-        if in_class:
-            in_class = char != "]"
-        elif char == "[":
-            in_class = True
-        elif char == "(":
-            holds.append(False)
-        elif char == ")":
-            risky = holds.pop() if holds else False
-            repeated = pattern[index + 1 : index + 2] in {"+", "*", "{"}
-            if repeated and risky:
-                msg = "a pattern cannot repeat a group that itself repeats or alternates"
-                raise ValueError(msg)
-            if holds and (risky or repeated):
-                holds[-1] = True
-        elif char in {"+", "*", "{", "|"} and holds:
-            holds[-1] = True
-        index += 1
-
-
-def _refuse_stacked_repetitions(pattern: str) -> None:
-    """Refuse more than a few unbounded repetitions: `a*a*a*a*b` backtracks in polynomial
-    time of that degree on `aaaa...`, which is slow enough on 200 characters."""
-    count = 0
-    in_class = False
-    index = 0
-    while index < len(pattern):
-        char = pattern[index]
-        if char == "\\":
-            index += 2
-            continue
-        if in_class:
-            in_class = char != "]"
-        elif char == "[":
-            in_class = True
-        elif char in {"*", "+"}:
-            count += 1
-        elif char == "{":
-            close = pattern.find("}", index)
-            body = pattern[index + 1 : close] if close > index else ""
-            if "," in body:
-                low, _, high = body.partition(",")
-                if low != high or not high:
-                    count += 1
-        index += 1
-    if count > MAX_UNBOUNDED_REPETITIONS:
-        msg = f"a pattern has at most {MAX_UNBOUNDED_REPETITIONS} repetitions"
+    if not template or len(template) > MAX_TEMPLATE_LENGTH:
+        msg = f"a template is between 1 and {MAX_TEMPLATE_LENGTH} characters"
         raise ValueError(msg)
 
 
-def check_pattern(pattern: str) -> None:
-    """Accept only a pattern that is short, compiles, and cannot backtrack catastrophically."""
-    if not pattern or len(pattern) > MAX_PATTERN_LENGTH:
-        msg = f"a pattern is at most {MAX_PATTERN_LENGTH} characters"
-        raise ValueError(msg)
-    _refuse_catastrophic(pattern)
-    _refuse_stacked_repetitions(pattern)
-    try:
-        re.compile(pattern)
-    except re.error as error:
-        msg = f"not a valid pattern: {error}"
-        raise ValueError(msg) from error
+def _same(expected: str, char: str) -> bool:
+    if expected == "?":
+        return True
+    if expected == "#":
+        return char in "0123456789"
+    return expected == char
+
+
+def matches_template(template: str, value: str) -> bool:
+    """Whether `value` fits `template` as a whole. Bounded: O(len(template) * len(value))."""
+    t = v = 0
+    star = -1
+    mark = 0
+    while v < len(value):
+        if t < len(template) and template[t] == "*":
+            star, mark = t, v
+            t += 1
+        elif t < len(template) and _same(template[t], value[v]):
+            t += 1
+            v += 1
+        elif star >= 0:
+            mark += 1
+            v = mark
+            t = star + 1
+        else:
+            return False
+    while t < len(template) and template[t] == "*":
+        t += 1
+    return t == len(template)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +128,7 @@ class StereotypeProperty:
     required: bool = False
     kind: PropertyKind = PropertyKind.FREE
     allowed_values: tuple[str, ...] = ()
-    pattern: str | None = None
+    template: str | None = None
     help: str = ""
 
     def __post_init__(self) -> None:
@@ -192,19 +150,19 @@ class StereotypeProperty:
             if any(not v or len(v) > MAX_PROPERTY_VALUE_LENGTH for v in values):
                 msg = "an allowed value is between 1 and 500 characters"
                 raise ValueError(msg)
-            if self.pattern is not None:
-                msg = "an enumeration has no pattern"
+            if self.template is not None:
+                msg = "an enumeration has no template"
                 raise ValueError(msg)
-        elif self.kind is PropertyKind.PATTERN:
-            if self.pattern is None:
-                msg = "a pattern property needs its pattern"
+        elif self.kind is PropertyKind.TEMPLATE:
+            if self.template is None:
+                msg = "a template property needs its template"
                 raise ValueError(msg)
-            check_pattern(self.pattern)
+            check_template(self.template)
             if self.allowed_values:
-                msg = "a pattern property has no allowed values"
+                msg = "a template property has no allowed values"
                 raise ValueError(msg)
-        elif self.allowed_values or self.pattern is not None:
-            msg = "a free property has neither allowed values nor a pattern"
+        elif self.allowed_values or self.template is not None:
+            msg = "a free property has neither allowed values nor a template"
             raise ValueError(msg)
 
 
@@ -266,14 +224,14 @@ def check_value(prop: StereotypeProperty, value: str) -> None:
     if len(value) > MAX_PROPERTY_VALUE_LENGTH:
         msg = f"{prop.key}: a value is at most {MAX_PROPERTY_VALUE_LENGTH} characters"
         raise ValueError(msg)
-    if prop.kind is PropertyKind.PATTERN and len(value) > MAX_PATTERNED_VALUE_LENGTH:
-        msg = f"{prop.key}: a patterned value is at most {MAX_PATTERNED_VALUE_LENGTH} characters"
+    if prop.kind is PropertyKind.TEMPLATE and len(value) > MAX_TEMPLATED_VALUE_LENGTH:
+        msg = f"{prop.key}: a templated value is at most {MAX_TEMPLATED_VALUE_LENGTH} characters"
         raise ValueError(msg)
     if prop.kind is PropertyKind.ENUM and value not in prop.allowed_values:
         msg = f"{prop.key}: {value!r} is not one of {', '.join(prop.allowed_values)}"
         raise ValueError(msg)
-    if prop.kind is PropertyKind.PATTERN and not re.fullmatch(prop.pattern or "", value):
-        msg = f"{prop.key}: {value!r} does not match the expected form ({prop.pattern})"
+    if prop.kind is PropertyKind.TEMPLATE and not matches_template(prop.template or "", value):
+        msg = f"{prop.key}: {value!r} does not match the expected form ({prop.template})"
         raise ValueError(msg)
 
 
@@ -342,7 +300,7 @@ def profile_to_document(profile: Profile) -> dict[str, Any]:
                         "required": p.required,
                         "kind": p.kind.value,
                         "allowed_values": list(p.allowed_values),
-                        "pattern": p.pattern,
+                        "template": p.template,
                         "help": p.help,
                     }
                     for p in s.properties
@@ -375,7 +333,7 @@ def profile_from_document(document: Mapping[str, Any], *, now: datetime) -> Prof
                         required=p["required"],
                         kind=PropertyKind(p["kind"]),
                         allowed_values=tuple(p["allowed_values"]),
-                        pattern=p["pattern"],
+                        template=p["template"],
                         help=p["help"],
                     )
                     for p in raw["properties"]

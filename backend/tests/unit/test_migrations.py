@@ -410,3 +410,21 @@ def test_a_diagram_carries_a_revision_that_starts_at_zero() -> None:
 
     assert column.nullable is False
     assert str(column.server_default.arg) == "0"  # type: ignore[union-attr]
+
+
+def test_an_applied_stereotype_is_restricted_while_an_element_takes_its_tags_with_it() -> None:
+    table = Base.metadata.tables["element_stereotypes"]
+
+    assert next(iter(table.c.stereotype_id.foreign_keys)).ondelete == "RESTRICT"
+    assert next(iter(table.c.element_id.foreign_keys)).ondelete == "CASCADE"
+    assert table.c.stereotype_id.index is True
+
+
+def test_a_stereotype_name_is_unique_within_its_profile_and_a_profile_name_everywhere() -> None:
+    names = {
+        c.name
+        for t in ("profiles", "profile_stereotypes")
+        for c in Base.metadata.tables[t].constraints
+    }
+
+    assert {"uq_profiles_name", "uq_profile_stereotypes_profile_id_name"} <= names

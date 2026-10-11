@@ -86,6 +86,7 @@ from ea.api.schemas import (
     PassageRead,
     PlateauGapRead,
     PlateauRead,
+    ProfileRead,
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
@@ -160,6 +161,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -329,7 +331,12 @@ element — it writes, so ask first.
 A diagram is a saved *view* of the catalogue: `list_diagrams` names them and
 `get_diagram` opens one with its boxes, notes, groups and routed links. A group on
 a diagram means "drawn together", never a relationship, and there is no tool that
-moves a box: a layout is a person's gesture, not data to compute.\
+moves a box: a layout is a person's gesture, not data to compute.
+
+An element may carry *stereotypes* - labels from a profile such as "database" or
+"external API", each with the properties expected on such an element. `list_profiles`
+names them; `apply_stereotype` tags an element. A stereotype never changes the
+element's type or what it may be linked to.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -345,6 +352,7 @@ ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
 DiagramProvider = Callable[[], DiagramService]
+ProfileProvider = Callable[[], ProfileService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -368,6 +376,9 @@ AsOfArgument = Annotated[
 Properties = Annotated[
     dict[str, str] | None,
     Field(description="Free-form attributes, e.g. owner or criticality. Keys are identifiers."),
+]
+StereotypeId = Annotated[
+    UUID, Field(description="The id of a stereotype, as `list_profiles` reports it.")
 ]
 DiagramId = Annotated[
     UUID, Field(description="The id of a saved diagram, as `list_diagrams` reports it.")
@@ -641,15 +652,17 @@ def build_mcp_server(
     get_analysis: AnalysisProvider,
     get_timeline: TimelineProvider,
     get_diagrams: DiagramProvider,
+    get_profiles: ProfileProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the twelve services.
+    """Assemble the tool set over the thirteen services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines, the exchanges, the analyses, the time and the diagrams.
+    queries, the audit trail, the baselines, the exchanges, the analyses, the time, the
+    diagrams and the profiles.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -661,7 +674,8 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis`, `get_timeline` and `get_diagrams` are required for the same reason.
+    `get_analysis`, `get_timeline`, `get_diagrams` and `get_profiles` are required for the
+    same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -972,6 +986,39 @@ def build_mcp_server(
         moves a box: a layout is a person's gesture, not data to compute.
         """
         return DiagramRead.of(await get_diagrams().open(diagram_id))
+
+    # --- Profiles and stereotypes -----------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_profiles() -> list[ProfileRead]:
+        """The profiles, each with its stereotypes and the properties they expect.
+
+        A stereotype is a label for one ArchiMate type ("database" on an
+        application component) with the properties people expect on such an
+        element. Read this before tagging an element: `apply_stereotype` only
+        accepts a stereotype made for the element's own type.
+        """
+        return [ProfileRead.of(p) for p in await get_profiles().list_profiles()]
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def apply_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
+        """Tag an element with a stereotype made for its type.
+
+        Idempotent. A stereotype of another type is refused, saying which, and
+        so is one whose declared property would conflict with another one the
+        element already carries. An approved or locked element takes no label
+        until an approver reopens it. The property *values* stay the element's
+        own: write them with `update_element`.
+        """
+        return ElementRead.of(await get_profiles().apply_stereotype(element_id, stereotype_id))
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def remove_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
+        """Take a stereotype's label off an element. Its properties are left untouched."""
+        return ElementRead.of(await get_profiles().remove_stereotype(element_id, stereotype_id))
 
     @server.tool(annotations=READS)
     @speaking_plainly

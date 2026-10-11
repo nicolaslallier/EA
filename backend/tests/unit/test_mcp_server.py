@@ -36,6 +36,8 @@ from ea.api.schemas import (
     SubnetCreate,
 )
 from ea.core.config import Settings
+from ea.domain.archimate import ElementType
+from ea.domain.profiles import IconKey
 from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
@@ -50,6 +52,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 from tests.conftest import (
@@ -78,6 +81,7 @@ def server(
     analysis: AnalysisService,
     timeline: TimelineService,
     diagram_service: DiagramService,
+    profile_service: ProfileService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -93,6 +97,7 @@ def server(
         lambda: analysis,
         lambda: timeline,
         lambda: diagram_service,
+        lambda: profile_service,
     )
 
 
@@ -110,6 +115,7 @@ def server_without_an_index(
     analysis: AnalysisService,
     timeline: TimelineService,
     diagram_service: DiagramService,
+    profile_service: ProfileService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -125,6 +131,7 @@ def server_without_an_index(
         lambda: analysis,
         lambda: timeline,
         lambda: diagram_service,
+        lambda: profile_service,
     )
 
 
@@ -359,10 +366,11 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert (
-            len(names) == 60
-        )  # fifty-eight, and the two that read a diagram: the list and one opened
+        assert len(names) == 63  # fifty-eight, two that read a diagram, three of the profiles
         assert names == {
+            "list_profiles",
+            "apply_stereotype",
+            "remove_stereotype",
             "list_diagrams",
             "get_diagram",
             "export_model",
@@ -2376,3 +2384,73 @@ class TestDiagrams:
         for name in ("list_diagrams", "get_diagram"):
             assert tools[name].annotations is not None
             assert tools[name].annotations.read_only_hint is True  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+class TestProfiles:
+    async def test_an_agent_reads_the_profiles_then_tags_an_element(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        profile = await profile_service.create_profile(name="SI")
+        stereotype = await profile_service.add_stereotype(
+            profile.id,
+            name="database",
+            base_type=ElementType.APPLICATION_COMPONENT,
+            colour=None,
+            icon_key=IconKey.DATABASE,
+            properties=(),
+        )
+        element = await an_element(server, "application_component", "Facturation")
+
+        listed = await call(server, "list_profiles")
+        tagged = await call(
+            server, "apply_stereotype", element_id=element["id"], stereotype_id=str(stereotype.id)
+        )
+        untagged = await call(
+            server, "remove_stereotype", element_id=element["id"], stereotype_id=str(stereotype.id)
+        )
+
+        assert listed["result"][0]["stereotypes"][0]["name"] == "database"
+        assert [s["name"] for s in tagged["stereotypes"]] == ["database"]
+        assert untagged["stereotypes"] == []
+
+    async def test_a_stereotype_of_another_type_is_refused_in_words_the_model_can_act_on(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        profile = await profile_service.create_profile(name="SI")
+        stereotype = await profile_service.add_stereotype(
+            profile.id,
+            name="x",
+            base_type=ElementType.NODE,
+            colour=None,
+            icon_key=IconKey.NONE,
+            properties=(),
+        )
+        element = await an_element(server, "application_component", "Facturation")
+
+        with pytest.raises(ToolError, match="applies to node"):
+            await call(
+                server,
+                "apply_stereotype",
+                element_id=element["id"],
+                stereotype_id=str(stereotype.id),
+            )
+
+    async def test_a_reader_may_list_but_not_tag(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        element = await an_element(server, "application_component", "Facturation")
+
+        with acting_as(a_reader()):
+            assert await call(server, "list_profiles") == {"result": []}
+            with pytest.raises(ToolError):
+                await call(
+                    server, "apply_stereotype", element_id=element["id"], stereotype_id=str(uuid4())
+                )
+
+    async def test_the_write_tools_say_they_write(self, server: MCPServer[Any]) -> None:
+        tools = {t.name: t for t in await server.list_tools()}
+
+        assert tools["list_profiles"].annotations.read_only_hint is True  # type: ignore[union-attr]
+        assert tools["apply_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]
+        assert tools["remove_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]

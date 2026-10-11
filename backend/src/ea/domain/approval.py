@@ -178,6 +178,7 @@ class WriteKind(StrEnum):
     DOCUMENT = "document"  # a document attached, revised or discarded
     FILING = "filing"  # moved to another package, or re-filed when its package is deleted
     RESTORE = "restore"  # rewritten or deleted by a baseline restoration
+    STEREOTYPES = "stereotypes"  # the set of stereotype labels it carries (docs/adr/0064)
 
 
 def is_frozen(element: Element) -> bool:

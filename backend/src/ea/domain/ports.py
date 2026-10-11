@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
+    from ea.domain.model import StereotypeRef
+    from ea.domain.profiles import Profile, Stereotype
 
 
 @dataclass(slots=True)
@@ -453,6 +455,81 @@ class DiagramRepository(Protocol):
         `revision` the write is refused with `DiagramRevisionConflictError`;
         otherwise the revision moves on by one and is returned. `None` means
         the diagram is gone. `audit` is given the scene it replaces.
+        """
+        ...
+
+
+class StereotypeSource(Protocol):
+    """What the architecture service needs of the profiles: tags to show, rules to check."""
+
+    async def refs_of(self, element_ids: Sequence[UUID]) -> dict[UUID, tuple[StereotypeRef, ...]]:
+        """The stereotypes each element carries; an element with none may be absent."""
+        ...
+
+    async def stereotypes_of(self, element_id: UUID) -> tuple[Stereotype, ...]:
+        """The full stereotypes (with their property rules) one element carries."""
+        ...
+
+
+class ProfileRepository(StereotypeSource, Protocol):
+    """Persistence for profiles, their stereotypes and where they are applied.
+
+    Every write names its audit, with no default (`tests/unit/test_audit_coverage.py`):
+    the events of a profile write are given the profile as the transaction read it.
+    """
+
+    async def list_profiles(self) -> tuple[Profile, ...]: ...
+
+    async def get_profile(self, profile_id: UUID) -> Profile | None: ...
+
+    async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        """Store a profile and every stereotype it holds in one transaction."""
+        ...
+
+    async def save_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        """Overwrite the name, description and update time only."""
+        ...
+
+    async def delete_profile(self, profile_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        """Refused (`StereotypeInUseError`) while one of its stereotypes is applied."""
+        ...
+
+    async def list_stereotypes(self) -> tuple[Stereotype, ...]: ...
+
+    async def get_stereotype(self, stereotype_id: UUID) -> Stereotype | None: ...
+
+    async def add_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        """`audit` is given the profile as it was before the stereotype joined it."""
+        ...
+
+    async def replace_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        """Replace a stereotype and, in the same transaction, all its properties.
+
+        Re-typing a stereotype that is applied is refused (`StereotypeInUseError`).
+        """
+        ...
+
+    async def delete_stereotype(self, stereotype_id: UUID, *, audit: AuditOf[Profile]) -> bool: ...
+
+    async def applied_counts(self, stereotype_ids: Sequence[UUID]) -> dict[UUID, int]:
+        """How many elements carry each stereotype; those carried by none are absent."""
+        ...
+
+    async def set_for_element(
+        self,
+        element_id: UUID,
+        stereotype_ids: Sequence[UUID],
+        *,
+        audit: AuditOf[tuple[StereotypeRef, ...]],
+    ) -> None:
+        """Make the set of stereotypes an element carries exactly this one.
+
+        The element is locked and put to `guard_element_write` in the same
+        transaction, and touched (a new revision, an author) like any other write to it.
         """
         ...
 

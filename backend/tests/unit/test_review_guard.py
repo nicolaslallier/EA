@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from ea.domain import approval
-from ea.repositories import document_store, package_store
+from ea.repositories import document_store, package_store, profile_store
 from ea.services.architecture import ArchitectureService
 
 #: (where, route) -> a name the route's body must call.
@@ -55,6 +55,10 @@ ROUTES = {
         "PostgresPackageRepository.delete",
         package_store.PostgresPackageRepository.delete,
     ): "guard_all",
+    (
+        "PostgresProfileRepository.set_for_element",
+        profile_store.PostgresProfileRepository.set_for_element,
+    ): "guard_element_write",
     ("approval.guard_all", approval.guard_all): "guard_element_write",
 }
 
@@ -124,6 +128,10 @@ ELEMENT_WRITERS = {
     "baseline_store.py": {
         "_write": "plan_restore blocks on approved_or_locked, read in the same transaction",
         "PostgresBaselineRepository.create": "copies FROM elements into baseline_*: no write to it",
+    },
+    "profile_store.py": {
+        "PostgresProfileRepository.set_for_element": "guard_element_write(STEREOTYPES) on the "
+        "row it holds locked, then touch",
     },
     "package_store.py": {
         "PostgresPackageRepository.delete": "guard_all(FILING)",

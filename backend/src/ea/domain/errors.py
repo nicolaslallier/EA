@@ -47,6 +47,22 @@ class DiagramRevisionConflictError(DomainError):
     """A layout was saved against a revision someone else has since moved on from."""
 
 
+class ProfileNotFoundError(DomainError):
+    """A profile referenced by id is absent from the store."""
+
+
+class StereotypeNotFoundError(DomainError):
+    """A stereotype referenced by id is absent from the store."""
+
+
+class DuplicateProfileError(DomainError):
+    """A profile name, or a stereotype name within its profile, is already taken."""
+
+
+class StereotypeInUseError(DomainError):
+    """A stereotype is applied to elements and cannot be removed or re-typed."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 

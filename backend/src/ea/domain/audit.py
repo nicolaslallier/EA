@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from ea.domain.diagram_objects import DiagramScene
     from ea.domain.diagrams import Diagram
     from ea.domain.documents import Document
+    from ea.domain.model import StereotypeRef
     from ea.domain.packages import Package
+    from ea.domain.profiles import Profile
     from ea.domain.saved_queries import SavedQuery
 
 MAX_AUDIT_PAGE: Final = 200
@@ -46,6 +48,7 @@ class EntityKind(StrEnum):
     DIAGRAM = "diagram"
     DOCUMENT = "document"
     BASELINE = "baseline"
+    PROFILE = "profile"
 
 
 class AuditChannel(StrEnum):
@@ -68,6 +71,10 @@ class AuditAction(StrEnum):
     ELEMENT_REOPENED = "element.reopened"
     ELEMENT_LOCKED = "element.locked"
     ELEMENT_UNLOCKED = "element.unlocked"
+    ELEMENT_STEREOTYPES_CHANGED = "element.stereotypes_changed"
+    PROFILE_CREATED = "profile.created"
+    PROFILE_UPDATED = "profile.updated"
+    PROFILE_DELETED = "profile.deleted"
     RELATIONSHIP_CREATED = "relationship.created"
     RELATIONSHIP_DELETED = "relationship.deleted"
     DIAGRAM_CREATED = "diagram.created"
@@ -251,6 +258,30 @@ def scene_views(
             "nodes_moved": moved,
         },
     )
+
+
+def profile_view(profile: Profile) -> dict[str, Any]:
+    """A profile and the shape of its stereotypes - reference data, no element and no value."""
+    return {
+        "id": str(profile.id),
+        "name": profile.name,
+        "description": profile.description,
+        "stereotypes": [
+            {
+                "name": s.name,
+                "base_type": s.base_type.value,
+                "colour": s.colour,
+                "icon_key": s.icon_key.value,
+                "properties": [p.key for p in s.properties],
+            }
+            for s in sorted(profile.stereotypes, key=lambda s: s.name)
+        ],
+    }
+
+
+def stereotypes_view(refs: Sequence[StereotypeRef]) -> dict[str, Any]:
+    """The labels an element carries, by name: never one of its property values."""
+    return {"stereotypes": sorted(ref.name for ref in refs)}
 
 
 def document_view(document: Document) -> dict[str, Any]:

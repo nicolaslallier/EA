@@ -199,6 +199,7 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     description: '',
     documentation: '',
     properties: {},
+    stereotypes: [],
     package_id: null,
     created_at: '2026-09-07T12:00:00Z',
     updated_at: '2026-09-07T12:00:00Z',

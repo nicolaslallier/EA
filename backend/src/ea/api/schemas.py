@@ -79,8 +79,20 @@ from ea.domain.ipam import (
 )
 from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
+from ea.domain.model import StereotypeRef as StereotypeRefModel
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.profiles import (
+    MAX_NAME_LENGTH,
+    MAX_PROPERTIES_PER_STEREOTYPE,
+    MAX_STEREOTYPES_PER_PROFILE,
+    MAX_TEMPLATE_LENGTH,
+    IconKey,
+    Profile,
+    PropertyKind,
+    Stereotype,
+    StereotypeProperty,
+)
 from ea.domain.quality import MAX_FINDINGS, Finding, QualityPage, RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
@@ -243,6 +255,23 @@ class ElementUpdate(_Input):
     properties: Properties | None = None
 
 
+#: `#rrggbb` only: a colour ends up in an SVG attribute, so anything else is an injection.
+Colour = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+
+class StereotypeRef(BaseModel):
+    """The stereotype an element carries - enough to draw it, none of its rules."""
+
+    id: UUID
+    name: str
+    colour: Colour | None
+    icon_key: IconKey
+
+    @classmethod
+    def of(cls, ref: StereotypeRefModel) -> StereotypeRef:
+        return cls(id=ref.id, name=ref.name, colour=ref.colour, icon_key=IconKey(ref.icon_key))
+
+
 class ElementRead(BaseModel):
     """An element as the API exposes it, layer and aspect resolved for the caller."""
 
@@ -254,6 +283,7 @@ class ElementRead(BaseModel):
     description: str
     documentation: str
     properties: dict[str, str]
+    stereotypes: list[StereotypeRef]
     package_id: UUID | None
     created_at: datetime
     updated_at: datetime
@@ -284,6 +314,7 @@ class ElementRead(BaseModel):
             description=element.description,
             documentation=element.documentation,
             properties=dict(element.properties),
+            stereotypes=[StereotypeRef.of(ref) for ref in element.stereotypes],
             package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
@@ -840,8 +871,6 @@ MAX_DIAGRAM_EDGES: Final = 2_000
 #: Stacking order, either way. Only the order matters, not the number.
 ZIndex = Annotated[int, Field(ge=-10_000, le=10_000)]
 Revision = Annotated[int, Field(ge=0)]
-#: `#rrggbb` only: a colour ends up in an SVG attribute, so anything else is an injection.
-Colour = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
 ObjectText = Annotated[str, Field(max_length=MAX_OBJECT_TEXT)]
 
 
@@ -2002,3 +2031,124 @@ class RoadmapRead(BaseModel):
             window_from=roadmap.window_from,
             window_to=roadmap.window_to,
         )
+
+
+# --- Profiles and stereotypes (docs/adr/0064) --------------
+
+#: The size of a profile document an import accepts.
+MAX_PROFILE_DOCUMENT_BYTES: Final = 256 * 1024
+_ProfileName = Annotated[str, Field(min_length=1, max_length=MAX_NAME_LENGTH)]
+
+
+class StereotypePropertySchema(_Input):
+    """One declared property. Every field is required: no default, no `-Input` twin."""
+
+    key: Annotated[str, Field(min_length=1, max_length=63)]
+    label: Annotated[str, Field(min_length=1, max_length=100)]
+    required: bool
+    kind: PropertyKind
+    allowed_values: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=500)]], Field(max_length=50)
+    ]
+    template: Annotated[str, Field(max_length=MAX_TEMPLATE_LENGTH)] | None
+    help: Annotated[str, Field(max_length=300)]
+
+    @classmethod
+    def of(cls, prop: StereotypeProperty) -> StereotypePropertySchema:
+        return cls(
+            key=prop.key,
+            label=prop.label,
+            required=prop.required,
+            kind=prop.kind,
+            allowed_values=list(prop.allowed_values),
+            template=prop.template,
+            help=prop.help,
+        )
+
+    def declared(self) -> StereotypeProperty:
+        return StereotypeProperty(
+            key=self.key,
+            label=self.label,
+            required=self.required,
+            kind=self.kind,
+            allowed_values=tuple(self.allowed_values),
+            template=self.template,
+            help=self.help,
+        )
+
+
+class StereotypeWrite(_Input):
+    name: _ProfileName
+    base_type: ElementType
+    colour: Colour | None
+    icon_key: IconKey
+    properties: Annotated[
+        list[StereotypePropertySchema], Field(max_length=MAX_PROPERTIES_PER_STEREOTYPE)
+    ]
+
+
+class StereotypeRead(BaseModel):
+    id: UUID
+    profile_id: UUID
+    name: str
+    base_type: ElementType
+    colour: str | None
+    icon_key: IconKey
+    properties: list[StereotypePropertySchema]
+
+    @classmethod
+    def of(cls, stereotype: Stereotype) -> StereotypeRead:
+        return cls(
+            id=stereotype.id,
+            profile_id=stereotype.profile_id,
+            name=stereotype.name,
+            base_type=stereotype.base_type,
+            colour=stereotype.colour,
+            icon_key=stereotype.icon_key,
+            properties=[StereotypePropertySchema.of(p) for p in stereotype.properties],
+        )
+
+
+class ProfileCreate(_Input):
+    name: _ProfileName
+    description: Description = ""
+
+
+class ProfileUpdate(_Input):
+    name: _ProfileName | None = None
+    description: Description | None = None
+
+
+class ProfileRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+    stereotypes: list[StereotypeRead]
+
+    @classmethod
+    def of(cls, profile: Profile) -> ProfileRead:
+        return cls(
+            id=profile.id,
+            name=profile.name,
+            description=profile.description,
+            created_at=profile.created_at,
+            updated_at=profile.updated_at,
+            stereotypes=[StereotypeRead.of(s) for s in profile.stereotypes],
+        )
+
+
+class ProfileDocument(_Input):
+    """A profile as a portable document: no ids, no dates, a version."""
+
+    profile_format: Literal[1]
+    name: _ProfileName
+    description: Description
+    stereotypes: Annotated[list[StereotypeWrite], Field(max_length=MAX_STEREOTYPES_PER_PROFILE)]
+
+
+class ElementStereotypesSet(_Input):
+    """The whole set of stereotypes an element carries: it replaces the previous one."""
+
+    stereotype_ids: Annotated[list[UUID], Field(max_length=20)]

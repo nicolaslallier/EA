@@ -58,6 +58,7 @@ from ea.domain.errors import (
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
+    DuplicateProfileError,
     DuplicateSavedQueryError,
     ElementNotFoundError,
     ImportInProgressError,
@@ -66,9 +67,12 @@ from ea.domain.errors import (
     NotAuthorisedError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    ProfileNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
     SavedQueryNotFoundError,
+    StereotypeInUseError,
+    StereotypeNotFoundError,
     StoredFileNotFoundError,
     TooManyRefusedRowsError,
     WriteConflictError,
@@ -83,7 +87,7 @@ from ea.domain.exchange import (
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
-from ea.domain.model import Element, Relationship
+from ea.domain.model import Element, Relationship, StereotypeRef
 from ea.domain.packages import Package, PackageCounts, name_key
 from ea.domain.ports import (
     ElementChange,
@@ -97,6 +101,7 @@ from ea.domain.ports import (
     RowRefusal,
     Transaction,
 )
+from ea.domain.profiles import Profile, Stereotype
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -117,6 +122,7 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -1075,6 +1081,170 @@ class InMemoryDiagrams:
         return current + 1
 
 
+class InMemoryProfiles:
+    """A dictionary pretending to be the profile tables and the application of stereotypes.
+
+    It reproduces what the real store enforces by constraint or by lock: a taken name,
+    a stereotype still applied, and the guard every write to an element is put to.
+    """
+
+    def __init__(
+        self,
+        audit_log: InMemoryAuditLog | None = None,
+        graph: InMemoryRepository | None = None,
+    ) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        self.graph = graph
+        self.profiles: dict[UUID, Profile] = {}
+        self.applied: dict[UUID, tuple[UUID, ...]] = {}  # element id -> stereotype ids
+
+    def _all(self) -> tuple[Stereotype, ...]:
+        return tuple(s for p in self.profiles.values() for s in p.stereotypes)
+
+    def _used(self, stereotype_id: UUID) -> int:
+        return sum(stereotype_id in ids for ids in self.applied.values())
+
+    def _refuse_a_taken_name(self, profile: Profile) -> None:
+        if any(p.name == profile.name and p.id != profile.id for p in self.profiles.values()):
+            msg = f"the profile name {profile.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+
+    async def list_profiles(self) -> tuple[Profile, ...]:
+        return tuple(sorted(self.profiles.values(), key=lambda p: p.name))
+
+    async def get_profile(self, profile_id: UUID) -> Profile | None:
+        return self.profiles.get(profile_id)
+
+    async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        self._refuse_a_taken_name(profile)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = profile
+        self.audit_log.append(events)
+        return profile
+
+    async def save_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        stored = self.profiles.get(profile.id)
+        if stored is None:
+            raise ProfileNotFoundError(str(profile.id))
+        self._refuse_a_taken_name(profile)
+        events = events_for(audit, stored)
+        self.profiles[profile.id] = replace(profile, stereotypes=stored.stereotypes)
+        self.audit_log.append(events)
+        return profile
+
+    async def delete_profile(self, profile_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        stored = self.profiles.get(profile_id)
+        if stored is None:
+            return False
+        if any(self._used(s.id) for s in stored.stereotypes):
+            msg = f"the profile {stored.name!r} is applied to elements"
+            raise StereotypeInUseError(msg)
+        events = events_for(audit, stored)
+        del self.profiles[profile_id]
+        self.audit_log.append(events)
+        return True
+
+    async def list_stereotypes(self) -> tuple[Stereotype, ...]:
+        return tuple(sorted(self._all(), key=lambda s: s.name))
+
+    async def get_stereotype(self, stereotype_id: UUID) -> Stereotype | None:
+        return next((s for s in self._all() if s.id == stereotype_id), None)
+
+    async def add_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        profile = self.profiles[stereotype.profile_id]
+        if any(s.name == stereotype.name for s in profile.stereotypes):
+            msg = f"the stereotype name {stereotype.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = replace(profile, stereotypes=(*profile.stereotypes, stereotype))
+        self.audit_log.append(events)
+        return stereotype
+
+    async def replace_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        profile = self.profiles[stereotype.profile_id]
+        current = next(s for s in profile.stereotypes if s.id == stereotype.id)
+        if any(s.name == stereotype.name and s.id != stereotype.id for s in profile.stereotypes):
+            msg = f"the stereotype name {stereotype.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+        if current.base_type is not stereotype.base_type and self._used(current.id):
+            msg = f"the stereotype {current.name!r} is applied to elements"
+            raise StereotypeInUseError(msg)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = replace(
+            profile,
+            stereotypes=tuple(
+                stereotype if s.id == stereotype.id else s for s in profile.stereotypes
+            ),
+        )
+        self.audit_log.append(events)
+        return stereotype
+
+    async def delete_stereotype(self, stereotype_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        for profile in self.profiles.values():
+            if any(s.id == stereotype_id for s in profile.stereotypes):
+                if self._used(stereotype_id):
+                    msg = "the stereotype is applied to elements"
+                    raise StereotypeInUseError(msg)
+                events = events_for(audit, profile)
+                self.profiles[profile.id] = replace(
+                    profile,
+                    stereotypes=tuple(s for s in profile.stereotypes if s.id != stereotype_id),
+                )
+                self.audit_log.append(events)
+                return True
+        return False
+
+    async def applied_counts(self, stereotype_ids: Sequence[UUID]) -> dict[UUID, int]:
+        counts = {sid: self._used(sid) for sid in stereotype_ids}
+        return {sid: n for sid, n in counts.items() if n}
+
+    async def set_for_element(
+        self,
+        element_id: UUID,
+        stereotype_ids: Sequence[UUID],
+        *,
+        audit: AuditOf[tuple[StereotypeRef, ...]],
+    ) -> None:
+        element = self.graph.elements.get(element_id) if self.graph is not None else None
+        if self.graph is not None and element is None:
+            raise ElementNotFoundError(str(element_id))
+        if element is not None:
+            guard_element_write(element, WriteKind.STEREOTYPES)
+        wanted = tuple(dict.fromkeys(stereotype_ids))
+        known = {s.id: s for s in self._all()}
+        for sid in wanted:
+            if sid not in known:
+                raise StereotypeNotFoundError(str(sid))
+            if element is not None and known[sid].base_type is not element.element_type:
+                msg = (
+                    f"stereotype {known[sid].name!r} does not apply to {element.element_type.value}"
+                )
+                raise ValueError(msg)
+        before = (await self.refs_of([element_id])).get(element_id, ())
+        events = events_for(audit, before)
+        self.applied[element_id] = wanted
+        self.audit_log.append(events)
+        if self.graph is not None and element_id in self.graph.elements:
+            self.graph.touch([element_id], events)
+
+    async def refs_of(self, element_ids: Sequence[UUID]) -> dict[UUID, tuple[StereotypeRef, ...]]:
+        found: dict[UUID, tuple[StereotypeRef, ...]] = {}
+        known = {s.id: s for s in self._all()}
+        for element_id in element_ids:
+            stereotypes = [known[sid] for sid in self.applied.get(element_id, ()) if sid in known]
+            if stereotypes:
+                found[element_id] = tuple(s.ref for s in sorted(stereotypes, key=lambda s: s.name))
+        return found
+
+    async def stereotypes_of(self, element_id: UUID) -> tuple[Stereotype, ...]:
+        known = {s.id: s for s in self._all()}
+        return tuple(known[sid] for sid in self.applied.get(element_id, ()) if sid in known)
+
+
 async def lay_out(
     service: DiagramService,
     diagram_id: UUID,
@@ -1978,9 +2148,19 @@ def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
 
 
 @pytest.fixture
-def service(repository: InMemoryRepository) -> ArchitectureService:
-    """The service wired to the in-memory graph and to a clock that never moves."""
-    return ArchitectureService(repository, clock=lambda: FIXED_NOW)
+def profiles(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> InMemoryProfiles:
+    return InMemoryProfiles(audit_log, repository)
+
+
+@pytest.fixture
+def service(repository: InMemoryRepository, profiles: InMemoryProfiles) -> ArchitectureService:
+    """The service wired to the in-memory graph, a clock that never moves, and the profiles."""
+    return ArchitectureService(repository, clock=lambda: FIXED_NOW, stereotypes=profiles)
+
+
+@pytest.fixture
+def profile_service(profiles: InMemoryProfiles, service: ArchitectureService) -> ProfileService:
+    return ProfileService(profiles, service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

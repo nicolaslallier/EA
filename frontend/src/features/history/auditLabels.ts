@@ -17,6 +17,10 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'element.reopened': 'Élément rouvert',
   'element.locked': 'Élément verrouillé',
   'element.unlocked': 'Élément déverrouillé',
+  'element.stereotypes_changed': 'Stéréotypes d\'un élément modifiés',
+  'profile.created': 'Profil créé',
+  'profile.updated': 'Profil modifié',
+  'profile.deleted': 'Profil supprimé',
   'relationship.created': 'Relation créée',
   'relationship.deleted': 'Relation supprimée',
   'diagram.created': 'Diagramme créé',
@@ -46,6 +50,7 @@ export const KIND_LABELS: Record<EntityKind, string> = {
   diagram: 'Diagramme',
   document: 'Document',
   baseline: 'Baseline',
+  profile: 'Profil',
 }
 
 /** A hand-written URL may name anything: only what the labels know is a filter. */

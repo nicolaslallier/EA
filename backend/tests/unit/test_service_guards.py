@@ -28,6 +28,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 from tests.conftest import a_reader
@@ -45,6 +46,18 @@ WRITES = {
         "disconnect",
     },
     DiagramService: {"create", "update", "delete", "replace_layout"},
+    ProfileService: {
+        "create_profile",
+        "update_profile",
+        "delete_profile",
+        "add_stereotype",
+        "replace_stereotype",
+        "delete_stereotype",
+        "import_profile",
+        "apply_stereotypes",
+        "apply_stereotype",
+        "remove_stereotype",
+    },
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
     ExchangeService: {"import_exchange"},
     FileService: {"upload", "delete", "set_details", "reconcile"},

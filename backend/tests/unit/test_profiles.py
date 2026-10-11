@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -10,12 +11,15 @@ import pytest
 from ea.domain.archimate import ElementType
 from ea.domain.profiles import (
     MAX_PROPERTY_VALUE_LENGTH,
+    MAX_TEMPLATE_LENGTH,
+    MAX_TEMPLATED_VALUE_LENGTH,
     IconKey,
     Profile,
     PropertyKind,
     Stereotype,
     StereotypeProperty,
-    check_pattern,
+    check_template,
+    matches_template,
     missing_required,
     profile_from_document,
     profile_to_document,
@@ -51,11 +55,11 @@ class TestDeclaring:
             with pytest.raises(ValueError, match="reserved"):
                 a_property(key=reserved)
 
-    def test_an_enumeration_needs_values_and_a_pattern_needs_a_pattern(self) -> None:
+    def test_an_enumeration_needs_values_and_a_template_needs_a_template(self) -> None:
         with pytest.raises(ValueError, match="allowed"):
             a_property(kind=PropertyKind.ENUM)
-        with pytest.raises(ValueError, match="pattern"):
-            a_property(kind=PropertyKind.PATTERN)
+        with pytest.raises(ValueError, match="template"):
+            a_property(kind=PropertyKind.TEMPLATE)
         with pytest.raises(ValueError, match="free"):
             a_property(allowed_values=("a",))
 
@@ -89,25 +93,57 @@ class TestDeclaring:
             )
 
 
-class TestThePattern:
-    @pytest.mark.parametrize(
-        "pattern", [r"^[A-Z]{3}-\d{4}$", r"(ab)+", r"[a-z]+\.[a-z]+", r"(?:oui|non)"]
-    )
-    def test_a_linear_pattern_is_accepted(self, pattern: str) -> None:
-        check_pattern(pattern)
+class TestTheTemplate:
+    """No regular expression is run for a user: a template is `*`, `?`, `#` and literals."""
 
     @pytest.mark.parametrize(
-        "pattern", [r"(a+)+$", r"(a|b)*c", r"(.*a){10}", r"(a)\1", r"((a+)b)+"]
+        ("template", "value", "fits"),
+        [
+            ("ABC-####", "ABC-1234", True),
+            ("ABC-####", "ABC-12a4", False),
+            ("ABC-####", "ABC-12345", False),
+            ("*.example.com", "api.example.com", True),
+            ("*.example.com", "api.example.org", False),
+            ("a*b*c", "a--b--c", True),
+            ("a*b*c", "ac", False),
+            ("???", "abc", True),
+            ("???", "ab", False),
+            ("*", "", True),
+            ("", "", True),
+            ("(a+)+$", "aaaa", False),  # regex syntax is literal text here
+            ("(a+)+$", "(a+)+$", True),
+        ],
     )
-    def test_a_pattern_that_can_backtrack_catastrophically_is_refused(self, pattern: str) -> None:
-        with pytest.raises(ValueError, match="pattern"):
-            check_pattern(pattern)
+    def test_matching_is_whole_value_and_literal_otherwise(
+        self, template: str, value: str, fits: bool
+    ) -> None:
+        assert matches_template(template, value) is fits
 
-    def test_a_pattern_is_bounded_and_must_compile(self) -> None:
-        with pytest.raises(ValueError, match="at most"):
-            check_pattern("a" * 201)
-        with pytest.raises(ValueError, match="pattern"):
-            check_pattern("[unclosed")
+    @pytest.mark.parametrize(
+        "template",
+        ["(a+)+$", "(a|a)*$", "(a|aa)+$", "(.*a){20}", "(.*)*", "(?=a)a", r"(a)\1", "*a" * 32],
+    )
+    def test_the_known_redos_patterns_are_inert_text_and_cost_next_to_nothing(
+        self, template: str
+    ) -> None:
+        """The adversarial patterns of the literature, against the longest value a template sees."""
+        value = "a" * MAX_TEMPLATED_VALUE_LENGTH
+        started = time.perf_counter()
+        matches_template(template, value)
+        assert time.perf_counter() - started < 0.5
+
+    def test_the_worst_template_against_the_longest_value_is_bounded(self) -> None:
+        template = "*a" * (MAX_TEMPLATE_LENGTH // 2)
+        started = time.perf_counter()
+        assert matches_template(template, "a" * MAX_TEMPLATED_VALUE_LENGTH) is True
+        assert matches_template(template + "b", "a" * MAX_TEMPLATED_VALUE_LENGTH) is False
+        assert time.perf_counter() - started < 0.5
+
+    def test_a_template_is_bounded(self) -> None:
+        with pytest.raises(ValueError, match="between 1 and 64"):
+            check_template("a" * 65)
+        with pytest.raises(ValueError, match="between 1 and 64"):
+            check_template("")
 
 
 class TestValidatingValues:
@@ -121,10 +157,8 @@ class TestValidatingValues:
         with pytest.raises(ValueError, match="tier"):
             validate_stereotype_properties({"tier": "9"}, [stereotype])
 
-    def test_a_pattern_must_match_the_whole_value(self) -> None:
-        code = a_property(
-            key="code", label="Code", kind=PropertyKind.PATTERN, pattern=r"[A-Z]{3}-\d{4}"
-        )
+    def test_a_template_must_fit_the_whole_value(self) -> None:
+        code = a_property(key="code", label="Code", kind=PropertyKind.TEMPLATE, template="???-####")
         stereotype = a_stereotype(code)
 
         validate_stereotype_properties({"code": "ABC-1234"}, [stereotype])
@@ -194,7 +228,7 @@ class TestTheDocument:
         again = profile_to_document(imported)
         assert again == document
 
-    def test_a_document_of_another_format_or_with_a_dangerous_pattern_is_refused(self) -> None:
+    def test_a_document_of_another_format_or_with_a_regular_expression_is_not_one(self) -> None:
         profile = Profile(id=uuid4(), name="SI", description="", created_at=NOW, updated_at=NOW)
         document = profile_to_document(profile)
 
@@ -213,16 +247,16 @@ class TestTheDocument:
                             "key": "k",
                             "label": "K",
                             "required": False,
-                            "kind": "pattern",
+                            "kind": "template",
                             "allowed_values": [],
-                            "pattern": "(a+)+",
+                            "template": "",
                             "help": "",
                         }
                     ],
                 }
             ],
         }
-        with pytest.raises(ValueError, match="pattern"):
+        with pytest.raises(ValueError, match="template"):
             profile_from_document(dangerous, now=NOW)
 
     def test_an_unknown_base_type_is_refused(self) -> None:
@@ -251,12 +285,7 @@ class TestHardening:
             with pytest.raises(ValueError, match="reserved"):
                 a_property(key=reserved)
 
-    def test_a_pattern_cannot_stack_unbounded_repetitions(self) -> None:
-        with pytest.raises(ValueError, match="repetitions"):
-            check_pattern(r"a*a*a*a*b")
-        check_pattern(r"^[A-Z]{3}-\d{4}-[a-z]+$")
-
-    def test_a_value_checked_by_pattern_is_short(self) -> None:
-        code = a_property(key="code", label="Code", kind=PropertyKind.PATTERN, pattern=r"a+")
-        with pytest.raises(ValueError, match="at most 200"):
-            validate_stereotype_properties({"code": "a" * 201}, [a_stereotype(code)])
+    def test_a_value_checked_by_a_template_is_short(self) -> None:
+        code = a_property(key="code", label="Code", kind=PropertyKind.TEMPLATE, template="*")
+        with pytest.raises(ValueError, match="at most 256"):
+            validate_stereotype_properties({"code": "a" * 257}, [a_stereotype(code)])
