@@ -19,6 +19,7 @@ from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.exchanges import ExchangeService
+from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
@@ -271,6 +272,25 @@ def get_analysis_service(request: Request) -> AnalysisService:
 
 
 Analysis = Annotated[AnalysisService, Depends(get_analysis_service)]
+
+
+def external_service_of(app: FastAPI) -> ExternalReferenceService:
+    """The external-reference use cases the lifespan attached, or a clear failure.
+
+    Absent means the relational store is shut: a wiring fault and a 500.
+    """
+    service: ExternalReferenceService | None = getattr(app.state, "external_service", None)
+    if service is None:
+        msg = "no external reference service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_external_service(request: Request) -> ExternalReferenceService:
+    return external_service_of(request.app)
+
+
+ExternalReferences = Annotated[ExternalReferenceService, Depends(get_external_service)]
 
 
 def timeline_service_of(app: FastAPI) -> TimelineService:

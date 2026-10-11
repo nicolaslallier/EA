@@ -53,6 +53,19 @@ from ea.domain.exchange import (
     Issue,
     Severity,
 )
+from ea.domain.external import (
+    MAX_ISSUE_BODY_LENGTH,
+    MAX_ISSUE_TITLE_LENGTH,
+    MAX_REFERENCE_LENGTH,
+    MAX_STALE_PAGE,
+    MAX_TARGET_LENGTH,
+    TARGET_NAME_PATTERN,
+    ExternalKind,
+    ExternalStatus,
+    ExternalView,
+    IssuePlan,
+    TargetStatus,
+)
 from ea.domain.files import (
     MAX_FILE_DESCRIPTION_LENGTH,
     MAX_FILE_TAGS,
@@ -1895,4 +1908,110 @@ class RoadmapRead(BaseModel):
             window_truncated=roadmap.window_truncated,
             data_from=roadmap.data_from,
             data_to=roadmap.data_to,
+        )
+
+
+# --- External references (docs/adr/0063) ------------------------------------
+# The bounds are declared once, here, and imported by `mcp/server.py`.
+#: What a caller writes to name an object: an identifier or an address, never a host to call.
+ExternalReferenceText = Annotated[str, Field(min_length=1, max_length=MAX_REFERENCE_LENGTH)]
+ExternalTargetName = Annotated[
+    str, Field(pattern=f"^{TARGET_NAME_PATTERN}$", max_length=MAX_TARGET_LENGTH)
+]
+IssueScope = Annotated[str, Field(min_length=3, max_length=140)]
+IssueTitle = Annotated[str, Field(min_length=1, max_length=MAX_ISSUE_TITLE_LENGTH)]
+IssueBody = Annotated[str, Field(max_length=MAX_ISSUE_BODY_LENGTH)]
+StaleLimit = Annotated[int, Field(ge=1, le=MAX_STALE_PAGE)]
+
+
+class ExternalReferenceCreate(_Input):
+    kind: ExternalKind = Field(description="`url` is a link shown as written and never called.")
+    reference: ExternalReferenceText = Field(
+        description="An identifier (`owner/repo#12`, `PROJ-1`, a page number, `INC0012345`) or "
+        "the address of that object on the target's site. The server never calls an address "
+        "you give: it asks the named target, which the deployment configured."
+    )
+    target: ExternalTargetName | None = Field(
+        default=None,
+        description="The configured target to ask; optional if one active target serves the kind.",
+    )
+
+
+class ExternalIssueOpen(_Input):
+    target: ExternalTargetName
+    scope: IssueScope = Field(description="Where to open it, e.g. `owner/repo`.")
+    title: IssueTitle
+    body: IssueBody = ""
+    dry_run: bool = Field(
+        default=True,
+        description="True by default: shows what would be sent and sends nothing. "
+        "Pass false to open the ticket, once.",
+    )
+
+
+class ExternalTargetRead(BaseModel):
+    """A declared target by name and kind — never its address, scope, account or token."""
+
+    name: str
+    kind: ExternalKind
+    active: bool = Field(description="Configured and reachable at boot.")
+    writable: bool = Field(description="Whether tickets may be opened here.")
+
+    @classmethod
+    def of(cls, target: TargetStatus) -> ExternalTargetRead:
+        return cls(
+            name=target.name, kind=target.kind, active=target.active, writable=target.writable
+        )
+
+
+class ExternalReferenceRead(BaseModel):
+    id: UUID
+    element_id: UUID
+    kind: ExternalKind
+    target: str
+    external_id: str
+    url: str = Field(description="Built by the server; a free link keeps what was written.")
+    title: str = Field(description="A third party's text, cached: render it as text.")
+    status: ExternalStatus
+    synced_at: datetime | None
+    created_by: str
+    created_at: datetime
+    stale: bool = Field(description="The cache is older than 24 hours (or was never filled).")
+
+    @classmethod
+    def of(cls, view: ExternalView) -> ExternalReferenceRead:
+        ref = view.reference
+        return cls(
+            id=ref.id,
+            element_id=ref.element_id,
+            kind=ref.kind,
+            target=ref.target,
+            external_id=ref.external_id,
+            url=ref.url,
+            title=ref.title,
+            status=ref.status,
+            synced_at=ref.synced_at,
+            created_by=ref.created_by,
+            created_at=ref.created_at,
+            stale=view.stale,
+        )
+
+
+class ExternalIssueRead(BaseModel):
+    dry_run: bool
+    target: str
+    scope: str
+    title: str
+    body: str
+    reference: ExternalReferenceRead | None = Field(description="The link, once opened.")
+
+    @classmethod
+    def of(cls, plan: IssuePlan) -> ExternalIssueRead:
+        return cls(
+            dry_run=plan.dry_run,
+            target=plan.target,
+            scope=plan.scope,
+            title=plan.title,
+            body=plan.body,
+            reference=ExternalReferenceRead.of(plan.view) if plan.view else None,
         )

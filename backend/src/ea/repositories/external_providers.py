@@ -170,6 +170,9 @@ class _Provider:
             self._scope(scope, "that object")
         return scope
 
+    async def resolve(self, external_id: str) -> ExternalSnapshot:  # pragma: no cover
+        raise NotImplementedError
+
     async def probe(self) -> None:  # pragma: no cover - overridden by every provider
         raise NotImplementedError
 

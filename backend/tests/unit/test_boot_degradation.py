@@ -22,14 +22,15 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 import pytest
 
 from ea.core.config import Settings
 from ea.domain.errors import FileStorageUnavailableError, SearchUnavailableError
 from ea.domain.files import FileListing
-from ea.main import FILES, SEARCH, create_app
+from ea.main import EXTERNAL, FILES, SEARCH, create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryDocuments
+from tests.conftest import FakeExternalSystem, InMemoryDocuments, InMemoryExternalReferences
 
 
 def _settings(**overrides: object) -> Settings:
@@ -109,6 +110,60 @@ class TestTheBucket:
                 pass
 
         assert "no ea-api user on this MinIO" in caplog.text
+
+
+class _DownSystem(FakeExternalSystem):
+    async def probe(self) -> None:
+        msg = "api.provider.test refused the token tok_secret"
+        raise ConnectionError(msg)
+
+
+class TestTheThirdPartyTargets:
+    """A declared target that fails its boot probe degrades `external`, nothing else (adr/0063)."""
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_target_boots_the_api_and_is_named_without_its_reason(
+        self,
+        service: ArchitectureService,
+        external_references: InMemoryExternalReferences,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        down, up = _DownSystem("down"), FakeExternalSystem("up")
+        app = create_app(
+            _settings(),
+            architecture_service=service,
+            external=external_references,
+            external_systems={"down": down, "up": up},
+        )
+
+        with caplog.at_level(logging.ERROR, logger="ea.main"):
+            async with app.router.lifespan_context(app):
+                assert app.state.degraded == (EXTERNAL,)
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    health = await client.get("/health")
+                    targets = await app.state.external_service.targets()
+
+        assert health.status_code == 200
+        assert health.json() == {"status": "degraded", "degraded": ["external"]}
+        assert "tok_secret" not in health.text
+        assert [(t.name, t.active) for t in targets] == [("down", False), ("up", True)]
+        assert "subsystem_degraded" in [getattr(r, "action", None) for r in caplog.records]
+
+    @pytest.mark.asyncio
+    async def test_reachable_targets_leave_nothing_degraded(
+        self, service: ArchitectureService, external_references: InMemoryExternalReferences
+    ) -> None:
+        app = create_app(
+            _settings(),
+            architecture_service=service,
+            external=external_references,
+            external_systems={"up": FakeExternalSystem("up")},
+        )
+
+        async with app.router.lifespan_context(app):
+            assert app.state.degraded == ()
 
 
 class TestTheEmbeddingService:
