@@ -68,6 +68,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/diagrams/DiagramsSection.vue'),
   },
   {
+    path: '/profils',
+    name: 'profiles',
+    label: 'Profils',
+    summary: 'Des stéréotypes et les propriétés attendues sur un type d\'élément.',
+    group: 'model',
+    view: () => import('../features/profiles/ProfilesSection.vue'),
+  },
+  {
     path: '/ipam',
     name: 'ipam',
     label: 'Adressage IP',
