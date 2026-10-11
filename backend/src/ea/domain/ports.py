@@ -26,6 +26,7 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
     from ea.domain.audit import AuditOf
+    from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
@@ -353,6 +354,61 @@ class AuditRepository(Protocol):
 
     async def page(self, criteria: AuditFilter) -> AuditPage:
         """Newest first (`at`, then `id`), at most `criteria.limit` events and a cursor."""
+        ...
+
+
+class BaselineRepository(Protocol):
+    """Persistence for baselines — docs/adr/0045.
+
+    Every write names its audit, with no default, like the stores of the model
+    (`tests/unit/test_audit_coverage.py`). The reads that feed a decision —
+    `snapshot_of`, `current_snapshot`, `restore_plan` — each run in one
+    transaction at one instant: a link is never read without its element.
+    """
+
+    async def list_all(self) -> tuple[Baseline, ...]:
+        """Every baseline by name, each with the counts of what it holds."""
+        ...
+
+    async def get(self, baseline_id: UUID) -> Baseline | None: ...
+
+    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+        """Copy the whole model under this baseline, in one REPEATABLE READ transaction.
+
+        Raises `DuplicateBaselineError` for a taken name and
+        `BaselineTooLargeError` past the limits; writes nothing then. `audit` is
+        given the stored baseline, counts included.
+        """
+        ...
+
+    async def delete(self, baseline_id: UUID, *, audit: AuditOf[Baseline]) -> bool:
+        """Remove the copy only — never a row of the model."""
+        ...
+
+    async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot: ...
+
+    async def current_snapshot(self) -> ModelSnapshot:
+        """The live elements, links and boxes of every diagram, as values."""
+        ...
+
+    async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
+        """What restoring would do now, documents counted. Raises `BaselineNotFoundError`."""
+        ...
+
+    async def apply_restore(
+        self,
+        baseline_id: UUID,
+        *,
+        keep_new: bool,
+        expected: RestorePlan,
+        now: datetime,
+        audit: AuditOf[RestorePlan],
+    ) -> None:
+        """Re-plan in one SERIALIZABLE transaction and apply it only if it is `expected`.
+
+        A different plan, a protected element touched, a clash or a concurrent
+        write raise `RestoreConflictError` / `RestoreBlockedError` and write nothing.
+        """
         ...
 
 
