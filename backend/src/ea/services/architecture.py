@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.audit import AuditAction, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship
+from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
@@ -54,6 +56,7 @@ class ArchitectureService:
     ) -> None:
         self._repository = repository
         self._now = clock
+        self._trail = AuditTrail(clock)
 
     # --- Elements ---------------------------------------------------------
 
@@ -76,7 +79,10 @@ class ArchitectureService:
             properties=properties,
             now=self._now(),
         )
-        stored = await self._repository.add_element(element)
+        event = self._trail.event(
+            AuditAction.ELEMENT_CREATED, entity_id=element.id, after=element_view(element)
+        )
+        stored = await self._repository.add_element(element, audit=(event,))
         logger.info(
             "element created: %s %r",
             stored.element_type.value,
@@ -141,7 +147,13 @@ class ArchitectureService:
                     documentation.strip() if documentation is not None else updated.documentation
                 ),
             )
-        stored = await self._repository.save_element(updated)
+        event = self._trail.event(
+            AuditAction.ELEMENT_UPDATED,
+            entity_id=current.id,
+            before=element_view(current),
+            after=element_view(updated),
+        )
+        stored = await self._repository.save_element(updated, audit=(event,))
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,
@@ -162,7 +174,25 @@ class ArchitectureService:
         it — see docs/adr/0033.
         """
         require_editor()
-        if not await self._repository.delete_element(element_id):
+        current = await self.get_element(element_id)
+        links = await self._repository.relations_of(element_id)
+        attached = await self._repository.attachments_of(element_id)
+        event = self._trail.event(
+            AuditAction.ELEMENT_DELETED,
+            entity_id=element_id,
+            before={
+                **element_view(current),
+                "cascaded": {
+                    "relationships": [
+                        {"id": str(link.id), "relationship_type": link.relationship_type.value}
+                        for link in links.relationships
+                    ],
+                    "documents": [str(identifier) for identifier in attached.document_ids],
+                    "diagrams": [str(identifier) for identifier in attached.diagram_ids],
+                },
+            },
+        )
+        if not await self._repository.delete_element(element_id, audit=(event,)):
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
         logger.info(
@@ -210,7 +240,12 @@ class ArchitectureService:
             )
             raise CyclicContainmentError(msg)
 
-        stored = await self._repository.add_relationship(relationship)
+        event = self._trail.event(
+            AuditAction.RELATIONSHIP_CREATED,
+            entity_id=relationship.id,
+            after=relationship_view(relationship),
+        )
+        stored = await self._repository.add_relationship(relationship, audit=(event,))
         logger.info(
             "%r --%s--> %r",
             source.name,
@@ -252,7 +287,13 @@ class ArchitectureService:
 
     async def disconnect(self, relationship_id: UUID) -> None:
         require_editor()
-        if not await self._repository.delete_relationship(relationship_id):
+        current = await self.get_relationship(relationship_id)
+        event = self._trail.event(
+            AuditAction.RELATIONSHIP_DELETED,
+            entity_id=relationship_id,
+            before=relationship_view(current),
+        )
+        if not await self._repository.delete_relationship(relationship_id, audit=(event,)):
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
         logger.info(
