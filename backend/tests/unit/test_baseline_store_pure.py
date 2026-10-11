@@ -19,6 +19,7 @@ from ea.db.models.baseline import BaselineElementRecord, BaselineRelationshipRec
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.baselines import (
+    LOGGED_BLOCKED,
     BaselineLimits,
     BoxSnapshot,
     ElementUpdate,
@@ -183,6 +184,21 @@ class TestApplyingAPlan:
         actions = [getattr(r, "action", None) for r in caplog.records]
         assert actions == ["restore_blocked", "restore_conflict"]
         assert caplog.records[0].blocked_count == 1  # type: ignore[attr-defined]
+
+    async def test_five_thousand_blocked_elements_make_a_small_message_and_a_small_record(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        many = tuple(node("x" * 1000 + str(i)) for i in range(5000))
+
+        with caplog.at_level("WARNING"), pytest.raises(RestoreBlockedError) as raised:
+            await apply(repository(RecordingSession(), RestorePlan(blocked=many)), RestorePlan())
+
+        assert len(str(raised.value)) < 3000 and "5000" in str(raised.value)
+        (record,) = caplog.records
+        assert record.blocked_count == 5000  # type: ignore[attr-defined]
+        assert len(record.blocked) == LOGGED_BLOCKED  # type: ignore[attr-defined]
+        assert len(repr(record.blocked)) < 5000  # type: ignore[attr-defined]
+        assert len(record.getMessage()) < 3000
 
     async def test_a_name_taken_meanwhile_names_the_element(self) -> None:
         session = RecordingSession()

@@ -42,6 +42,7 @@ from ea.domain.baselines import (
     BoxSnapshot,
     ModelSize,
     ModelSnapshot,
+    blocked_message,
     plan_restore,
     refusal_context,
     refuse_oversize,
@@ -549,8 +550,7 @@ class PostgresBaselineRepository:
                     plan = await self._plan(session, baseline_id, keep_new=keep_new)
                     blocked = plan.blocked
                     if plan.is_blocked:
-                        names = ", ".join(repr(e.name) for e in plan.blocked)
-                        msg = f"the restoration would touch protected elements: {names}"
+                        msg = blocked_message(plan.blocked)
                         raise RestoreBlockedError(msg)
                     if plan != expected:
                         msg = "the model changed since the plan was read: read the plan again"

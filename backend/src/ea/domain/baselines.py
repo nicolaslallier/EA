@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from itertools import islice
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -392,8 +393,15 @@ def _link_order(link: Relationship) -> tuple[str, str]:
     return (link.relationship_type.value, str(link.id))
 
 
-#: How many blocked elements a log line names; the count beside them is exact.
-LOGGED_BLOCKED: Final = 10
+#: How many blocked elements a log line or an error names, and how much of each name.
+#: The cap is applied at the source (`islice`), before anything is formatted: the
+#: exact count always travels beside.
+LOGGED_BLOCKED: Final = 20
+LOGGED_NAME_LENGTH: Final = 80
+
+
+def _shown(name: str) -> str:
+    return name if len(name) <= LOGGED_NAME_LENGTH else name[:LOGGED_NAME_LENGTH] + "..."
 
 
 def refusal_context(baseline_id: UUID, blocked: Sequence[Element] = ()) -> dict[str, Any]:
@@ -401,8 +409,18 @@ def refusal_context(baseline_id: UUID, blocked: Sequence[Element] = ()) -> dict[
     return {
         "baseline_id": str(baseline_id),
         "blocked_count": len(blocked),
-        "blocked": [{"id": str(e.id), "name": e.name} for e in blocked[:LOGGED_BLOCKED]],
+        "blocked": [
+            {"id": str(e.id), "name": _shown(e.name)} for e in islice(blocked, LOGGED_BLOCKED)
+        ],
     }
+
+
+def blocked_message(blocked: Sequence[Element]) -> str:
+    """`'a', 'b' and 4998 more`: the first few names, and the exact count of the rest."""
+    names = ", ".join(repr(_shown(e.name)) for e in islice(blocked, LOGGED_BLOCKED))
+    more = len(blocked) - LOGGED_BLOCKED
+    tail = f" and {more} more" if more > 0 else ""
+    return f"{len(blocked)} protected element(s) would be touched: {names}{tail}"
 
 
 def _cascades_of(

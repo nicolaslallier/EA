@@ -32,6 +32,7 @@ from ea.domain.baselines import (
     Cascade,
     RestorePlan,
     baseline_view,
+    blocked_message,
     diff_snapshots,
     refusal_context,
 )
@@ -159,8 +160,7 @@ class BaselineService:
                 "restoration refused: protected elements",
                 extra={"action": "restore_blocked", **refusal_context(baseline_id, plan.blocked)},
             )
-            names = ", ".join(repr(e.name) for e in plan.blocked)
-            msg = f"the restoration would touch protected elements: {names}. Unlock them first"
+            msg = f"{blocked_message(plan.blocked)}. Unlock them first"
             raise RestoreBlockedError(msg)
         story = f"restore:{baseline.id}"
 

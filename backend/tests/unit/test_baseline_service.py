@@ -10,6 +10,7 @@ from ea.core.logging import request_id
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction
+from ea.domain.baselines import LOGGED_BLOCKED
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import (
@@ -260,7 +261,10 @@ class TestRestoring:
         audit_log: InMemoryAuditLog,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        many = [await service.create_element(element_type=E.NODE, name=f"n{i}") for i in range(15)]
+        many = [
+            await service.create_element(element_type=E.NODE, name=f"n{i}")
+            for i in range(LOGGED_BLOCKED + 5)
+        ]
         baseline = await baseline_service.create(name="v1")
         for element in many:
             await service.update_element(element.id, name=f"{element.name}-late")
@@ -273,8 +277,8 @@ class TestRestoring:
         (record,) = [r for r in caplog.records if getattr(r, "action", "") == "restore_blocked"]
         assert record.levelname == "WARNING"
         assert record.baseline_id == str(baseline.id)  # type: ignore[attr-defined]
-        assert record.blocked_count == 15  # type: ignore[attr-defined]
-        assert len(record.blocked) == 10  # type: ignore[attr-defined]  # bounded, not a list of 15
+        assert record.blocked_count == LOGGED_BLOCKED + 5  # type: ignore[attr-defined]
+        assert len(record.blocked) == LOGGED_BLOCKED  # type: ignore[attr-defined]
         assert audit_log.events == []
 
     async def test_a_reader_may_not_even_ask_for_a_plan(
