@@ -22,7 +22,7 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AuditAction, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
-from ea.domain.model import Element, Relationship
+from ea.domain.model import Element, Relationship, reject_nul
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
@@ -143,10 +143,14 @@ class ArchitectureService:
                 updated,
                 updated_at=now,
                 description=(
-                    description.strip() if description is not None else updated.description
+                    reject_nul(description, "a description").strip()
+                    if description is not None
+                    else updated.description
                 ),
                 documentation=(
-                    documentation.strip() if documentation is not None else updated.documentation
+                    reject_nul(documentation, "a documentation").strip()
+                    if documentation is not None
+                    else updated.documentation
                 ),
             )
 

@@ -174,3 +174,26 @@ async def test_an_event_without_an_actor_is_refused_before_it_is_written() -> No
             write_events(session, [replace(blank, **{field: ""})])  # type: ignore[arg-type]
 
     assert added == []
+
+
+@pytest.mark.parametrize("field", ["name", "description", "documentation", "property"])
+async def test_a_nul_character_is_refused_as_an_input_error_before_any_write(
+    field: str, service: ArchitectureService, audit_log: InMemoryAuditLog
+) -> None:
+    """PostgreSQL cannot hold a NUL in `text`/`jsonb`: it must be a 422, never a driver 500."""
+    fields: dict[str, Any] = {"name": "n", "description": "", "documentation": ""}
+    properties: dict[str, str] = {}
+    if field == "property":
+        properties["owner"] = "a\x00b"
+    else:
+        fields[field] = "a\x00b"
+
+    with pytest.raises(ValueError, match="NUL"):
+        await service.create_element(element_type=E.NODE, properties=properties, **fields)
+
+    assert audit_log.events == []
+
+
+async def test_a_nul_in_a_diagram_name_is_refused(diagram_service: Any) -> None:
+    with pytest.raises(ValueError, match="NUL"):
+        await diagram_service.create(name="a\x00b")

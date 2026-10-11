@@ -25,7 +25,16 @@ from ea.domain.archimate import (
 _EMPTY_PROPERTIES: Mapping[str, str] = MappingProxyType({})
 
 
+def reject_nul(value: str, what: str) -> str:
+    """PostgreSQL cannot store a NUL in `text` or `jsonb`: a refusal here, not a driver error."""
+    if "\x00" in value:
+        msg = f"{what} cannot contain a NUL character"
+        raise ValueError(msg)
+    return value
+
+
 def _clean_name(name: str) -> str:
+    reject_nul(name, "a name")
     cleaned = name.strip()
     if not cleaned:
         msg = "an element name cannot be blank"
@@ -41,7 +50,8 @@ PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}\Z")
 def _freeze(properties: Mapping[str, str] | None) -> Mapping[str, str]:
     if not properties:
         return _EMPTY_PROPERTIES
-    for key in properties:
+    for key, value in properties.items():
+        reject_nul(value, f"the property {key!r}")
         if not PROPERTY_KEY.match(key):
             msg = (
                 f"property name {key!r} is not a plain identifier "
@@ -88,8 +98,8 @@ class Element:
             name=_clean_name(name),
             created_at=now,
             updated_at=now,
-            description=description.strip(),
-            documentation=documentation.strip(),
+            description=reject_nul(description, "a description").strip(),
+            documentation=reject_nul(documentation, "a documentation").strip(),
             properties=_freeze(properties),
         )
 
@@ -162,7 +172,7 @@ class Relationship:
             source_type=source.element_type,
             target_type=target.element_type,
             created_at=now,
-            name=name.strip(),
+            name=reject_nul(name, "a name").strip(),
             access_type=access_type,
             directed=directed,
             properties=_freeze(properties),
