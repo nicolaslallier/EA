@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
@@ -15,7 +17,7 @@ from ea.domain.archimate import ElementType
 from ea.domain.diagrams import DiagramNode
 from ea.domain.reports import MAX_REPORT_ELEMENTS
 from ea.main import create_app
-from ea.repositories.report_renderers import available_renderers
+from ea.repositories.report_renderers import available_renderers, docx_renderer
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from tests.conftest import (
@@ -487,3 +489,37 @@ class TestThePdfFormat:
 
         assert response.status_code == 200
         assert response.content.startswith(b"%PDF")
+
+
+class TestTheDocxFormat:
+    async def test_a_docx_is_a_zip_with_a_document_and_deposits_like_the_others(
+        self,
+        service: ArchitectureService,
+        diagrams: InMemoryDiagrams,
+        documents: InMemoryDocuments,
+        files_store: InMemoryObjectStore,
+        files_metadata: InMemoryFileMetadata,
+    ) -> None:
+        async with a_client(
+            service, diagrams, documents, files_store, files_metadata, {"docx": docx_renderer()}
+        ) as client:
+            diagram_id = await a_diagram(client, "Facturation")
+
+            response = await client.get("/reports/render", params=render_params(diagram_id, "docx"))
+            deposit = await client.post(
+                "/reports",
+                json={
+                    "template": "fiche-diagramme",
+                    "subject": {"kind": "diagram", "id": diagram_id},
+                    "format": "docx",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].endswith("wordprocessingml.document")
+        assert response.headers["content-disposition"].endswith(".docx")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "word/document.xml" in archive.namelist()
+            assert "Facturation" in archive.read("word/document.xml").decode()
+        assert deposit.status_code == 201
+        assert deposit.json()["key"].endswith(".docx")

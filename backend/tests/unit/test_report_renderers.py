@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import zipfile
 
 import pytest
 
@@ -16,7 +18,12 @@ from ea.domain.reports import (
     ReportModel,
     Table,
 )
-from ea.repositories.report_renderers import available_renderers, pdf_renderer, refuse_every_url
+from ea.repositories.report_renderers import (
+    available_renderers,
+    docx_renderer,
+    pdf_renderer,
+    refuse_every_url,
+)
 from tests.unit.test_diagram_render import a_detail, an_element
 
 
@@ -112,3 +119,58 @@ class TestWhatIsOffered:
 
         assert "pdf" not in offered
         assert any(getattr(r, "action", "") == "report_format_unavailable" for r in caplog.records)
+
+
+def document_xml(docx: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(docx)) as archive:
+        assert "[Content_Types].xml" in archive.namelist()
+        return archive.read("word/document.xml").decode()
+
+
+class TestTheDocx:
+    def test_a_report_becomes_a_zip_with_a_document(self) -> None:
+        docx = docx_renderer()(
+            model(
+                Heading(2, "Titre"),
+                Paragraph("Texte"),
+                Table(("Nom", "Type"), (("Facturation", "Application Component"),)),
+                MarkdownBlock("# Doc\n\n- a\n"),
+            )
+        )
+
+        xml = document_xml(docx)
+        assert docx.startswith(b"PK")
+        assert "Facturation" in xml and "Titre" in xml
+
+    def test_markup_in_a_name_is_text_in_the_document(self) -> None:
+        xml = document_xml(
+            docx_renderer()(model(Paragraph("<w:p>&</w:p>"), Table(("<b>",), (("</w:t>",),))))
+        )
+
+        assert "&lt;w:p&gt;&amp;&lt;/w:p&gt;" in xml
+        assert "&lt;/w:t&gt;" in xml
+
+    def test_characters_xml_forbids_do_not_break_it(self) -> None:
+        xml = document_xml(docx_renderer()(model(Paragraph("A\x00B\x0bC"), Heading(2, "D\x1fE"))))
+
+        assert "ABC" in xml and "DE" in xml
+
+    def test_a_diagram_is_replaced_by_a_note_not_embedded(self) -> None:
+        svg = render_svg(a_detail([(an_element("Facturation"), 40, 40, 132, 46)]))
+
+        xml = document_xml(docx_renderer()(model(Figure(svg, "Vente"))))
+
+        assert "Vente" in xml
+        assert "<svg" not in xml and "&lt;svg" not in xml
+
+    def test_an_empty_report_is_still_a_valid_document(self) -> None:
+        assert document_xml(docx_renderer()(model())).startswith("<?xml")
+
+    def test_non_latin_text_survives(self) -> None:
+        xml = document_xml(docx_renderer()(model(Paragraph("Ελληνικά Кириллица 日本語"))))
+
+        assert "Ελληνικά Кириллица 日本語" in xml
+
+
+def test_docx_is_offered_with_the_pdf_engine_when_it_loads() -> None:
+    assert "docx" in available_renderers()

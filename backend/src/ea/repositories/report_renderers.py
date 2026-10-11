@@ -1,4 +1,4 @@
-"""The report formats that need native libraries: PDF now, DOCX in the next lot.
+"""The report formats that need native libraries: PDF and DOCX.
 
 Each engine is imported on demand and an engine that cannot load is *left out*,
 not fatal: HTML is always served, and `GET /report-templates` lists the formats
@@ -7,12 +7,23 @@ this deployment really produces (docs/adr/0062).
 
 from __future__ import annotations
 
+import io
 import logging
 from collections.abc import Callable
 from typing import NoReturn
 
+from ea.domain.diagram_render import xml_safe
 from ea.domain.report_html import to_html
-from ea.domain.reports import Renderer, ReportFormat, ReportModel
+from ea.domain.reports import (
+    Figure,
+    Heading,
+    MarkdownBlock,
+    Paragraph,
+    Renderer,
+    ReportFormat,
+    ReportModel,
+    Table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +53,54 @@ def pdf_renderer() -> Renderer:
     return render
 
 
+def docx_renderer() -> Renderer:
+    """The DOCX engine (python-docx). Raises `ImportError` when it is not installed."""
+    from docx import Document
+
+    def render(model: ReportModel) -> bytes:
+        document = Document()
+        document.core_properties.title = xml_safe(model.title)[:255]
+        document.add_heading(xml_safe(model.title), level=0)
+        document.add_paragraph(xml_safe(model.subtitle))
+        for block in model.blocks:
+            match block:
+                case Heading():
+                    document.add_heading(xml_safe(block.text), level=min(max(block.level, 1), 9))
+                case Paragraph():
+                    document.add_paragraph(xml_safe(block.text))
+                case MarkdownBlock():
+                    # The markdown source as plain lines: Word has no markdown. The
+                    # syntax stays visible; a faithful conversion is a later lot.
+                    for line in block.source.splitlines():
+                        if line.strip():
+                            document.add_paragraph(xml_safe(line))
+                case Table():
+                    table = document.add_table(rows=1, cols=max(len(block.headers), 1))
+                    table.style = "Table Grid"
+                    for cell, text in zip(table.rows[0].cells, block.headers, strict=False):
+                        cell.text = xml_safe(text)
+                    for row in block.rows:
+                        for cell, text in zip(table.add_row().cells, row, strict=False):
+                            cell.text = xml_safe(text)
+                case Figure():
+                    document.add_paragraph(
+                        f"Diagramme « {xml_safe(block.caption)} » : le dessin figure dans le "
+                        "rapport HTML ou PDF; ses éléments et ses relations sont listés "
+                        "dans les tableaux de ce document."
+                    )
+        buffer = io.BytesIO()
+        document.save(buffer)
+        return buffer.getvalue()
+
+    return render
+
+
 def available_renderers() -> dict[ReportFormat, Renderer]:
     """Every extra format whose engine loads on this machine."""
-    engines: tuple[tuple[ReportFormat, Callable[[], Renderer]], ...] = (("pdf", pdf_renderer),)
+    engines: tuple[tuple[ReportFormat, Callable[[], Renderer]], ...] = (
+        ("pdf", pdf_renderer),
+        ("docx", docx_renderer),
+    )
     found: dict[ReportFormat, Renderer] = {}
     for name, factory in engines:
         try:
