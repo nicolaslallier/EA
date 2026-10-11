@@ -38,7 +38,7 @@ from ea.domain.packages import (
     path_of,
 )
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -91,6 +91,14 @@ class PackageService:
         require_caller()
         summaries = await self._summaries()
         return tuple(sorted(summaries.values(), key=lambda s: s.path.lower()))
+
+    async def name_keys(self, names: Sequence[str]) -> dict[str, str]:
+        """Each name's comparison key, as the database that will enforce sibling uniqueness
+        computes it (one round trip). An import plans against these keys, so that it refuses in
+        memory exactly what the database would refuse, and no more."""
+        require_caller()
+        unique = tuple(dict.fromkeys(names))
+        return dict(zip(unique, await self._repository.fold_names(unique), strict=True))
 
     async def get(self, package_id: UUID) -> PackageSummary:
         require_caller()
@@ -230,7 +238,7 @@ class PackageService:
             raise _not_found(package_id)
         logger.info(
             "package deleted: %r",
-            current.name,
+            logged(current.name),
             extra={
                 "action": "package_deleted",
                 "package_id": str(package_id),
@@ -282,4 +290,6 @@ class PackageService:
 
     @staticmethod
     def _audit(message: str, package: Package, action: str) -> None:
-        logger.info(message, package.name, extra={"action": action, "package_id": str(package.id)})
+        logger.info(
+            message, logged(package.name), extra={"action": action, "package_id": str(package.id)}
+        )

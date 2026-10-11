@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
+from ea.db.unit_of_work import reading, work
 from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import events_for
 from ea.domain.documents import Document, DocumentSummary
@@ -167,7 +168,7 @@ class PostgresDocumentRepository:
             updated_at=document.updated_at,
         )
         events = events_for(audit, document)
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             _guard_the_element(await _hold_the_element(session, document.element_id))
             session.add(row)
             # Flushed before the passages are added, and not left to the unit of
@@ -190,7 +191,7 @@ class PostgresDocumentRepository:
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(ElementDocument, document_id)
             return _to_document(row) if row is not None else None
 
@@ -214,7 +215,7 @@ class PostgresDocumentRepository:
             .where(ElementDocument.element_id == element_id)
             .order_by(ElementDocument.created_at, ElementDocument.filename)
         )
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             rows = await session.execute(statement)
             return tuple(
                 DocumentSummary(
@@ -243,7 +244,7 @@ class PostgresDocumentRepository:
         match up. Both halves are one transaction, which is what stops a
         revision from ever being searchable under its previous text.
         """
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             locked = await _lock_document(session, document.id)
             if locked is None:
                 # Only reachable if the document was deleted between the
@@ -271,7 +272,7 @@ class PostgresDocumentRepository:
     @replayable
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             locked = await _lock_document(session, document_id)
             if locked is None:
                 return False
@@ -286,7 +287,7 @@ class PostgresDocumentRepository:
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every document in the store, oldest first — the reindex walks these."""
         statement = select(ElementDocument.id).order_by(ElementDocument.created_at)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple((await session.execute(statement)).scalars())
 
     async def search(
@@ -326,7 +327,7 @@ class PostgresDocumentRepository:
         )
         if element_id is not None:
             statement = statement.where(DocumentChunk.element_id == element_id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             rows = await session.execute(statement)
             return tuple(
                 Passage(

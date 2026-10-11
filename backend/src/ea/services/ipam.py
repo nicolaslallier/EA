@@ -59,7 +59,7 @@ from ea.domain.ipam import (
     read_vrf,
     reserved_by_the_protocol,
 )
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.model import Element
@@ -130,7 +130,7 @@ class IpamService:
             "subnet %s declared in VRF %r as %r",
             prefix.with_prefixlen,
             scope,
-            element.name,
+            logged(element.name),
             extra={
                 "action": "subnet_declared",
                 "cidr": prefix.with_prefixlen,
@@ -264,7 +264,7 @@ class IpamService:
         await self._architecture.update_element(element_id, properties=remaining)
         logger.info(
             "address released by %r",
-            element.name,
+            logged(element.name),
             extra={"action": "address_released", "element_id": str(element_id)},
         )
 
@@ -415,7 +415,7 @@ class IpamService:
         logger.info(
             "%s assigned to %r in VRF %r",
             address,
-            updated.name,
+            logged(updated.name),
             vrf,
             extra={
                 "action": "address_assigned",

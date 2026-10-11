@@ -33,18 +33,26 @@ def verifier_of(app: FastAPI) -> AccessTokenVerifier:
     return verifier
 
 
+async def caller_of(app: FastAPI, token: str | None) -> Caller:
+    """Who a bearer token says is calling — the one place a request is authenticated.
+
+    The dependency below uses it, and so does any middleware that must know the caller
+    before the body is read (`body_limit.py`): there is a single verification, never a copy.
+    """
+    settings: Settings = app.state.settings
+    if not settings.auth_enabled:
+        return LOCAL_DEVELOPER
+    if token is None:
+        msg = "a bearer token is required"
+        raise NotAuthenticatedError(msg)
+    return await verifier_of(app).verify(token)
+
+
 async def authenticate(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> Caller:
-    settings: Settings = request.app.state.settings
-    if not settings.auth_enabled:
-        caller = LOCAL_DEVELOPER
-    elif credentials is None:
-        msg = "a bearer token is required"
-        raise NotAuthenticatedError(msg)
-    else:
-        caller = await verifier_of(request.app).verify(credentials.credentials)
+    caller = await caller_of(request.app, credentials.credentials if credentials else None)
     current_caller.set(caller)
     # The door is said by the adapter that received the call, never by the caller.
     current_channel.set(AuditChannel.HTTP)

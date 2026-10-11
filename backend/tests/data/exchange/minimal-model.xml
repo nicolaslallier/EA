@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.opengroup.org/xsd/archimate/3.0/ http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd"
+       identifier="id-model-1">
+  <name xml:lang="en">Minimal model</name>
+  <elements>
+    <element identifier="id-actor" xsi:type="BusinessActor">
+      <name xml:lang="en">Customer</name>
+      <documentation xml:lang="en">Buys things</documentation>
+    </element>
+    <element identifier="id-app" xsi:type="ApplicationComponent">
+      <name xml:lang="en">Shop</name>
+      <properties>
+        <property propertyDefinitionRef="pd-owner"><value xml:lang="en">retail</value></property>
+      </properties>
+    </element>
+    <element identifier="id-svc" xsi:type="ApplicationService">
+      <name xml:lang="en">Ordering</name>
+    </element>
+    <element identifier="id-and" xsi:type="AndJunction"/>
+  </elements>
+  <relationships>
+    <relationship identifier="id-r1" source="id-app" target="id-svc" xsi:type="Association"/>
+    <relationship identifier="id-r2" source="id-svc" target="id-actor" xsi:type="Serving">
+      <name xml:lang="en">serves</name>
+    </relationship>
+    <relationship identifier="id-r3" source="id-app" target="id-and" xsi:type="Flow"/>
+  </relationships>
+  <propertyDefinitions>
+    <propertyDefinition identifier="pd-owner" type="string"><name xml:lang="en">owner</name></propertyDefinition>
+  </propertyDefinitions>
+</model>

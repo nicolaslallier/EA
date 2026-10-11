@@ -19,6 +19,7 @@ from ea.core.config import Settings
 from ea.db.postgres import (
     RelationalStoreUnavailableError,
     check_connectivity,
+    create_api_engine,
     create_engine,
     create_session_factory,
     dsn_of,
@@ -247,7 +248,7 @@ async def test_the_lifespan_opens_the_store_and_disposes_it_on_shutdown(
     test that quietly needed the cluster.
     """
     engine = WorkingEngine()
-    monkeypatch.setattr("ea.main.create_engine", lambda _settings: engine)
+    monkeypatch.setattr("ea.main.create_api_engine", lambda _settings: engine)
 
     app = create_app(
         Settings(
@@ -293,3 +294,20 @@ async def test_the_lifespan_refuses_a_graph_with_the_store_shut() -> None:
     with pytest.raises(RuntimeError, match="EA_POSTGRES_ENABLED=true or inject"):
         async with app.router.lifespan_context(app):
             pass  # pragma: no cover - the lifespan must not get this far
+
+
+@pytest.mark.parametrize(("setting", "asked"), [(10_000, "10000"), (250, "250"), (0, None)])
+def test_the_api_engine_asks_postgresql_for_a_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch, setting: int, asked: str | None
+) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "ea.db.postgres.create_async_engine", lambda *_, **kwargs: seen.update(kwargs)
+    )
+
+    create_api_engine(Settings(debug=True, postgres_password="x", db_lock_timeout_ms=setting))
+    assert seen["connect_args"].get("server_settings", {}).get("lock_timeout") == asked
+
+    seen.clear()  # a script, a migration: they may wait as long as they need to
+    create_engine(Settings(debug=True, postgres_password="x"))
+    assert "server_settings" not in seen["connect_args"]

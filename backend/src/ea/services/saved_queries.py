@@ -22,7 +22,7 @@ from ea.domain.ports import ElementFilter
 from ea.domain.query import ElementQuery, QueryResult
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -157,4 +157,6 @@ class SavedQueryService:
 
     @staticmethod
     def _audit(message: str, saved: SavedQuery, action: str) -> None:
-        logger.info(message, saved.name, extra={"action": action, "query_id": str(saved.id)})
+        logger.info(
+            message, logged(saved.name), extra={"action": action, "query_id": str(saved.id)}
+        )

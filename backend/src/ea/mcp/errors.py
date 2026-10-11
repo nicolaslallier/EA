@@ -38,6 +38,7 @@ from typing import Any
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver.exceptions import ToolError
 
+from ea.api.errors import safe_failure
 from ea.core.logging import TOOLS_LOGGER, summarise
 from ea.domain.audit import AuditChannel
 from ea.domain.errors import DomainError
@@ -45,6 +46,11 @@ from ea.mcp.auth import caller_of
 from ea.services.caller import acting_as, acting_through
 
 logger = logging.getLogger(TOOLS_LOGGER)
+
+#: Arguments that are the text of a file: logged by their length, never by their first characters.
+FILE_TEXTS = frozenset({"content", "elements", "relations", "properties"})
+#: Tools whose failures carry a file's values.
+IMPORTING_TOOLS = frozenset({"import_model"})
 
 
 def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
@@ -69,7 +75,15 @@ def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awa
             logger.debug(
                 "tool %s called",
                 name,
-                extra={"tool": name, "arguments": {k: summarise(v) for k, v in kwargs.items()}},
+                extra={
+                    "tool": name,
+                    "arguments": {
+                        k: f"<{len(v)} chars>"
+                        if k in FILE_TEXTS and isinstance(v, str)
+                        else summarise(v)
+                        for k, v in kwargs.items()
+                    },
+                },
             )
         started = perf_counter()
 
@@ -94,8 +108,13 @@ def speaking_plainly[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awa
             # it is INFO and it carries no traceback.
             logger.info("tool %s refused: %s", name, failure, extra=took("refused"))
             raise ToolError(str(failure)) from failure
-        except Exception:
-            logger.exception("tool %s failed", name, extra=took("failed"))
+        except Exception as failure:
+            # What is logged of an unexpected failure is its structure: a driver's message quotes
+            # the values it refused, and an import's values are a file's (api/errors.py).
+            info, said = safe_failure(failure, importing=name in IMPORTING_TOOLS)
+            logger.exception(
+                "tool %s failed", name, exc_info=info, extra={**took("failed"), **said}
+            )
             raise
         logger.info("tool %s answered", name, extra=took("ok"))
         return answer

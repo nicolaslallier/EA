@@ -16,11 +16,13 @@ from ea.api.architecture import router as architecture_router
 from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
 from ea.api.baselines import router as baselines_router
+from ea.api.body_limit import BODY_ENVELOPE_MARGIN, LimitingRequestBodies
 from ea.api.dependencies import (
     architecture_service_of,
     audit_service_of,
     baseline_service_of,
     document_service_of,
+    exchange_service_of,
     file_service_of,
     ipam_service_of,
     package_service_of,
@@ -29,6 +31,7 @@ from ea.api.dependencies import (
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
+from ea.api.exchanges import router as exchanges_router
 from ea.api.files import router as files_router
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
@@ -41,7 +44,7 @@ from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
 from ea.db.postgres import check_connectivity as check_relational_store
-from ea.db.postgres import create_engine, create_session_factory
+from ea.db.postgres import create_api_engine, create_session_factory
 from ea.domain.auth import Caller
 from ea.domain.ports import (
     AccessTokenVerifier,
@@ -49,6 +52,7 @@ from ea.domain.ports import (
     BaselineRepository,
     DiagramRepository,
     DocumentRepository,
+    ExchangeRepository,
     FileMetadataRepository,
     IpamRepository,
     ObjectStore,
@@ -65,6 +69,7 @@ from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
+from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
@@ -75,6 +80,8 @@ from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchange_admission import Admission
+from ea.services.exchanges import MAX_PARSES_QUEUED, ExchangeService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -172,6 +179,7 @@ def _lifespan(
     file_metadata: FileMetadataRepository | None = None,
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
+    exchanges: ExchangeRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -241,8 +249,9 @@ def _lifespan(
             metadata_store = file_metadata
             audit_store = audit
             baseline_store = baselines
+            exchange_store: ExchangeRepository | None = None
             if settings.postgres_enabled:
-                engine = create_engine(settings)
+                engine = create_api_engine(settings)
                 stack.push_async_callback(engine.dispose)
                 await check_relational_store(engine)
                 app.state.db_sessions = create_session_factory(engine)
@@ -281,6 +290,7 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
@@ -312,6 +322,20 @@ def _lifespan(
             if diagram_store is not None:
                 app.state.diagram_service = DiagramService(
                     diagram_store, architecture_service_of(app), packages=package_store
+                )
+            if exchange_store is not None:
+                app.state.exchange_service = ExchangeService(
+                    exchange_store,
+                    architecture_service_of(app),
+                    diagrams=getattr(app.state, "diagram_service", None),
+                    packages=getattr(app.state, "package_service", None),
+                    queries=getattr(app.state, "saved_query_service", None),
+                    max_bytes=settings.exchange_max_bytes,
+                    max_new_folders=settings.exchange_max_new_folders,
+                    max_exports=settings.exchange_max_exports,
+                    exports_per_caller=settings.exchange_exports_per_caller,
+                    export_lease_seconds=settings.exchange_export_lease_s,
+                    imports=app.state.import_admission,
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -456,6 +480,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: saved_query_service_of(app),
         lambda: audit_service_of(app),
         lambda: baseline_service_of(app),
+        lambda: exchange_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -500,6 +525,7 @@ def create_app(
     file_metadata: FileMetadataRepository | None = None,
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
+    exchanges: ExchangeRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -551,9 +577,18 @@ def create_app(
             file_metadata=file_metadata,
             audit=audit,
             baselines=baselines,
+            exchanges=exchanges,
         ),
     )
     app.state.settings = settings
+    # One admission for every door an import comes through: HTTP's (in the middleware below),
+    # MCP's and a script's (in the service), so that three doors cannot hold six places.
+    admission = Admission(
+        MAX_PARSES_QUEUED,
+        per_caller=settings.exchange_imports_per_caller,
+        lease_seconds=settings.exchange_import_lease_s,
+    )
+    app.state.import_admission = admission
     if verifier is not None:
         app.state.token_verifier = verifier
     if architecture_service is not None:
@@ -574,6 +609,20 @@ def create_app(
             app.state.diagram_service = DiagramService(
                 diagrams, architecture_service, packages=packages
             )
+        if exchanges is not None:
+            app.state.exchange_service = ExchangeService(
+                exchanges,
+                architecture_service,
+                diagrams=getattr(app.state, "diagram_service", None),
+                packages=getattr(app.state, "package_service", None),
+                queries=getattr(app.state, "saved_query_service", None),
+                max_bytes=settings.exchange_max_bytes,
+                max_new_folders=settings.exchange_max_new_folders,
+                max_exports=settings.exchange_max_exports,
+                exports_per_caller=settings.exchange_exports_per_caller,
+                export_lease_seconds=settings.exchange_export_lease_s,
+                imports=admission,
+            )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
     if audit is not None:
@@ -585,6 +634,17 @@ def create_app(
     # unhandled failure then passes back out through CORS and the request id,
     # like every other answer. Starlette's own `Exception` handler sits outside
     # both and stays only as a last resort — see `api/errors.py`.
+    # The ceiling on an import's body is innermost of all (docs/adr/0050): its 413 is then an
+    # ordinary answer to CORS and the request id, and the disconnect it hands the route on
+    # overflow never reaches the net below as an unexpected failure.
+    app.add_middleware(
+        LimitingRequestBodies,
+        path_suffix="/exchanges/imports",
+        limit=settings.exchange_max_bytes + BODY_ENVELOPE_MARGIN,
+        admission=admission,
+        read_timeout=settings.exchange_read_timeout_s,
+        total_timeout=settings.exchange_read_total_s,
+    )
     app.add_middleware(AnsweringUnexpectedFailures)
     app.add_middleware(
         CORSMiddleware,
@@ -610,6 +670,7 @@ def create_app(
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(baselines_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

@@ -72,6 +72,20 @@ def validate_package_name(name: str) -> str:
     return cleaned
 
 
+def name_key(name: str) -> str:
+    """The key sibling names are compared by in a database with a Unicode locale: its `lower()`.
+
+    The unique indexes are on `lower(name)` — PostgreSQL's, not Python's: `İ` lowers to `i`
+    there and to `i` plus a combining dot here, `Σ` lowers the same everywhere but Python's
+    `lower()` of a whole word picks the final sigma by context and the database does not, and
+    `casefold()` would merge `ß` with `SS`, which the database keeps apart. Lowered one character
+    at a time, with the one exception, it is the database's. The deployed database is the
+    authority and an import asks it (`PackageRepository.fold_names`); this stands in where there
+    is none (the in-memory double, the pure planning of folders in tests).
+    """
+    return "".join("i" if character == "\u0130" else character.lower() for character in name)
+
+
 @dataclass(frozen=True, slots=True)
 class Package:
     id: UUID

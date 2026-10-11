@@ -39,7 +39,7 @@ from ea.domain.baselines import (
 )
 from ea.domain.errors import BaselineNotFoundError, RestoreBlockedError, RestoreConflictError
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
@@ -102,7 +102,7 @@ class BaselineService:
         stored = await self._repository.create(baseline, audit=created)
         logger.info(
             "baseline captured: %r",
-            stored.name,
+            logged(stored.name),
             extra={"action": "baseline_created", "baseline_id": str(stored.id)},
         )
         return stored
@@ -187,7 +187,7 @@ class BaselineService:
         )
         logger.info(
             "baseline %r restored",
-            baseline.name,
+            logged(baseline.name),
             extra={"action": "baseline_restored", "baseline_id": str(baseline.id)},
         )
         return RestoreOutcome(plan, applied=True, digest=digest)

@@ -504,6 +504,109 @@
         "title": "Body_attach_document_elements__element_id__documents_post",
         "type": "object"
       },
+      "Body_import_model_exchanges_imports_post": {
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "description": "Simulate and roll back. Writing needs `false`, said outright.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "elements": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`elements.csv`; required for `csv`.",
+            "title": "Elements"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An ArchiMate exchange file (XML); `archimate-xml`.",
+            "title": "File"
+          },
+          "format": {
+            "$ref": "#/components/schemas/ExchangeFormat",
+            "default": "archimate-xml"
+          },
+          "on_conflict": {
+            "$ref": "#/components/schemas/ConflictPolicy",
+            "default": "reuse"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`properties.csv` (`csv`).",
+            "title": "Properties"
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`relations.csv` (`csv`).",
+            "title": "Relations"
+          },
+          "safe_cells": {
+            "default": true,
+            "description": "CSV only. Give back a cell the export had prefixed with `'`.",
+            "title": "Safe Cells",
+            "type": "boolean"
+          },
+          "strict": {
+            "default": false,
+            "description": "If any row is refused, write nothing at all.",
+            "title": "Strict",
+            "type": "boolean"
+          },
+          "target_package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where new packages and new elements outside any folder are put.",
+            "title": "Target Package Id"
+          },
+          "with_views": {
+            "default": true,
+            "description": "XML only. Recreate the views of the file (their boxes).",
+            "title": "With Views",
+            "type": "boolean"
+          }
+        },
+        "title": "Body_import_model_exchanges_imports_post",
+        "type": "object"
+      },
       "Body_revise_document_documents__document_id__put": {
         "properties": {
           "file": {
@@ -565,6 +668,42 @@
           "file"
         ],
         "title": "Body_upload_file_files_post",
+        "type": "object"
+      },
+      "ConflictPolicy": {
+        "enum": [
+          "reuse",
+          "fail"
+        ],
+        "title": "ConflictPolicy",
+        "type": "string"
+      },
+      "CountsRead": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "ignored": {
+            "title": "Ignored",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "reused": {
+            "title": "Reused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "reused",
+          "rejected",
+          "ignored"
+        ],
+        "title": "CountsRead",
         "type": "object"
       },
       "DiagramCreate": {
@@ -1461,6 +1600,14 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "ExchangeFormat": {
+        "enum": [
+          "archimate-xml",
+          "csv"
+        ],
+        "title": "ExchangeFormat",
+        "type": "string"
+      },
       "FieldChangeRead": {
         "properties": {
           "after": {
@@ -1716,6 +1863,149 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "ImportCountsRead": {
+        "properties": {
+          "elements": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "packages": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "relationships": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "views": {
+            "$ref": "#/components/schemas/CountsRead"
+          }
+        },
+        "required": [
+          "elements",
+          "relationships",
+          "packages",
+          "views"
+        ],
+        "title": "ImportCountsRead",
+        "type": "object"
+      },
+      "ImportReportRead": {
+        "description": "What an import did, or would do: counts that are always exact, lines that may be cut.",
+        "properties": {
+          "applied": {
+            "description": "True only if the transaction was committed.",
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportCountsRead"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "description": "How long the import took, in milliseconds.",
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "format": {
+            "$ref": "#/components/schemas/ExchangeFormat"
+          },
+          "issue_count": {
+            "description": "Every line the import produced, kept or not.",
+            "title": "Issue Count",
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueRead"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "sha256": {
+            "description": "Digest of the received file: a confirmation re-sends it.",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when `issues` was cut at the report ceiling.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dry_run",
+          "applied",
+          "format",
+          "sha256",
+          "counts",
+          "issues",
+          "truncated",
+          "issue_count",
+          "duration_ms"
+        ],
+        "title": "ImportReportRead",
+        "type": "object"
+      },
+      "IssueRead": {
+        "description": "One line of an import report. Texts are cut and cleaned: they never carry the file.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          }
+        },
+        "required": [
+          "severity",
+          "code",
+          "message",
+          "source_id",
+          "line",
+          "path"
+        ],
+        "title": "IssueRead",
         "type": "object"
       },
       "Layer": {
@@ -2679,6 +2969,15 @@
         },
         "title": "SavedQueryUpdate",
         "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
       },
       "SubnetCreate": {
         "additionalProperties": false,
@@ -5650,6 +5949,275 @@
         "summary": "Read Element Relations",
         "tags": [
           "architecture"
+        ]
+      }
+    },
+    "/exchanges/export": {
+      "get": {
+        "description": "Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).\n\nThe file is prepared before the first byte is sent, and no database connection is held while\na client reads it. A client has `EA_EXCHANGE_SEND_TIMEOUT_S` to take it; at most\n`EA_EXCHANGE_MAX_EXPORTS` are prepared or sent at once (429 and `Retry-After` beyond).",
+        "operationId": "export_model_exchanges_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExchangeFormat",
+              "default": "archimate-xml"
+            }
+          },
+          {
+            "description": "What to export: `model` (the whole catalogue), `package` or `query`.",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "model",
+              "description": "What to export: `model` (the whole catalogue), `package` or `query`.",
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`scope=package`: the package to export.",
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`scope=package`: the package to export.",
+              "title": "Package Id"
+            }
+          },
+          {
+            "description": "`scope=query`: the saved query whose elements to export.",
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`scope=query`: the saved query whose elements to export.",
+              "title": "Query Id"
+            }
+          },
+          {
+            "description": "`scope=package`: the sub-packages come too.",
+            "in": "query",
+            "name": "include_subpackages",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "`scope=package`: the sub-packages come too.",
+              "title": "Include Subpackages",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_views",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "With Views",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are.",
+            "in": "query",
+            "name": "safe_cells",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are.",
+              "title": "Safe Cells",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV).",
+            "headers": {
+              "X-Export-Cells": {
+                "description": "CSV only: `safe` (formulas neutralised) or `raw`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Export-Skipped-Views": {
+                "description": "Views left out: a box shows an element outside the scope.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Model",
+        "tags": [
+          "exchanges"
+        ]
+      }
+    },
+    "/exchanges/imports": {
+      "post": {
+        "description": "Simulate (the default) or apply an exchange file; editors only, simulation included.\n\nWriting needs `dry_run=false`, said outright: a client that forgets destroys nothing.\nTo confirm, send the same file(s) again with `dry_run=false`; the report's `sha256` says\nit is what was simulated. The import is idempotent (an existing element or link is\nreused), so a client whose connection was cut can send it again. XML takes `file`; CSV\ntakes `elements` and, optionally, `relations` and `properties` \u2014 three files, never an\narchive. The ceiling is on their sum. Neither a file's name nor its declared type is read.",
+        "operationId": "import_model_exchanges_imports_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_model_exchanges_imports_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Timeout"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Model",
+        "tags": [
+          "exchanges"
         ]
       }
     },

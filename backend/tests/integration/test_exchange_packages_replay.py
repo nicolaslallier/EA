@@ -1,0 +1,187 @@
+"""Folders refused by the database, at random: an element is filed where the file said or nowhere.
+
+A property test on a real PostgreSQL: a random tree of folders, a random quarter of them refused
+(at their creation, or at the filing of their elements), and then every element is either
+unfiled or under exactly the path the file gave it — never under a path made of the
+parts of another. The batch rollback and the replay of the rows before a refusal are what this
+exercises.
+"""
+
+from __future__ import annotations
+
+import random
+from typing import Any
+
+import pytest
+
+from ea.domain.errors import DuplicatePackageError, PackageNotFoundError
+from ea.domain.exchange import Category
+from ea.domain.ports import ElementFilter
+from ea.services.packages import PackageService
+from tests.exchange_files import el, exchange_xml
+from tests.integration.test_exchange_roundtrip import REAL, content, whole  # noqa: F401
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
+
+
+def folders(tree: list[tuple[str, list[str], Any]]) -> str:
+    out = ""
+    for label, refs, kids in tree:
+        items = "".join(f'<item identifierRef="{r}"/>' for r in refs)
+        out += f"<item><label>{label}</label>{items}{folders(kids)}</item>"
+    return out
+
+
+@pytest.mark.parametrize("mode", ["create", "move"])
+@pytest.mark.parametrize("seed", range(6))
+async def test_an_element_is_filed_where_the_file_said_or_not_at_all(
+    whole: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    seed: int,
+) -> None:
+    architecture, _, packages, exchange, _ = whole
+    rnd = random.Random(seed)
+    counter = [0]
+    elements: list[str] = []
+    expected: dict[str, tuple[str, ...]] = {}
+
+    def make(depth: int, path: tuple[str, ...]) -> list[tuple[str, list[str], Any]]:
+        out = []
+        for _ in range(rnd.randint(1, 3)):
+            counter[0] += 1
+            label, ident = f"F{counter[0]}", f"e{counter[0]}"
+            elements.append(el(ident, "Node", f"n{counter[0]}"))
+            here = (*path, label.casefold())
+            expected[ident] = here
+            kids = make(depth + 1, here) if depth < 3 and rnd.random() < 0.7 else []
+            out.append((label, [ident], kids))
+        return out
+
+    tree = make(0, ())
+    refused_names = {f"F{i}" for i in range(1, counter[0] + 1) if rnd.random() < 0.25}
+    real_create, real_move = PackageService.create, PackageService.move_elements
+
+    async def create(self, *, name, description="", parent_id=None):  # type: ignore[no-untyped-def]
+        if mode == "create" and name in refused_names:
+            raise DuplicatePackageError("a concurrent creation took it")
+        return await real_create(self, name=name, description=description, parent_id=parent_id)
+
+    async def move(self, element_ids, package_id):  # type: ignore[no-untyped-def]
+        if (
+            mode == "move"
+            and package_id is not None
+            and (await self.get(package_id)).package.name in refused_names
+        ):
+            raise PackageNotFoundError("the package vanished")
+        return await real_move(self, element_ids, package_id)
+
+    monkeypatch.setattr(PackageService, "create", create)
+    monkeypatch.setattr(PackageService, "move_elements", move)
+    organizations = f"<organizations>{folders(tree)}</organizations>"
+
+    report = await exchange.import_exchange(
+        content(exchange_xml("".join(elements), extra=organizations)), REAL
+    )
+
+    stored = {s.package.id: s.package for s in await packages.list_packages()}
+
+    def path_of(package_id: Any) -> tuple[str, ...]:
+        names: list[str] = []
+        while package_id is not None:
+            names.append(stored[package_id].name.casefold())
+            package_id = stored[package_id].parent_id
+        return tuple(reversed(names))
+
+    wrong = []
+    for element in await architecture.list_elements(ElementFilter(limit=1000)):
+        ident = "e" + element.name[1:]
+        if element.package_id is not None and path_of(element.package_id) != expected[ident]:
+            wrong.append((ident, path_of(element.package_id), expected[ident]))
+    assert wrong == []
+    # a folder exists only under the path the file gave it
+    assert {path_of(p) for p in stored} <= set(expected.values())
+    # and what was refused is said once per folder that the database refused
+    errors = [i for i in report.issues if i.severity.value == "error"]
+    assert len(errors) <= len(refused_names)
+    assert report.counts[Category.PACKAGES].created == len(stored)
+
+
+async def test_two_thousand_folders_are_bounded_by_the_creation_ceiling_and_stay_quick(
+    whole: Any,  # noqa: F811
+) -> None:
+    import time
+
+    from ea.domain.exchange import MAX_NEW_FOLDERS
+
+    _, _, packages, exchange, _ = whole
+    n = 2_100
+    elements = "".join(el(f"e{i}", "Node", f"n{i}") for i in range(n))
+    organizations = "<organizations>" + folders([(f"f{i}", [f"e{i}"], []) for i in range(n)])
+    organizations += "</organizations>"
+
+    started = time.monotonic()
+    report = await exchange.import_exchange(
+        content(exchange_xml(elements, extra=organizations)), REAL
+    )
+    elapsed = time.monotonic() - started
+
+    assert report.counts[Category.PACKAGES].created == MAX_NEW_FOLDERS
+    assert report.counts[Category.PACKAGES].rejected == n - MAX_NEW_FOLDERS
+    assert len(await packages.list_packages()) == MAX_NEW_FOLDERS
+    # Before the ceiling this took a minute with the locks held; with it, a few seconds.
+    assert elapsed < 30, elapsed
+
+
+async def test_the_tree_is_read_after_its_lock_is_taken_not_before(
+    whole: Any,  # noqa: F811
+    engine_at_head: Any,
+) -> None:
+    """A package written while the import waits for the tree is in the tree the import reads."""
+    import asyncio
+    import contextvars
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from sqlalchemy import func, select, text
+
+    from ea.repositories.package_store import TREE_LOCK
+    from ea.services.caller import acting_as
+    from tests.conftest import an_editor
+
+    _, _, packages, exchange, _ = whole
+    data = exchange_xml(
+        el("a", "Node", "A"),
+        extra="<organizations><item><label>Racy</label>"
+        '<item identifierRef="a"/></item></organizations>',
+    )
+
+    async def importing() -> Any:
+        with acting_as(an_editor()):
+            return await exchange.import_exchange(content(data), REAL)
+
+    async with engine_at_head.connect() as writer, writer.begin():
+        await writer.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
+        task = asyncio.create_task(importing(), context=contextvars.Context())
+        for _ in range(200):  # the barrier: the import is queued behind the tree's lock
+            waiting = await writer.scalar(
+                text("select count(*) from pg_locks where locktype='advisory' and not granted")
+            )
+            if waiting:
+                break
+            await asyncio.sleep(0.02)
+        assert waiting, "the import should wait for the tree"
+        now = datetime.now(UTC)
+        await writer.execute(
+            text(
+                "insert into packages (id, parent_id, name, description, created_at, updated_at)"
+                " values (:id, null, 'Racy', '', :now, :now)"
+            ),
+            {"id": uuid4(), "now": now},
+        )
+
+    report = await asyncio.wait_for(task, 20)
+
+    assert report.counts[Category.PACKAGES].reused == 1  # it saw the package just committed
+    assert report.counts[Category.PACKAGES].rejected == 0
+    assert [s.package.name for s in await packages.list_packages()] == ["Racy"]

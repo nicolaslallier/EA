@@ -443,6 +443,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/exchanges/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Model
+         * @description Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).
+         *
+         *     The file is prepared before the first byte is sent, and no database connection is held while
+         *     a client reads it. A client has `EA_EXCHANGE_SEND_TIMEOUT_S` to take it; at most
+         *     `EA_EXCHANGE_MAX_EXPORTS` are prepared or sent at once (429 and `Retry-After` beyond).
+         */
+        get: operations["export_model_exchanges_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exchanges/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Model
+         * @description Simulate (the default) or apply an exchange file; editors only, simulation included.
+         *
+         *     Writing needs `dry_run=false`, said outright: a client that forgets destroys nothing.
+         *     To confirm, send the same file(s) again with `dry_run=false`; the report's `sha256` says
+         *     it is what was simulated. The import is idempotent (an existing element or link is
+         *     reused), so a client whose connection was cut can send it again. XML takes `file`; CSV
+         *     takes `elements` and, optionally, `relations` and `properties` — three files, never an
+         *     archive. The ceiling is on their sum. Neither a file's name nor its declared type is read.
+         */
+        post: operations["import_model_exchanges_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files": {
         parameters: {
             query?: never;
@@ -1156,6 +1207,62 @@ export interface components {
              */
             file: string;
         };
+        /** Body_import_model_exchanges_imports_post */
+        Body_import_model_exchanges_imports_post: {
+            /**
+             * Dry Run
+             * @description Simulate and roll back. Writing needs `false`, said outright.
+             * @default true
+             */
+            dry_run?: boolean;
+            /**
+             * Elements
+             * @description `elements.csv`; required for `csv`.
+             */
+            elements?: string | null;
+            /**
+             * File
+             * @description An ArchiMate exchange file (XML); `archimate-xml`.
+             */
+            file?: string | null;
+            /** @default archimate-xml */
+            format?: components["schemas"]["ExchangeFormat"];
+            /** @default reuse */
+            on_conflict?: components["schemas"]["ConflictPolicy"];
+            /**
+             * Properties
+             * @description `properties.csv` (`csv`).
+             */
+            properties?: string | null;
+            /**
+             * Relations
+             * @description `relations.csv` (`csv`).
+             */
+            relations?: string | null;
+            /**
+             * Safe Cells
+             * @description CSV only. Give back a cell the export had prefixed with `'`.
+             * @default true
+             */
+            safe_cells?: boolean;
+            /**
+             * Strict
+             * @description If any row is refused, write nothing at all.
+             * @default false
+             */
+            strict?: boolean;
+            /**
+             * Target Package Id
+             * @description Where new packages and new elements outside any folder are put.
+             */
+            target_package_id?: string | null;
+            /**
+             * With Views
+             * @description XML only. Recreate the views of the file (their boxes).
+             * @default true
+             */
+            with_views?: boolean;
+        };
         /** Body_revise_document_documents__document_id__put */
         Body_revise_document_documents__document_id__put: {
             /**
@@ -1196,6 +1303,22 @@ export interface components {
              * @default
              */
             title?: string;
+        };
+        /**
+         * ConflictPolicy
+         * @enum {string}
+         */
+        ConflictPolicy: "reuse" | "fail";
+        /** CountsRead */
+        CountsRead: {
+            /** Created */
+            created: number;
+            /** Ignored */
+            ignored: number;
+            /** Rejected */
+            rejected: number;
+            /** Reused */
+            reused: number;
         };
         /** DiagramCreate */
         DiagramCreate: {
@@ -1599,6 +1722,11 @@ export interface components {
              */
             error: string;
         };
+        /**
+         * ExchangeFormat
+         * @enum {string}
+         */
+        ExchangeFormat: "archimate-xml" | "csv";
         /** FieldChangeRead */
         FieldChangeRead: {
             /** After */
@@ -1753,6 +1881,67 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded";
+        };
+        /** ImportCountsRead */
+        ImportCountsRead: {
+            elements: components["schemas"]["CountsRead"];
+            packages: components["schemas"]["CountsRead"];
+            relationships: components["schemas"]["CountsRead"];
+            views: components["schemas"]["CountsRead"];
+        };
+        /**
+         * ImportReportRead
+         * @description What an import did, or would do: counts that are always exact, lines that may be cut.
+         */
+        ImportReportRead: {
+            /**
+             * Applied
+             * @description True only if the transaction was committed.
+             */
+            applied: boolean;
+            counts: components["schemas"]["ImportCountsRead"];
+            /** Dry Run */
+            dry_run: boolean;
+            /**
+             * Duration Ms
+             * @description How long the import took, in milliseconds.
+             */
+            duration_ms: number;
+            format: components["schemas"]["ExchangeFormat"];
+            /**
+             * Issue Count
+             * @description Every line the import produced, kept or not.
+             */
+            issue_count: number;
+            /** Issues */
+            issues: components["schemas"]["IssueRead"][];
+            /**
+             * Sha256
+             * @description Digest of the received file: a confirmation re-sends it.
+             */
+            sha256: string;
+            /**
+             * Truncated
+             * @description True when `issues` was cut at the report ceiling.
+             */
+            truncated: boolean;
+        };
+        /**
+         * IssueRead
+         * @description One line of an import report. Texts are cut and cleaned: they never carry the file.
+         */
+        IssueRead: {
+            /** Code */
+            code: string;
+            /** Line */
+            line: number | null;
+            /** Message */
+            message: string;
+            /** Path */
+            path: string | null;
+            severity: components["schemas"]["Severity"];
+            /** Source Id */
+            source_id: string | null;
         };
         /**
          * Layer
@@ -2213,6 +2402,11 @@ export interface components {
             name?: string | null;
             query?: components["schemas"]["ElementQuerySchema"] | null;
         };
+        /**
+         * Severity
+         * @enum {string}
+         */
+        Severity: "error" | "warning" | "info";
         /**
          * SubnetCreate
          * @description A new subnet: a `communication_network` element carrying a prefix.
@@ -4117,6 +4311,149 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_model_exchanges_export_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["ExchangeFormat"];
+                /** @description What to export: `model` (the whole catalogue), `package` or `query`. */
+                scope?: string;
+                /** @description `scope=package`: the package to export. */
+                package_id?: string | null;
+                /** @description `scope=query`: the saved query whose elements to export. */
+                query_id?: string | null;
+                /** @description `scope=package`: the sub-packages come too. */
+                include_subpackages?: boolean;
+                with_views?: boolean;
+                /** @description CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are. */
+                safe_cells?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV). */
+            200: {
+                headers: {
+                    /** @description CSV only: `safe` (formulas neutralised) or `raw`. */
+                    "X-Export-Cells"?: string;
+                    /** @description Views left out: a box shows an element outside the scope. */
+                    "X-Export-Skipped-Views"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                    "application/zip": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    import_model_exchanges_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_model_exchanges_imports_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportReportRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Timeout */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

@@ -48,6 +48,11 @@ def _clean_name(name: str) -> str:
 PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}\Z")
 
 
+def is_property_key(key: str) -> bool:
+    """Whether `key` is a property name the model accepts (a plain identifier)."""
+    return PROPERTY_KEY.match(key) is not None
+
+
 def _freeze(properties: Mapping[str, str] | None) -> Mapping[str, str]:
     if not properties:
         return _EMPTY_PROPERTIES

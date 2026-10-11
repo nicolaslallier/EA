@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.saved_query import SavedQueryRecord
+from ea.db.unit_of_work import reading, work
 from ea.domain.audit import events_for, saved_query_record_view
 from ea.domain.errors import DuplicateSavedQueryError, SavedQueryNotFoundError
 from ea.domain.query import from_json, to_json
@@ -59,13 +60,13 @@ class PostgresSavedQueryRepository:
             SavedQueryRecord.created_at,
             SavedQueryRecord.updated_at,
         ).order_by(func.lower(SavedQueryRecord.name), SavedQueryRecord.id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(
                 SavedQuerySummary(*row) for row in (await session.execute(statement)).tuples()
             )
 
     async def get(self, query_id: UUID) -> SavedQuery | None:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(SavedQueryRecord, query_id)
             if row is None:
                 return None
@@ -80,7 +81,7 @@ class PostgresSavedQueryRepository:
             )
 
     async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             session.add(
                 SavedQueryRecord(
                     id=saved.id,
@@ -102,7 +103,7 @@ class PostgresSavedQueryRepository:
         return saved
 
     async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             row = await session.get(SavedQueryRecord, saved.id, with_for_update=True)
             if row is None:
                 msg = f"no saved query with id {saved.id}"
@@ -122,7 +123,7 @@ class PostgresSavedQueryRepository:
         return saved
 
     async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             row = await session.get(SavedQueryRecord, query_id, with_for_update=True)
             if row is None:
                 return False

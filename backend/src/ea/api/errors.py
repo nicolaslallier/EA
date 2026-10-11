@@ -14,6 +14,7 @@ sent from outside every middleware this app adds — see
 from __future__ import annotations
 
 import logging
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import FastAPI, Request, status
@@ -41,11 +42,17 @@ from ea.domain.errors import (
     DuplicateSavedQueryError,
     ElementLockedError,
     ElementNotFoundError,
+    ExchangeBodyTimeoutError,
+    ExchangeFileTooLargeError,
+    ExportInProgressError,
+    ExportTooLargeError,
     FileNotTextError,
     FileStorageUnavailableError,
     FileTooLargeError,
     IllegalRelationshipError,
+    ImportInProgressError,
     InvalidCursorError,
+    InvalidExchangeFileError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
     InvalidQueryError,
@@ -60,13 +67,16 @@ from ea.domain.errors import (
     PackageTooDeepError,
     RestoreBlockedError,
     RestoreConflictError,
+    RowRefusedError,
     SavedQueryNotFoundError,
     SearchUnavailableError,
     StoredFileExistsError,
     StoredFileNotFoundError,
     TooManyPackagesError,
+    TooManyRefusedRowsError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    UnknownScopeError,
     WriteConflictError,
 )
 
@@ -155,6 +165,19 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     FileTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "file_too_large"),
     FileNotTextError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_text"),
     FileStorageUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "storage_unavailable"),
+    # --- Exchanges (docs/adr/0050) ---
+    InvalidExchangeFileError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_exchange_file"),
+    # 413 literally: the bucket's `FileTooLargeError` above is a 422 and a different class.
+    ExchangeFileTooLargeError: (413, "file_too_large"),
+    ExchangeBodyTimeoutError: (status.HTTP_408_REQUEST_TIMEOUT, "body_timeout"),
+    ImportInProgressError: (status.HTTP_409_CONFLICT, "import_in_progress"),
+    ExportInProgressError: (status.HTTP_429_TOO_MANY_REQUESTS, "export_in_progress"),
+    ExportTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "export_too_large"),
+    TooManyRefusedRowsError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_refused_rows"),
+    UnknownScopeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_scope"),
+    # Never sent: a refused row is a line of the import report. The row exists
+    # because every `DomainError` needs one (tests/unit/test_error_statuses.py).
+    RowRefusedError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_row"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
@@ -164,10 +187,17 @@ _FALLBACK: Final = (status.HTTP_400_BAD_REQUEST, "invalid_request")
 
 
 async def _handle_domain_error(_: Request, error: Exception) -> JSONResponse:
+    return domain_error_response(error)
+
+
+def domain_error_response(error: Exception) -> JSONResponse:
+    """The envelope of a domain failure: for a handler, and for a middleware that answers alone."""
     http_status, code = _STATUS.get(type(error), _FALLBACK)
     headers = (
         {"WWW-Authenticate": "Bearer"} if http_status == status.HTTP_401_UNAUTHORIZED else None
     )
+    if http_status == status.HTTP_429_TOO_MANY_REQUESTS or isinstance(error, ImportInProgressError):
+        headers = {"Retry-After": str(RETRY_AFTER_SECONDS)}
     return JSONResponse(
         status_code=http_status, content={"error": code, "detail": str(error)}, headers=headers
     )
@@ -231,6 +261,90 @@ async def _handle_unexpected_error(_: Request, error: Exception) -> JSONResponse
     return _internal_error()
 
 
+#: What a client refused for lack of a place is told to wait before asking again.
+RETRY_AFTER_SECONDS: Final = 5
+_DRIVERS = ("sqlalchemy", "asyncpg", "psycopg")
+#: The only things a database failure may say to a log: where and which rule, never with what.
+_STRUCTURE = ("sqlstate", "constraint_name", "table_name", "column_name", "schema_name")
+#: Exceptions followed through causes, contexts and groups before the chain is distrusted.
+_CHAIN_LIMIT = 20
+#: The doors an import comes through: a failure there is logged without its message.
+IMPORTING_PATHS = ("/exchanges/imports", "/mcp")
+ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None]
+
+
+def _chain(error: BaseException) -> tuple[list[BaseException], bool]:
+    """The exception, then what it was raised from, in what context, or grouped with — breadth
+    first, bounded; the flag says the bound was reached and the rest is unknown."""
+    seen: list[BaseException] = []
+    queue = [error]
+    while queue:
+        link = queue.pop(0)
+        if any(link is known for known in seen):
+            continue
+        if len(seen) >= _CHAIN_LIMIT:
+            return seen, True
+        seen.append(link)
+        queue.extend(
+            e
+            for e in (link.__cause__, link.__context__, getattr(link, "orig", None))
+            if isinstance(e, BaseException)
+        )
+        queue.extend(getattr(link, "exceptions", ()))
+    return seen, False
+
+
+def _structure_of(database: BaseException) -> dict[str, object]:
+    """Only the whitelisted structural fields, from the exception or the driver's under it."""
+    orig = getattr(database, "orig", None)
+    holders = [database, orig, getattr(orig, "__cause__", None), database.__cause__]
+    found: dict[str, object] = {"db_error": type(database).__name__}
+    for name in _STRUCTURE:
+        for holder in holders:
+            value = getattr(holder, name, None)
+            if isinstance(value, str) and value:
+                found[name] = value
+                break
+    return found
+
+
+def _stand_in(message: str, error: BaseException) -> ExcInfo:
+    """A fresh exception with our words and the real one's frames (source lines, not values)."""
+    stand_in = RuntimeError(message)
+    stand_in.__suppress_context__ = True
+    return RuntimeError, stand_in, error.__traceback__
+
+
+def safe_failure(error: BaseException, *, importing: bool) -> tuple[ExcInfo, dict[str, object]]:
+    """What may be logged of a failure nobody handled: `(exc_info, extra fields)`.
+
+    Fails closed. A failure with the database anywhere in its chain (a cause, a context, a member
+    of a group) is logged as its structure alone, the traceback's frames and a fixed sentence:
+    never its message, its statement, its parameters or the text of anything it was raised from.
+    A failure of any other kind keeps its message outside an import and loses it during one
+    (what is not recognised is replaced, not matched). A chain too long to follow is not trusted.
+    If this function itself fails, one fixed sentence and the class are what remain.
+    """
+    try:
+        chain, truncated = _chain(error)
+        database = next((e for e in chain if type(e).__module__.startswith(_DRIVERS)), None)
+        if database is not None:
+            fields = _structure_of(database)
+            outer = fields["db_error"]
+            return _stand_in(
+                f"{outer}: the database refused a statement (detail withheld)", error
+            ), fields
+        if importing or truncated:
+            name = type(error).__name__
+            return _stand_in(f"{name}: failure during an import (message withheld)", error), {
+                "error": name
+            }
+        return (type(error), error, error.__traceback__), {}
+    except Exception:
+        fields = {"db_error": type(error).__name__}
+        return _stand_in("unsanitisable database error", error), fields
+
+
 class AnsweringUnexpectedFailures:
     """The `internal_error` envelope, sent from *inside* the middleware stack.
 
@@ -283,8 +397,10 @@ class AnsweringUnexpectedFailures:
                 "method": scope.get("method", ""),
                 "path": scope.get("path", ""),
             }
+            path = str(scope.get("path", ""))
+            info, said = safe_failure(error, importing=path.endswith(IMPORTING_PATHS))
             logger.exception(
-                "the request failed with no handler for it", exc_info=error, extra=fields
+                "the request failed with no handler for it", exc_info=info, extra={**fields, **said}
             )
             await _internal_error()(scope, receive, send)
 

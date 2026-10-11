@@ -14,7 +14,7 @@ user's first request.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import URL, text
 from sqlalchemy.ext.asyncio import (
@@ -53,8 +53,14 @@ def dsn_of(settings: Settings) -> URL:
     )
 
 
-def create_engine(settings: Settings) -> AsyncEngine:
-    """Build the engine. No connection is opened until it is first used."""
+def create_engine(settings: Settings, *, lock_timeout_ms: int = 0) -> AsyncEngine:
+    """Build the engine. No connection is opened until it is first used.
+
+    `lock_timeout_ms` (0: none) is sent as a server setting of every connection.
+    """
+    connect_args: dict[str, Any] = {"timeout": settings.postgres_connection_timeout_seconds}
+    if lock_timeout_ms:
+        connect_args["server_settings"] = {"lock_timeout": str(lock_timeout_ms)}
     return create_async_engine(
         dsn_of(settings),
         pool_size=settings.postgres_pool_size,
@@ -63,8 +69,17 @@ def create_engine(settings: Settings) -> AsyncEngine:
         # use, not on checkout; the ping turns that into a transparent reconnect.
         pool_pre_ping=True,
         # asyncpg spells its connect timeout `timeout`.
-        connect_args={"timeout": settings.postgres_connection_timeout_seconds},
+        connect_args=connect_args,
     )
+
+
+def create_api_engine(settings: Settings) -> AsyncEngine:
+    """The engine of the API: `create_engine` plus a bounded wait for row locks.
+
+    Not the engine of a migration or of `ea.reindex`, which may legitimately wait
+    for a lock as long as it takes (docs/adr/0052).
+    """
+    return create_engine(settings, lock_timeout_ms=settings.db_lock_timeout_ms)
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

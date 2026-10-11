@@ -6,7 +6,16 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -28,6 +37,22 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
+    from ea.domain.exchange import ExportedView, ExportScope, PackageNode
+
+
+@dataclass(slots=True)
+class Transaction:
+    """The handle of a shared transaction: set `commit` to `False` to roll it back instead."""
+
+    commit: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RowRefusal:
+    """A row of an import the rules refused: its position in the rows given, and why."""
+
+    index: int
+    error: Exception
 
 
 @dataclass(frozen=True, slots=True)
@@ -652,6 +677,11 @@ class PackageRepository(Protocol):
 
     async def get(self, package_id: UUID) -> Package | None: ...
 
+    async def fold_names(self, names: Sequence[str]) -> list[str]:
+        """`lower()` of each name as the database computes it, in the same order: the key its
+        unique indexes on sibling names compare by, which Python cannot be trusted to compute."""
+        ...
+
     async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         """Store a new package, or refuse a sibling name already taken."""
         ...
@@ -728,3 +758,86 @@ class SavedQueryRepository(Protocol):
         ...
 
     async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool: ...
+
+
+class ExportSnapshot(Protocol):
+    """A consistent, read-only reading of the graph, paged in a stable order.
+
+    Pages rather than the whole graph so an export never holds the model in
+    memory; one snapshot rather than one read per page so a write landing
+    between two pages cannot tear the file (docs/adr/0050).
+    """
+
+    async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]: ...
+
+    async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]: ...
+
+    async def skipped_views(self) -> int:
+        """Views a scoped export leaves out because a box shows an element outside it — counted
+        in this very snapshot, so the number and the file agree."""
+        ...
+
+    async def check_scope(self) -> None:
+        """Run the scope's filter once; a filter the database cannot run is `UnknownScopeError`."""
+        ...
+
+    async def packages(self) -> tuple[PackageNode, ...]:
+        """The packages of the export, with the parent each names (the scope may cut the tree)."""
+        ...
+
+    async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
+        """Saved diagrams with their boxes, by name; boxes by exported identifier."""
+        ...
+
+
+class ExchangeRepository(Protocol):
+    """What the import/export of an exchange file needs beyond the graph's own port."""
+
+    def snapshot(self, scope: ExportScope) -> AbstractAsyncContextManager[ExportSnapshot]:
+        """A `REPEATABLE READ`, read-only view of what `scope` selects."""
+        ...
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """The one transaction every write of an import joins, held by one import at a time.
+
+        Rolled back unless `commit` is still true on a normal exit. A second import
+        is refused at once (`ImportInProgressError`), never queued (docs/adr/0052).
+        """
+        ...
+
+    async def apply_rows[Row](
+        self,
+        rows: Sequence[Row],
+        apply: Callable[[Row], Awaitable[None]],
+        *,
+        max_refused: int | None = None,
+    ) -> list[RowRefusal]:
+        """Apply each row in the transaction; a refused row is skipped, the others stay.
+
+        `max_refused` is what this call may still refuse (the default is the whole budget of
+        an import, `MAX_REFUSED_ROWS`): an import that calls this twice shares one budget.
+
+        Rows run in batches of one `SAVEPOINT`, and a refusal replays the rows of its batch
+        that precede it: `apply` must be re-runnable, deriving its state from what it does now.
+        """
+        ...
+
+    async def known_elements(self) -> tuple[Element, ...]:
+        """Every element of the catalogue — the map an import matches `(type, name)` against."""
+        ...
+
+    async def known_relationship_keys(self) -> frozenset[tuple[RelationshipType, UUID, UUID]]:
+        """`(type, source, target)` of every link, to tell a new link from an existing one."""
+        ...
+
+    async def lock_package_tree(self) -> None:
+        """Take the package tree's lock, before any element lock, as a package write does."""
+        ...
+
+    async def lock_elements(self, ids: Iterable[UUID]) -> None:
+        """Take the row locks of these existing elements, in id order, without writing.
+
+        Done before the first write so that an import and an ordinary write meet the
+        elements in the same order (docs/adr/0052, the interlock limit).
+        """
+        ...

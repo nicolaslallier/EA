@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!DOCTYPE model [<!ENTITY secret SYSTEM "file:///etc/hostname">]>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" identifier="id-xxe">
+  <name>&secret;</name>
+</model>

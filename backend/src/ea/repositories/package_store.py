@@ -12,13 +12,14 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import ARRAY, Text, bindparam, delete, func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
+from ea.db.unit_of_work import reading, work
 from ea.domain.approval import WriteKind, guard_all
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
@@ -124,11 +125,11 @@ class PostgresPackageRepository:
 
     async def list_all(self) -> tuple[Package, ...]:
         statement = select(PackageRecord).order_by(func.lower(PackageRecord.name), PackageRecord.id)
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             return tuple(_to_package(row) for row in await session.scalars(statement))
 
     async def counts(self) -> dict[UUID, PackageCounts]:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             elements = await _count_by(session, ElementRecord.package_id)
             diagrams = await _count_by(session, DiagramRecord.package_id)
             children = await _count_by(session, PackageRecord.parent_id)
@@ -142,12 +143,24 @@ class PostgresPackageRepository:
         }
 
     async def get(self, package_id: UUID) -> Package | None:
-        async with self._sessions() as session:
+        async with reading(self._sessions) as session:
             row = await session.get(PackageRecord, package_id)
             return _to_package(row) if row is not None else None
 
+    async def fold_names(self, names: Sequence[str]) -> list[str]:
+        if not names:
+            return []
+        # `text()` with one bound array: there is no expression for `unnest ... WITH ORDINALITY`
+        # that keeps the order, and the order is the point. Nothing is spliced into the SQL.
+        statement = text(
+            "SELECT lower(n) FROM unnest(CAST(:names AS text[])) WITH ORDINALITY AS t(n, i) "
+            "ORDER BY i"
+        ).bindparams(bindparam("names", type_=ARRAY(Text)))
+        async with reading(self._sessions) as session:
+            return list((await session.scalars(statement, {"names": list(names)})).all())
+
     async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             tree = await _locked_tree(session)
             if len(tree) >= MAX_PACKAGES:
                 msg = f"the tree holds at most {MAX_PACKAGES} packages"
@@ -177,7 +190,7 @@ class PostgresPackageRepository:
         return package
 
     async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             tree = await _locked_tree(session)
             if package.id not in tree:
                 msg = f"no package with id {package.id}"
@@ -215,7 +228,7 @@ class PostgresPackageRepository:
         audit: AuditOf[PackageRemoval],
         require_empty: bool = False,
     ) -> bool:
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             tree = await _locked_tree(session)
             if package_id not in tree:
                 return False
@@ -319,7 +332,7 @@ class PostgresPackageRepository:
         audit: AuditOf[Mapping[UUID, UUID | None]],
     ) -> None:
         wanted = tuple(dict.fromkeys(element_ids))
-        async with self._sessions.begin() as session:
+        async with work(self._sessions) as session:
             # The tree's lock first, like every other write that names a package: a
             # deletion or a re-parenting of the destination cannot interleave
             # between the origins read below and the update that follows.

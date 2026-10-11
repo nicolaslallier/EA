@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" identifier="id-refused">
+  <name>Refused relations</name>
+  <elements>
+    <element identifier="e-actor" xsi:type="BusinessActor"><name>Alice</name></element>
+    <element identifier="e-node" xsi:type="Node"><name>srv-1</name></element>
+    <element identifier="e-app" xsi:type="ApplicationComponent"><name>CRM</name></element>
+  </elements>
+  <relationships>
+    <relationship identifier="r-bad" source="e-actor" target="e-node" xsi:type="Specialization"/>
+    <relationship identifier="r-good" source="e-app" target="e-node" xsi:type="Association"/>
+  </relationships>
+</model>
