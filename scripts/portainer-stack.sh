@@ -127,13 +127,16 @@ direct_setup() {
 direct_key() { # écrit la config curl (mode 600) ; supprimée à la sortie
   CURL_CFG="$(umask 077 && mktemp)"
   trap 'rm -f "$CURL_CFG"' EXIT
+  # Un secret collé garde souvent un saut de ligne ou un CR de fin : dans la
+  # config curl, il casse l'en-tête et Portainer répond « Invalid JWT token ».
+  PORTAINER_API_KEY="${PORTAINER_API_KEY//[[:space:]]/}"
   printf 'header = "X-API-Key: %s"\n' "$PORTAINER_API_KEY" >"$CURL_CFG"
 }
 api_direct() { # <méthode> <chemin> [corps-json]
   local out
   out="$(printf '%s' "${3:-}" | curl -sS "${CURL_TLS[@]}" -K "$CURL_CFG" --fail-with-body -X "$1" \
     -H "Content-Type: application/json" --data-binary @- "$PORTAINER_URL/api$2" 2>&1)" \
-    || { printf '%s\n' "${out//$PORTAINER_API_KEY/***}" >&2; die "$1 $2 a échoué (Portainer joignable à $PORTAINER_URL ?)"; }
+    || { printf '%s\n' "${out//$PORTAINER_API_KEY/***}" >&2; die "$1 $2 a échoué (Portainer joignable à $PORTAINER_URL ? clé de ${#PORTAINER_API_KEY} caractères)"; }
   printf '%s' "$out"
 }
 # La clé entre par la première ligne de stdin, le corps suit — pas par
