@@ -30,7 +30,7 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
-from ea.domain.junctions import validate_junction_properties
+from ea.domain.junctions import JUNCTION_TYPE_PROPERTY, validate_junction_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview, RelationshipChange
 from ea.domain.timeline import validate_lifespan_properties
@@ -198,6 +198,7 @@ class ArchitectureService:
         caller = require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
+        names_its_kind = JUNCTION_TYPE_PROPERTY in (properties or {})
         properties = validate_lifespan_properties(
             validate_junction_properties(
                 current.element_type, validate_ipam_properties(current.element_type, properties)
@@ -216,7 +217,12 @@ class ArchitectureService:
             if name is not None:
                 updated = updated.rename(name, now=now)
             if properties is not None:
-                updated = updated.with_properties(properties, now=now)
+                replacing = dict(properties)
+                kept = stored.properties.get(JUNCTION_TYPE_PROPERTY)
+                if kept and not names_its_kind and stored.element_type is ElementType.JUNCTION:
+                    # Replacing the map must not turn an OR into an AND by omission.
+                    replacing[JUNCTION_TYPE_PROPERTY] = kept
+                updated = updated.with_properties(replacing, now=now)
             if description is not None or documentation is not None:
                 updated = replace(
                     updated,

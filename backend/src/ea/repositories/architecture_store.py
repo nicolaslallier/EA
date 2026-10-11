@@ -75,6 +75,7 @@ from ea.domain.ports import (
     RelationshipChange,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
+from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
@@ -921,6 +922,9 @@ class PostgresArchitectureRepository:
             after = change(before)
             wanted = relationship_row(after)
             if wanted == relationship_row(before):
+                # Nothing to say after all: undo the review of the ends already flushed,
+                # so no element changes without the link event that explains it.
+                await session.rollback()
                 return before
             events = events_for(audit, RelationshipChange(before, after))
             for column in ("name", "access_type", "directed", "properties"):
@@ -1376,3 +1380,43 @@ class PostgresArchitectureRepository:
         async with reading(self._sessions) as session:
             row = (await session.scalars(statement)).first()
             return element_from_row(row) if row is not None else None
+
+    # --- Requirements (docs/adr/0064) --------------------------------------
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        kinds = [kind.value for kind in REQUIREMENT_TYPES]
+        links_statement = (
+            select(RelationshipRecord)
+            .where(
+                RelationshipRecord.relationship_type == RelationshipType.REALIZATION.value,
+                RelationshipRecord.target_type.in_(kinds),
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+            .limit(link_limit)
+        )
+        requirements_statement = (
+            select(ElementRecord)
+            .where(ElementRecord.element_type.in_(kinds))
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(requirement_limit)
+        )
+        async with reading(self._sessions) as session:
+            links = tuple(
+                relationship_from_row(row) for row in await session.scalars(links_statement)
+            )
+            requirements = {
+                row.id: element_from_row(row)
+                for row in await session.scalars(requirements_statement)
+            }
+            # Bounded by the links just read, themselves bounded above.
+            others = {link.source_id for link in links} - requirements.keys()
+            sources = (
+                await session.scalars(select(ElementRecord).where(ElementRecord.id.in_(others)))
+                if others
+                else ()
+            )
+            elements = {**requirements, **{row.id: element_from_row(row) for row in sources}}
+        return GraphView(
+            elements=tuple(sorted(elements.values(), key=lambda e: (e.name, e.id))),
+            relationships=links,
+        )

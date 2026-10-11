@@ -376,6 +376,52 @@ class TestRelationshipListing:
             response = await client.patch(f"/relationships/{link['id']}", json=field)
             assert response.status_code == 422
 
+    async def test_an_empty_patch_changes_nothing_and_a_partial_one_touches_only_its_field(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        api = await create(client, "application_service", "Invoice API")
+        process = await create(client, "business_process", "Order to cash")
+        link = (
+            await client.post(
+                "/relationships",
+                json={
+                    "relationship_type": "serving",
+                    "source_id": api["id"],
+                    "target_id": process["id"],
+                    "name": "keep",
+                    "directed": True,
+                    "properties": {"a": "1"},
+                },
+            )
+        ).json()
+
+        empty = await client.patch(f"/relationships/{link['id']}", json={})
+        named = await client.patch(f"/relationships/{link['id']}", json={"name": "new"})
+
+        assert empty.status_code == 200 and empty.json() == link
+        assert named.json() == {**link, "name": "new"}  # properties, directed untouched
+
+    async def test_an_explicit_null_is_refused_not_read_as_omitted(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        api = await create(client, "application_service", "Invoice API")
+        process = await create(client, "business_process", "Order to cash")
+        link = (
+            await client.post(
+                "/relationships",
+                json={
+                    "relationship_type": "serving",
+                    "source_id": api["id"],
+                    "target_id": process["id"],
+                    "properties": {"a": "1"},
+                },
+            )
+        ).json()
+
+        for body in ({"access_type": None}, {"properties": None}, {"name": None}):
+            response = await client.patch(f"/relationships/{link['id']}", json=body)
+            assert response.status_code == 422, body
+
     async def test_patching_an_unknown_relationship_is_a_404(
         self, client: httpx.AsyncClient
     ) -> None:

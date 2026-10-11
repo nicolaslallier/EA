@@ -46,6 +46,22 @@ class TestElements:
         assert either.properties["junction_type"] == "or"
 
     @pytest.mark.asyncio
+    async def test_replacing_the_properties_of_an_or_junction_keeps_it_an_or(
+        self, service: ArchitectureService
+    ) -> None:
+        gate = await service.create_element(
+            element_type=E.JUNCTION, name="Choice", properties={"junction_type": "or"}
+        )
+
+        kept = await service.update_element(gate.id, properties={"owner": "me"})
+        switched = await service.update_element(
+            gate.id, properties={"junction_type": "and", "owner": "me"}
+        )
+
+        assert dict(kept.properties) == {"owner": "me", "junction_type": "or"}
+        assert switched.properties["junction_type"] == "and"
+
+    @pytest.mark.asyncio
     async def test_a_junction_of_another_kind_is_refused_on_create_and_on_update(
         self, service: ArchitectureService
     ) -> None:

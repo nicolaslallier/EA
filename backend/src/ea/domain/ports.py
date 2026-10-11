@@ -687,6 +687,26 @@ class AnalysisRepository(Protocol):
         ...
 
 
+class RequirementRepository(Protocol):
+    """The one read the requirements coverage needs and the catalogue lacks.
+
+    A requirement is an element and a test or a design realizes it
+    (docs/adr/0064), so nothing here is a new store: it is the query
+    `ElementFilter` cannot express, because it follows a relationship.
+    Declared apart from `ArchitectureRepository`, like the IPAM port, and
+    satisfied by the same PostgreSQL class.
+    """
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        """The requirements, the realizations pointing at one, and those links' sources.
+
+        At most `requirement_limit` requirements and `link_limit` links are read — the
+        caller asks for one past its ceiling and refuses when it gets it: a coverage
+        computed on a page of the requirements would be wrong, silently.
+        """
+        ...
+
+
 class AccessTokenVerifier(Protocol):
     """Whatever proves who a bearer token belongs to — Keycloak's JWKS in production."""
 

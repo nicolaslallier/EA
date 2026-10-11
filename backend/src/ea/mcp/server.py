@@ -51,6 +51,8 @@ from ea.api.schemas import (
     AxisSelect,
     BaselineDiffRead,
     BaselineRead,
+    CoverageFilter,
+    CoverageRead,
     Cursor,
     CursorToken,
     Depth,
@@ -157,6 +159,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -243,6 +246,14 @@ links present or absent — "the application components of Finance with an owner
 and no serving link" is one call. `list_saved_queries` shows the filters the
 team already named; reuse one with `run_saved_query` rather than rebuilding it,
 and `save_query` keeps a good filter for the others.
+
+Requirements live in the catalogue too: a `requirement` or `constraint` element whose
+`req_status` (`proposed`, `approved`, `implemented`, `verified`, `rejected`) and
+`req_priority` (`must`, `should`, `could`) are properties. A design element or a test (a
+`deliverable` or `artifact` carrying `test_result`) is linked to the requirement by
+`realization`, source to target. `get_coverage` answers "is this requirement realized, and
+tested?" and lists the gaps; `impact_of` is not that question - it follows what a requirement
+realizes, not what realizes it.
 
 The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
 bucket organised in folders. `list_files` browses a folder, `read_file` reads a
@@ -336,6 +347,7 @@ BaselineProvider = Callable[[], BaselineService]
 ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
+RequirementProvider = Callable[[], RequirementService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -447,6 +459,14 @@ FileTagsArgument = Annotated[
 #: Base64 carries three bytes in four characters; `upload_file` still decides
 #: on the decoded size against `MAX_MCP_UPLOAD_BYTES`, this only stops a
 #: runaway argument before it is built into a request.
+CoverageStatus = Annotated[
+    CoverageFilter,
+    Field(description="Only the requirements with this status (e.g. `approved`), or `unset`."),
+]
+CoveragePriority = Annotated[
+    CoverageFilter,
+    Field(description="Only the requirements with this priority (`must`, `should`, `could`)."),
+]
 FileContent = Annotated[
     str,
     Field(
@@ -636,6 +656,7 @@ def build_mcp_server(
     get_exchanges: ExchangeProvider,
     get_analysis: AnalysisProvider,
     get_timeline: TimelineProvider,
+    get_requirements: RequirementProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
@@ -656,7 +677,7 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis` and `get_timeline` are required for the same reason.
+    `get_analysis`, `get_timeline` and `get_requirements` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1017,6 +1038,25 @@ def build_mcp_server(
             already = True
         comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
+
+    # --- Requirements (docs/adr/0064) ---------------------------------------
+    # A requirement is an element and a test or a design realizes it; this tool only reads.
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_coverage(
+        status: CoverageStatus | None = None,
+        priority: CoveragePriority | None = None,
+    ) -> CoverageRead:
+        """Which requirements are realized by a design, and tested by a test.
+
+        Call it before you claim a requirement is done, or to list the ones nobody realizes
+        (`gap` = `design`) or nobody tests (`gap` = `verification`). Each requirement says what
+        realizes it (`designed_by`) and what tests it (`tested_by`, with each test's result).
+        The rates leave out rejected requirements and are null when there is none. To change a
+        status or a result, use `update_element` (`req_status`, `test_result`).
+        """
+        return CoverageRead.of(await get_requirements().coverage(status=status, priority=priority))
 
     # --- Documents --------------------------------------------------------
     # The markdown attached to an element, which lives in PostgreSQL while the

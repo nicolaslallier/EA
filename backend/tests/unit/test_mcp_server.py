@@ -51,6 +51,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 from tests.conftest import (
@@ -78,6 +79,7 @@ def server(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    requirements: RequirementService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -92,7 +94,13 @@ def server(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: requirements,
     )
+
+
+@pytest.fixture
+def requirements(repository: InMemoryRepository) -> RequirementService:
+    return RequirementService(repository)
 
 
 @pytest.fixture
@@ -108,6 +116,7 @@ def server_without_an_index(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    requirements: RequirementService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -122,6 +131,7 @@ def server_without_an_index(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: requirements,
     )
 
 
@@ -357,8 +367,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 60
-        )  # fifty-six, the three time tools (plateaus, gap, drawing it), and update_relationship
+            len(names) == 61
+        )  # fifty-six, the three time tools, update_relationship and get_coverage
         assert names == {
             "export_model",
             "import_model",
@@ -371,6 +381,7 @@ class TestTheToolset:
             "list_relationships",
             "read_element_relations",
             "update_relationship",
+            "get_coverage",
             "disconnect_elements",
             "neighbourhood",
             "impact_of",
@@ -707,6 +718,45 @@ class TestRelationships:
         await call(server, "disconnect_elements", relationship_id=link["id"])
 
         assert await call(server, "list_relationships") == {"result": []}
+
+
+@pytest.mark.asyncio
+class TestCoverage:
+    async def test_it_lists_the_gaps_an_agent_asks_about(self, server: MCPServer[Any]) -> None:
+        requirement = await call(
+            server,
+            "create_element",
+            element_type="requirement",
+            name="Chiffrer",
+            properties={"req_status": "approved"},
+        )
+        design = await an_element(server, "application_component", "Coffre")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=design["id"],
+            target_id=requirement["id"],
+        )
+
+        coverage = await call(server, "get_coverage", status="approved")
+
+        assert coverage["total"] == 1
+        (item,) = coverage["requirements"]
+        assert item["gap"] == "verification"
+        assert item["designed_by"][0]["name"] == "Coffre"
+
+    async def test_an_unknown_status_comes_back_as_a_tool_error(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="unknown status"):
+            await server.call_tool("get_coverage", {"status": "banana"})
+
+    async def test_the_tool_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_coverage")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
 
 
 @pytest.mark.asyncio
@@ -1894,6 +1944,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("check_model", "cursor", "/quality", "cursor"),
             ("aggregate_model", "by", "/analytics/aggregate", "by"),
             ("aggregate_model", "property_key", "/analytics/aggregate", "property"),
+            ("get_coverage", "status", "/requirements/coverage", "status"),
+            ("get_coverage", "priority", "/requirements/coverage", "priority"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(

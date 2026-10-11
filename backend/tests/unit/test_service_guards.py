@@ -28,6 +28,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 from tests.conftest import a_reader
@@ -50,6 +51,7 @@ WRITES = {
     ExchangeService: {"import_exchange"},
     FileService: {"upload", "delete", "set_details", "reconcile"},
     PackageService: {"create", "update", "delete", "move_elements"},
+    RequirementService: set(),
     SavedQueryService: {"create", "update", "delete"},
     TimelineService: {"create_gap"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},

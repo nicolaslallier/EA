@@ -96,6 +96,7 @@ from ea.domain.ports import (
     RowRefusal,
     Transaction,
 )
+from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -836,6 +837,25 @@ class InMemoryRepository:
             ),
             None,
         )
+
+    # --- Requirements (docs/adr/0064) ---
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        links = tuple(
+            link
+            for link in self.relationships.values()
+            if link.relationship_type is R.REALIZATION and link.target_type in REQUIREMENT_TYPES
+        )[:link_limit]
+        wanted = {link.source_id for link in links}
+        requirements = [e for e in self.elements.values() if e.element_type in REQUIREMENT_TYPES][
+            :requirement_limit
+        ]
+        extra = [
+            e
+            for e in self.elements.values()
+            if e.id in wanted and e.element_type not in REQUIREMENT_TYPES
+        ]
+        return GraphView(elements=(*requirements, *extra), relationships=links)
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Walk the stored containment edges from target back to source."""

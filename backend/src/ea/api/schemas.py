@@ -90,6 +90,7 @@ from ea.domain.query import (
     QueryOrder,
     RelationTest,
 )
+from ea.domain.requirements import RESULT_PROPERTY, Coverage, Gap, RequirementTrace
 from ea.domain.saved_queries import (
     MAX_SAVED_QUERY_DESCRIPTION,
     MAX_SAVED_QUERY_NAME_LENGTH,
@@ -333,6 +334,19 @@ class RelationshipUpdate(_Input):
         default=None, description="Only meaningful on an association relationship."
     )
     properties: Properties | None = None
+
+    @model_validator(mode="after")
+    def _null_is_not_a_way_to_omit(self) -> RelationshipUpdate:
+        """Absent keeps the value; an explicit `null` has no meaning here, so it is refused.
+
+        None of the four fields can be emptied (an access link always has an access type), and
+        reading `null` as "omitted" would let a typo pass for a no-op.
+        """
+        nulled = sorted(name for name in self.model_fields_set if getattr(self, name) is None)
+        if nulled:
+            msg = f"{', '.join(nulled)} cannot be null: leave a field out to keep it"
+            raise ValueError(msg)
+        return self
 
 
 class RelationshipRead(BaseModel):
@@ -1913,4 +1927,100 @@ class RoadmapRead(BaseModel):
             window_truncated=roadmap.window_truncated,
             data_from=roadmap.data_from,
             data_to=roadmap.data_to,
+        )
+
+
+# --- Requirements and their traceability (docs/adr/0064) ---
+
+#: A status or a priority to narrow the coverage to. Which values exist is
+#: `domain/requirements.py`'s decision and the domain refuses the others; this
+#: only stops a runaway argument, for both adapters.
+CoverageFilter = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=32,
+        description="A value of the vocabulary, or `unset` for requirements that have none.",
+    ),
+]
+
+
+class TraceElementRead(BaseModel):
+    """An element on the other end of a realization of a requirement."""
+
+    id: UUID
+    element_type: ElementType
+    name: str
+    result: str | None = Field(
+        description="For a test, the result it records (`passed`, `failed`…); absent otherwise."
+    )
+
+    @classmethod
+    def of(cls, element: Element) -> TraceElementRead:
+        return cls(
+            id=element.id,
+            element_type=element.element_type,
+            name=element.name,
+            result=element.properties.get(RESULT_PROPERTY),
+        )
+
+
+class RequirementTraceRead(BaseModel):
+    """One requirement, what realizes it, what tests it, and what is missing."""
+
+    id: UUID
+    element_type: ElementType
+    name: str
+    identifier: str = Field(description="The readable identifier, empty when none is recorded.")
+    status: str
+    priority: str
+    gap: Gap
+    designed_by: list[TraceElementRead]
+    tested_by: list[TraceElementRead]
+
+    @classmethod
+    def of(cls, trace: RequirementTrace) -> RequirementTraceRead:
+        return cls(
+            id=trace.requirement.id,
+            element_type=trace.requirement.element_type,
+            name=trace.requirement.name,
+            identifier=trace.identifier,
+            status=trace.status,
+            priority=trace.priority,
+            gap=trace.gap,
+            designed_by=[TraceElementRead.of(element) for element in trace.designed_by],
+            tested_by=[TraceElementRead.of(element) for element in trace.tested_by],
+        )
+
+
+class CoverageRead(BaseModel):
+    """The coverage of the requirements asked about.
+
+    The rates are over the *active* requirements (a rejected one needs neither
+    a design nor a test) and are `null` when there is none: a rate over nothing
+    is not 100 %.
+    """
+
+    total: int
+    active: int
+    designed: int
+    verified: int
+    design_rate: float | None
+    verification_rate: float | None
+    by_status: dict[str, int]
+    by_priority: dict[str, int]
+    requirements: list[RequirementTraceRead]
+
+    @classmethod
+    def of(cls, coverage: Coverage) -> CoverageRead:
+        return cls(
+            total=coverage.total,
+            active=coverage.active,
+            designed=coverage.designed,
+            verified=coverage.verified,
+            design_rate=coverage.design_rate,
+            verification_rate=coverage.verification_rate,
+            by_status=coverage.by_status,
+            by_priority=coverage.by_priority,
+            requirements=[RequirementTraceRead.of(trace) for trace in coverage.traces],
         )

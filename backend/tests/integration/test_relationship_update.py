@@ -143,6 +143,13 @@ async def test_two_patches_of_one_link_both_land_on_the_row_the_other_left(
 
     (stored,) = (await world.graph.relations_of(a.id)).relationships
     assert (stored.name, stored.directed) == ("renamed", True)  # neither undid the other
+    first, second = [
+        e for e in await world.events(EntityKind.RELATIONSHIP) if e.action.value.endswith("updated")
+    ]
+    # Each event is the row it really replaced: the second one starts where the first ended.
+    assert second.before is not None and first.after is not None
+    assert second.before["name"] == first.after["name"]
+    assert second.before["directed"] == first.after["directed"]
 
 
 async def test_a_junction_wires_two_processes_and_survives_a_round_trip_of_the_store(
@@ -165,3 +172,20 @@ async def test_a_junction_wires_two_processes_and_survives_a_round_trip_of_the_s
     impact = await world.graph.impact_of(a.id, depth=3)
     assert {e.name for e in impact.elements} >= {"a", "Choice", "b"}
     assert AuditAction.RELATIONSHIP_UPDATED.value == "relationship.updated"
+
+
+async def test_an_empty_patch_reviews_no_end_and_writes_nothing(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    a = await world.graph.create_element(element_type=E.NODE, name="a")
+    b = await world.graph.create_element(element_type=E.NODE, name="b")
+    link = await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=a.id, target_id=b.id
+    )
+    await put_in_state(engine_at_head, a.id, "approved")
+    before = await state_of(engine_at_head, a.id)
+
+    await world.graph.update_relationship(link.id)
+
+    assert await state_of(engine_at_head, a.id) == before
