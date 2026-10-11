@@ -228,7 +228,7 @@ case "$cmd" in
       body="$(jq -n --arg ref "$REF" --argjson env "$env" --arg every "$POLL_INTERVAL" \
         '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
           Prune: false, AutoUpdate: {Interval: $every}}')"
-      api PUT "/stacks/$sid/git?endpointId=$eid" "$body" >/dev/null
+      api POST "/stacks/$sid/git?endpointId=$eid" "$body" >/dev/null
       body="$(jq -n --arg ref "$REF" --argjson env "$env" \
         '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
           Prune: false, RepullImageAndRedeploy: false}')"
