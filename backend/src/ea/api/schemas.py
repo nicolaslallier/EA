@@ -1656,7 +1656,7 @@ class QualityReportRead(BaseModel):
     findings: list[FindingRead]
     next_cursor: int | None
     partial: bool = Field(
-        description="True when a rule stopped at its budget (duplicates): finding nothing is not proof."
+        description="True when a rule stopped at its budget: a short list proves little."
     )
 
     @classmethod

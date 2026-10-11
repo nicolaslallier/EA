@@ -546,3 +546,54 @@ class TestBoundsAreAppliedBeforeTheReadNotAfter:
             await small.check()
 
         assert asked == [3]
+
+
+@pytest.mark.asyncio
+class TestAScopePastTheCeilingIsRefusedEverywhere:
+    """The resolver hands back one id past the ceiling; no path may treat that as the scope."""
+
+    def over(self, service, repository):  # type: ignore[no-untyped-def]
+        ids = tuple(uuid4() for _ in range(3))
+
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return ids
+
+        return AnalysisService(
+            service,
+            repository,
+            params=QualityParams(max_elements=2),
+            scope_ids=resolver,
+        )
+
+    async def test_the_aggregate(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        with pytest.raises(ScopeTooLargeError):
+            await self.over(service, repository).aggregate(
+                Dimension.parse("layer"), Metric.COUNT, package_id=uuid4()
+            )
+
+    async def test_the_heat_map(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        with pytest.raises(ScopeTooLargeError):
+            await self.over(service, repository).heatmap(
+                Dimension.parse("layer"),
+                Dimension.parse("element_type"),
+                Metric.COUNT,
+                query_id=uuid4(),
+            )
+
+    async def test_the_matrix(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        with pytest.raises(ScopeTooLargeError):
+            await self.over(service, repository).matrix(
+                AxisSelection(package_id=uuid4()), AxisSelection()
+            )
+
+    async def test_the_quality_run(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        with pytest.raises(ScopeTooLargeError):
+            await self.over(service, repository).check(package_id=uuid4())

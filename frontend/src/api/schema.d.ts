@@ -2446,7 +2446,7 @@ export interface components {
             next_cursor: number | null;
             /**
              * Partial
-             * @description True when a rule stopped at its budget (duplicates): finding nothing is not proof.
+             * @description True when a rule stopped at its budget: a short list proves little.
              */
             partial: boolean;
             /**

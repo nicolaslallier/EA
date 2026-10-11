@@ -266,7 +266,16 @@ class AnalysisService:
         if self._scope_ids is None:
             msg = "this deployment has no packages or saved queries to scope by"
             raise InvalidAnalysisError(msg)
-        return await self._scope_ids(package_id, query_id)
+        ids = await self._scope_ids(package_id, query_id)
+        # The one point of control: the resolver reads one past the ceiling, so a scope that
+        # does not fit is refused here for every path, never silently cut to its first rows.
+        if len(ids) > self._params.max_elements:
+            msg = (
+                f"the scope holds more than {self._params.max_elements} elements; "
+                f"an analysis takes at most that"
+            )
+            raise ScopeTooLargeError(msg)
+        return ids
 
     def _place(self, key: str) -> AbstractAsyncContextManager[Lease | None]:
         """A place among the analyses reading the whole model, or no limit where none is set."""
