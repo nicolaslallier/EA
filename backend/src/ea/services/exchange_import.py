@@ -171,14 +171,7 @@ class _State:
 class _Row:
     index: int  # position in the file; the report follows it
     category: Category
-    element: ExchangeElement | None = None
-    link: ExchangeRelationship | None = None
-
-    @property
-    def identifier(self) -> str:
-        item = self.element or self.link
-        assert item is not None
-        return item.identifier
+    item: ExchangeElement | ExchangeRelationship  # one or the other, never neither
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,8 +249,7 @@ class ImportRun:
 
         for refusal in await self._repository.apply_rows(rows, apply):
             row = rows[refusal.index]
-            item = row.element or row.link
-            assert item is not None
+            item = row.item
             self._results[row.index] = _Result(
                 row.category, Outcome.REJECTED, (_located(refusal_issue(refusal.error, ""), item),)
             )
@@ -307,14 +299,14 @@ class ImportRun:
                     accepted.element_type,
                     (accepted.element_type, accepted.name),
                 )
-                rows.append(_Row(index, Category.ELEMENTS, element=accepted))
+                rows.append(_Row(index, Category.ELEMENTS, accepted))
             index += 1
         for link in model.relationships:
             judged = self._judge_link(link, state, ends)
             if isinstance(judged, Issue):
                 self._reject(index, Category.RELATIONSHIPS, judged, link)
             else:
-                rows.append(_Row(index, Category.RELATIONSHIPS, link=judged))
+                rows.append(_Row(index, Category.RELATIONSHIPS, judged))
             index += 1
         return rows
 
@@ -367,11 +359,9 @@ class ImportRun:
         """
         reuse = self._options.on_conflict is ConflictPolicy.REUSE
         by_identifier = {
-            row.element.identifier: state.by_key.get(
-                (row.element.element_type, row.element.name.strip())
-            )
+            row.item.identifier: state.by_key.get((row.item.element_type, row.item.name.strip()))
             for row in rows
-            if row.element is not None
+            if isinstance(row.item, ExchangeElement)
         }
 
         def existing(identifier: str) -> UUID | None:
@@ -382,9 +372,12 @@ class ImportRun:
 
         touched: set[UUID] = set()
         for row in rows:
-            names = [row.element.identifier] if row.element else []
-            if row.link:
-                names = [row.link.source, row.link.target]
+            item = row.item
+            names = (
+                [item.identifier]
+                if isinstance(item, ExchangeElement)
+                else [item.source, item.target]
+            )
             touched.update(uid for uid in map(existing, names) if uid is not None)
         return touched
 
@@ -393,14 +386,13 @@ class ImportRun:
     async def _apply(self, row: _Row, state: _State) -> None:
         self._ledger.begin(row.index)
         try:
-            if row.element is not None:
-                result = await self._element(row, row.element, state)
+            if isinstance(row.item, ExchangeElement):
+                result = await self._element(row, row.item, state)
             else:
-                assert row.link is not None
-                result = await self._link(row, row.link, state)
+                result = await self._link(row, row.item, state)
         except Exception as error:
-            if row.element is not None:
-                state.refused.add(row.element.identifier)
+            if isinstance(row.item, ExchangeElement):
+                state.refused.add(row.item.identifier)
             if isinstance(error, ValueError):  # a pure check, raised before any write
                 raise RowRefusedError("invalid_row", str(error)) from error
             raise
@@ -414,7 +406,7 @@ class ImportRun:
         code: str,
         why: str,
     ) -> _Result:
-        if row.element is not None:
+        if isinstance(row.item, ExchangeElement):
             state.refused.add(item.identifier)
         issue = Issue(Severity.ERROR, code, why, item.identifier, item.line, item.path)
         return _Result(row.category, Outcome.REJECTED, (issue,))

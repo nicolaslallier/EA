@@ -143,7 +143,9 @@ async def _nested(session: AsyncSession) -> AsyncIterator[None]:
     # SQLAlchemy's own name for it: there is no public way to ask for it.
     held: Any = transaction.sync_transaction
     name: str = next(entry[1]._savepoint for entry in held._connections.values())
-    assert _SAVEPOINT_NAME.fullmatch(name), name
+    if not _SAVEPOINT_NAME.fullmatch(name):  # SQLAlchemy changed its naming: do not guess
+        msg = f"unexpected savepoint name {name!r}"
+        raise RuntimeError(msg)
     try:
         yield
     except BaseException:
