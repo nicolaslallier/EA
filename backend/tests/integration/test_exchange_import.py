@@ -42,7 +42,8 @@ async def count(engine: AsyncEngine, table: str) -> int:
 
 
 RIVAL_D = (
-    "INSERT INTO elements (id, element_type, layer, aspect, name, properties, created_at, updated_at) VALUES "
+    "INSERT INTO elements "
+    "(id, element_type, layer, aspect, name, properties, created_at, updated_at) VALUES "
     "(gen_random_uuid(), 'node', 'technology', 'active_structure', 'D', '{}', now(), now())"
 )
 

@@ -1107,3 +1107,88 @@ class TestTheReportNeverEchoesTheFile:
                 assert len(text) <= 201
                 assert not any(unicodedata.category(c) in ("Cc", "Cf") for c in text), repr(text)
         assert sizes < 4_000  # a fixed bound, whatever the file's size
+
+
+class TestWhatTheReplayMustRemember:
+    async def test_links_applied_before_a_refused_link_are_applied_again_not_taken_for_existing(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+    ) -> None:
+        # The elements are in the catalogue already: their ids do not change on the replay,
+        # so a link key remembered from the first pass would be found again.
+        for name in "ABCD":
+            await service.create_element(element_type=E.APPLICATION_COMPONENT, name=name)
+        letters = "".join(el(name.lower(), "ApplicationComponent", name) for name in "ABCD")
+        chain = (
+            rel("r1", "Composition", "a", "b")
+            + rel("r2", "Composition", "b", "c")
+            + rel("r3", "Composition", "c", "d")
+            + rel("r4", "Composition", "d", "a")  # closes the loop: refused after the three
+        )
+
+        report = await exchange_service.import_exchange(xml(exchange_xml(letters, chain)), REAL)
+
+        assert [i.code for i in report.issues] == ["cyclic_containment"]
+        assert report.counts[Category.RELATIONSHIPS].created == 3
+        assert report.counts[Category.RELATIONSHIPS].reused == 0
+        names = names_of(repository)
+        links = {
+            (names[x.source_id], names[x.target_id]) for x in repository.relationships.values()
+        }
+        assert links == {("A", "B"), ("B", "C"), ("C", "D")}  # in the graph, not just the report
+
+    async def test_a_link_naming_a_refused_element_never_lands_on_another_with_that_source_id(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await service.create_element(
+            element_type=E.NODE, name="stranger", properties={SOURCE_ID: "x"}
+        )
+        refusing_on_write(monkeypatch, service, "refused")
+        data = exchange_xml(
+            el("ok", "Node", "ok") + el("x", "Node", "refused"),  # "x" is also the stranger's
+            rel("r", "Association", "ok", "x"),
+        )
+
+        report = await exchange_service.import_exchange(xml(data), REAL)
+
+        assert repository.relationships == {}
+        assert [i.code for i in report.issues] == ["duplicate_element", "end_rejected"]
+
+    async def test_an_element_reopened_before_a_refusal_is_reopened_and_reported_after_it(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+    ) -> None:
+        approved = await service.create_element(
+            element_type=E.APPLICATION_COMPONENT, name="srv", properties={SOURCE_ID: "srv-1"}
+        )
+        repository.elements[approved.id] = replace(
+            repository.elements[approved.id], approval_state=ApprovalState.APPROVED
+        )
+        data = exchange_xml(
+            el("n", "ApplicationComponent", "N") + el("m", "ApplicationComponent", "M"),
+            rel("r1", "Association", "n", "srv-1")  # reopens "srv"
+            + rel("r2", "Composition", "n", "m")
+            + rel("r3", "Composition", "m", "n"),  # refused: the batch is rolled back, r1 replayed
+        )
+
+        report = await exchange_service.import_exchange(xml(data), REAL)
+
+        reopened = [i for i in report.issues if i.code == "approved_element_reopened"]
+        assert [i.source_id for i in reopened] == ["r1"]  # said once, and after the replay
+        assert repository.elements[approved.id].approval_state is ApprovalState.IN_REVIEW
+
+
+def test_the_bounds_have_the_values_the_plan_states() -> None:
+    from ea.domain.exchange import MAX_EXCHANGE_BYTES, MAX_EXCHANGE_ITEMS, MAX_NESTING_DEPTH
+
+    assert MAX_EXCHANGE_ITEMS == 50_000
+    assert MAX_EXCHANGE_BYTES == 20 * 1024 * 1024
+    assert MAX_NESTING_DEPTH == 250  # 200 levels of organizations, and the frame around them
