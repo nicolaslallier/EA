@@ -1,4 +1,4 @@
-"""The retention procedure names what the migration and the Makefile really hold — or it is a lie."""
+"""The retention procedure names what the migration and the Makefile hold, or it is a lie."""
 
 from __future__ import annotations
 
