@@ -36,6 +36,9 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'baseline.created': 'Baseline capturée',
   'baseline.deleted': 'Baseline supprimée',
   'baseline.restored': 'Baseline restaurée',
+  'external_reference.linked': 'Référence externe liée',
+  'external_reference.unlinked': 'Référence externe retirée',
+  'external_reference.refreshed': 'Référence externe actualisée',
 }
 
 export const KIND_LABELS: Record<EntityKind, string> = {
@@ -46,6 +49,7 @@ export const KIND_LABELS: Record<EntityKind, string> = {
   diagram: 'Diagramme',
   document: 'Document',
   baseline: 'Baseline',
+  external_reference: 'Référence externe',
 }
 
 /** A hand-written URL may name anything: only what the labels know is a filter. */

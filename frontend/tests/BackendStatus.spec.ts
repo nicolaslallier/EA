@@ -26,7 +26,7 @@ describe('BackendStatus', () => {
     // "up" and "whole" stopped being the same answer.
     stubFetch(() =>
       Promise.resolve(
-        new Response(JSON.stringify({ status: 'degraded', degraded: ['files', 'search'] }), {
+        new Response(JSON.stringify({ status: 'degraded', degraded: ['files', 'search', 'external'] }), {
           status: 200,
         }),
       ),
@@ -36,6 +36,7 @@ describe('BackendStatus', () => {
 
     await waitFor(() => expect(screen.getByText(/fichiers/i)).toBeInTheDocument())
     expect(screen.getByText(/recherche documentaire/i)).toBeInTheDocument()
+    expect(screen.getByText(/systèmes tiers/i)).toBeInTheDocument()
   })
 
   it('names a section it has no label for rather than hiding it', async () => {

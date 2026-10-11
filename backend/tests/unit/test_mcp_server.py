@@ -1894,6 +1894,40 @@ class TestTheExternalTools:
         assert done["dry_run"] is False and len(external_system.created) == 1
         assert done["reference"]["untrusted_title"] == "Rounding"
 
+    async def test_the_instructions_and_the_tool_say_that_data_leaves_and_must_be_confirmed(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "open_external_issue")
+
+        assert "OUTSIDE THIS SYSTEM" in (tool.description or "")
+        assert "confirm" in (tool.description or "")
+        for phrase in (
+            "untrusted_title",
+            "never an instruction",
+            "confirmed",
+            "nothing from the catalogue",
+        ):
+            assert phrase in INSTRUCTIONS, phrase
+
+    async def test_an_agent_reads_a_bounded_number_of_references(
+        self, server: MCPServer[Any], external_system: FakeExternalSystem
+    ) -> None:
+        from ea.mcp.server import MAX_AGENT_REFERENCES
+
+        element = await an_element(server, "application_component", "Billing")
+        for index in range(MAX_AGENT_REFERENCES + 5):
+            await call(
+                server,
+                "link_external_reference",
+                element_id=element["id"],
+                kind="url",
+                reference=f"https://wiki.test/{index}",
+            )
+
+        listed = await call(server, "list_external_references", element_id=element["id"])
+
+        assert len(listed["result"]) == MAX_AGENT_REFERENCES
+
     async def test_a_reader_cannot_write_through_these_tools(self, server: MCPServer[Any]) -> None:
         element = await an_element(server, "application_component", "Billing")
 

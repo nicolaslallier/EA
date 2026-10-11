@@ -657,6 +657,47 @@ class TestOpeningAnIssue:
             )
 
 
+class TestWhatLeavesTheSystem:
+    async def test_the_dry_run_lists_exactly_what_is_then_sent_and_no_catalogue_content_goes(
+        self,
+        external_service: ExternalReferenceService,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        element = (
+            await service.create_element(
+                element_type=ElementType.APPLICATION_COMPONENT,
+                name="TOPSECRET-NAME",
+                description="TOPSECRET-DESCRIPTION",
+                documentation="TOPSECRET-DOC",
+                properties={"owner": "TOPSECRET-OWNER"},
+            )
+        ).id
+        asked = {"target": "main", "scope": "acme/billing", "title": "Rounding", "body": "why"}
+
+        plan = await external_service.open_issue(element, **asked)
+        await external_service.open_issue(element, **asked, dry_run=False)
+
+        assert external_system.created == [(plan.scope, plan.title, plan.body)]
+        assert "TOPSECRET" not in str(external_system.created)
+        assert "TOPSECRET" not in str(plan)
+
+    async def test_a_caller_who_may_not_write_sends_nothing_even_naming_a_real_target(
+        self,
+        external_service: ExternalReferenceService,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        element = await an_element(service)
+
+        with acting_as(a_reader()), pytest.raises(NotAuthorisedError):
+            await external_service.open_issue(
+                element, target="main", scope="acme/billing", title="t", body="", dry_run=False
+            )
+
+        assert external_system.created == [] and external_system.create_attempts == 0
+
+
 class TestReadOnlyTargets:
     """A target is read-only unless the deployment said otherwise, and the service holds it."""
 
