@@ -515,6 +515,7 @@ def _read(data: bytes) -> _Reading:
     source = _Metered(data)
     live = 0  # nodes started since the last time what had been handled was let go
     in_item = 0  # nodes started below the element or relationship being read
+    at_item_start = 0  # `live`, counting the item itself, when it started
     for event, node in _events(source):
         source.silent = 0
         if event == "pi":
@@ -531,6 +532,7 @@ def _read(data: bytes) -> _Reading:
             live += 1
             if len(nodes) == 3:
                 in_item = 0
+                at_item_start = live
             elif len(nodes) > 3 and tags[1] in _ITEM_SECTIONS:
                 in_item += 1
                 if in_item > MAX_NODES_PER_ITEM:
@@ -553,7 +555,8 @@ def _read(data: bytes) -> _Reading:
                 reading.links.append(_too_many_properties(slot, Category.RELATIONSHIPS))
             elif section == _q("propertyDefinitions") and tag == _q("propertyDefinition"):
                 _read_definition(node, reading)  # clears the definition and its name
-                live = 0
+                # Its content is freed; the empty shell stays under its parent, and stays counted.
+                live = at_item_start
                 tags.pop(), nodes.pop()
                 continue  # the siblings of a definition are the other definitions: keep them
             nodes[1].clear()  # forget what has been handled: memory stays flat

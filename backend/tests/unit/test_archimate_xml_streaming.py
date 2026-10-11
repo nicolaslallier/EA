@@ -186,3 +186,64 @@ class TestThePropertyDefinitionsBoundary:
 
         with pytest.raises(InvalidExchangeFileError, match="property definitions"):
             parse_model(self.definitions(MAX_EXCHANGE_ITEMS + 1))
+
+    def test_one_definition_holding_a_great_many_nodes_is_refused_early(self, spy: Spy) -> None:
+        inside = "<x/>" * 200_000
+        xml = exchange_xml(
+            extra='<propertyDefinitions><propertyDefinition identifier="d" type="string">'
+            f"<name>k</name>{inside}</propertyDefinition></propertyDefinitions>"
+        )
+
+        with pytest.raises(InvalidExchangeFileError, match="too many nodes in one object"):
+            parse_model(xml)
+
+        assert spy.events < 2_000  # stopped at the 465th node of that definition
+
+    def test_many_small_definitions_are_accepted_because_each_is_freed_as_it_ends(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sizes = []
+        for count in (10_000, 40_000):
+            rows = "".join(
+                f'<propertyDefinition identifier="d{i}" type="string"><name>k{i}</name>'
+                "<x/><y/></propertyDefinition>"
+                for i in range(count)
+            )
+            xml = exchange_xml(extra=f"<propertyDefinitions>{rows}</propertyDefinitions>")
+            seen = 0
+
+            def watch(real: Any) -> Any:
+                def wrapped(*args: Any, **kwargs: Any) -> Any:
+                    nonlocal seen
+                    section = None
+                    for event, node in real(*args, **kwargs):
+                        if event == "start" and node.tag.endswith("}propertyDefinitions"):
+                            section = node
+                        if section is not None and event == "end":
+                            # what hangs below the definitions: their shells, never their content
+                            seen = max(seen, len(section))
+                        yield event, node
+
+                return wrapped
+
+            with monkeypatch.context() as patch:
+                patch.setattr(reader, "iterparse", watch(reader.iterparse))
+                assert len(parse_model(xml).elements) == 0
+            sizes.append(seen)
+
+        assert sizes[1] / sizes[0] < 5  # shells: one per definition, 40 000 of them, no more
+
+    def test_the_shells_of_the_definitions_stay_in_the_global_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Each definition is freed as it ends, but the empty node it leaves under its parent
+        # is a node held: the budget counts it, and does not start again from zero.
+        monkeypatch.setattr(reader, "MAX_LIVE_NODES", 10)
+        rows = "".join(
+            f'<propertyDefinition identifier="d{i}" type="string"><name>k</name>'
+            "</propertyDefinition>"
+            for i in range(100)
+        )
+
+        with pytest.raises(InvalidExchangeFileError, match="too many nodes held"):
+            parse_model(exchange_xml(extra=f"<propertyDefinitions>{rows}</propertyDefinitions>"))
