@@ -339,6 +339,18 @@ describe('ElementCatalogue', () => {
     expect(screen.getByRole('button', { name: /^filtrer$/i })).toBeInTheDocument()
     expect(row.getByRole('button', { name: 'Facturation' })).toBeInTheDocument()
   })
+
+  it('starts filtered when the URL names a layer or a type', async () => {
+    const { calls } = await renderCatalogue(
+      [{ path: '/elements', body: aPage([anElement()]) }],
+      '?layer=business&type=business_process',
+    )
+
+    await screen.findByRole('row', { name: /Facturation/ })
+    const listing = calls.find((call) => call.url.pathname === '/elements')
+    expect(listing?.url.searchParams.get('layer')).toBe('business')
+    expect(listing?.url.searchParams.get('element_type')).toBe('business_process')
+  })
 })
 
 const FINANCE = aPackage({ id: 'f', name: 'Finance', path: 'Finance' })

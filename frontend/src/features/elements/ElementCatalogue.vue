@@ -25,7 +25,13 @@ import { usePackages } from '../packages/usePackages'
 import RelationshipPanel from '../relationships/RelationshipPanel.vue'
 import ElementDetail from './ElementDetail.vue'
 import ElementForm from './ElementForm.vue'
-import type { ElementCreate, ElementRead, ElementUpdate } from './useElementCatalogue'
+import type {
+  ElementCreate,
+  ElementRead,
+  ElementType,
+  ElementUpdate,
+  Layer,
+} from './useElementCatalogue'
 import { useElementCatalogue } from './useElementCatalogue'
 import { useElementDetail } from './useElementDetail'
 
@@ -95,8 +101,17 @@ const documenting = ref<ElementRead | null>(null)
 const failure = ref('')
 const busy = ref(false)
 
+/** A query parameter is `string | string[] | null`; only a string means anything here. */
+function oneOf(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
 onMounted(async () => {
   applyUrlFilters()
+  // A link from the dashboard arrives with `?layer=` / `?type=`: start filtered.
+  // Values pass as they stand; the API refuses a layer or type it does not know.
+  catalogue.filters.layer = oneOf(route.query.layer) as Layer | ''
+  catalogue.filters.elementType = oneOf(route.query.type) as ElementType | ''
   await Promise.all([metamodel.load(), packages.load(), catalogue.load()])
 })
 

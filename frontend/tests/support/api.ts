@@ -7,6 +7,8 @@ type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
 type FindingRead = components['schemas']['FindingRead']
 type QualityReportRead = components['schemas']['QualityReportRead']
+type AggregateRead = components['schemas']['AggregateRead']
+type HeatmapRead = components['schemas']['HeatmapRead']
 type MatrixRead = components['schemas']['MatrixRead']
 type MatrixCellDetailRead = components['schemas']['MatrixCellDetailRead']
 type PackageRead = components['schemas']['PackageRead']
@@ -585,6 +587,44 @@ export function aQualityReport(
     })),
     findings,
     next_cursor: null,
+    ...overrides,
+  }
+}
+
+
+/** An aggregate as `GET /analytics/aggregate` returns it. */
+export function anAggregate(overrides: Partial<AggregateRead> = {}): AggregateRead {
+  return {
+    by: 'layer',
+    metric: 'count',
+    property_key: null,
+    total: 3,
+    unreadable: 0,
+    truncated: false,
+    buckets: [
+      { key: 'business', count: 1, value: 1, level: 0 },
+      { key: 'technology', count: 2, value: 2, level: 4 },
+    ],
+    ...overrides,
+  }
+}
+
+/** A heat map as `GET /analytics/heatmap` returns it. */
+export function aHeatmap(overrides: Partial<HeatmapRead> = {}): HeatmapRead {
+  return {
+    rows_by: 'layer',
+    cols_by: 'property:lifecycle',
+    rows: ['business', 'technology'],
+    cols: ['en production', 'retiré', '__unset__'],
+    metric: 'count',
+    property_key: null,
+    total: 3,
+    unreadable: 0,
+    truncated: false,
+    cells: [
+      { row: 'business', col: 'retiré', count: 1, value: 1, level: 0 },
+      { row: 'technology', col: 'en production', count: 2, value: 2, level: 4 },
+    ],
     ...overrides,
   }
 }

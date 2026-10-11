@@ -116,6 +116,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/quality/QualitySection.vue'),
   },
   {
+    path: '/analyse/tableau-de-bord',
+    name: 'dashboard',
+    label: 'Tableau de bord',
+    summary: 'Répartition du modèle et carte de chaleur : couverture, cycle de vie, coût, risque.',
+    group: 'analysis',
+    view: () => import('../features/dashboard/DashboardSection.vue'),
+  },
+  {
     path: '/recherche',
     name: 'search',
     label: 'Recherche',
