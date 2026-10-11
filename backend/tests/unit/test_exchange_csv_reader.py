@@ -239,6 +239,44 @@ class TestRelationsAndProperties:
 
         assert model.elements == () and "too_many_properties" in codes(model)
 
+    def test_the_limit_counts_the_users_properties_not_the_exchanges_own(self) -> None:
+        user = [[f"k{i}", "v"] for i in range(100)]  # exactly the limit
+        props = table(
+            PROPERTY_HEADER,
+            *[["a", key, value] for key, value in user],
+            ["a", "ea.description", "d"],
+            *[["r", key, value] for key, value in user],
+            ["r", "ea.access_type", "read"],
+            ["s", "ea.directed", "true"],
+            *[["s", key, value] for key, value in user],
+        )
+        relations = table(
+            RELATION_HEADER,
+            ["r", "Access", "", "", "a", "a", ""],
+            ["s", "Association", "", "", "a", "a", ""],
+        )
+
+        model = parse_csv(elements(["a", "Node", "A", "", ""]), relations, props)
+
+        (element,) = model.elements
+        assert len(element.properties) == 100 and element.description == "d"
+        access, association = model.relationships
+        assert len(access.properties) == 100 and access.access_type is AccessType.READ
+        assert len(association.properties) == 100 and association.directed is True
+        assert "k99" in access.properties and "k99" in association.properties
+
+    def test_one_property_past_the_limit_rejects_the_object_and_says_so(self) -> None:
+        props = table(
+            PROPERTY_HEADER,
+            *[["r", f"k{i}", "v"] for i in range(101)],
+            ["r", "ea.access_type", "read"],
+        )
+        relations = table(RELATION_HEADER, ["r", "Access", "", "", "a", "a", ""])
+
+        model = parse_csv(elements(["a", "Node", "A", "", ""]), relations, props)
+
+        assert model.relationships == () and "too_many_properties" in codes(model)
+
     def test_a_formula_in_a_property_value_or_an_id_is_restored(self) -> None:
         props = table(PROPERTY_HEADER, ["'=a", "k", "'+1"])
 

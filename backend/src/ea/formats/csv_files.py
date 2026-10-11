@@ -30,6 +30,7 @@ from ea.domain.exchange import (
     MAX_PROPERTIES_PER_OBJECT,
     PROPERTIES_FILE,
     RELATIONS_FILE,
+    RESERVED_PREFIX,
     Category,
     ExchangeElement,
     ExchangeModel,
@@ -282,6 +283,8 @@ class _Reading:
         self.issues: list[Issue] = []
         #: The property rows of each id, never more than one over the limit per object.
         self.owners: dict[str, list[tuple[str, str]]] = {}
+        #: The `ea.*` rows of each id, the last value of each key.
+        self.reserved: dict[str, dict[str, str]] = {}
 
     def identifier(self, cell: str) -> str:
         return self.unguard(cell).strip()
@@ -321,10 +324,18 @@ class _Reading:
 
 
 def _read_properties(data: bytes, reading: _Reading) -> None:
+    """Keep each object's own properties (at most one over the limit, which says "too many")
+    apart from the exchange's `ea.*` rows, of which only the last value of each key is kept:
+    the limit counts what a person wrote, never what the exchange adds to it."""
     for _, row in _table(data, PROPERTIES_FILE, ("id", "key", "value")):
-        pairs = reading.owners.setdefault(reading.identifier(row["id"]), [])
-        if len(pairs) <= MAX_PROPERTIES_PER_OBJECT:  # one more than allowed says "too many"
-            pairs.append((row["key"], reading.unguard(row["value"])))
+        owner = reading.identifier(row["id"])
+        key, value = row["key"], reading.unguard(row["value"])
+        if key.startswith(RESERVED_PREFIX):
+            reading.reserved.setdefault(owner, {})[key] = value
+            continue
+        pairs = reading.owners.setdefault(owner, [])
+        if len(pairs) <= MAX_PROPERTIES_PER_OBJECT:
+            pairs.append((key, value))
 
 
 def _read_elements(data: bytes, reading: _Reading) -> list[ExchangeElement]:
@@ -373,13 +384,14 @@ def _read_elements(data: bytes, reading: _Reading) -> list[ExchangeElement]:
         if element_type is None:
             refuse("unknown_type", "this is not an ArchiMate element type")
             continue
-        pairs = reading.owners.get(identifier, [])
-        if reading.too_many(pairs):
+        own = reading.owners.get(identifier, [])
+        if reading.too_many(own):
             refuse(
                 "too_many_properties",
                 f"an object has at most {MAX_PROPERTIES_PER_OBJECT} properties",
             )
             continue
+        pairs = [*own, *reading.reserved.get(identifier, {}).items()]
         if row.get("specialization", "").strip():
             reading.say(
                 Issue(
@@ -444,10 +456,13 @@ def _read_relations(data: bytes, reading: _Reading) -> list[ExchangeRelationship
         if not source or not target:
             refuse("missing_end", "a relation needs a Source and a Target", cascade=False)
             continue
-        pairs = reading.owners.get(identifier, [])
-        stated = dict(pairs)
-        rest = [(k, v) for k, v in pairs if k not in (ACCESS_TYPE_KEY, DIRECTED_KEY)]
-        if reading.too_many(rest):
+        own = reading.owners.get(identifier, [])
+        stated = reading.reserved.get(identifier, {})
+        rest = [
+            *own,
+            *((k, v) for k, v in stated.items() if k not in (ACCESS_TYPE_KEY, DIRECTED_KEY)),
+        ]
+        if reading.too_many(own):
             refuse(
                 "too_many_properties",
                 f"an object has at most {MAX_PROPERTIES_PER_OBJECT} properties",
@@ -519,7 +534,7 @@ def parse_csv(
         _read_properties(properties, reading)
     elements = _read_elements(main, reading)
     links = _read_relations(relations, reading) if relations is not None else []
-    for owner in sorted(set(reading.owners) - reading.seen):
+    for owner in sorted((set(reading.owners) | set(reading.reserved)) - reading.seen):
         reading.issues.append(
             Issue(
                 Severity.WARNING,
