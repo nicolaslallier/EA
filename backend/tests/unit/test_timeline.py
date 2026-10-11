@@ -11,6 +11,7 @@ from ea.domain.timeline import (
     VALID_FROM,
     VALID_UNTIL,
     Lifespan,
+    readable_lifespan_properties,
     validate_lifespan_properties,
 )
 
@@ -100,6 +101,26 @@ class TestValidation:
         stored = validate_lifespan_properties({VALID_FROM: "", VALID_UNTIL: "  ", "owner": "x"})
 
         assert stored == {"owner": "x"}
+
+
+class TestReadingWhatWasStoredBeforeTheRule:
+    """A baseline captured before revision 0014 may hold any string under these keys."""
+
+    def test_a_good_pair_is_canonical_and_the_rest_is_untouched(self) -> None:
+        stored = readable_lifespan_properties({VALID_FROM: "20260301", "owner": "x"})
+
+        assert stored == {VALID_FROM: "2026-03-01", "owner": "x"}
+
+    def test_an_unreadable_value_is_set_aside_not_raised_not_lost(self) -> None:
+        stored = readable_lifespan_properties({VALID_UNTIL: "2027-06", VALID_FROM: "2" * 9999})
+
+        assert stored == {"legacy_valid_until": "2027-06", "legacy_valid_from": "2" * 9999}
+
+    def test_a_blank_is_removed_and_a_reversed_pair_sets_the_end_aside(self) -> None:
+        assert readable_lifespan_properties({VALID_FROM: " "}) == {}
+        assert readable_lifespan_properties(
+            {VALID_FROM: "2027-02-01", VALID_UNTIL: "2027-01-01"}
+        ) == {VALID_FROM: "2027-02-01", "legacy_valid_until": "2027-01-01"}
 
 
 class TestWhatIsRefusedIsNotEchoed:

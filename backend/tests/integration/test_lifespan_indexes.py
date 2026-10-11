@@ -106,6 +106,68 @@ async def test_the_chain_goes_down_and_up_again_on_a_populated_base(
         await asyncio.to_thread(command.downgrade, alembic_config, "base")
 
 
+async def test_0014_survives_thousands_of_hostile_rows_and_indexes_them(
+    postgres_engine: AsyncEngine, alembic_config: Config
+) -> None:
+    """No CAST, no refusal, one pass: hostile values neither fail nor stall the boot."""
+    hostile = [
+        "9" * 100_000,
+        "infinity",
+        "-infinity",
+        "NaN",
+        "+2027-01-01",
+        "-2027-01-01",
+        "0000-01-01",
+        "9999-12-31",
+        "10000-01-01",
+        "\uff12\uff10\uff12\uff17-\uff10\uff11-\uff10\uff11",
+        "2027\N{NO-BREAK SPACE}01-01",
+        "\t",
+        "' OR 1=1 --",
+        "2027-02-30",
+    ]
+    await asyncio.to_thread(command.upgrade, alembic_config, "0013")
+    try:
+        async with postgres_engine.begin() as connection:
+            await connection.execute(
+                # Test setup: everything is bound; thousands of rows in one statement.
+                text(
+                    "INSERT INTO elements (id, element_type, layer, aspect, name, properties, "
+                    "created_at, updated_at) SELECT gen_random_uuid(), 'node', 'technology', "
+                    "'active_structure', 'n' || g, jsonb_build_object('valid_from', "
+                    "CASE WHEN g % 3 = 0 THEN '2027-01-0' || (g % 9 + 1) "
+                    "WHEN g % 3 = 1 THEN 'junk' || g ELSE ' 2027-02-01 ' END, "
+                    "'valid_until', CAST(:hostile AS jsonb) ->> (g % :n)::int), now(), now() "
+                    "FROM generate_series(1, 5000) AS g"
+                ),
+                {"hostile": json.dumps(hostile), "n": len(hostile)},
+            )
+        await asyncio.to_thread(command.upgrade, alembic_config, "0014")
+
+        async with postgres_engine.connect() as connection:
+            unreadable = await connection.execute(
+                text(
+                    "SELECT count(*) FROM elements WHERE "
+                    "(properties ->> 'valid_from') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "
+                    "OR (properties ->> 'valid_until') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'"
+                )
+            )
+            assert unreadable.scalar_one() == 0
+            kept = await connection.execute(
+                text("SELECT count(*) FROM elements WHERE properties ? 'legacy_valid_until'")
+            )
+            assert kept.scalar_one() > 0
+        assert await _index_names(postgres_engine) >= INDEXES
+
+        await asyncio.to_thread(command.downgrade, alembic_config, "0013")
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")
+        await asyncio.to_thread(command.upgrade, alembic_config, "head")
+        await asyncio.to_thread(command.downgrade, alembic_config, "0013")
+        await asyncio.to_thread(command.upgrade, alembic_config, "0014")
+    finally:
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")
+
+
 async def test_0014_canonicalises_removes_blanks_and_moves_what_is_not_a_day(
     postgres_engine: AsyncEngine, alembic_config: Config
 ) -> None:

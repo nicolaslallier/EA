@@ -17,7 +17,7 @@ from collections.abc import (
 )
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -168,6 +168,8 @@ class ElementFilter:
     order: QueryOrder = QueryOrder.NAME
     limit: int = 50
     offset: int = 0
+    #: Read the model as it is on this day (docs/adr/0060); `None` filters nothing.
+    as_of: date | None = None
 
     @classmethod
     def from_query(cls, query: ElementQuery) -> ElementFilter:
@@ -271,6 +273,7 @@ class ArchitectureRepository(Protocol):
         relationship_types: Sequence[RelationshipType] = (),
         limit: int = 50,
         offset: int = 0,
+        as_of: date | None = None,
     ) -> tuple[Relationship, ...]: ...
 
     async def delete_relationship(
@@ -301,6 +304,7 @@ class ArchitectureRepository(Protocol):
         *,
         depth: int = 1,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """Everything reachable from an element within `depth` hops, either way."""
         ...
@@ -311,6 +315,7 @@ class ArchitectureRepository(Protocol):
         *,
         depth: int = 5,
         relationship_types: Sequence[RelationshipType] = (),
+        as_of: date | None = None,
     ) -> GraphView:
         """What depends on this element — the answer to "what breaks if it fails".
 

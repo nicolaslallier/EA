@@ -69,6 +69,33 @@ class Lifespan:
         )
 
 
+def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str]:
+    """Properties stored before the rule, made readable: never raises, never loses a value.
+
+    For what is *read back* from a copy that predates revision 0014 (a baseline): a
+    day is canonicalised, a blank removed, and whatever is not a day — or an end that
+    precedes its start — is set aside under `legacy_<key>`, exactly as the migration does.
+    """
+    out = dict(properties)
+    days: dict[str, date] = {}
+    for key in (VALID_FROM, VALID_UNTIL):
+        raw = properties.get(key)
+        if raw is None:
+            continue
+        if not raw.strip():
+            del out[key]
+            continue
+        try:
+            days[key] = parse_day(raw, key=key)
+        except InvalidLifespanError:
+            out[f"legacy_{key}"] = out.pop(key)
+        else:
+            out[key] = days[key].isoformat()
+    if VALID_FROM in days and VALID_UNTIL in days and days[VALID_UNTIL] < days[VALID_FROM]:
+        out["legacy_" + VALID_UNTIL] = out.pop(VALID_UNTIL)
+    return out
+
+
 def validate_lifespan_properties(
     properties: Mapping[str, str] | None,
 ) -> Mapping[str, str] | None:

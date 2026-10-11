@@ -45,6 +45,17 @@ le second se composera plus tard (`known_at`, nom réservé, non livré).
   tout le service. Comme `properties` était libre, une valeur déjà stockée sous ces clés est canonisée si c'est
   un jour, retirée si elle est vide, et **déplacée** sous `legacy_valid_from` / `legacy_valid_until` sinon : rien
   n'est perdu, rien n'est indexé de travers. La migration ne touche pas au journal d'audit (comme la `0013`).
+  Elle est écrite pour ne pas dépendre des données : aucun `CAST` en SQL ; une valeur de plus de 16 caractères
+  est déplacée par une instruction SQL sans jamais être lue ; les valeurs distinctes plus courtes sont jugées en
+  Python puis appliquées en **une** passe par jointure (trois passes par table et par clé, quel que soit le
+  nombre de valeurs) ; l'index porte sur `properties ->> clé`, une expression totale qui ne peut lever sur
+  aucune ligne. `CREATE INDEX` sans `CONCURRENTLY` bloque l'écriture le temps de la construction (de l'ordre de
+  la seconde pour quelques dizaines de milliers de lignes) ; `lock_timeout = 10s` borne l'attente du verrou.
+  Testée sur 5 000 lignes hostiles (`9`×100 000, `infinity`, chiffres pleine chasse, signes, années hors plage),
+  la chaîne descendue puis remontée.
+- Une baseline capturée avant la `0014` peut contenir n'importe quelle chaîne sous ces clés : sa lecture
+  (`baseline_store`) passe par `readable_lifespan_properties`, qui ne lève jamais et met de côté sous
+  `legacy_*` ; une restauration n'écrit donc jamais une date illisible dans le modèle.
 - L'appartenance à un plateau reste **calculée** (cible d'une `composition` ou `aggregation` partant du plateau),
   jamais stockée en double (ADR 0061).
 
