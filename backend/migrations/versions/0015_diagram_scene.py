@@ -7,8 +7,12 @@ Date: 2026-10-11
 Notes et groupes (`diagram_objects`, une seule table : même géométrie, même
 empilement, même imbrication), tracés de liens (`diagram_edges`), parent et
 ordre d'empilement d'une boîte, et `diagrams.revision` — le compteur qui permet
-de refuser un enregistrement fait sur une copie périmée (docs/adr/0063). Rien à convertir : tout est ajout nullable ou défaut serveur, les
-diagrammes existants gardent leurs boîtes à l'identique.
+de refuser un enregistrement fait sur une copie périmée (docs/adr/0063).
+
+Rien à convertir : tout est ajout nullable ou défaut serveur, les diagrammes existants
+gardent leurs boîtes à l'identique, aucune valeur n'est lue ni transformée - la révision
+ne peut donc pas échouer sur des données existantes. `lock_timeout` borne l'attente des
+verrous.
 """
 
 from __future__ import annotations
@@ -87,7 +91,10 @@ def upgrade() -> None:
         sa.Column("diagram_id", sa.Uuid(), nullable=False),
         sa.Column("relationship_id", sa.Uuid(), nullable=False),
         sa.Column(
-            "waypoints", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False
+            "waypoints",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default="[]",
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["diagram_id"],
