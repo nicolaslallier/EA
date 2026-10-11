@@ -4,6 +4,7 @@
 import type { RouteRecordRaw, Router, RouterHistory } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { parseAsOf } from '../lib/asof'
 import { accessToken, CALLBACK_PATH, signIn } from '../lib/auth'
 import { createLogger } from '../lib/logging'
 import LoginFailed from './LoginFailed.vue'
@@ -67,6 +68,17 @@ export function createAppRouter(
       return { name: 'login-failed', query: { returnTo: to.fullPath } }
     }
     return false
+  })
+  // The date the catalogue is read on follows the user from section to section
+  // (docs/adr/0060): the menu and every internal link land on the next section
+  // with `?asof=` still on. Only a change of path carries it, so clearing the
+  // date on the page you are on stays cleared.
+  router.beforeEach((to, from) => {
+    const kept = parseAsOf(from.query.asof)
+    if (kept && to.query.asof === undefined && to.path !== from.path && !to.meta.public) {
+      return { ...to, query: { ...to.query, asof: kept }, replace: true }
+    }
+    return true
   })
   return router
 }
