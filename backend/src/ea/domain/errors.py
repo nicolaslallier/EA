@@ -326,3 +326,7 @@ class ScopeTooLargeError(DomainError):
 
 class AnalysisBusyError(DomainError):
     """As many analyses are running as the process allows: try again shortly."""
+
+
+class InvalidAnalysisError(DomainError):
+    """A question the analysis cannot answer: a dimension that does not exist, a sum of nothing."""
