@@ -37,12 +37,15 @@ from ea.domain.audit import (
     saved_query_view,
 )
 from ea.domain.auth import EDITOR_ROLE, Caller
+from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
+    BaselineNotFoundError,
     DiagramNotFoundError,
     DocumentNotFoundError,
+    DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
@@ -52,6 +55,8 @@ from ea.domain.errors import (
     NotAuthenticatedError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    RestoreBlockedError,
+    RestoreConflictError,
     SavedQueryNotFoundError,
     StoredFileNotFoundError,
 )
@@ -75,6 +80,7 @@ from ea.domain.search import (
     Passage,
 )
 from ea.services.architecture import ArchitectureService
+from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -732,6 +738,188 @@ class InMemoryDiagrams:
         return True
 
 
+class InMemoryBaselines:
+    """The baseline tables over the model doubles they copy.
+
+    Capture copies the dicts. `apply_restore` plans again on the double's own
+    state, refuses a plan that is not the one expected or that touches a
+    protected element (`protected`, a set a test fills), mutates and swaps in
+    only if every step held — the all-or-nothing the real transaction gives,
+    uniqueness of (type, name) and of addresses included.
+    """
+
+    def __init__(
+        self,
+        graph: InMemoryRepository,
+        diagrams: InMemoryDiagrams,
+        documents: InMemoryDocuments | None = None,
+        packages: InMemoryPackages | None = None,
+    ) -> None:
+        self.graph = graph
+        self.diagrams = diagrams
+        self.documents = documents
+        self.packages = packages
+        self.audit_log = graph.audit_log
+        self.protected: set[UUID] = set()
+        self.baselines: dict[UUID, Baseline] = {}
+        self.copies: dict[UUID, ModelSnapshot] = {}
+
+    def _counted(self, baseline: Baseline) -> Baseline:
+        copy = self.copies.get(baseline.id, ModelSnapshot((), ()))
+        return baseline.with_counts(len(copy.elements), len(copy.relationships), len(copy.boxes))
+
+    async def list_all(self) -> tuple[Baseline, ...]:
+        return tuple(
+            self._counted(b) for b in sorted(self.baselines.values(), key=lambda b: b.name)
+        )
+
+    async def get(self, baseline_id: UUID) -> Baseline | None:
+        stored = self.baselines.get(baseline_id)
+        return self._counted(stored) if stored is not None else None
+
+    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+        if any(b.name == baseline.name for b in self.baselines.values()):
+            raise DuplicateBaselineError(f"a baseline is already named {baseline.name!r}")
+        self.baselines[baseline.id] = baseline
+        self.copies[baseline.id] = await self.current_snapshot()
+        stored = self._counted(baseline)
+        self.audit_log.append(events_for(audit, stored))
+        return stored
+
+    async def delete(self, baseline_id: UUID, *, audit: AuditOf[Baseline]) -> bool:
+        stored = self.baselines.get(baseline_id)
+        if stored is None:
+            return False
+        events = events_for(audit, self._counted(stored))
+        del self.baselines[baseline_id]
+        self.copies.pop(baseline_id, None)
+        self.audit_log.append(events)
+        return True
+
+    async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot:
+        return self.copies.get(baseline_id, ModelSnapshot((), ()))
+
+    async def current_snapshot(self) -> ModelSnapshot:
+        tree = self.packages.packages if self.packages is not None else {}
+
+        def path(package_id: UUID) -> str:
+            package = tree[package_id]
+            above = path(package.parent_id) + " / " if package.parent_id else ""
+            return above + package.name
+
+        return ModelSnapshot(
+            elements=tuple(self.graph.elements.values()),
+            relationships=tuple(self.graph.relationships.values()),
+            boxes=tuple(
+                BoxSnapshot(diagram_id, n.element_id, n.x, n.y, n.width, n.height)
+                for diagram_id, nodes in self.diagrams.nodes.items()
+                for n in nodes
+            ),
+            package_paths={package_id: path(package_id) for package_id in tree},
+        )
+
+    async def _plan(self, baseline_id: UUID, keep_new: bool) -> RestorePlan:
+        if baseline_id not in self.baselines:
+            raise BaselineNotFoundError(f"no baseline with id {baseline_id}")
+        plan = plan_restore(
+            self.copies[baseline_id],
+            await self.current_snapshot(),
+            keep_new=keep_new,
+            packages_present=frozenset(self.packages.packages if self.packages else ()),
+            protected_ids=frozenset(self.protected),
+            diagrams_present=frozenset(self.diagrams.diagrams),
+        )
+        doomed = {e.id for e in plan.elements_to_delete}
+        lost = sum(
+            1
+            for d in (self.documents.documents.values() if self.documents else ())
+            if d.element_id in doomed
+        )
+        return replace(plan, documents_lost=lost)
+
+    async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
+        return await self._plan(baseline_id, keep_new)
+
+    async def apply_restore(
+        self,
+        baseline_id: UUID,
+        *,
+        keep_new: bool,
+        expected: RestorePlan,
+        now: datetime,
+        audit: AuditOf[RestorePlan],
+    ) -> None:
+        plan = await self._plan(baseline_id, keep_new)
+        if plan.is_blocked:
+            raise RestoreBlockedError(
+                "protected elements: " + ", ".join(e.name for e in plan.blocked)
+            )
+        if plan != expected:
+            raise RestoreConflictError("the model changed since the plan was read")
+        events = events_for(audit, plan)
+        saved = (
+            dict(self.graph.elements),
+            dict(self.graph.relationships),
+            dict(self.diagrams.nodes),
+            dict(self.documents.documents) if self.documents else {},
+        )
+        try:
+            for link in plan.relationships_to_delete:
+                self.graph.relationships.pop(link.id, None)
+            for element in plan.elements_to_delete:
+                self.graph.elements.pop(element.id, None)
+                for link_id in [
+                    i
+                    for i, r in self.graph.relationships.items()
+                    if element.id in (r.source_id, r.target_id)
+                ]:
+                    del self.graph.relationships[link_id]
+                if self.documents is not None:
+                    for doc_id in [
+                        i for i, d in self.documents.documents.items() if d.element_id == element.id
+                    ]:
+                        del self.documents.documents[doc_id]
+                for diagram_id, nodes in list(self.diagrams.nodes.items()):
+                    self.diagrams.nodes[diagram_id] = tuple(
+                        n for n in nodes if n.element_id != element.id
+                    )
+            for update in plan.elements_to_update:
+                restored = replace(update.restored, updated_at=now)
+                self.graph._refuse_a_taken_address(restored)
+                self.graph.elements[restored.id] = restored
+            for element in plan.elements_to_create:
+                clash = any(
+                    e.name == element.name and e.element_type == element.element_type
+                    for e in self.graph.elements.values()
+                )
+                if clash:
+                    raise RestoreConflictError(f"restoring {element.name!r} conflicts: name taken")
+                try:
+                    self.graph._refuse_a_taken_address(element)
+                except AddressAlreadyAssignedError as refusal:
+                    raise RestoreConflictError(
+                        f"restoring {element.name!r} conflicts: {refusal}"
+                    ) from refusal
+                self.graph.elements[element.id] = element
+            for link in plan.relationships_to_create:
+                self.graph.relationships[link.id] = link
+            for box in plan.boxes_to_restore:
+                kept = [
+                    n
+                    for n in self.diagrams.nodes.get(box.diagram_id, ())
+                    if n.element_id != box.element_id
+                ]
+                kept.append(DiagramNode(box.element_id, box.x, box.y, box.width, box.height))
+                self.diagrams.nodes[box.diagram_id] = tuple(kept)
+        except Exception:
+            self.graph.elements, self.graph.relationships = saved[0], saved[1]
+            self.diagrams.nodes = saved[2]
+            if self.documents is not None:
+                self.documents.documents = saved[3]
+            raise
+        self.audit_log.append(events)
+
+
 def _held_ids(ids: Iterable[UUID]) -> Held:
     found = tuple(sorted(ids))
     return Held(len(found), found[:100])
@@ -1149,6 +1337,21 @@ def packages(repository: InMemoryRepository, diagrams: InMemoryDiagrams) -> InMe
 @pytest.fixture
 def package_service(packages: InMemoryPackages) -> PackageService:
     return PackageService(packages, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def baseline_store(
+    repository: InMemoryRepository,
+    diagrams: InMemoryDiagrams,
+    documents: InMemoryDocuments,
+    packages: InMemoryPackages,
+) -> InMemoryBaselines:
+    return InMemoryBaselines(repository, diagrams, documents, packages)
+
+
+@pytest.fixture
+def baseline_service(baseline_store: InMemoryBaselines) -> BaselineService:
+    return BaselineService(baseline_store, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture

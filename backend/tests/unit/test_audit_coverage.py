@@ -31,6 +31,7 @@ import tests.conftest as conftest_module
 from ea.domain import ports
 from ea.repositories import (
     architecture_store,
+    baseline_store,
     diagram_store,
     document_store,
     package_store,
@@ -60,6 +61,10 @@ AUDITED_STORES = {
     saved_query_store.PostgresSavedQueryRepository: (
         ports.SavedQueryRepository,
         conftest_module.InMemorySavedQueries,
+    ),
+    baseline_store.PostgresBaselineRepository: (
+        ports.BaselineRepository,
+        conftest_module.InMemoryBaselines,
     ),
 }
 #: The ports whose writes a service may not call without an audit.
@@ -270,6 +275,7 @@ def test_the_expected_writes_are_found() -> None:
     assert found["PostgresDiagramRepository"] == {"add", "save", "delete", "replace_layout"}
     assert found["PostgresPackageRepository"] == {"add", "save", "delete", "move_elements"}
     assert found["PostgresSavedQueryRepository"] == {"add", "save", "delete"}
+    assert found["PostgresBaselineRepository"] == {"create", "delete", "apply_restore"}
 
 
 @pytest.mark.parametrize("store", list(AUDITED_STORES), ids=lambda c: c.__name__)

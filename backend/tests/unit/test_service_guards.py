@@ -19,6 +19,7 @@ from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
+from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
@@ -30,6 +31,7 @@ from tests.conftest import a_reader
 
 WRITES = {
     AuditService: set(),
+    BaselineService: {"create", "delete", "restore"},
     ArchitectureService: {
         "create_element",
         "update_element",
