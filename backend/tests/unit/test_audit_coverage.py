@@ -267,6 +267,7 @@ def test_the_expected_writes_are_found() -> None:
     assert found["PostgresArchitectureRepository"] == {
         "add_element",
         "update_element",
+        "transition_element",
         "delete_element",
         "add_relationship",
         "delete_relationship",

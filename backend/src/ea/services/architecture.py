@@ -18,19 +18,24 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.approval import (
+    check_modifiable,
+    reviewed_after_change,
+)
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
-from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
+from ea.domain.errors import CyclicContainmentError, ElementLockedError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
+from ea.domain.ports import ElementChange, EndsReview
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
+from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
-        ElementChange,
         ElementFilter,
         ElementRemoval,
         GraphView,
@@ -56,10 +61,38 @@ class ArchitectureService:
         repository: ArchitectureRepository,
         *,
         clock: Clock = _utc_now,
+        separate_duties: bool = True,
     ) -> None:
         self._repository = repository
         self._now = clock
         self._trail = AuditTrail(clock)
+        self._separate_duties = separate_duties
+
+    def _review_of_ends(self) -> EndsReview:
+        """What a link change does to its two ends, applied by the repository under their locks.
+
+        A locked end refuses the change outright; an approved one is allowed and
+        goes back to `in_review` — saved in the same transaction as the link,
+        never approved in silence.
+        """
+
+        def change(end: Element) -> Element:
+            if end.locked:
+                msg = f"{end.name!r} is locked: its relationships cannot change"
+                raise ElementLockedError(msg)
+            return reviewed_after_change(end)
+
+        def audit(changed: ElementChange) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_UPDATED,
+                    entity_id=changed.before.id,
+                    before=element_view(changed.before),
+                    after=element_view(changed.after),
+                ),
+            )
+
+        return EndsReview(change=change, audit=audit)
 
     # --- Elements ---------------------------------------------------------
 
@@ -136,13 +169,18 @@ class ArchitectureService:
         relationships that are already stored illegal, which is a migration, not
         an edit.
         """
-        require_editor()
+        caller = require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
         properties = validate_ipam_properties(current.element_type, properties)
 
         def patch(stored: Element) -> Element:
-            """Pure; the repository applies it to the row it holds under lock."""
+            """Pure; the repository applies it to the row it holds under lock.
+
+            Review and locking are decided here, on that row and not on the
+            copy read above: a lock put on the element meanwhile still refuses.
+            """
+            check_modifiable(stored, caller)
             now = self._now()
             updated = stored
             if name is not None:
@@ -164,6 +202,8 @@ class ArchitectureService:
                         else updated.documentation
                     ),
                 )
+            if replace(updated, updated_at=stored.updated_at) != stored:
+                updated = reviewed_after_change(updated)
             return updated
 
         def events(change: ElementChange) -> tuple[AuditEvent, ...]:
@@ -177,7 +217,8 @@ class ArchitectureService:
                 ),
             )
 
-        stored = await self._repository.update_element(element_id, patch, audit=events)
+        with logged_refusal("lock_refused", [element_id]):
+            stored = await self._repository.update_element(element_id, patch, audit=events)
         logger.info(
             "element updated: %s %r",
             stored.element_type.value,
@@ -197,7 +238,7 @@ class ArchitectureService:
         diagrams follow by foreign keys, in the one transaction that deletes
         it — see docs/adr/0033.
         """
-        require_editor()
+        caller = require_editor()
 
         def events(removal: ElementRemoval) -> tuple[AuditEvent, ...]:
             # What went with the element is read by the repository in the same
@@ -223,7 +264,12 @@ class ArchitectureService:
                 ),
             )
 
-        if not await self._repository.delete_element(element_id, audit=events):
+        def guard(stored: Element) -> None:
+            check_modifiable(stored, caller)
+
+        with logged_refusal("lock_refused", [element_id]):
+            deleted = await self._repository.delete_element(element_id, audit=events, guard=guard)
+        if not deleted:
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
         logger.info(
@@ -280,7 +326,10 @@ class ArchitectureService:
                 ),
             )
 
-        stored = await self._repository.add_relationship(relationship, audit=created)
+        with logged_refusal("lock_refused", [source_id, target_id]):
+            stored = await self._repository.add_relationship(
+                relationship, audit=created, ends=self._review_of_ends()
+            )
         logger.info(
             "%r --%s--> %r",
             source.name,
@@ -332,7 +381,11 @@ class ArchitectureService:
                 ),
             )
 
-        if not await self._repository.delete_relationship(relationship_id, audit=events):
+        with logged_refusal("lock_refused"):
+            deleted = await self._repository.delete_relationship(
+                relationship_id, audit=events, ends=self._review_of_ends()
+            )
+        if not deleted:
             msg = f"no relationship with id {relationship_id}"
             raise ElementNotFoundError(msg)
         logger.info(

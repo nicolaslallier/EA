@@ -25,7 +25,7 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
-    from ea.domain.audit import AuditOf
+    from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
 
@@ -60,6 +60,26 @@ class ElementChange:
 
     before: Element
     after: Element
+
+
+#: A rule the repository applies to an element it holds locked, in the writing
+#: transaction; it raises to refuse. A decision taken on a copy read earlier
+#: would miss a lock put on the element in between.
+ElementGuard = Callable[[Element], None]
+
+
+@dataclass(frozen=True, slots=True)
+class EndsReview:
+    """What a link change does to the elements at its two ends (docs/adr/0046).
+
+    `change` is applied to each end read under its row lock — it raises to refuse
+    and returns the element as it must be stored — and `audit` says what the
+    journal records for an end it really changed. Both are pure and run in the
+    transaction that writes the link.
+    """
+
+    change: Callable[[Element], Element]
+    audit: Callable[[ElementChange], Sequence[AuditEvent]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,16 +182,45 @@ class ArchitectureRepository(Protocol):
         """
         ...
 
-    async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element, str | None], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        """Move an element through review, deciding on the row read under its lock.
+
+        `change` receives that row and the subject that made its last change
+        (`element.created` / `element.updated` in the journal, read in the same
+        transaction; `None` if there is none) and returns the element after the
+        transition — or raises to refuse. Only the review columns are written.
+        """
+        ...
+
+    async def delete_element(
+        self,
+        element_id: UUID,
+        *,
+        audit: AuditOf[ElementRemoval],
+        guard: ElementGuard | None = None,
+    ) -> bool:
         """Remove an element and every relationship attached to it.
 
         `audit` is written only if a row was deleted; `False` writes nothing.
+        `guard` sees the element under its lock, before anything is removed.
         """
         ...
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: AuditOf[Relationship]
-    ) -> Relationship: ...
+        self,
+        relationship: Relationship,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
+    ) -> Relationship:
+        """Store a link; `ends` reviews its two elements in the same transaction."""
+        ...
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None: ...
 
@@ -185,7 +234,11 @@ class ArchitectureRepository(Protocol):
     ) -> tuple[Relationship, ...]: ...
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: AuditOf[Relationship]
+        self,
+        relationship_id: UUID,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
     ) -> bool: ...
 
     async def relations_of(

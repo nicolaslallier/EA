@@ -1,0 +1,193 @@
+"""Review and locking against a real PostgreSQL: decided on the locked row (docs/adr/0046)."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
+from uuid import UUID
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from ea.db.postgres import create_session_factory
+from ea.domain.approval import reviewed_after_change
+from ea.domain.archimate import ElementType as E
+from ea.domain.archimate import RelationshipType as R
+from ea.domain.audit import AuditAction, EntityKind
+from ea.domain.errors import ElementLockedError, ElementNotFoundError
+from ea.domain.model import Relationship
+from ea.domain.ports import EndsReview
+from ea.repositories.architecture_store import PostgresArchitectureRepository
+from ea.services.caller import acting_as
+from tests.conftest import an_approver
+from tests.integration.test_audit_registry import START, World
+
+pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+
+
+async def put_in_state(
+    engine: AsyncEngine, element_id: UUID, state: str, *, locked: bool = False
+) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE elements SET approval_state = :s, locked = :l, "
+                "approved_by_sub = CASE WHEN :s = 'approved' THEN 'approver-1' END, "
+                "approved_at = CASE WHEN :s = 'approved' THEN now() END WHERE id = :id"
+            ),
+            {"s": state, "l": locked, "id": element_id},
+        )
+
+
+async def state_of(engine: AsyncEngine, element_id: UUID) -> tuple[Any, ...]:
+    async with engine.connect() as connection:
+        row = await connection.execute(
+            text("SELECT approval_state, locked, revision FROM elements WHERE id = :id"),
+            {"id": element_id},
+        )
+        return tuple(row.one())
+
+
+async def wait_until_a_statement_waits_for_a_lock(engine: AsyncEngine) -> None:
+    """Deterministic: no sleep, poll the server until a backend is blocked on a lock."""
+    for _ in range(500):
+        async with engine.connect() as connection:
+            waiting = (
+                await connection.execute(
+                    text("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'")
+                )
+            ).scalar_one()
+        if waiting:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("no statement ever waited for the lock")
+
+
+async def test_an_approver_changing_an_approved_element_leaves_it_in_review_and_a_new_revision(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")
+    await put_in_state(engine_at_head, element.id, "approved")
+
+    with pytest.raises(ElementLockedError):
+        await world.graph.update_element(element.id, name="db-02")
+    assert await state_of(engine_at_head, element.id) == ("approved", False, 1)
+
+    with acting_as(an_approver()):
+        await world.graph.update_element(element.id, name="db-02")
+    assert await state_of(engine_at_head, element.id) == ("in_review", False, 2)
+    updates = [
+        e for e in await world.events(EntityKind.ELEMENT) if e.action is AuditAction.ELEMENT_UPDATED
+    ]
+    assert len(updates) == 1  # the refusal wrote nothing
+
+
+async def test_a_lock_committed_after_the_service_read_still_refuses_the_write(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """The decision is taken on the row read under the write's own lock, not on an earlier copy."""
+    world = World(engine_at_head)
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")
+    await put_in_state(engine_at_head, element.id, "approved")
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:  # an approver locks the element, not yet committed
+        await session.execute(
+            text("UPDATE elements SET locked = true WHERE id = :id"), {"id": element.id}
+        )
+        with acting_as(an_approver()):
+            writer = asyncio.create_task(world.graph.update_element(element.id, name="x"))
+            await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError, match="locked"):
+        await writer
+
+    assert await state_of(engine_at_head, element.id) == ("approved", True, 1)
+
+
+async def test_deleting_is_guarded_on_the_locked_row_too(engine_at_head: AsyncEngine) -> None:
+    world = World(engine_at_head)
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")
+    await put_in_state(engine_at_head, element.id, "approved", locked=True)
+
+    with acting_as(an_approver()), pytest.raises(ElementLockedError):
+        await world.graph.delete_element(element.id)
+
+    assert await world.graph.get_element(element.id) is not None
+    deleted = [
+        e for e in await world.events(EntityKind.ELEMENT) if e.action is AuditAction.ELEMENT_DELETED
+    ]
+    assert deleted == []
+
+
+async def test_a_link_and_the_review_it_causes_commit_or_fail_together(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    approved = await world.graph.create_element(element_type=E.NODE, name="a")
+    other = await world.graph.create_element(element_type=E.NODE, name="b")
+    await put_in_state(engine_at_head, approved.id, "approved")
+    graph = PostgresArchitectureRepository(create_session_factory(engine_at_head))
+    ends = EndsReview(change=reviewed_after_change, audit=lambda change: ())
+    ghost = await world.graph.create_element(element_type=E.NODE, name="ghost")
+    missing = Relationship.between(R.ASSOCIATION, approved, ghost, now=START)
+    async with engine_at_head.begin() as connection:
+        await connection.execute(text("DELETE FROM elements WHERE id = :id"), {"id": ghost.id})
+
+    with pytest.raises(ElementNotFoundError):
+        await graph.add_relationship(missing, audit=(), ends=ends)
+    assert await state_of(engine_at_head, approved.id) == ("approved", False, 1)
+
+    link = Relationship.between(R.ASSOCIATION, approved, other, now=START)
+    await graph.add_relationship(link, audit=(), ends=ends)
+    assert await state_of(engine_at_head, approved.id) == ("in_review", False, 2)
+    assert await state_of(engine_at_head, other.id) == ("draft", False, 1)
+
+    await put_in_state(engine_at_head, approved.id, "approved")
+    assert await graph.delete_relationship(link.id, audit=(), ends=ends)
+    assert (await state_of(engine_at_head, approved.id))[0] == "in_review"
+
+
+async def test_a_locked_end_refuses_the_link_and_nothing_is_written(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    locked = await world.graph.create_element(element_type=E.NODE, name="a")
+    other = await world.graph.create_element(element_type=E.NODE, name="b")
+    await put_in_state(engine_at_head, locked.id, "approved", locked=True)
+
+    with pytest.raises(ElementLockedError):
+        await world.graph.connect(
+            relationship_type=R.ASSOCIATION, source_id=other.id, target_id=locked.id
+        )
+
+    assert (await world.graph.relations_of(other.id)).relationships == ()
+    assert [
+        e for e in await world.events(EntityKind.RELATIONSHIP) if e.action.value.endswith("created")
+    ] == []
+
+
+async def test_a_concurrent_lock_and_link_never_leave_a_link_on_a_locked_element(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    one = await world.graph.create_element(element_type=E.NODE, name="a")
+    two = await world.graph.create_element(element_type=E.NODE, name="b")
+    await put_in_state(engine_at_head, one.id, "approved")
+    sessions = create_session_factory(engine_at_head)
+    link: Callable[[], Awaitable[object]] = lambda: world.graph.connect(  # noqa: E731
+        relationship_type=R.ASSOCIATION, source_id=one.id, target_id=two.id
+    )
+
+    async with sessions.begin() as session:
+        await session.execute(
+            text("UPDATE elements SET locked = true WHERE id = :id"), {"id": one.id}
+        )
+        writer = asyncio.create_task(link())
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError):
+        await writer
+
+    assert (await world.graph.relations_of(one.id)).relationships == ()

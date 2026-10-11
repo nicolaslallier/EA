@@ -27,6 +27,7 @@ import pytest
 
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
+    AuditAction,
     AuditEvent,
     AuditFilter,
     AuditOf,
@@ -67,7 +68,9 @@ from ea.domain.packages import Package, PackageCounts
 from ea.domain.ports import (
     ElementChange,
     ElementFilter,
+    ElementGuard,
     ElementRemoval,
+    EndsReview,
     GraphView,
     Held,
     PackageRemoval,
@@ -394,10 +397,49 @@ class InMemoryRepository:
         if replace(after, updated_at=before.updated_at) == before:
             return before  # nothing observable changed: no write, no event
         self._refuse_a_taken_address(after)
+        after = replace(after, revision=before.revision + 1)
         events = events_for(audit, ElementChange(before, after))
         self.elements[element_id] = after
         self.audit_log.append(events)
         return after
+
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element, str | None], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        if element_id not in self.elements:
+            raise ElementNotFoundError(str(element_id))
+        before = self.elements[element_id]
+        mine = [
+            e
+            for e in self.audit_log.events
+            if e.entity_id == element_id
+            and e.action in (AuditAction.ELEMENT_CREATED, AuditAction.ELEMENT_UPDATED)
+        ]
+        after = change(before, mine[-1].actor_sub if mine else None)
+        events = events_for(audit, ElementChange(before, after))
+        self.elements[element_id] = after
+        self.audit_log.append(events)
+        return after
+
+    def _review_ends(self, end_ids: Sequence[UUID], ends: EndsReview) -> list[ElementChange]:
+        """What the repository does to the elements at the ends of a link, in its transaction."""
+        changes: list[ElementChange] = []
+        staged: dict[UUID, Element] = {}
+        for end_id in sorted(set(end_ids)):
+            if end_id not in self.elements:
+                raise ElementNotFoundError(str(end_id))
+            before = self.elements[end_id]
+            after = ends.change(before)
+            if after != before:
+                after = replace(after, revision=before.revision + 1)
+                staged[end_id] = after
+                changes.append(ElementChange(before, after))
+        self.elements.update(staged)
+        return changes
 
     def _refuse_a_taken_address(self, element: Element) -> None:
         """Stand in for the `(vrf, ip_address)` partial unique index.
@@ -425,10 +467,18 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
+    async def delete_element(
+        self,
+        element_id: UUID,
+        *,
+        audit: AuditOf[ElementRemoval],
+        guard: ElementGuard | None = None,
+    ) -> bool:
         element = self.elements.get(element_id)
         if element is None:
             return False
+        if guard is not None:
+            guard(element)
         links = tuple(
             r for r in self.relationships.values() if element_id in (r.source_id, r.target_id)
         )
@@ -443,10 +493,21 @@ class InMemoryRepository:
         return True
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: AuditOf[Relationship]
+        self,
+        relationship: Relationship,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
     ) -> Relationship:
+        reviewed = (
+            self._review_ends((relationship.source_id, relationship.target_id), ends)
+            if ends is not None
+            else []
+        )
         self.relationships[relationship.id] = relationship
         self.audit_log.append(events_for(audit, relationship))
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
@@ -463,14 +524,25 @@ class InMemoryRepository:
         return tuple(self.relationships.values())
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: AuditOf[Relationship]
+        self,
+        relationship_id: UUID,
+        *,
+        audit: AuditOf[Relationship],
+        ends: EndsReview | None = None,
     ) -> bool:
         stored = self.relationships.get(relationship_id)
         if stored is None:
             return False
+        reviewed = (
+            self._review_ends((stored.source_id, stored.target_id), ends)
+            if ends is not None
+            else []
+        )
         events = events_for(audit, stored)
         del self.relationships[relationship_id]
         self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
         return True
 
     async def relations_of(
