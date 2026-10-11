@@ -101,6 +101,7 @@ from ea.domain.search import (
     Passage,
 )
 from ea.repositories.architecture_store import author_of
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
@@ -1883,6 +1884,12 @@ def ipam(repository: InMemoryRepository, service: ArchitectureService) -> IpamSe
     an attribute of an element, not a second store (docs/adr/0020).
     """
     return IpamService(service, repository)
+
+
+@pytest.fixture
+def analysis(repository: InMemoryRepository, service: ArchitectureService) -> AnalysisService:
+    """The analysis use cases over the same graph double, which answers `AnalysisRepository` too."""
+    return AnalysisService(service, repository)
 
 
 @pytest.fixture

@@ -17,6 +17,7 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 from ea.domain.ports import ElementFilter
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -31,6 +32,7 @@ from ea.services.saved_queries import SavedQueryService
 from tests.conftest import a_reader
 
 WRITES = {
+    AnalysisService: set(),
     AuditService: set(),
     BaselineService: {"create", "delete", "restore"},
     ArchitectureService: {

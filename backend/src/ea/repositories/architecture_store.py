@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `ArchitectureRepository`, `IpamRepository` and `AnalysisRepository`.
+"""The PostgreSQL implementation of the architecture, IPAM and analysis repositories.
 
 The graph is two tables (docs/adr/0033): an element is a row of `elements`, a
 relationship a row of `relationships` whose two ends are foreign keys, so
