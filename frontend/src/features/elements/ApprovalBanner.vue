@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // L'état d'approbation d'un élément, et les seuls boutons que l'API offre à cet
 // appelant (`allowed_transitions`). Le SPA masque ; l'API décide (docs/adr/0046).
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 
 import { ApiError, messageOf } from '../../lib/api'
 import { STATE_LABELS, TRANSITION_LABELS, type Transition } from './approvalLabels'
@@ -14,6 +14,7 @@ const emit = defineEmits<{ changed: [element: ElementRead] }>()
 const approval = useApproval()
 const failure = ref('')
 const busy = ref(false)
+const banner = ref<HTMLElement | null>(null)
 
 const label = computed(() =>
   props.element.locked ? 'Verrouillé' : STATE_LABELS[props.element.approval_state],
@@ -31,6 +32,9 @@ const why = computed(() => {
 })
 
 async function take(next: Transition): Promise<void> {
+  if (busy.value) {
+    return
+  }
   busy.value = true
   failure.value = ''
   try {
@@ -49,17 +53,22 @@ async function take(next: Transition): Promise<void> {
     }
   } finally {
     busy.value = false
+    // The button that was clicked may be gone with the old state: keep the focus here.
+    await nextTick()
+    banner.value?.focus()
   }
 }
 </script>
 
 <template>
   <section
+    ref="banner"
+    tabindex="-1"
     class="banner"
     :data-state="element.locked ? 'locked' : element.approval_state"
     aria-label="État d'approbation"
   >
-    <strong>{{ label }}</strong>
+    <strong aria-live="polite">{{ label }}</strong>
     <span class="meta">révision {{ element.revision }}</span>
     <span v-if="element.approved_by" class="meta">
       approuvé par {{ element.approved_by

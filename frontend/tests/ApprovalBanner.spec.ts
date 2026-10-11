@@ -168,4 +168,21 @@ describe('ApprovalBanner', () => {
     await waitFor(() => expect(view.emitted().changed?.[0]).toEqual([fresh]))
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1)
   })
+
+  it('announces the state politely and gives the focus back to the banner after a transition', async () => {
+    const before = anElement({ allowed_transitions: ['submit'] })
+    const after = anElement({ approval_state: 'in_review', allowed_transitions: [] })
+    stubApi([{ method: 'POST', path: `/elements/${before.id}/approval`, body: after }])
+    const view = render(ApprovalBanner, { props: { element: before } })
+
+    expect(screen.getByText('Brouillon').getAttribute('aria-live')).toBe('polite')
+    await fireEvent.click(screen.getByRole('button', { name: 'Soumettre à revue' }))
+
+    await waitFor(() => expect(view.emitted().changed).toBeTruthy())
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('region', { name: "État d'approbation" }),
+      ),
+    )
+  })
 })
