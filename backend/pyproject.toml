@@ -13,6 +13,7 @@ dependencies = [
     # The embedding service is reached over HTTP, and it is the only outbound
     # call this process makes — see docs/adr/0019.
     "httpx>=0.27",
+    "markdown-it-py>=3.0",
     "mcp>=2.3.0",
     # Files in the Infra's MinIO — see docs/adr/0036. Same SDK as pipelines/.
     "minio>=7.2.20",
