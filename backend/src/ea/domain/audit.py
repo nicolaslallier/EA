@@ -170,6 +170,10 @@ def element_view(element: Element) -> dict[str, Any]:
         "documentation": element.documentation,
         "package_id": str(element.package_id) if element.package_id else None,
         "properties": dict(element.properties),
+        "approval_state": element.approval_state.value,
+        "locked": element.locked,
+        "approved_by_sub": element.approved_by_sub,
+        "approved_at": element.approved_at.isoformat() if element.approved_at else None,
         "created_at": element.created_at.isoformat(),
         "updated_at": element.updated_at.isoformat(),
     }

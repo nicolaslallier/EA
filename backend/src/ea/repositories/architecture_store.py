@@ -37,6 +37,7 @@ from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
+from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
@@ -93,6 +94,11 @@ def element_row(element: Element) -> dict[str, Any]:
         "properties": dict(element.properties),
         "created_at": element.created_at,
         "updated_at": element.updated_at,
+        "approval_state": element.approval_state.value,
+        "locked": element.locked,
+        "approved_by_sub": element.approved_by_sub,
+        "approved_at": element.approved_at,
+        "revision": element.revision,
     }
 
 
@@ -107,6 +113,11 @@ def element_from_row(row: ElementRecord) -> Element:
         documentation=row.documentation,
         properties=dict(row.properties),
         package_id=row.package_id,
+        approval_state=ApprovalState(row.approval_state),
+        locked=row.locked,
+        approved_by_sub=row.approved_by_sub,
+        approved_at=row.approved_at,
+        revision=row.revision,
     )
 
 

@@ -194,3 +194,12 @@ class TestThePackageAndSavedQueryVocabulary:
 
         assert shown["count"] == AUDIT_LISTED_IDS + 5
         assert len(shown["ids"]) == AUDIT_LISTED_IDS
+
+
+def test_an_audit_view_of_an_element_carries_its_review_state() -> None:
+    view = element_view(
+        Element.create(element_type=E.NODE, name="a", now=datetime(2026, 10, 10, tzinfo=UTC))
+    )
+
+    assert view["approval_state"] == "draft" and view["locked"] is False
+    assert view["approved_by_sub"] is None and view["approved_at"] is None

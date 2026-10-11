@@ -333,3 +333,23 @@ def test_a_baseline_references_nothing_but_its_own_header() -> None:
         assert foreign_key.column.table.name == "baselines"
         assert foreign_key.ondelete == "CASCADE"
     assert not Base.metadata.tables["baselines"].foreign_keys
+
+
+def test_revision_0013_follows_0012() -> None:
+    revision = ScriptDirectory.from_config(_config()).get_revision("0013")
+
+    assert revision is not None
+    assert revision.down_revision == "0012"
+
+
+def test_the_review_state_sits_beside_the_properties_and_is_constrained() -> None:
+    """Review is not in `properties`: no `PATCH` erases it, no index is touched (docs/adr/0046)."""
+    table = Base.metadata.tables["elements"]
+
+    assert {c.name for c in table.constraints if c.name} >= {
+        "ck_elements_approval_state_known",
+        "ck_elements_locked_implies_approved",
+        "uq_elements_element_type_name",
+    }
+    assert not table.c.approval_state.nullable and not table.c.locked.nullable
+    assert table.c.approved_by_sub.nullable and table.c.approved_at.nullable

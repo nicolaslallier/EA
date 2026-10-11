@@ -83,6 +83,9 @@ class Element:
     locked: bool = False
     approved_by_sub: str | None = None
     approved_at: datetime | None = None
+    #: Counts the changes to the element's content (docs/adr/0046). An approval is
+    #: of one revision: approving a revision someone has since changed is refused.
+    revision: int = 1
 
     @classmethod
     def create(

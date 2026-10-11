@@ -89,6 +89,10 @@ async def test_properties_named_like_audit_fields_cannot_forge_an_event(
         "documentation",
         "package_id",
         "properties",
+        "approval_state",
+        "locked",
+        "approved_by_sub",
+        "approved_at",
         "created_at",
         "updated_at",
     }
