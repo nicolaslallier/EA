@@ -82,6 +82,7 @@ from ea.domain.search import (
     EmbeddedChunk,
     Passage,
 )
+from ea.repositories.architecture_store import author_of
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
@@ -370,7 +371,7 @@ class InMemoryRepository:
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
-        element = replace(element, last_modified_by_sub=events[0].actor_sub if events else None)
+        element = replace(element, last_modified_by_sub=author_of(events))
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
         self.audit_log.append(events)
@@ -378,7 +379,7 @@ class InMemoryRepository:
 
     def touch(self, element_ids: Iterable[UUID], events: Sequence[AuditEvent]) -> None:
         """What the real repositories do to a changed element: a new revision and an author."""
-        author = events[0].actor_sub if events else None
+        author = author_of(events)
         for element_id in element_ids:
             element = self.elements[element_id]
             self.elements[element_id] = replace(
@@ -412,7 +413,7 @@ class InMemoryRepository:
         after = replace(
             after,
             revision=before.revision + 1,
-            last_modified_by_sub=events[0].actor_sub if events else None,
+            last_modified_by_sub=author_of(events),
         )
         self.elements[element_id] = after
         self.audit_log.append(events)
@@ -467,7 +468,7 @@ class InMemoryRepository:
         missing = [i for i in end_ids if i not in self.elements]
         if missing:
             raise ElementNotFoundError(str(missing[0]))
-        author = events[0].actor_sub if events else None
+        author = author_of(events)
         changes = [
             ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
             for c in ends.apply(self.elements[i] for i in set(end_ids))

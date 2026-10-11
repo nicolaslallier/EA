@@ -455,6 +455,19 @@ def frozen_clause() -> ColumnElement[bool]:
     )
 
 
+#: The columns a review or a touch changes.
+_REVIEW_COLUMNS: Final = frozenset(
+    {
+        "approval_state",
+        "locked",
+        "approved_by_sub",
+        "approved_at",
+        "revision",
+        "last_modified_by_sub",
+    }
+)
+
+
 def author_of(events: Sequence[AuditEvent]) -> str | None:
     """The subject that did a write: the actor of the events it writes, set by the service."""
     return events[0].actor_sub if events else None
@@ -470,15 +483,17 @@ async def _review_ends(
     end is the refusal an insert would have given. Each end is a new revision
     last changed by `author`.
     """
-    rows = {}
-    for end_id in sorted(set(end_ids)):
-        found = await session.get(
-            ElementRecord, end_id, with_for_update={"key_share": True}, populate_existing=True
-        )
-        if found is None:
-            msg = f"cannot link: the element {end_id} does not exist"
-            raise ElementNotFoundError(msg)
-        rows[end_id] = found
+    found = await session.scalars(
+        select(ElementRecord)
+        .where(ElementRecord.id.in_(set(end_ids)))
+        .order_by(ElementRecord.id)
+        .with_for_update(key_share=True)
+        .execution_options(populate_existing=True)
+    )
+    rows = {row.id: row for row in found}
+    if rows.keys() != set(end_ids):
+        msg = f"cannot link: an element at one end does not exist ({', '.join(map(str, end_ids))})"
+        raise ElementNotFoundError(msg)
     changes = [
         ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
         for c in ends.apply(element_from_row(row) for row in rows.values())
@@ -491,16 +506,9 @@ async def _review_ends(
 
 def _write_review(row: ElementRecord, after: Element) -> None:
     """The columns a review or a touch changes — and nothing the element says about itself."""
-    wanted = element_row(after)
-    for column in (
-        "approval_state",
-        "locked",
-        "approved_by_sub",
-        "approved_at",
-        "revision",
-        "last_modified_by_sub",
-    ):
-        setattr(row, column, wanted[column])
+    for column, value in element_row(after).items():
+        if column in _REVIEW_COLUMNS:
+            setattr(row, column, value)
 
 
 async def touch(session: AsyncSession, element_ids: Sequence[UUID], author: str | None) -> None:
@@ -567,9 +575,30 @@ class PostgresArchitectureRepository:
         *,
         audit: AuditOf[ElementChange],
     ) -> Element:
+        return await self._change(element_id, change, audit, content=True)
+
+    async def transition_element(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        *,
+        audit: AuditOf[ElementChange],
+    ) -> Element:
+        # A transition is not a change to the content: no new revision, no new author.
+        return await self._change(element_id, change, audit, content=False)
+
+    async def _change(
+        self,
+        element_id: UUID,
+        change: Callable[[Element], Element],
+        audit: AuditOf[ElementChange],
+        *,
+        content: bool,
+    ) -> Element:
         async with self._sessions.begin() as session:
-            # `FOR UPDATE`: the row the patch is applied to is the latest committed
-            # one, and a concurrent writer waits for our commit.
+            # `FOR UPDATE`: the row the patch is applied to — its content, its review
+            # state, its revision, its last author — is the latest committed one, and a
+            # concurrent writer or transition waits for our commit.
             row = await session.get(ElementRecord, element_id, with_for_update=True)
             if row is None:
                 msg = f"no element with id {element_id}"
@@ -584,39 +613,17 @@ class PostgresArchitectureRepository:
             }
             if not changed:
                 return before
-            # Every write to the content is a new revision, by whoever the event says.
             events = events_for(audit, ElementChange(before, after))
-            after = replace(
-                after, revision=before.revision + 1, last_modified_by_sub=author_of(events)
-            )
-            changed["revision"] = after.revision
-            changed["last_modified_by_sub"] = after.last_modified_by_sub
+            if content:  # a new revision, by whoever the event says
+                after = replace(
+                    after, revision=before.revision + 1, last_modified_by_sub=author_of(events)
+                )
+                changed["revision"] = after.revision
+                changed["last_modified_by_sub"] = after.last_modified_by_sub
             for column, value in {**changed, "updated_at": after.updated_at}.items():
                 setattr(row, column, value)
             await _flush_refusing(session, after)
             write_events(session, events)
-        return after
-
-    async def transition_element(
-        self,
-        element_id: UUID,
-        change: Callable[[Element], Element],
-        *,
-        audit: AuditOf[ElementChange],
-    ) -> Element:
-        async with self._sessions.begin() as session:
-            # The row — its state, its revision, its last author — is read under this
-            # lock: two transitions queue here, and a change to the element either
-            # committed before the read below or waits for this commit.
-            row = await session.get(ElementRecord, element_id, with_for_update=True)
-            if row is None:
-                msg = f"no element with id {element_id}"
-                raise ElementNotFoundError(msg)
-            before = element_from_row(row)
-            after = change(before)
-            _write_review(row, after)
-            await session.flush()
-            write_events(session, events_for(audit, ElementChange(before, after)))
         return after
 
     async def delete_element(
