@@ -66,6 +66,7 @@ def mcp_over(
         lambda: app.state.exchange_service,
         lambda: AnalysisService(service, InMemoryRepository()),
         lambda: TimelineService(service, InMemoryRepository()),
+        lambda: app.state.report_service,
     )
 
 

@@ -30,6 +30,7 @@ from ea.api.dependencies import (
     file_service_of,
     ipam_service_of,
     package_service_of,
+    report_service_of,
     saved_query_service_of,
     timeline_service_of,
 )
@@ -575,6 +576,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: exchange_service_of(app),
         lambda: analysis_service_of(app),
         lambda: timeline_service_of(app),
+        lambda: report_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

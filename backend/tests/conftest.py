@@ -115,6 +115,7 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.reports import ReportService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -2098,3 +2099,23 @@ def file_service(
 ) -> FileService:
     """The bucket and the catalogue beside it, on one frozen clock."""
     return FileService(files_store, metadata=files_metadata, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def report_service(
+    diagram_service: DiagramService,
+    service: ArchitectureService,
+    document_service_without_an_index: DocumentService,
+    file_service: FileService,
+    package_service: PackageService,
+) -> ReportService:
+    """Reports over the in-memory stores, on one frozen clock and a fixed suffix."""
+    return ReportService(
+        diagram_service,
+        service,
+        document_service_without_an_index,
+        file_service,
+        packages=package_service,
+        clock=lambda: FIXED_NOW,
+        new_id=lambda: "ab12cd34",
+    )
