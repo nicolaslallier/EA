@@ -332,8 +332,10 @@ class ImportRun:
         # the rows of the elements it carries, so an import that held elements and then waited
         # for the tree could be a half of a deadlock. The target is checked before any write.
         if self._files_into_packages(model):
-            await self._seed_packages(model, state)
+            # The lock first, the reading after: what is read under the lock is the tree this
+            # import will modify, not the one before a concurrent write committed.
             await self._repository.lock_package_tree()
+            await self._seed_packages(model, state)
         self._package_of = {e.id: e.package_id for e in known}
         rows = self._plan(model, state)
         await self._repository.lock_elements(self._touched(rows, state))

@@ -131,3 +131,57 @@ async def test_two_thousand_folders_are_bounded_by_the_creation_ceiling_and_stay
     assert len(await packages.list_packages()) == MAX_NEW_FOLDERS
     # Before the ceiling this took a minute with the locks held; with it, a few seconds.
     assert elapsed < 30, elapsed
+
+
+async def test_the_tree_is_read_after_its_lock_is_taken_not_before(
+    whole: Any,  # noqa: F811
+    engine_at_head: Any,
+) -> None:
+    """A package written while the import waits for the tree is in the tree the import reads."""
+    import asyncio
+    import contextvars
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from sqlalchemy import func, select, text
+
+    from ea.repositories.package_store import TREE_LOCK
+    from ea.services.caller import acting_as
+    from tests.conftest import an_editor
+
+    _, _, packages, exchange, _ = whole
+    data = exchange_xml(
+        el("a", "Node", "A"),
+        extra="<organizations><item><label>Racy</label>"
+        '<item identifierRef="a"/></item></organizations>',
+    )
+
+    async def importing() -> Any:
+        with acting_as(an_editor()):
+            return await exchange.import_exchange(content(data), REAL)
+
+    async with engine_at_head.connect() as writer, writer.begin():
+        await writer.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
+        task = asyncio.create_task(importing(), context=contextvars.Context())
+        for _ in range(200):  # the barrier: the import is queued behind the tree's lock
+            waiting = await writer.scalar(
+                text("select count(*) from pg_locks where locktype='advisory' and not granted")
+            )
+            if waiting:
+                break
+            await asyncio.sleep(0.02)
+        assert waiting, "the import should wait for the tree"
+        now = datetime.now(UTC)
+        await writer.execute(
+            text(
+                "insert into packages (id, parent_id, name, description, created_at, updated_at)"
+                " values (:id, null, 'Racy', '', :now, :now)"
+            ),
+            {"id": uuid4(), "now": now},
+        )
+
+    report = await asyncio.wait_for(task, 20)
+
+    assert report.counts[Category.PACKAGES].reused == 1  # it saw the package just committed
+    assert report.counts[Category.PACKAGES].rejected == 0
+    assert [s.package.name for s in await packages.list_packages()] == ["Racy"]
