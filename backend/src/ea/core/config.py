@@ -258,6 +258,14 @@ class Settings(BaseSettings):
     #: The Infra CA, when the endpoint is reached through the Infra NGINX.
     s3_ca_cert: str | None = None
 
+    # --- Model quality checks — see docs/adr/0057 ---
+    #: How alike two names of one type must be to be reported as probable
+    #: duplicates (0 = anything, 1 = identical once normalised).
+    quality_similarity: float = Field(default=0.9, ge=0.0, le=1.0)
+    #: Properties a type must carry, as JSON: {"application_component": ["owner"]}.
+    #: Which types and keys are valid is checked at boot by `QualityParams`.
+    quality_required: dict[str, list[str]] = {}
+
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:

@@ -11,10 +11,18 @@ are reads.
 
 from __future__ import annotations
 
+import logging
+from contextlib import AbstractAsyncContextManager, nullcontext
+from time import perf_counter
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.errors import ElementNotFoundError, MatrixAxisTooLargeError
+from ea.domain.errors import (
+    AnalysisBusyError,
+    ElementNotFoundError,
+    MatrixAxisTooLargeError,
+    ScopeTooLargeError,
+)
 from ea.domain.matrix import (
     MAX_MATRIX_AXIS,
     AxisSelection,
@@ -25,11 +33,40 @@ from ea.domain.matrix import (
     build_matrix,
 )
 from ea.domain.ports import ElementFilter
+from ea.domain.quality import (
+    QualityPage,
+    QualityParams,
+    RuleCode,
+    Severity,
+    page_of,
+    run_checks,
+)
 from ea.services.caller import require_caller
+from ea.services.exchange_admission import Admission
 
 if TYPE_CHECKING:
     from ea.domain.ports import AnalysisRepository
     from ea.services.architecture import ArchitectureService
+
+
+logger = logging.getLogger(__name__)
+
+#: How many analyses may read the whole model at once, and how many one caller may hold.
+#: A run reads up to `MAX_QUALITY_ELEMENTS` rows and their links, so it is admitted, not queued.
+MAX_ANALYSES_IN_FLIGHT = 4
+MAX_ANALYSES_PER_CALLER = 2
+ANALYSIS_LEASE_SECONDS = 120.0
+
+
+def analysis_admission(*, limit: int = MAX_ANALYSES_IN_FLIGHT) -> Admission:
+    """The places for the analyses that read the whole model (docs/adr/0057)."""
+    return Admission(
+        limit,
+        per_caller=min(MAX_ANALYSES_PER_CALLER, limit),
+        lease_seconds=ANALYSIS_LEASE_SECONDS,
+        refusal=lambda: AnalysisBusyError("other analyses are running: try again in a moment"),
+        kind="analysis",
+    )
 
 
 class AnalysisService:
@@ -39,9 +76,14 @@ class AnalysisService:
         self,
         architecture: ArchitectureService,
         repository: AnalysisRepository,
+        *,
+        params: QualityParams | None = None,
+        admission: Admission | None = None,
     ) -> None:
         self._architecture = architecture
         self._repository = repository
+        self._params = params or QualityParams()
+        self._admission = admission
 
     # --- The relationship matrix -------------------------------------------
 
@@ -68,6 +110,53 @@ class AnalysisService:
             links=tuple(sorted(links, key=lambda link: (link.created_at, link.id))),
             allowed=allowed_between(source, target),
         )
+
+    # --- Quality checks -----------------------------------------------------
+
+    async def check(
+        self,
+        *,
+        severity: Severity | None = None,
+        code: RuleCode | None = None,
+        limit: int = 100,
+        cursor: int = 0,
+    ) -> QualityPage:
+        """Run every rule over the catalogue and return one page of findings.
+
+        The counts describe the whole run; `severity` and `code` narrow only the
+        findings listed. A catalogue over the ceiling is refused rather than
+        silently checked in part: a partial report reads as a clean one.
+        """
+        caller = require_caller()
+        async with self._place(caller.subject):
+            return await self._check(severity, code, limit, cursor)
+
+    async def _check(
+        self, severity: Severity | None, code: RuleCode | None, limit: int, cursor: int
+    ) -> QualityPage:
+        started = perf_counter()
+        ceiling = self._params.max_elements
+        elements = await self._architecture.list_elements(ElementFilter(limit=ceiling + 1))
+        if len(elements) > ceiling:
+            msg = f"the catalogue holds more than {ceiling} elements; a run takes at most {ceiling}"
+            raise ScopeTooLargeError(msg)
+        links = await self._repository.links_touching([element.id for element in elements])
+        report = run_checks(elements, links, self._params)
+        logger.info(
+            "quality run: %d findings over %d elements",
+            len(report.findings),
+            len(elements),
+            extra={
+                "action": "quality_run",
+                "duration_ms": round((perf_counter() - started) * 1000, 1),
+                "findings": len(report.findings),
+            },
+        )
+        return page_of(report, severity=severity, code=code, limit=limit, cursor=cursor)
+
+    def _place(self, key: str) -> AbstractAsyncContextManager[object]:
+        """A place among the analyses reading the whole model, or no limit where none is set."""
+        return self._admission.lease(key) if self._admission is not None else nullcontext()
 
     async def _axis(self, selection: AxisSelection) -> MatrixAxis:
         if selection.element_ids:

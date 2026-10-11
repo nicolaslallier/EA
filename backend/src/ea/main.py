@@ -62,6 +62,7 @@ from ea.domain.ports import (
     PackageRepository,
     SavedQueryRepository,
 )
+from ea.domain.quality import QualityParams
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
@@ -78,7 +79,7 @@ from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
-from ea.services.analysis import AnalysisService
+from ea.services.analysis import AnalysisService, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -135,6 +136,11 @@ async def _reachable(name: str, probe: Callable[[], Awaitable[None]], degraded: 
         degraded.append(name)
         return False
     return True
+
+
+def build_quality_params(settings: Settings) -> QualityParams:
+    """The quality knobs, validated: a bad `EA_QUALITY_REQUIRED` stops the boot."""
+    return QualityParams.from_settings(settings.quality_similarity, settings.quality_required)
 
 
 def build_embedder(settings: Settings) -> HttpEmbedder:
@@ -295,7 +301,10 @@ def _lifespan(
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
                     app.state.analysis_service = AnalysisService(
-                        app.state.architecture_service, repository
+                        app.state.architecture_service,
+                        repository,
+                        params=app.state.quality_params,
+                        admission=app.state.analysis_admission,
                     )
                     exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
@@ -590,6 +599,10 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    # Validated here, so a wrong `EA_QUALITY_REQUIRED` stops the boot (docs/adr/0057); and one
+    # admission for the analyses that read the whole model, whichever door they come through.
+    app.state.quality_params = build_quality_params(settings)
+    app.state.analysis_admission = analysis_admission()
     # One admission for every door an import comes through: HTTP's (in the middleware below),
     # MCP's and a script's (in the service), so that three doors cannot hold six places.
     admission = Admission(
@@ -609,7 +622,12 @@ def create_app(
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
         if analysis is not None:
-            app.state.analysis_service = AnalysisService(architecture_service, analysis)
+            app.state.analysis_service = AnalysisService(
+                architecture_service,
+                analysis,
+                params=app.state.quality_params,
+                admission=app.state.analysis_admission,
+            )
         if packages is not None:
             app.state.package_service = PackageService(packages)
         if queries is not None:

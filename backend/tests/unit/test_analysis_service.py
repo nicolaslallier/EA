@@ -9,15 +9,18 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.errors import (
+    AnalysisBusyError,
     ElementNotFoundError,
     MatrixAxisTooLargeError,
     NotAuthenticatedError,
+    ScopeTooLargeError,
 )
 from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection
-from ea.services.analysis import AnalysisService
+from ea.domain.quality import QualityParams, RuleCode, Severity
+from ea.services.analysis import AnalysisService, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
-from tests.conftest import a_reader
+from tests.conftest import InMemoryRepository, a_reader
 
 
 async def two_linked(service: ArchitectureService):  # type: ignore[no-untyped-def]
@@ -138,3 +141,104 @@ class TestOneCell:
     async def test_an_unknown_end_is_a_not_found(self, analysis: AnalysisService) -> None:
         with pytest.raises(ElementNotFoundError):
             await analysis.cell(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
+class TestTheQualityRun:
+    async def test_a_lone_bare_element_is_an_orphan_without_description(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="Loner")
+
+        page = await analysis.check()
+
+        assert {f.rule for f in page.findings} == {RuleCode.ORPHAN, RuleCode.NO_DESCRIPTION}
+        assert {c.rule: c.count for c in page.report.counts}[RuleCode.ORPHAN] == 1
+
+    async def test_an_empty_model_is_clean(self, analysis: AnalysisService) -> None:
+        page = await analysis.check()
+
+        assert page.findings == ()
+        assert all(count.count == 0 for count in page.report.counts)
+
+    async def test_links_count_against_the_orphan_rule(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await two_linked(service)
+
+        page = await analysis.check(code=RuleCode.ORPHAN)
+
+        assert page.findings == ()
+
+    async def test_filters_and_paging_are_applied(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        for index in range(3):
+            await service.create_element(element_type=E.NODE, name=f"n{index}")
+
+        page = await analysis.check(severity=Severity.INFO, limit=2)
+
+        assert len(page.findings) == 2
+        assert page.next_cursor == 2
+
+    async def test_a_scope_over_the_ceiling_is_refused_not_truncated(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        small = AnalysisService(service, repository, params=QualityParams(max_elements=2))
+        for index in range(3):
+            await service.create_element(element_type=E.NODE, name=f"n{index}")
+
+        with pytest.raises(ScopeTooLargeError, match="2"):
+            await small.check()
+
+    async def test_a_reader_may_run_it(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="Loner")
+
+        with acting_as(a_reader()):
+            page = await analysis.check()
+
+        assert page.findings
+
+    async def test_nobody_runs_nothing(
+        self, analysis: AnalysisService, nobody_calling: None
+    ) -> None:
+        with pytest.raises(NotAuthenticatedError):
+            await analysis.check()
+
+    async def test_a_run_leaves_a_trace_with_its_duration(
+        self, analysis: AnalysisService, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("INFO", logger="ea.services.analysis"):
+            await analysis.check()
+
+        record = next(r for r in caplog.records if getattr(r, "action", "") == "quality_run")
+        assert record.findings == 0  # type: ignore[attr-defined]
+        assert record.duration_ms >= 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+class TestTheAdmission:
+    """A run reads the whole model, so only so many may be in flight at once."""
+
+    async def test_a_run_beyond_the_ceiling_is_refused_not_queued(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        busy = analysis_admission(limit=1)
+        guarded = AnalysisService(service, repository, admission=busy)
+
+        async with busy.lease("somebody else"):
+            with pytest.raises(AnalysisBusyError):
+                await guarded.check()
+
+    async def test_the_place_is_given_back_when_the_run_ends(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        busy = analysis_admission(limit=1)
+        guarded = AnalysisService(service, repository, admission=busy)
+
+        await guarded.check()
+        await guarded.check()
+
+        assert busy.in_flight == 0

@@ -277,3 +277,32 @@ class TestExchangeCeiling:
     @pytest.mark.parametrize("value", [1024, 100 * 1024 * 1024])
     def test_the_bounds_themselves_are_accepted(self, value: int) -> None:
         assert Settings(debug=True, exchange_max_bytes=value).exchange_max_bytes == value
+
+
+def test_quality_defaults_are_a_ninety_percent_threshold_and_nothing_required() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.quality_similarity == 0.9
+    assert settings.quality_required == {}
+
+
+def test_quality_required_is_read_as_json_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EA_QUALITY_REQUIRED", '{"application_component": ["owner"]}')
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.quality_required == {"application_component": ["owner"]}
+
+
+def test_a_similarity_outside_zero_to_one_does_not_build() -> None:
+    with pytest.raises(ValueError, match="quality_similarity"):
+        Settings(_env_file=None, quality_similarity=1.5)  # type: ignore[call-arg]
+
+
+def test_a_wrong_required_property_stops_the_application_from_building() -> None:
+    from ea.main import create_app
+
+    with pytest.raises(ValueError, match="bogus"):
+        create_app(Settings(debug=True, auth_enabled=False, quality_required={"bogus": ["owner"]}))

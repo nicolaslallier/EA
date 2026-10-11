@@ -318,3 +318,11 @@ class RowRefusedError(DomainError):
 
 class MatrixAxisTooLargeError(DomainError):
     """An axis of the relationship matrix names more elements than the grid shows."""
+
+
+class ScopeTooLargeError(DomainError):
+    """A calculation was asked of more elements than one run takes."""
+
+
+class AnalysisBusyError(DomainError):
+    """As many analyses are running as the process allows: try again shortly."""

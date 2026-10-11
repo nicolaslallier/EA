@@ -25,6 +25,7 @@ from ea.domain.errors import (
     AddressAlreadyAssignedError,
     AddressNotAssignedError,
     AddressOutsideAnyNetworkError,
+    AnalysisBusyError,
     ApprovalStaleError,
     BaselineNotFoundError,
     BaselineTooLargeError,
@@ -70,6 +71,7 @@ from ea.domain.errors import (
     RestoreConflictError,
     RowRefusedError,
     SavedQueryNotFoundError,
+    ScopeTooLargeError,
     SearchUnavailableError,
     StoredFileExistsError,
     StoredFileNotFoundError,
@@ -181,6 +183,8 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     RowRefusedError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_row"),
     # --- Model analysis (docs/adr/0056) ---
     MatrixAxisTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "matrix_axis_too_large"),
+    ScopeTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "scope_too_large"),
+    AnalysisBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "analysis_busy"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
