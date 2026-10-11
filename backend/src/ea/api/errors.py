@@ -67,6 +67,7 @@ from ea.domain.errors import (
     TooManyPackagesError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    WriteConflictError,
 )
 
 if TYPE_CHECKING:
@@ -107,6 +108,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
     # --- Review and locking (docs/adr/0046) ---
     ApprovalStaleError: (status.HTTP_409_CONFLICT, "approval_stale"),
+    WriteConflictError: (status.HTTP_409_CONFLICT, "write_conflict"),
     ElementLockedError: (status.HTTP_409_CONFLICT, "element_locked"),
     InvalidTransitionError: (status.HTTP_409_CONFLICT, "invalid_transition"),
     RestoreBlockedError: (status.HTTP_409_CONFLICT, "restore_blocked"),

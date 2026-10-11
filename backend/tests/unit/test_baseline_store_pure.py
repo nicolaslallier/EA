@@ -38,8 +38,8 @@ from ea.repositories.baseline_store import (
     _box,
     _copied_element,
     _copied_relationship,
-    _is_serialization_failure,
 )
+from ea.repositories.conflicts import is_serialization_failure
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 
@@ -321,8 +321,8 @@ class TestReadingRows:
         assert _box(row) == BoxSnapshot(row.diagram_id, row.element_id, 1, 2, 3, 4)  # type: ignore[arg-type]
 
     def test_only_a_serialization_failure_or_a_deadlock_is_replayable(self) -> None:
-        assert _is_serialization_failure(DBAPIError("", {}, driver_error("40001")))
-        assert not _is_serialization_failure(DBAPIError("", {}, Exception("no cause")))
+        assert is_serialization_failure(DBAPIError("", {}, driver_error("40001")))
+        assert not is_serialization_failure(DBAPIError("", {}, Exception("no cause")))
 
 
 class TestTheStatementsThatCountAndWalk:

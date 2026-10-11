@@ -68,6 +68,7 @@ from ea.repositories.architecture_store import (
     touch,
 )
 from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import is_serialization_failure
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -573,7 +574,7 @@ class PostgresBaselineRepository:
                     await _write(session, plan, now, author_of(events))
                     write_events(session, events)
             except DBAPIError as error:
-                if _is_serialization_failure(error):
+                if is_serialization_failure(error):
                     msg = "the catalogue changed during the restoration: read the plan again"
                     raise RestoreConflictError(msg) from error
                 if isinstance(error, IntegrityError) and (constraint_of(error) or "").startswith(
@@ -597,13 +598,6 @@ class PostgresBaselineRepository:
                 },
             )
             raise
-
-
-def _is_serialization_failure(error: DBAPIError) -> bool:
-    """SQLSTATE 40001 (and 40P01, a deadlock) — carried by the driver's own exception."""
-    cause = getattr(error.orig, "__cause__", None)
-    code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
-    return code in ("40001", "40P01")
 
 
 async def _flush_restoring(session: AsyncSession, element: Element) -> None:

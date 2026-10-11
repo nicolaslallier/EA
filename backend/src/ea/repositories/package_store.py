@@ -40,6 +40,7 @@ from ea.repositories.architecture_store import (
     lock_elements,
 )
 from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -205,6 +206,7 @@ class PostgresPackageRepository:
             write_events(session, events_for(audit, before))
         return package
 
+    @replayable
     async def delete(
         self,
         package_id: UUID,
@@ -308,6 +310,7 @@ class PostgresPackageRepository:
             write_events(session, events)
         return bool(cast("CursorResult[Any]", deleted).rowcount)
 
+    @replayable
     async def move_elements(
         self,
         element_ids: Sequence[UUID],

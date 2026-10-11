@@ -62,6 +62,7 @@ from ea.domain.ports import (
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -592,6 +593,7 @@ class PostgresArchitectureRepository:
 
     # --- Elements ---------------------------------------------------------
 
+    @replayable
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
         element = replace(element, last_modified_by_sub=author_of(events))
@@ -622,6 +624,7 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
+    @replayable
     async def update_element(
         self,
         element_id: UUID,
@@ -631,6 +634,7 @@ class PostgresArchitectureRepository:
     ) -> Element:
         return await self._change(element_id, change, audit, content=True)
 
+    @replayable
     async def transition_element(
         self,
         element_id: UUID,
@@ -680,6 +684,7 @@ class PostgresArchitectureRepository:
             write_events(session, events)
         return after
 
+    @replayable
     async def delete_element(
         self,
         element_id: UUID,
@@ -726,6 +731,7 @@ class PostgresArchitectureRepository:
 
     # --- Relationships ----------------------------------------------------
 
+    @replayable
     async def add_relationship(
         self,
         relationship: Relationship,
@@ -790,6 +796,7 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
+    @replayable
     async def delete_relationship(
         self,
         relationship_id: UUID,

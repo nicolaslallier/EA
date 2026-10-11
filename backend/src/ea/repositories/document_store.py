@@ -40,6 +40,7 @@ from ea.domain.errors import DocumentNotFoundError, DuplicateDocumentError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 from ea.repositories.architecture_store import author_of, element_from_row, touch
 from ea.repositories.audit_store import write_events
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -139,6 +140,7 @@ class PostgresDocumentRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
 
+    @replayable
     async def add(
         self,
         document: Document,
@@ -226,6 +228,7 @@ class PostgresDocumentRepository:
                 for row in rows
             )
 
+    @replayable
     async def replace(
         self,
         document: Document,
@@ -265,6 +268,7 @@ class PostgresDocumentRepository:
                 await touch(session, [row.element_id], author_of(events))
         return document
 
+    @replayable
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:

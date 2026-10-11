@@ -229,6 +229,10 @@ class RestoreBlockedError(DomainError):
     """A restoration would change an element that is locked — unlock it first."""
 
 
+class WriteConflictError(DomainError):
+    """The database aborted this write because another one got in its way: replay it."""
+
+
 class RestoreConflictError(DomainError):
     """A restoration the catalogue refused, or that no longer matches the plan read.
 
