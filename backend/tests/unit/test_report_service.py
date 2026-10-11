@@ -739,3 +739,35 @@ class TestTheOutputIsBoundedBeforeItIsSerialised:
             await reports.build(request_for(diagram))
 
         assert read == []
+
+
+class TestTheNodeCeilingStopsTheEngine:
+    async def test_two_hundred_thousand_paragraphs_are_refused_without_starting_the_engine(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        file_service: FileService,
+        document_service_without_an_index: DocumentService,
+    ) -> None:
+        diagram, (element,) = await a_diagram(service, diagram_service, "A")
+        await document_service_without_an_index.attach_text(
+            element.id, filename="d.md", content="a\n\n" * 200_000
+        )
+        ran: list[int] = []
+
+        def engine(model: ReportModel) -> bytes:
+            ran.append(1)
+            return b"%PDF"
+
+        reports = ReportService(
+            diagram_service,
+            service,
+            document_service_without_an_index,
+            file_service,
+            extra_renderers={"pdf": engine},
+        )
+
+        with pytest.raises(ReportTooLargeError, match="blocks"):
+            await reports.build(request_for(diagram, "pdf"))
+
+        assert ran == []

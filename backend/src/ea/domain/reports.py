@@ -25,10 +25,13 @@ from ea.domain.errors import UnknownReportTemplateError
 from ea.domain.model import Element, Relationship
 
 MAX_REPORT_ELEMENTS: Final = 500
-MAX_REPORT_RELATIONSHIPS: Final = 5000
+MAX_REPORT_RELATIONSHIPS: Final = 2000
 #: Bytes of text (names, descriptions, documents, drawings) a report may carry: the write doors
 #: cap a description at 2000 characters, the domain does not; a serialiser costs what it holds.
 MAX_REPORT_TEXT_BYTES: Final = 8 * 1024 * 1024
+#: Blocks, table cells and markdown blocks a report may hold. The cost of a PDF follows the
+#: number of nodes, not the bytes (600 KB of one-letter paragraphs took 96 s and 3.9 GB).
+MAX_REPORT_NODES: Final = 12_000
 MAX_REPORT_DIAGRAMS: Final = 20
 #: Boxes drawn in all, over every diagram of a package.
 MAX_REPORT_BOXES: Final = 1000
@@ -365,6 +368,24 @@ def model_text_bytes(model: ReportModel) -> int:
                 total += sum(len(cell) for row in block.rows for cell in row)
             case Figure():
                 total += len(block.svg) + len(block.caption)
+    return total
+
+
+def model_nodes(model: ReportModel) -> int:
+    """How many things a serialiser must lay out: blocks, table cells, markdown lines.
+
+    A markdown line stands for a block (a paragraph, a list item, a code line): the source is
+    counted, never rendered, so the count is cheap and the engine is not started to learn it.
+    """
+    total = 0
+    for block in model.blocks:
+        match block:
+            case Table():
+                total += 1 + len(block.headers) + sum(len(row) + 1 for row in block.rows)
+            case MarkdownBlock():
+                total += 1 + sum(1 for line in block.source.splitlines() if line.strip())
+            case _:
+                total += 1
     return total
 
 

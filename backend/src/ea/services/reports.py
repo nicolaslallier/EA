@@ -47,6 +47,7 @@ from ea.domain.reports import (
     MAX_REPORT_DIAGRAMS,
     MAX_REPORT_DOCUMENT_BYTES,
     MAX_REPORT_ELEMENTS,
+    MAX_REPORT_NODES,
     MAX_REPORT_RELATIONSHIPS,
     MAX_REPORT_TEXT_BYTES,
     REPORT_FORMATS,
@@ -61,6 +62,7 @@ from ea.domain.reports import (
     ReportTemplate,
     ScopedDocument,
     build_model,
+    model_nodes,
     model_text_bytes,
     report_filename,
     report_key,
@@ -131,6 +133,12 @@ def _assemble(
     model = build_model(template, scope, documents, now=now)
     if model_text_bytes(model) > MAX_REPORT_TEXT_BYTES:
         raise _too_much_text()
+    if model_nodes(model) > MAX_REPORT_NODES:
+        msg = (
+            f"a report holds at most {MAX_REPORT_NODES} blocks, table cells and markdown "
+            "blocks; report on a smaller scope or shorten the attached documents"
+        )
+        raise ReportTooLargeError(msg)
     return renderer(model)
 
 

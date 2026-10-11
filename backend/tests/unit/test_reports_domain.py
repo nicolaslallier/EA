@@ -204,3 +204,29 @@ class TestThePackageTemplate:
 
         assert len([b for b in model.blocks if isinstance(b, Figure)]) == 2
         assert model.title == "Inventaire d'un paquet — Finance"
+
+
+class TestTheNodeCeiling:
+    def test_a_markdown_of_many_blocks_weighs_many_nodes_whatever_its_bytes(self) -> None:
+        from ea.domain.reports import MAX_REPORT_NODES, ReportModel, model_nodes
+
+        source = "a\n\n" * 200_000
+        model = ReportModel("t", "s", (MarkdownBlock(source),))
+
+        assert len(source) < 1_000_000
+        assert model_nodes(model) > MAX_REPORT_NODES
+
+    def test_a_wide_table_weighs_its_cells(self) -> None:
+        from ea.domain.reports import MAX_REPORT_NODES, ReportModel, model_nodes
+
+        rows = tuple(tuple("x" for _ in range(300)) for _ in range(300))
+        model = ReportModel("t", "s", (Table(tuple("h" for _ in range(300)), rows),))
+
+        assert model_nodes(model) > MAX_REPORT_NODES
+
+    def test_an_ordinary_report_is_far_below(self) -> None:
+        from ea.domain.reports import MAX_REPORT_NODES, model_nodes
+
+        model = build_model(SHEET, a_scope((an_element(),)), (), now=NOW)
+
+        assert model_nodes(model) < MAX_REPORT_NODES / 100
