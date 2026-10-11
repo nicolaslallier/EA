@@ -62,3 +62,12 @@ def test_a_fenced_block_shows_its_markup_as_text() -> None:
 
 def test_the_empty_document_is_the_empty_string() -> None:
     assert render_markdown("") == ""
+
+
+def test_a_protocol_relative_link_is_not_a_link() -> None:
+    html = render_markdown("[a](//evil.example/x) [b](  //evil.example) [c](/local) [d](x/y)")
+
+    assert 'href="//' not in html
+    assert html.count("<a ") == 2
+    assert 'href="/local"' in html
+    assert 'href="x/y"' in html

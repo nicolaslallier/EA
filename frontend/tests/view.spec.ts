@@ -234,6 +234,9 @@ describe('the reader mode has no way to write, by construction', () => {
     expect(Object.keys(sources).length).toBeGreaterThanOrEqual(5)
     for (const [file, source] of Object.entries(sources)) {
       expect(source, file).not.toMatch(/api\.(POST|PUT|PATCH|DELETE)\b/)
+      expect(source, file).not.toMatch(/api\[\s*['"`](POST|PUT|PATCH|DELETE)/)
+      expect(source, file).not.toMatch(/\bfetch\(/)
+      expect(source, file).not.toMatch(/method:\s*['"`](POST|PUT|PATCH|DELETE)/)
     }
   })
 })

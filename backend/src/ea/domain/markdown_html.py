@@ -25,6 +25,8 @@ def _only_safe_links(url: str) -> bool:
     markdown-it's own default lets `data:image/png;...` through as a link target;
     a report has no use for any scheme beyond these three.
     """
+    if url.lstrip().startswith("//"):  # protocol-relative: it names another host
+        return False
     scheme = _SCHEME.match(url)
     return scheme is None or scheme.group(1).lower() in _SAFE_SCHEMES
 
