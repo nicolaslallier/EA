@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
-from ea.domain.approval import check_all_untouched
+from ea.domain.approval import WriteKind, guard_all
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     CyclicPackageError,
@@ -32,7 +32,13 @@ from ea.domain.errors import (
 )
 from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
 from ea.domain.ports import Held, PackageRemoval
-from ea.repositories.architecture_store import constraint_of, element_from_row, frozen_clause
+from ea.repositories.architecture_store import (
+    author_of,
+    constraint_of,
+    element_from_row,
+    frozen_clause,
+    touch,
+)
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
@@ -46,8 +52,8 @@ if TYPE_CHECKING:
 #: Key of the transaction-scoped advisory lock every write to the tree takes
 #: (docs/adr/0042). A constant, not a hash of something: one tree, one lock.
 TREE_LOCK: Final = 0x45415041  # "EAPA"
-#: How many frozen elements a refused deletion spells out (one more is read, to say "others").
-_FROZEN_SAMPLE: Final = 5
+#: How many frozen elements a refused deletion spells out; the count is exact.
+_FROZEN_SAMPLE: Final = 20
 NAME_TAKEN: Final = ("uq_packages_root_name", "uq_packages_child_name")
 #: The three foreign keys that name a package.
 REFERENCES: Final = (
@@ -237,6 +243,7 @@ class PostgresPackageRepository:
                 elements=await _held_by(session, ElementRecord.package_id, package_id),
                 diagrams=await _held_by(session, DiagramRecord.package_id, package_id),
             )
+            events = events_for(audit, removal)
             if require_empty:
                 held = [
                     await session.scalar(select(func.count()).where(column == package_id))
@@ -253,23 +260,35 @@ class PostgresPackageRepository:
                 if not require_empty:
                     # Re-filing an element is a change to it: an approved or locked one
                     # stays where it is, so the deletion is refused rather than moving it.
-                    # Every element of the package is locked first, unfiltered: a row that
-                    # does not match a `WHERE` is skipped by `FOR UPDATE`, not waited for,
-                    # so a lock filtered on "frozen" would miss an approval in flight. The
-                    # query after it is a new statement and sees what that approval wrote.
-                    await session.execute(
-                        select(ElementRecord.id)
-                        .where(ElementRecord.package_id == package_id)
-                        .with_for_update()
+                    # Every element of the package is locked first, unfiltered and in id
+                    # order: a row that does not match a `WHERE` is skipped by `FOR UPDATE`,
+                    # not waited for, so a lock filtered on "frozen" would miss an approval
+                    # in flight. The queries after it are new statements and see it.
+                    locked = (
+                        await session.scalars(
+                            select(ElementRecord.id)
+                            .where(ElementRecord.package_id == package_id)
+                            .order_by(ElementRecord.id)
+                            .with_for_update()
+                        )
+                    ).all()
+                    refusing = await session.scalar(
+                        select(func.count()).where(
+                            ElementRecord.package_id == package_id, frozen_clause()
+                        )
                     )
                     sample = await session.scalars(
                         select(ElementRecord)
                         .where(ElementRecord.package_id == package_id, frozen_clause())
                         .order_by(ElementRecord.name, ElementRecord.id)
-                        .limit(_FROZEN_SAMPLE + 1)
+                        .limit(_FROZEN_SAMPLE)
                     )
-                    frozen = [element_from_row(found) for found in sample]
-                    check_all_untouched(frozen[:_FROZEN_SAMPLE], more=len(frozen) > _FROZEN_SAMPLE)
+                    guard_all(
+                        [element_from_row(found) for found in sample],
+                        WriteKind.FILING,
+                        total=int(refusing or 0),
+                    )
+                    await touch(session, locked, author_of(events))
                     for table, column in (
                         (PackageRecord, PackageRecord.parent_id),
                         (ElementRecord, ElementRecord.package_id),
@@ -288,7 +307,7 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
-            write_events(session, events_for(audit, removal))
+            write_events(session, events)
         return bool(cast("CursorResult[Any]", deleted).rowcount)
 
     async def move_elements(
@@ -307,7 +326,10 @@ class PostgresPackageRepository:
             # `FOR UPDATE`: the origins the event names are the ones this move leaves.
             found = (
                 await session.scalars(
-                    select(ElementRecord).where(ElementRecord.id.in_(wanted)).with_for_update()
+                    select(ElementRecord)
+                    .where(ElementRecord.id.in_(wanted))
+                    .order_by(ElementRecord.id)  # a fixed order, so overlapping batches queue
+                    .with_for_update()
                 )
             ).all()
             origins = {row.id: row.package_id for row in found}
@@ -316,12 +338,22 @@ class PostgresPackageRepository:
                 msg = f"no element with id {', '.join(missing)}"
                 raise ElementNotFoundError(msg)
             # Filing is a change to the element: approved and locked ones stay put (all or none).
-            check_all_untouched([element_from_row(row) for row in found])
+            guard_all([element_from_row(row) for row in found], WriteKind.FILING)
+            events = events_for(audit, origins)
             try:
+                # Only what really changes folder is a change to the element: a new
+                # revision, last made by the actor of the event.
                 await session.execute(
                     update(ElementRecord)
-                    .where(ElementRecord.id.in_(wanted))
-                    .values(package_id=package_id)
+                    .where(
+                        ElementRecord.id.in_(wanted),
+                        ElementRecord.package_id.is_distinct_from(package_id),
+                    )
+                    .values(
+                        package_id=package_id,
+                        revision=ElementRecord.revision + 1,
+                        last_modified_by_sub=author_of(events),
+                    )
                     .execution_options(synchronize_session=False)
                 )
             except IntegrityError as error:
@@ -329,4 +361,4 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
-            write_events(session, events_for(audit, origins))
+            write_events(session, events)

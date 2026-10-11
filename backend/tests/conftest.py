@@ -25,10 +25,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from ea.domain.approval import check_all_untouched, check_untouched, is_frozen
+from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
-    AuditAction,
     AuditEvent,
     AuditFilter,
     AuditOf,
@@ -370,10 +369,21 @@ class InMemoryRepository:
         self.relationships: dict[UUID, Relationship] = {}
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+        events = events_for(audit, element)
+        element = replace(element, last_modified_by_sub=events[0].actor_sub if events else None)
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
-        self.audit_log.append(events_for(audit, element))
+        self.audit_log.append(events)
         return element
+
+    def touch(self, element_ids: Iterable[UUID], events: Sequence[AuditEvent]) -> None:
+        """What the real repositories do to a changed element: a new revision and an author."""
+        author = events[0].actor_sub if events else None
+        for element_id in element_ids:
+            element = self.elements[element_id]
+            self.elements[element_id] = replace(
+                element, revision=element.revision + 1, last_modified_by_sub=author
+            )
 
     async def get_element(self, element_id: UUID) -> Element | None:
         return self.elements.get(element_id)
@@ -398,8 +408,12 @@ class InMemoryRepository:
         if replace(after, updated_at=before.updated_at) == before:
             return before  # nothing observable changed: no write, no event
         self._refuse_a_taken_address(after)
-        after = replace(after, revision=before.revision + 1)
         events = events_for(audit, ElementChange(before, after))
+        after = replace(
+            after,
+            revision=before.revision + 1,
+            last_modified_by_sub=events[0].actor_sub if events else None,
+        )
         self.elements[element_id] = after
         self.audit_log.append(events)
         return after
@@ -407,20 +421,14 @@ class InMemoryRepository:
     async def transition_element(
         self,
         element_id: UUID,
-        change: Callable[[Element, str | None], Element],
+        change: Callable[[Element], Element],
         *,
         audit: AuditOf[ElementChange],
     ) -> Element:
         if element_id not in self.elements:
             raise ElementNotFoundError(str(element_id))
         before = self.elements[element_id]
-        mine = [
-            e
-            for e in self.audit_log.events
-            if e.entity_id == element_id
-            and e.action in (AuditAction.ELEMENT_CREATED, AuditAction.ELEMENT_UPDATED)
-        ]
-        after = change(before, mine[-1].actor_sub if mine else None)
+        after = change(before)
         events = events_for(audit, ElementChange(before, after))
         self.elements[element_id] = after
         self.audit_log.append(events)
@@ -452,12 +460,18 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    def _review_ends(self, end_ids: Sequence[UUID], ends: EndsReview) -> list[ElementChange]:
+    def _review_ends(
+        self, end_ids: Sequence[UUID], ends: EndsReview, events: Sequence[AuditEvent]
+    ) -> list[ElementChange]:
         """What the repository does to the elements at the ends of a link, in its transaction."""
         missing = [i for i in end_ids if i not in self.elements]
         if missing:
             raise ElementNotFoundError(str(missing[0]))
-        changes = ends.apply(self.elements[i] for i in set(end_ids))
+        author = events[0].actor_sub if events else None
+        changes = [
+            ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
+            for c in ends.apply(self.elements[i] for i in set(end_ids))
+        ]
         for change in changes:
             self.elements[change.after.id] = change.after
         return changes
@@ -494,13 +508,14 @@ class InMemoryRepository:
         audit: AuditOf[Relationship],
         ends: EndsReview | None = None,
     ) -> Relationship:
+        events = events_for(audit, relationship)
         reviewed = (
-            self._review_ends((relationship.source_id, relationship.target_id), ends)
+            self._review_ends((relationship.source_id, relationship.target_id), ends, events)
             if ends is not None
             else []
         )
         self.relationships[relationship.id] = relationship
-        self.audit_log.append(events_for(audit, relationship))
+        self.audit_log.append(events)
         for end in reviewed:
             self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
         return relationship
@@ -528,12 +543,12 @@ class InMemoryRepository:
         stored = self.relationships.get(relationship_id)
         if stored is None:
             return False
+        events = events_for(audit, stored)
         reviewed = (
-            self._review_ends((stored.source_id, stored.target_id), ends)
+            self._review_ends((stored.source_id, stored.target_id), ends, events)
             if ends is not None
             else []
         )
-        events = events_for(audit, stored)
         del self.relationships[relationship_id]
         self.audit_log.append(events)
         for end in reviewed:
@@ -650,7 +665,11 @@ class InMemoryDocuments:
         """Stand in for the repository reading the element under its lock (docs/adr/0046)."""
         element = self.graph.elements.get(element_id) if self.graph is not None else None
         if element is not None:
-            check_untouched(element)
+            guard_element_write(element, WriteKind.DOCUMENT)
+
+    def _touch(self, element_id: UUID, events: Sequence[AuditEvent]) -> None:
+        if self.graph is not None and element_id in self.graph.elements:
+            self.graph.touch([element_id], events)
 
     async def add(
         self,
@@ -660,6 +679,7 @@ class InMemoryDocuments:
         audit: AuditOf[Document],
     ) -> Document:
         self._refuse_a_frozen_element(document.element_id)
+        events = events_for(audit, document)
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
             for stored in self.documents.values()
@@ -669,7 +689,8 @@ class InMemoryDocuments:
             raise DuplicateDocumentError(msg)
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
-        self.audit_log.append(events_for(audit, document))
+        self.audit_log.append(events)
+        self._touch(document.element_id, events)
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -693,12 +714,15 @@ class InMemoryDocuments:
     ) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
-        if self.documents[document.id].content != document.content:
+        changing = self.documents[document.id].content != document.content
+        if changing:
             self._refuse_a_frozen_element(document.element_id)
         events = events_for(audit, self.documents[document.id])
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
         self.audit_log.append(events)
+        if changing:
+            self._touch(document.element_id, events)
         return document
 
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
@@ -712,6 +736,7 @@ class InMemoryDocuments:
         self.chunks.pop(document_id, None)
         del self.documents[document_id]
         self.audit_log.append(events)
+        self._touch(stored.element_id, events)
         return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
@@ -1106,8 +1131,9 @@ class InMemoryPackages:
                 msg = "the package still holds sub-packages, elements or diagrams"
                 raise PackageNotEmptyError(msg)
         if not require_empty:
-            check_all_untouched(
-                [e for e in self._graph.elements.values() if e.package_id == package_id]
+            guard_all(
+                [e for e in self._graph.elements.values() if e.package_id == package_id],
+                WriteKind.FILING,
             )
         children = [p for p in self.packages.values() if p.parent_id == package_id]
         for child in children:  # checked before anything moves: all or none
@@ -1128,6 +1154,9 @@ class InMemoryPackages:
         )
         for child in children:
             self.packages[child.id] = replace(child, parent_id=into)
+        self._graph.touch(
+            [e.id for e in self._graph.elements.values() if e.package_id == package_id], events
+        )
         for element_id, element in list(self._graph.elements.items()):
             if element.package_id == package_id:
                 self._graph.elements[element_id] = replace(element, package_id=into)
@@ -1150,11 +1179,19 @@ class InMemoryPackages:
             raise ElementNotFoundError(f"no element with id {', '.join(missing)}")
         if package_id is not None and package_id not in self.packages:
             raise PackageNotFoundError(str(package_id))
-        check_all_untouched([self._graph.elements[i] for i in dict.fromkeys(element_ids)])
+        guard_all([self._graph.elements[i] for i in dict.fromkeys(element_ids)], WriteKind.FILING)
         events = events_for(
             audit, {i: self._graph.elements[i].package_id for i in dict.fromkeys(element_ids)}
         )
         self.audit_log.append(events)
+        self._graph.touch(
+            [
+                i
+                for i in dict.fromkeys(element_ids)
+                if self._graph.elements[i].package_id != package_id
+            ],
+            events,
+        )
         for element_id in element_ids:
             self._graph.elements[element_id] = replace(
                 self._graph.elements[element_id], package_id=package_id

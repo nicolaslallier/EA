@@ -20,7 +20,7 @@ from ea.domain.model import Relationship
 from ea.domain.ports import EndsReview
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.caller import acting_as
-from tests.conftest import an_approver
+from tests.conftest import an_approver, an_editor
 from tests.integration.test_audit_registry import START, World
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -142,7 +142,7 @@ async def test_a_link_and_the_review_it_causes_commit_or_fail_together(
     link = Relationship.between(R.ASSOCIATION, approved, other, now=START)
     await graph.add_relationship(link, audit=(), ends=ends)
     assert await state_of(engine_at_head, approved.id) == ("in_review", False, 2)
-    assert await state_of(engine_at_head, other.id) == ("draft", False, 1)
+    assert await state_of(engine_at_head, other.id) == ("draft", False, 2)  # a link is a change
 
     await put_in_state(engine_at_head, approved.id, "approved")
     assert await graph.delete_relationship(link.id, audit=(), ends=ends)
@@ -318,19 +318,18 @@ async def test_two_simultaneous_transitions_let_exactly_one_through(
     assert len(approvals) == 1
 
 
-async def test_an_element_older_than_the_journal_cannot_be_approved_by_anyone_who_cannot_be_checked(
+async def test_an_element_whose_last_author_is_unknown_cannot_be_approved(
     engine_at_head: AsyncEngine,
 ) -> None:
-    """No journal entry about the element: the separation rule refuses, it is never skipped."""
+    """A missing fact about who changed it: the separation rule refuses, it is never skipped."""
     world = World(engine_at_head)
     element_id = await in_review(world)
     revision = (await world.graph.get_element(element_id)).revision
     async with engine_at_head.begin() as connection:
-        await connection.execute(text("ALTER TABLE audit_events DISABLE TRIGGER ALL"))
         await connection.execute(
-            text("DELETE FROM audit_events WHERE entity_id = :id"), {"id": element_id}
+            text("UPDATE elements SET last_modified_by_sub = NULL WHERE id = :id"),
+            {"id": element_id},
         )
-        await connection.execute(text("ALTER TABLE audit_events ENABLE TRIGGER ALL"))
 
     with acting_as(an_approver()), pytest.raises(NotAuthorisedError, match="unknown"):
         await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=revision)
@@ -367,7 +366,7 @@ async def test_the_documents_of_an_approved_or_locked_element_are_frozen_with_it
     for locked in (False, True):
         await put_in_state(engine_at_head, element.id, "approved", locked=locked)
         with acting_as(an_approver()):  # not even an approver: reopen first
-            with pytest.raises(ElementLockedError, match="reopen"):
+            with pytest.raises(ElementLockedError, match=r"reopen|unlock"):
                 await documents.attach_text(element.id, filename="x.md", content="# X")
             with pytest.raises(ElementLockedError):
                 await documents.revise_text(kept.id, filename="runbook.md", content="# Changed")
@@ -579,3 +578,142 @@ async def test_an_approval_landing_during_an_address_change_refuses_it(
         await assigner
 
     assert "ip_address" not in (await world.graph.get_element(element_id)).properties
+
+
+# --- Every door records who changed the element, and moves its revision (docs/adr/0046) ---
+
+
+async def authored(engine: AsyncEngine, element_id: UUID) -> tuple[Any, ...]:
+    async with engine.connect() as connection:
+        row = await connection.execute(
+            text("SELECT last_modified_by_sub, revision FROM elements WHERE id = :id"),
+            {"id": element_id},
+        )
+        return tuple(row.one())
+
+
+async def test_who_adds_a_document_cannot_approve_the_element(engine_at_head: AsyncEngine) -> None:
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)  # created and submitted by editor-1
+
+    with acting_as(an_approver()):  # approver-1 adds a document: now the last author
+        await documents.attach_text(element_id, filename="d.md", content="# D")
+        fresh = (await world.graph.get_element(element_id)).revision
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=fresh)
+    assert (await authored(engine_at_head, element_id))[0] == "approver-1"
+
+    with acting_as(an_approver(subject="approver-2", username="v")):
+        approved = await world.graph.transition_element(
+            element_id, Tr.APPROVE, expected_revision=fresh
+        )
+    assert approved.approval_state.value == "approved"
+
+
+async def test_a_document_added_after_the_approver_read_makes_the_approval_stale(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)
+    with acting_as(an_approver(subject="v", username="v")):
+        read = (await world.graph.get_element(element_id)).revision  # V reads revision n
+    with acting_as(an_approver()):  # U adds a document
+        await documents.attach_text(element_id, filename="d.md", content="# D")
+
+    with acting_as(an_approver(subject="v", username="v")):
+        with pytest.raises(ApprovalStaleError):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=read)
+        # discarding it is a change too
+        document = (await documents.list_for_element(element_id))[0]
+    after_add = (await authored(engine_at_head, element_id))[1]
+    with acting_as(an_editor(subject="e2", username="e2")):
+        await documents.discard(document.id)
+    assert (await authored(engine_at_head, element_id)) == ("e2", after_add + 1)
+
+
+async def test_filing_an_element_is_a_change_by_the_one_who_files_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    element_id = await in_review(world)
+    before = (await authored(engine_at_head, element_id))[1]
+
+    with acting_as(an_approver()):
+        await world.packages.move_elements([element_id], package.package.id)
+        assert await authored(engine_at_head, element_id) == ("approver-1", before + 1)
+        await world.packages.move_elements([element_id], package.package.id)  # nothing moves
+        assert await authored(engine_at_head, element_id) == ("approver-1", before + 1)
+        fresh = (await world.graph.get_element(element_id)).revision
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=fresh)
+
+    with acting_as(an_editor(subject="e3", username="e3")):  # re-parenting counts too
+        await world.packages.delete(package.package.id, move_contents_to=None)
+    assert await authored(engine_at_head, element_id) == ("e3", before + 2)
+
+
+async def test_a_link_is_a_change_to_both_of_its_ends(engine_at_head: AsyncEngine) -> None:
+    world = World(engine_at_head)
+    one = await world.graph.create_element(element_type=E.NODE, name="a")
+    two = await world.graph.create_element(element_type=E.NODE, name="b")
+
+    with acting_as(an_editor(subject="linker", username="linker")):
+        await world.graph.connect(
+            relationship_type=R.ASSOCIATION, source_id=one.id, target_id=two.id
+        )
+
+    assert await authored(engine_at_head, one.id) == ("linker", 2)
+    assert await authored(engine_at_head, two.id) == ("linker", 2)
+
+
+async def test_overlapping_batches_in_opposite_orders_do_not_deadlock(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    first = await world.packages.create(name="One")
+    second = await world.packages.create(name="Two")
+    ids = [
+        (await world.graph.create_element(element_type=E.NODE, name=f"n{i}")).id for i in range(12)
+    ]
+
+    results = await asyncio.gather(
+        world.packages.move_elements(ids, first.package.id),
+        world.packages.move_elements(list(reversed(ids)), second.package.id),
+        *(world.graph.update_element(i, description="x") for i in ids[::3]),
+        *(world.graph.update_element(i, description="y") for i in reversed(ids[1::3])),
+        return_exceptions=True,
+    )
+
+    assert [r for r in results if isinstance(r, BaseException)] == []
+
+
+async def test_the_sql_twin_of_the_rule_agrees_with_it_for_every_state(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """The restoration reads its protection as a set; it must be the rule of every other door."""
+    from ea.domain.approval import ApprovalState, WriteKind, guard_element_write
+    from ea.repositories.baseline_store import approved_or_locked
+
+    world = World(engine_at_head)
+    cases = [("draft", False), ("in_review", False), ("approved", False), ("approved", True)]
+    ids = {}
+    for index, (state, locked) in enumerate(cases):
+        element = await world.graph.create_element(element_type=E.NODE, name=f"n{index}")
+        await put_in_state(engine_at_head, element.id, state, locked=locked)
+        ids[element.id] = (state, locked)
+
+    sessions = create_session_factory(engine_at_head)
+    async with sessions() as session:
+        protected = await approved_or_locked(session)
+    for element_id, (state, locked) in ids.items():
+        element = await world.graph.get_element(element_id)
+        assert element.approval_state is ApprovalState(state)
+        try:
+            guard_element_write(element, WriteKind.RESTORE)
+            refused = False
+        except ElementLockedError:
+            refused = True
+        assert (element_id in protected) is refused, (state, locked)

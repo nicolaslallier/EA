@@ -10,10 +10,11 @@ import pytest
 from ea.domain.approval import ApprovalState as S
 from ea.domain.approval import Transition as Tr
 from ea.domain.approval import (
+    WriteKind,
     allowed_transitions,
     apply_transition,
-    check_modifiable,
-    check_untouched,
+    guard_all,
+    guard_element_write,
     reviewed_after_change,
 )
 from ea.domain.archimate import ElementType as E
@@ -227,25 +228,70 @@ class TestSeparationOfDuties:
         assert rejected.approval_state is S.DRAFT
 
 
+#: What each kind of write may do to an element in each state — written out, not derived.
+#: ok / "approver" (only a caller with the approver role) / no (refused to everyone).
+WRITES = {
+    "draft": dict.fromkeys(WriteKind, "ok"),
+    "in_review": dict.fromkeys(WriteKind, "ok"),
+    "approved": {
+        WriteKind.CONTENT: "approver",
+        WriteKind.LINK: "ok",
+        WriteKind.DOCUMENT: "no",
+        WriteKind.FILING: "no",
+        WriteKind.RESTORE: "no",
+    },
+    "locked": dict.fromkeys(WriteKind, "no"),
+}
+
+
+def element_in(name: str) -> Element:
+    return {
+        "draft": an_element(S.DRAFT),
+        "in_review": an_element(S.IN_REVIEW),
+        "approved": an_element(S.APPROVED),
+        "locked": an_element(S.APPROVED, locked=True),
+    }[name]
+
+
 class TestWhatReviewForbids:
-    def test_a_draft_and_an_element_in_review_stay_editable(self) -> None:
-        check_modifiable(an_element(S.DRAFT), an_editor())
-        check_modifiable(an_element(S.IN_REVIEW), an_editor())
+    @pytest.mark.parametrize("kind", list(WriteKind))
+    @pytest.mark.parametrize("state", list(WRITES))
+    @pytest.mark.parametrize("who", ["editor", "approver", "nobody"])
+    def test_the_whole_table_of_writes(self, state: str, kind: WriteKind, who: str) -> None:
+        caller = {"editor": an_editor(), "approver": an_approver(), "nobody": None}[who]
+        verdict = WRITES[state][kind]
+        allowed = verdict == "ok" or (verdict == "approver" and who == "approver")
 
-    def test_an_approved_element_is_for_approvers_only(self) -> None:
-        with pytest.raises(ElementLockedError, match="approved"):
-            check_modifiable(an_element(S.APPROVED), an_editor())
-        check_modifiable(an_element(S.APPROVED), an_approver())
+        if allowed:
+            guard_element_write(element_in(state), kind, caller)
+        else:
+            with pytest.raises(ElementLockedError):
+                guard_element_write(element_in(state), kind, caller)
 
-    def test_a_locked_element_is_for_nobody(self) -> None:
-        with pytest.raises(ElementLockedError, match="locked"):
-            check_modifiable(an_element(S.APPROVED, locked=True), an_approver())
+    def test_the_refusal_says_what_to_do(self) -> None:
+        with pytest.raises(ElementLockedError, match="unlock"):
+            guard_element_write(element_in("locked"), WriteKind.CONTENT, an_approver())
+        with pytest.raises(ElementLockedError, match="reopen"):
+            guard_element_write(element_in("approved"), WriteKind.DOCUMENT)
+        with pytest.raises(ElementLockedError, match="approver"):
+            guard_element_write(element_in("approved"), WriteKind.CONTENT, an_editor())
 
-    def test_a_bulk_operation_leaves_approved_and_locked_elements_alone_whoever_asks(self) -> None:
-        check_untouched(an_element(S.IN_REVIEW))
-        for element in (an_element(S.APPROVED), an_element(S.APPROVED, locked=True)):
-            with pytest.raises(ElementLockedError, match="reopen"):
-                check_untouched(element)
+    def test_a_batch_is_refused_whole_with_an_exact_count_and_a_bounded_list(self) -> None:
+        batch = [replace(an_element(S.APPROVED), name=f"n{i:02d}") for i in range(30)]
+        batch.append(an_element(S.DRAFT))
+
+        with pytest.raises(ElementLockedError, match=r"30 element\(s\)") as raised:
+            guard_all(batch, WriteKind.FILING)
+
+        assert "n19" in str(raised.value) and "n20" not in str(raised.value)
+        assert "and 10 more" in str(raised.value)
+        guard_all([an_element(S.DRAFT), an_element(S.IN_REVIEW)], WriteKind.FILING)
+
+    def test_a_sample_of_a_longer_list_keeps_the_true_total(self) -> None:
+        sample = [replace(an_element(S.APPROVED), name="a")]
+
+        with pytest.raises(ElementLockedError, match=r"500 element\(s\)"):
+            guard_all(sample, WriteKind.FILING, total=500)
 
     def test_changing_an_approved_element_sends_it_back_to_review(self) -> None:
         back = reviewed_after_change(an_element(S.APPROVED))
@@ -271,11 +317,10 @@ class TestEverythingNotListedIsRefused:
                 )
 
     def test_an_unknown_state_is_not_modifiable_by_anyone(self) -> None:
-        for caller in (an_editor(), an_approver()):
-            with pytest.raises(ElementLockedError):
-                check_modifiable(self.bogus_state(), caller)
-        with pytest.raises(ElementLockedError):
-            check_untouched(self.bogus_state())
+        for kind in WriteKind:
+            for caller in (an_editor(), an_approver(), None):
+                with pytest.raises(ElementLockedError):
+                    guard_element_write(self.bogus_state(), kind, caller)
 
     def test_an_unknown_role_or_no_role_may_take_no_transition(self) -> None:
         stranger = Caller("s", "n", frozenset({"ea-god", "ea-editors"}))

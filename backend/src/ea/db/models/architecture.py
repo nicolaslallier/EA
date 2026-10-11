@@ -91,6 +91,7 @@ class ElementRecord(Base):
     approved_by_sub: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Bumped by every write to the element's content; an approval names the one it saw.
+    last_modified_by_sub: Mapped[str | None] = mapped_column(Text, nullable=True)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("1"))
 
 

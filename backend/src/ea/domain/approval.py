@@ -170,54 +170,89 @@ def apply_transition(
             return replace(element, locked=False)
 
 
+class WriteKind(StrEnum):
+    """The ways to write to an element, or to what hangs from it (docs/adr/0046)."""
+
+    CONTENT = "content"  # its fields and properties; deleting it
+    LINK = "link"  # a relationship added to or removed from it
+    DOCUMENT = "document"  # a document attached, revised or discarded
+    FILING = "filing"  # moved to another package, or re-filed when its package is deleted
+    RESTORE = "restore"  # rewritten or deleted by a baseline restoration
+
+
 def is_frozen(element: Element) -> bool:
-    """Approved or locked: what a bulk operation leaves alone."""
+    """Approved or locked, or in a state this code does not know: the bulk writes leave it alone."""
     return element.locked or element.approval_state not in _EDITABLE
 
 
-def check_modifiable(element: Element, caller: Caller) -> None:
-    """Refuse a change the element's state forbids this caller."""
+def guard_element_write(element: Element, kind: WriteKind, caller: Caller | None = None) -> None:
+    """THE rule of what review lets through — every way into an element asks it.
+
+    Called with the element as read under its row lock, in the transaction that
+    writes (`update_element`, `delete_element`, a link, a document, a filing, a
+    restoration's protection: see `tests/unit/test_review_guard.py`). Raises
+    `ElementLockedError`; returns when the write may go on.
+
+    - locked, or a state this code does not know: refused to everyone;
+    - draft and in review: allowed;
+    - approved: a change to its content only by an approver (who sends it back to
+      review), a link by any editor (same consequence); a document, a filing or
+      a restoration by nobody — they cannot send it back to review in the same
+      transaction, so an approver reopens it first.
+
+    No caller (`None`) never lifts a refusal.
+    """
     if element.locked:
         msg = f"{element.name!r} is locked: an approver must unlock it first"
         raise ElementLockedError(msg)
     if element.approval_state in _EDITABLE:
         return
-    if element.approval_state is ApprovalState.APPROVED and caller.can_approve:
-        return
-    msg = f"{element.name!r} is {element.approval_state}: only an approver may change it"
-    raise ElementLockedError(msg)
-
-
-def check_untouched(element: Element) -> None:
-    """Refuse a change no role may make while the element is approved or locked.
-
-    For what is not an edit of the element's facts but still moves it or its
-    material — filing it elsewhere, attaching a document — and which therefore
-    cannot send it back to review in the same transaction.
-    """
-    if is_frozen(element):
-        state = "locked" if element.locked else str(element.approval_state)
-        msg = f"{element.name!r} is {state}: an approver must reopen it first"
+    if element.approval_state is ApprovalState.APPROVED:
+        if kind is WriteKind.LINK:
+            return
+        if kind is WriteKind.CONTENT:
+            if caller is not None and caller.can_approve:
+                return
+            msg = f"{element.name!r} is approved: only an approver may change it"
+            raise ElementLockedError(msg)
+        msg = f"{element.name!r} is approved: an approver must reopen it first"
         raise ElementLockedError(msg)
-
-
-def check_all_untouched(elements: Sequence[Element], *, more: bool = False) -> None:
-    """`check_untouched` over a batch: all or none, naming a bounded handful.
-
-    `more` says the batch given is only the first of a longer list of frozen
-    elements.
-    """
-    frozen = [e for e in elements if is_frozen(e)]
-    if not frozen:
-        return
-    shown = ", ".join(repr(e.name[:60]) for e in frozen[:_NAMED])
-    tail = " and others" if more or len(frozen) > _NAMED else ""
-    msg = f"approved or locked, an approver must reopen them first: {shown}{tail}"
+    msg = f"{element.name!r} is {element.approval_state}: an approver must reopen it first"
     raise ElementLockedError(msg)
 
 
 #: How many names a refusal over a batch spells out.
-_NAMED: Final = 5
+_NAMED: Final = 20
+
+
+def guard_all(
+    elements: Sequence[Element],
+    kind: WriteKind,
+    caller: Caller | None = None,
+    *,
+    total: int | None = None,
+) -> None:
+    """`guard_element_write` over a batch: all or none, with an exact count and a bounded list.
+
+    `total` is the true number of refused elements when `elements` is only a
+    sample of them.
+    """
+    refused: list[Element] = []
+    for element in elements:
+        try:
+            guard_element_write(element, kind, caller)
+        except ElementLockedError:
+            refused.append(element)
+    if not refused:
+        return
+    count = max(total or 0, len(refused))
+    shown = ", ".join(repr(e.name[:60]) for e in refused[:_NAMED])
+    tail = f" and {count - _NAMED} more" if count > _NAMED else ""
+    msg = (
+        f"{count} element(s) are approved or locked ({kind.value}), "
+        f"an approver must reopen them first: {shown}{tail}"
+    )
+    raise ElementLockedError(msg)
 
 
 def reviewed_after_change(element: Element) -> Element:

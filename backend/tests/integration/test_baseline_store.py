@@ -15,7 +15,13 @@ from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction, AuditChannel, AuditEvent, AuditFilter
-from ea.domain.baselines import Baseline, BaselineLimits, RestorePlan, diff_snapshots
+from ea.domain.baselines import (
+    Baseline,
+    BaselineLimits,
+    RestorePlan,
+    diff_snapshots,
+    element_content,
+)
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import BaselineNotFoundError, BaselineTooLargeError, DuplicateBaselineError
@@ -133,8 +139,9 @@ async def test_a_capture_copies_elements_links_boxes_and_the_place_of_each_eleme
     assert (baseline.element_count, baseline.relationship_count, baseline.box_count) == (2, 1, 1)
     snapshot = await model.baselines.snapshot_of(baseline.id)
     current = await model.baselines.current_snapshot()
-    assert sorted(snapshot.elements, key=lambda e: e.name) == sorted(
-        current.elements, key=lambda e: e.name
+    # A baseline copies what an element says, not its review state or its revision.
+    assert sorted((element_content(e) for e in snapshot.elements), key=str) == sorted(
+        (element_content(e) for e in current.elements), key=str
     )
     assert [r.id for r in snapshot.relationships] == [model.link.id]
     assert [(b.diagram_id, b.x) for b in snapshot.boxes] == [(model.diagram.id, 5.0)]

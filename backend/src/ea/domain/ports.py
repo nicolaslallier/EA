@@ -82,18 +82,17 @@ class EndsReview:
     audit: Callable[[ElementChange], Sequence[AuditEvent]]
 
     def apply(self, ends: Iterable[Element]) -> list[ElementChange]:
-        """The elements this review really changes, in id order, once each.
+        """Every end, in id order, once each, as it must be stored.
 
-        `ends` are the elements as read under their locks; one that `change`
-        leaves as it is (a draft, say) is not in the answer. Each change is a new
-        revision of its element. `change` raising refuses the whole link.
+        `ends` are the elements as read under their locks. A link is a change to
+        both of its ends: each gets a new revision, and `change` decides what
+        else (an approved end goes back to review). `change` raising refuses the
+        whole link.
         """
-        changes: list[ElementChange] = []
-        for before in sorted({e.id: e for e in ends}.values(), key=lambda e: e.id):
-            after = self.change(before)
-            if after != before:
-                changes.append(ElementChange(before, replace(after, revision=before.revision + 1)))
-        return changes
+        return [
+            ElementChange(before, replace(self.change(before), revision=before.revision + 1))
+            for before in sorted({e.id: e for e in ends}.values(), key=lambda e: e.id)
+        ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,16 +198,15 @@ class ArchitectureRepository(Protocol):
     async def transition_element(
         self,
         element_id: UUID,
-        change: Callable[[Element, str | None], Element],
+        change: Callable[[Element], Element],
         *,
         audit: AuditOf[ElementChange],
     ) -> Element:
         """Move an element through review, deciding on the row read under its lock.
 
-        `change` receives that row and the subject that made its last change
-        (`element.created` / `element.updated` in the journal, read in the same
-        transaction; `None` if there is none) and returns the element after the
-        transition — or raises to refuse. Only the review columns are written.
+        `change` receives that row — with its state, its revision and the subject
+        that last changed it — and returns the element after the transition, or
+        raises to refuse. Only the review columns are written.
         """
         ...
 

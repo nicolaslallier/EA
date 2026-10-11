@@ -40,6 +40,16 @@ def upgrade() -> None:
         "elements",
         sa.Column("revision", sa.BigInteger(), server_default=sa.text("1"), nullable=False),
     )
+    op.add_column("elements", sa.Column("last_modified_by_sub", sa.Text(), nullable=True))
+    # Data migration, one statement over static text: whoever the journal says changed an
+    # element last; `backfill` — nobody's subject — for an element it never heard of.
+    # An approver can then approve an old element, never one they changed themselves.
+    op.execute(
+        "UPDATE elements SET last_modified_by_sub = COALESCE("
+        "(SELECT a.actor_sub FROM audit_events a WHERE a.entity_id = elements.id "
+        "AND a.action IN ('element.created', 'element.updated') "
+        "ORDER BY a.at DESC, a.id DESC LIMIT 1), 'backfill')"
+    )
     op.create_check_constraint(
         op.f("ck_elements_approval_state_known"),
         "elements",
@@ -55,6 +65,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_constraint(op.f("ck_elements_locked_implies_approved"), "elements", type_="check")
     op.drop_constraint(op.f("ck_elements_approval_state_known"), "elements", type_="check")
+    op.drop_column("elements", "last_modified_by_sub")
     op.drop_column("elements", "revision")
     op.drop_column("elements", "approved_at")
     op.drop_column("elements", "approved_by_sub")

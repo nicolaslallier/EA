@@ -20,14 +20,15 @@ from uuid import UUID
 
 from ea.domain.approval import (
     Transition,
+    WriteKind,
     apply_transition,
-    check_modifiable,
+    guard_element_write,
     needs_approver,
     reviewed_after_change,
 )
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
-from ea.domain.errors import CyclicContainmentError, ElementLockedError, ElementNotFoundError
+from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview
@@ -96,12 +97,12 @@ class ArchitectureService:
         """
 
         def change(end: Element) -> Element:
-            if end.locked:
-                msg = f"{end.name!r} is locked: its relationships cannot change"
-                raise ElementLockedError(msg)
+            guard_element_write(end, WriteKind.LINK)
             return reviewed_after_change(end)
 
         def audit(changed: ElementChange) -> tuple[AuditEvent, ...]:
+            if changed.before.approval_state is changed.after.approval_state:
+                return ()  # only the revision moved: the link's own event says it all
             return (
                 self._trail.event(
                     AuditAction.ELEMENT_UPDATED,
@@ -199,7 +200,7 @@ class ArchitectureService:
             Review and locking are decided here, on that row and not on the
             copy read above: a lock put on the element meanwhile still refuses.
             """
-            check_modifiable(stored, caller)
+            guard_element_write(stored, WriteKind.CONTENT, caller)
             now = self._now()
             updated = stored
             if name is not None:
@@ -284,7 +285,7 @@ class ArchitectureService:
             )
 
         def guard(stored: Element) -> None:
-            check_modifiable(stored, caller)
+            guard_element_write(stored, WriteKind.CONTENT, caller)
 
         with logged_refusal("lock_refused", [element_id]):
             deleted = await self._repository.delete_element(element_id, audit=events, guard=guard)
@@ -318,13 +319,13 @@ class ArchitectureService:
         else:
             require_editor()
 
-        def change(stored: Element, last_author: str | None) -> Element:
+        def change(stored: Element) -> Element:
             return apply_transition(
                 stored,
                 transition,
                 caller,
                 now=self._now(),
-                last_author=last_author,
+                last_author=stored.last_modified_by_sub,
                 expected_revision=expected_revision,
                 separate_duties=self._separate_duties,
             )

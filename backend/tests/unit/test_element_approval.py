@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from uuid import uuid4
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -18,6 +19,7 @@ from ea.domain.errors import (
     NotAuthenticatedError,
     NotAuthorisedError,
 )
+from ea.domain.model import Element
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from tests.conftest import (
@@ -29,6 +31,10 @@ from tests.conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def element_of(repository: InMemoryRepository, element_id: UUID) -> Element:
+    return repository.elements[element_id]
 
 
 def reviewing(
@@ -144,7 +150,9 @@ async def test_with_no_known_author_the_approval_is_refused(
     service = reviewing(repository)
     element = await service.create_element(element_type=E.NODE, name="db-01")
     await service.transition_element(element.id, Tr.SUBMIT)
-    audit_log.events.clear()  # the journal says nothing about who last changed it
+    repository.elements[element.id] = replace(
+        element_of(repository, element.id), last_modified_by_sub=None
+    )
 
     with acting_as(an_approver()), pytest.raises(NotAuthorisedError, match="unknown"):
         await service.transition_element(element.id, Tr.APPROVE, expected_revision=1)

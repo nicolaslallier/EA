@@ -86,6 +86,12 @@ class Element:
     #: Counts the changes to the element's content (docs/adr/0046). An approval is
     #: of one revision: approving a revision someone has since changed is refused.
     revision: int = 1
+    #: The subject that last changed the element (docs/adr/0046): its creation, its
+    #: content, a link, a document, its filing, a restoration. Set by the
+    #: repository, under the row's lock, from the actor of the event it writes —
+    #: never by a client. Unknown (`None`) is not "nobody": the separation of
+    #: duties refuses to approve an element whose last author is unknown.
+    last_modified_by_sub: str | None = None
 
     @classmethod
     def create(

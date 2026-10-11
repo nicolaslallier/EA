@@ -29,19 +29,19 @@ from sqlalchemy import (
     not_,
     or_,
     select,
+    update,
 )
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
-from ea.db.models.audit import AuditEventRecord
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.audit import AUDIT_LISTED_IDS, AuditAction, events_for
+from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     DomainError,
@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
 
-    from ea.domain.audit import AuditOf
+    from ea.domain.audit import AuditEvent, AuditOf
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ def element_row(element: Element) -> dict[str, Any]:
         "approved_by_sub": element.approved_by_sub,
         "approved_at": element.approved_at,
         "revision": element.revision,
+        "last_modified_by_sub": element.last_modified_by_sub,
     }
 
 
@@ -128,6 +129,7 @@ def element_from_row(row: ElementRecord) -> Element:
         approved_by_sub=row.approved_by_sub,
         approved_at=row.approved_at,
         revision=row.revision,
+        last_modified_by_sub=row.last_modified_by_sub,
     )
 
 
@@ -453,36 +455,20 @@ def frozen_clause() -> ColumnElement[bool]:
     )
 
 
-#: The journal entries that say who last changed an element's content.
-_AUTHORSHIP: Final = (AuditAction.ELEMENT_CREATED.value, AuditAction.ELEMENT_UPDATED.value)
-
-
-async def _last_author(session: AsyncSession, element_id: UUID) -> str | None:
-    """The subject of the newest creation or change of this element, if the journal has one.
-
-    Read in the transaction that holds the element's row lock, so no change can
-    slip between this answer and the transition it decides.
-    """
-    return (
-        await session.scalars(
-            select(AuditEventRecord.actor_sub)
-            .where(
-                AuditEventRecord.entity_id == element_id, AuditEventRecord.action.in_(_AUTHORSHIP)
-            )
-            .order_by(AuditEventRecord.at.desc(), AuditEventRecord.id.desc())
-            .limit(1)
-        )
-    ).first()
+def author_of(events: Sequence[AuditEvent]) -> str | None:
+    """The subject that did a write: the actor of the events it writes, set by the service."""
+    return events[0].actor_sub if events else None
 
 
 async def _review_ends(
-    session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview
+    session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview, author: str | None
 ) -> list[ElementChange]:
     """Lock the elements at the ends of a link, review them, write what changed.
 
     Locked in id order (two writers cannot wait on each other) and with
     `FOR NO KEY UPDATE`: a link insert only needs the key of its ends. A missing
-    end is the refusal an insert would have given.
+    end is the refusal an insert would have given. Each end is a new revision
+    last changed by `author`.
     """
     rows = {}
     for end_id in sorted(set(end_ids)):
@@ -493,7 +479,10 @@ async def _review_ends(
             msg = f"cannot link: the element {end_id} does not exist"
             raise ElementNotFoundError(msg)
         rows[end_id] = found
-    changes = ends.apply(element_from_row(row) for row in rows.values())
+    changes = [
+        ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
+        for c in ends.apply(element_from_row(row) for row in rows.values())
+    ]
     for change in changes:
         _write_review(rows[change.after.id], change.after)
     await session.flush()
@@ -501,10 +490,31 @@ async def _review_ends(
 
 
 def _write_review(row: ElementRecord, after: Element) -> None:
-    """The columns a review changes — and nothing the element says about itself."""
+    """The columns a review or a touch changes — and nothing the element says about itself."""
     wanted = element_row(after)
-    for column in ("approval_state", "locked", "approved_by_sub", "approved_at", "revision"):
+    for column in (
+        "approval_state",
+        "locked",
+        "approved_by_sub",
+        "approved_at",
+        "revision",
+        "last_modified_by_sub",
+    ):
         setattr(row, column, wanted[column])
+
+
+async def touch(session: AsyncSession, element_ids: Sequence[UUID], author: str | None) -> None:
+    """Record, in the writing transaction, that these elements were changed by `author`.
+
+    A new revision each, and the author the separation of duties looks at. The
+    rows are already locked by the caller.
+    """
+    if element_ids:
+        await session.execute(
+            update(ElementRecord)
+            .where(ElementRecord.id.in_(list(element_ids)))
+            .values(revision=ElementRecord.revision + 1, last_modified_by_sub=author)
+        )
 
 
 # --------------------------------------------------------------------------
@@ -521,10 +531,12 @@ class PostgresArchitectureRepository:
     # --- Elements ---------------------------------------------------------
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
+        events = events_for(audit, element)
+        element = replace(element, last_modified_by_sub=author_of(events))
         async with self._sessions.begin() as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
-            write_events(session, events_for(audit, element))
+            write_events(session, events)
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -572,32 +584,36 @@ class PostgresArchitectureRepository:
             }
             if not changed:
                 return before
-            # Every write to the content is a new revision: an approval names one.
-            after = replace(after, revision=before.revision + 1)
+            # Every write to the content is a new revision, by whoever the event says.
+            events = events_for(audit, ElementChange(before, after))
+            after = replace(
+                after, revision=before.revision + 1, last_modified_by_sub=author_of(events)
+            )
             changed["revision"] = after.revision
+            changed["last_modified_by_sub"] = after.last_modified_by_sub
             for column, value in {**changed, "updated_at": after.updated_at}.items():
                 setattr(row, column, value)
             await _flush_refusing(session, after)
-            write_events(session, events_for(audit, ElementChange(before, after)))
+            write_events(session, events)
         return after
 
     async def transition_element(
         self,
         element_id: UUID,
-        change: Callable[[Element, str | None], Element],
+        change: Callable[[Element], Element],
         *,
         audit: AuditOf[ElementChange],
     ) -> Element:
         async with self._sessions.begin() as session:
-            # The row, its state and its last author are all read under this lock:
-            # two transitions queue here, and a content change either committed
-            # before the read below or waits for this commit.
+            # The row — its state, its revision, its last author — is read under this
+            # lock: two transitions queue here, and a change to the element either
+            # committed before the read below or waits for this commit.
             row = await session.get(ElementRecord, element_id, with_for_update=True)
             if row is None:
                 msg = f"no element with id {element_id}"
                 raise ElementNotFoundError(msg)
             before = element_from_row(row)
-            after = change(before, await _last_author(session, element_id))
+            after = change(before)
             _write_review(row, after)
             await session.flush()
             write_events(session, events_for(audit, ElementChange(before, after)))
@@ -637,9 +653,15 @@ class PostgresArchitectureRepository:
         audit: AuditOf[Relationship],
         ends: EndsReview | None = None,
     ) -> Relationship:
+        events = events_for(audit, relationship)
         async with self._sessions.begin() as session:
             reviewed = (
-                await _review_ends(session, (relationship.source_id, relationship.target_id), ends)
+                await _review_ends(
+                    session,
+                    (relationship.source_id, relationship.target_id),
+                    ends,
+                    author_of(events),
+                )
                 if ends is not None
                 else []
             )
@@ -654,7 +676,7 @@ class PostgresArchitectureRepository:
                     "one of them does not exist"
                 )
                 raise ElementNotFoundError(msg) from error
-            write_events(session, events_for(audit, relationship))
+            write_events(session, events)
             for end in reviewed:
                 write_events(session, cast("EndsReview", ends).audit(end))
         return relationship
@@ -696,20 +718,24 @@ class PostgresArchitectureRepository:
         ends: EndsReview | None = None,
     ) -> bool:
         async with self._sessions.begin() as session:
-            reviewed: list[ElementChange] = []
-            if ends is not None:
-                # The ends first, then the link: deleting an element locks its
-                # row and then its links, so this is the one order that cannot deadlock.
-                found = await session.get(RelationshipRecord, relationship_id)
-                if found is None:
-                    return False
-                reviewed = await _review_ends(session, (found.source_id, found.target_id), ends)
+            # The ends first, then the link: deleting an element locks its row and
+            # then its links, so this is the one order that cannot deadlock.
+            found = await session.get(RelationshipRecord, relationship_id)
+            if found is None:
+                return False
+            events = events_for(audit, relationship_from_row(found))
+            reviewed = (
+                await _review_ends(
+                    session, (found.source_id, found.target_id), ends, author_of(events)
+                )
+                if ends is not None
+                else []
+            )
             row = await session.get(
                 RelationshipRecord, relationship_id, with_for_update=True, populate_existing=True
             )
             if row is None:
                 return False
-            events = events_for(audit, relationship_from_row(row))
             await session.execute(
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )

@@ -148,3 +148,40 @@ async def test_an_element_older_than_the_audit_trail_can_be_approved_by_an_appro
         assert approved.approval_state is ApprovalState.APPROVED
     finally:
         await asyncio.to_thread(command.downgrade, alembic_config, "base")
+
+
+async def test_the_last_author_of_an_old_element_is_the_journal_s_or_the_reserved_backfill(
+    postgres_engine: AsyncEngine, alembic_config: Config
+) -> None:
+    journalled, unknown = uuid4(), uuid4()
+    insert = text(
+        "INSERT INTO elements (id, element_type, layer, aspect, name, created_at, updated_at) "
+        "VALUES (:id, 'node', 'technology', 'active_structure', :name, :at, :at)"
+    )
+    await asyncio.to_thread(command.upgrade, alembic_config, "0010")
+    try:
+        async with postgres_engine.begin() as connection:
+            await connection.execute(insert, {"id": journalled, "name": "j", "at": AT})
+        await asyncio.to_thread(command.upgrade, alembic_config, "0012")  # journals `journalled`
+        async with postgres_engine.begin() as connection:
+            await connection.execute(insert, {"id": unknown, "name": "u", "at": AT})
+            await connection.execute(  # a later change by a real person
+                text(
+                    "INSERT INTO audit_events (id, at, actor_sub, actor_name, action, "
+                    "entity_kind, entity_id, request_id, channel) VALUES (:e, now(), 'alice', "
+                    "'alice', 'element.updated', 'element', :id, 'r', 'http')"
+                ),
+                {"e": uuid4(), "id": journalled},
+            )
+
+        await asyncio.to_thread(command.upgrade, alembic_config, "0013")
+
+        async with postgres_engine.connect() as connection:
+            rows = dict(
+                (
+                    await connection.execute(text("SELECT id, last_modified_by_sub FROM elements"))
+                ).all()
+            )
+        assert rows == {journalled: "alice", unknown: "backfill"}
+    finally:
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")

@@ -33,12 +33,12 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.document import ElementDocument
-from ea.domain.approval import check_untouched
+from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import events_for
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import DocumentNotFoundError, DuplicateDocumentError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
-from ea.repositories.architecture_store import element_from_row
+from ea.repositories.architecture_store import author_of, element_from_row, touch
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
@@ -66,10 +66,13 @@ async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing
     A change to a document is a change to its element (docs/adr/0046): the
     element's row is locked here — `FOR NO KEY UPDATE`, which a review
     transition's `UPDATE` waits for and waits on — its state is read under that
-    lock, a frozen element refuses, and the element's `revision` moves, so an
-    approval read before this write is stale after it. No document is written
-    without passing through here: `add`, `replace` and `delete` all call it, and
-    `tests/unit/test_review_guard.py` fails on a writer that does not.
+    lock and put to the one guard every way into an element asks
+    (`guard_element_write`), and the caller then `touch`es the element in this
+    same transaction: a new revision, so an approval read before this write is
+    stale after it, and the author, so they cannot approve what they changed.
+    No document is written without passing through here: `add`, `replace` and
+    `delete` all call it, and `tests/unit/test_review_guard.py` fails on a writer
+    that does not.
 
     A write that changes no text (a reindex rewrites passages) only takes
     `FOR SHARE`: it waits for a transition in flight, and changes nothing. The
@@ -82,11 +85,8 @@ async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing
         with_for_update={"key_share": True} if changing else {"read": True},
         populate_existing=True,
     )
-    if row is None or not changing:
-        return
-    check_untouched(element_from_row(row))
-    row.revision += 1
-    await session.flush()
+    if row is not None and changing:
+        guard_element_write(element_from_row(row), WriteKind.DOCUMENT)
 
 
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:
@@ -153,6 +153,7 @@ class PostgresDocumentRepository:
             created_at=document.created_at,
             updated_at=document.updated_at,
         )
+        events = events_for(audit, document)
         async with self._sessions.begin() as session:
             await _hold_the_element(session, document.element_id, changing=True)
             session.add(row)
@@ -171,7 +172,8 @@ class PostgresDocumentRepository:
                 msg = f"{document.filename!r} is already attached to this element"
                 raise DuplicateDocumentError(msg) from error
             session.add_all(_chunk_rows(document, chunks))
-            write_events(session, events_for(audit, document))
+            write_events(session, events)
+            await touch(session, [document.element_id], author_of(events))
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -242,13 +244,17 @@ class PostgresDocumentRepository:
                 msg = f"no document with id {document.id}"
                 raise DocumentNotFoundError(msg)
             before = _to_document(row)
+            events = events_for(audit, before)
+            changing = row.content != document.content
             row.content = document.content
             row.updated_at = document.updated_at
             await session.execute(
                 delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
             )
             session.add_all(_chunk_rows(document, chunks))
-            write_events(session, events_for(audit, before))
+            write_events(session, events)
+            if changing:
+                await touch(session, [row.element_id], author_of(events))
         return document
 
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
@@ -266,6 +272,7 @@ class PostgresDocumentRepository:
             events = events_for(audit, _to_document(row))
             await session.execute(delete(ElementDocument).where(ElementDocument.id == document_id))
             write_events(session, events)
+            await touch(session, [known.element_id], author_of(events))
         return True
 
     async def all_document_ids(self) -> tuple[UUID, ...]:

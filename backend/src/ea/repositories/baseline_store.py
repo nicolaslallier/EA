@@ -57,6 +57,7 @@ from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import PATH_SEPARATOR
 from ea.repositories.architecture_store import (
+    author_of,
     constraint_of,
     element_from_row,
     element_row,
@@ -567,8 +568,9 @@ class PostgresBaselineRepository:
                         raise RestoreConflictError(msg)
                     # The plan read rows as objects; the writes below are statements.
                     session.expunge_all()
-                    await _write(session, plan, now)
-                    write_events(session, events_for(audit, plan))
+                    events = events_for(audit, plan)
+                    await _write(session, plan, now, author_of(events))
+                    write_events(session, events)
             except DBAPIError as error:
                 if _is_serialization_failure(error):
                     msg = "the catalogue changed during the restoration: read the plan again"
@@ -618,7 +620,9 @@ async def _flush_restoring(session: AsyncSession, element: Element) -> None:
         raise RestoreConflictError(msg) from error
 
 
-async def _write(session: AsyncSession, plan: RestorePlan, now: datetime) -> None:
+async def _write(
+    session: AsyncSession, plan: RestorePlan, now: datetime, author: str | None
+) -> None:
     """Links out, elements out (their documents, boxes and links follow by foreign key),
     then fields, elements and links back, then boxes."""
     for link in plan.relationships_to_delete:
@@ -659,9 +663,15 @@ async def _write(session: AsyncSession, plan: RestorePlan, now: datetime) -> Non
         row.approval_state = update.restored.approval_state.value
         row.approved_by_sub = update.restored.approved_by_sub
         row.approved_at = update.restored.approved_at
+        row.last_modified_by_sub = author
         await _flush_restoring(session, update.restored)
     for element in plan.elements_to_create:
-        session.add(ElementRecord(**element_row(element), package_id=element.package_id))
+        session.add(
+            ElementRecord(
+                **element_row(replace(element, last_modified_by_sub=author)),
+                package_id=element.package_id,
+            )
+        )
         await _flush_restoring(session, element)
     for link in plan.relationships_to_create:
         session.add(RelationshipRecord(**relationship_row(link)))
