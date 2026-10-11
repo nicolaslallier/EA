@@ -18,8 +18,9 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from ea.domain.audit import AuditAction, diagram_view, layout_view
-from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
+from ea.domain.audit import AuditAction, diagram_view, scene_views
+from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, check_scene
+from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode
 from ea.domain.errors import (
     DiagramNotFoundError,
     PackageNotFoundError,
@@ -131,8 +132,11 @@ class DiagramService:
         require_caller()
         diagram = await self.get(diagram_id)
         nodes = await self._repository.nodes_of(diagram_id)
+        objects = await self._repository.objects_of(diagram_id)
+        edges = await self._repository.edges_of(diagram_id)
         graph = await self._architecture.view_of([node.element_id for node in nodes])
         present = {element.id for element in graph.elements}
+        linked = {link.id for link in graph.relationships}
         inactive_elements: frozenset[UUID] = frozenset()
         inactive_links: frozenset[UUID] = frozenset()
         if as_of is not None:
@@ -152,6 +156,8 @@ class DiagramService:
             diagram=diagram,
             nodes=tuple(node for node in nodes if node.element_id in present),
             graph=graph,
+            objects=objects,
+            edges=tuple(edge for edge in edges if edge.relationship_id in linked),
             inactive_elements=inactive_elements,
             inactive_relationships=inactive_links,
         )
@@ -204,47 +210,71 @@ class DiagramService:
             "diagram deleted", extra={"action": "diagram_deleted", "diagram_id": str(diagram_id)}
         )
 
-    async def replace_layout(self, diagram_id: UUID, nodes: Sequence[DiagramNode]) -> None:
-        """Replace every box of a diagram, refusing an element the graph lacks.
+    async def replace_layout(
+        self,
+        diagram_id: UUID,
+        *,
+        revision: int,
+        nodes: Sequence[DiagramNode],
+        objects: Sequence[DiagramObject] = (),
+        edges: Sequence[DiagramEdge] = (),
+    ) -> int:
+        """Replace the whole scene of a diagram, against the revision the caller saw.
 
-        A body that places one element twice is refused before anything is
-        read; otherwise an unknown diagram is a 404. The elements are checked
-        in one graph query, not one per box.
+        A scene that breaks `check_scene` is refused before anything is read;
+        an unknown diagram is a 404; an element the graph lacks, or a route for
+        a link that does not join two placed elements, is refused; a stale
+        `revision` is a conflict. The elements and links are checked in one
+        graph query, not one per box. Returns the new revision.
         """
         require_editor()
-        layout = check_layout(nodes)
+        scene = check_scene(nodes, objects, edges)
         diagram = await self.get(diagram_id)
-        graph = await self._architecture.view_of([node.element_id for node in layout])
+        graph = await self._architecture.view_of([node.element_id for node in scene.nodes])
         present = {element.id for element in graph.elements}
-        missing = [str(node.element_id) for node in layout if node.element_id not in present]
+        missing = [str(node.element_id) for node in scene.nodes if node.element_id not in present]
         if missing:
             msg = f"no element with id {', '.join(missing)}"
             raise UnknownLayoutElementError(msg)
+        joined = {link.id for link in graph.relationships}
+        stray = [
+            str(edge.relationship_id) for edge in scene.edges if edge.relationship_id not in joined
+        ]
+        if stray:
+            msg = f"no relationship between two elements of the diagram: {', '.join(stray)}"
+            raise ValueError(msg)
 
-        def events(before: tuple[DiagramNode, ...]) -> tuple[AuditEvent, ...]:
+        def events(before: DiagramScene) -> tuple[AuditEvent, ...]:
+            old, new = scene_views(before, scene, revision=revision)
             return (
                 self._trail.event(
                     AuditAction.DIAGRAM_LAYOUT_REPLACED,
                     entity_id=diagram_id,
-                    before=layout_view(before),
-                    after=layout_view(layout),
+                    before=old,
+                    after=new,
                 ),
             )
 
-        if not await self._repository.replace_layout(
-            diagram_id, layout, now=self._now(), audit=events
-        ):
+        stored = await self._repository.replace_layout(
+            diagram_id, scene, revision=revision, now=self._now(), audit=events
+        )
+        if stored is None:
             raise _not_found(diagram_id)  # deleted between the read and the write
+        # Counts only: the text of a note is the author's, and may be sensitive.
         logger.info(
-            "diagram %r laid out with %d box(es)",
+            "diagram %r saved at revision %d",
             logged(diagram.name),
-            len(layout),
+            stored,
             extra={
                 "action": "diagram_layout_replaced",
                 "diagram_id": str(diagram_id),
-                "nodes": len(layout),
+                "diagram_revision": stored,
+                "nodes": len(scene.nodes),
+                "objects": len(scene.objects),
+                "edges": len(scene.edges),
             },
         )
+        return stored
 
     @staticmethod
     def _audit(message: str, diagram: Diagram, action: str) -> None:

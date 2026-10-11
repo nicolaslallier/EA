@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
+    from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
 
@@ -433,15 +434,26 @@ class DiagramRepository(Protocol):
 
     async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool: ...
 
+    async def objects_of(self, diagram_id: UUID) -> tuple[DiagramObject, ...]: ...
+
+    async def edges_of(self, diagram_id: UUID) -> tuple[DiagramEdge, ...]: ...
+
     async def replace_layout(
         self,
         diagram_id: UUID,
-        nodes: Sequence[DiagramNode],
+        scene: DiagramScene,
         *,
+        revision: int,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]],
-    ) -> bool:
-        """Replace every node of a diagram in one transaction; `False` if it is gone."""
+        audit: AuditOf[DiagramScene],
+    ) -> int | None:
+        """Replace boxes, notes, groups and routes in one transaction.
+
+        The diagram row is locked first. If its stored revision is not
+        `revision` the write is refused with `DiagramRevisionConflictError`;
+        otherwise the revision moves on by one and is returned. `None` means
+        the diagram is gone. `audit` is given the scene it replaces.
+        """
         ...
 
 

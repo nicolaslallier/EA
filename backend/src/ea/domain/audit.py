@@ -25,7 +25,8 @@ from ea.domain.query import to_json
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `ports`, which imports this module.
-    from ea.domain.diagrams import Diagram, DiagramNode
+    from ea.domain.diagram_objects import DiagramScene
+    from ea.domain.diagrams import Diagram
     from ea.domain.documents import Document
     from ea.domain.packages import Package
     from ea.domain.saved_queries import SavedQuery
@@ -210,20 +211,46 @@ def diagram_view(diagram: Diagram) -> dict[str, Any]:
     }
 
 
-def layout_view(nodes: Sequence[DiagramNode]) -> dict[str, Any]:
-    ordered = sorted(nodes, key=lambda node: str(node.element_id))
-    return {
-        "nodes": [
-            {
-                "element_id": str(node.element_id),
-                "x": node.x,
-                "y": node.y,
-                "width": node.width,
-                "height": node.height,
-            }
-            for node in ordered
-        ]
-    }
+def scene_views(
+    before: DiagramScene, after: DiagramScene, *, revision: int
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Counts of what a saved scene changed - never a coordinate, never the text of a note.
+
+    One event per save, not one per box (an autosave fires at every pause); the
+    figures say how much moved, the diagram's own revision says which save it was.
+    """
+    kept = {node.element_id: node for node in before.nodes}
+    moved = sum(
+        1
+        for node in after.nodes
+        if node.element_id in kept
+        and (node.x, node.y, node.width, node.height)
+        != (
+            kept[node.element_id].x,
+            kept[node.element_id].y,
+            kept[node.element_id].width,
+            kept[node.element_id].height,
+        )
+    )
+    old_ids = {node.element_id for node in before.nodes}
+    new_ids = {node.element_id for node in after.nodes}
+    return (
+        {
+            "diagram_revision": revision,
+            "nodes": len(before.nodes),
+            "objects": len(before.objects),
+            "edges": len(before.edges),
+        },
+        {
+            "diagram_revision": revision + 1,
+            "nodes": len(after.nodes),
+            "objects": len(after.objects),
+            "edges": len(after.edges),
+            "nodes_added": len(new_ids - old_ids),
+            "nodes_removed": len(old_ids - new_ids),
+            "nodes_moved": moved,
+        },
+    )
 
 
 def document_view(document: Document) -> dict[str, Any]:

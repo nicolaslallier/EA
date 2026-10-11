@@ -903,7 +903,7 @@ class ImportRun:
         name = _free_name(step.name, state.diagram_names)
         diagram = await diagrams.create(name=name, description=step.description)
         self._ledger.add(state.diagram_names, name)
-        await diagrams.replace_layout(diagram.id, list(step.nodes))
+        await diagrams.replace_layout(diagram.id, revision=diagram.revision, nodes=list(step.nodes))
         return _Result(row.category, Outcome.CREATED, step.notes)
 
     async def _folder(self, row: _Row, step: _FolderStep, state: _State) -> _Result:

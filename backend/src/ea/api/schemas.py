@@ -43,6 +43,10 @@ from ea.domain.baselines import (
     EntityRef,
     Modified,
 )
+from ea.domain.diagram_objects import MAX_OBJECT_TEXT, MAX_WAYPOINTS, ObjectKind
+from ea.domain.diagram_objects import DiagramEdge as PlacedEdge
+from ea.domain.diagram_objects import DiagramObject as PlacedObject
+from ea.domain.diagram_objects import Point as PlacedPoint
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
@@ -830,6 +834,15 @@ Coordinate = Annotated[float, Field(ge=-MAX_COORDINATE, le=MAX_COORDINATE, allow
 MIN_BOX_SIZE: Final = 20
 MAX_BOX_SIZE: Final = 5_000
 BoxSize = Annotated[float, Field(ge=MIN_BOX_SIZE, le=MAX_BOX_SIZE, allow_inf_nan=False)]
+#: Notes and groups on one diagram, and the links whose route was changed.
+MAX_DIAGRAM_OBJECTS: Final = 500
+MAX_DIAGRAM_EDGES: Final = 2_000
+#: Stacking order, either way. Only the order matters, not the number.
+ZIndex = Annotated[int, Field(ge=-10_000, le=10_000)]
+Revision = Annotated[int, Field(ge=0)]
+#: `#rrggbb` only: a colour ends up in an SVG attribute, so anything else is an injection.
+Colour = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+ObjectText = Annotated[str, Field(max_length=MAX_OBJECT_TEXT)]
 
 
 class DiagramCreate(_Input):
@@ -860,23 +873,116 @@ class DiagramNode(_Input):
     # and an output schema, and rename the type the SPA imports.
     width: BoxSize
     height: BoxSize
+    parent_object_id: UUID | None
+    z: ZIndex
 
     @classmethod
     def of(cls, node: PlacedNode) -> DiagramNode:
         return cls(
-            element_id=node.element_id, x=node.x, y=node.y, width=node.width, height=node.height
+            element_id=node.element_id,
+            x=node.x,
+            y=node.y,
+            width=node.width,
+            height=node.height,
+            parent_object_id=node.parent_object_id,
+            z=node.z,
         )
 
     def placed(self) -> PlacedNode:
         return PlacedNode(
-            element_id=self.element_id, x=self.x, y=self.y, width=self.width, height=self.height
+            element_id=self.element_id,
+            x=self.x,
+            y=self.y,
+            width=self.width,
+            height=self.height,
+            parent_object_id=self.parent_object_id,
+            z=self.z,
+        )
+
+
+class DiagramPoint(_Input):
+    x: Coordinate
+    y: Coordinate
+
+
+class DiagramEdge(_Input):
+    """The route of one link on this diagram. A link with no row is drawn straight."""
+
+    relationship_id: UUID
+    waypoints: Annotated[list[DiagramPoint], Field(max_length=MAX_WAYPOINTS)]
+
+    @classmethod
+    def of(cls, edge: PlacedEdge) -> DiagramEdge:
+        return cls(
+            relationship_id=edge.relationship_id,
+            waypoints=[DiagramPoint(x=p.x, y=p.y) for p in edge.waypoints],
+        )
+
+    def placed(self) -> PlacedEdge:
+        return PlacedEdge(
+            relationship_id=self.relationship_id,
+            waypoints=tuple(PlacedPoint(x=p.x, y=p.y) for p in self.waypoints),
+        )
+
+
+class DiagramObject(_Input):
+    """A note (its text is the body) or a group (its text is the title). Never a fact."""
+
+    id: UUID
+    kind: ObjectKind
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    text: ObjectText
+    colour: Colour | None
+    z: ZIndex
+    parent_id: UUID | None
+    anchor_element_id: UUID | None
+
+    @classmethod
+    def of(cls, item: PlacedObject) -> DiagramObject:
+        return cls(
+            id=item.id,
+            kind=item.kind,
+            x=item.x,
+            y=item.y,
+            width=item.width,
+            height=item.height,
+            text=item.text,
+            colour=item.colour,
+            z=item.z,
+            parent_id=item.parent_id,
+            anchor_element_id=item.anchor_element_id,
+        )
+
+    def placed(self) -> PlacedObject:
+        return PlacedObject(
+            id=self.id,
+            kind=self.kind,
+            x=self.x,
+            y=self.y,
+            width=self.width,
+            height=self.height,
+            text=self.text,
+            colour=self.colour,
+            z=self.z,
+            parent_id=self.parent_id,
+            anchor_element_id=self.anchor_element_id,
         )
 
 
 class DiagramLayout(_Input):
-    """Every box of a diagram. It replaces the stored layout whole."""
+    """The whole scene of a diagram, replacing the stored one — against the revision the client saw.
 
+    Every field is required, empty lists included: an optional one would split
+    this model into `-Input` and `-Output` schemas (docs/adr/0035).
+    """
+
+    revision: Revision
     nodes: Annotated[list[DiagramNode], Field(max_length=MAX_DIAGRAM_NODES)]
+    objects: Annotated[list[DiagramObject], Field(max_length=MAX_DIAGRAM_OBJECTS)]
+    edges: Annotated[list[DiagramEdge], Field(max_length=MAX_DIAGRAM_EDGES)]
 
 
 class DiagramSummaryRead(BaseModel):
@@ -910,7 +1016,12 @@ class DiagramRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     package_id: UUID | None
+    revision: int = Field(
+        description="Send it back with the next PUT /layout: a stale one is a 409."
+    )
     nodes: list[DiagramNode]
+    objects: list[DiagramObject]
+    edges: list[DiagramEdge]
     elements: list[ElementRead]
     relationships: list[RelationshipRead] = Field(
         description="Only the relationships whose two ends are both on the diagram."
@@ -934,7 +1045,10 @@ class DiagramRead(BaseModel):
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
             package_id=diagram.package_id,
+            revision=diagram.revision,
             nodes=[DiagramNode.of(node) for node in detail.nodes],
+            objects=[DiagramObject.of(item) for item in detail.objects],
+            edges=[DiagramEdge.of(edge) for edge in detail.edges],
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
             inactive_element_ids=sorted(detail.inactive_elements, key=str),

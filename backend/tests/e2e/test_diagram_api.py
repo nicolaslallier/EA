@@ -51,12 +51,23 @@ async def a_diagram(client: httpx.AsyncClient, name: str = "Vente") -> dict[str,
     return dict(response.json())
 
 
-def layout(*element_ids: str) -> dict[str, Any]:
+def layout(*element_ids: str, revision: int = 0) -> dict[str, Any]:
     return {
+        "revision": revision,
         "nodes": [
-            {"element_id": e, "x": 10.0 * i, "y": 20.0, "width": 200.0, "height": 80.0}
+            {
+                "element_id": e,
+                "x": 10.0 * i,
+                "y": 20.0,
+                "width": 200.0,
+                "height": 80.0,
+                "parent_object_id": None,
+                "z": 0,
+            }
             for i, e in enumerate(element_ids)
-        ]
+        ],
+        "objects": [],
+        "edges": [],
     }
 
 
@@ -170,7 +181,15 @@ class TestTheLayout:
         assert response.status_code == 204
         read = (await client.get(f"/diagrams/{diagram['id']}")).json()
         assert read["nodes"] == [
-            {"element_id": element, "x": 0.0, "y": 20.0, "width": 200.0, "height": 80.0}
+            {
+                "element_id": element,
+                "x": 0.0,
+                "y": 20.0,
+                "width": 200.0,
+                "height": 80.0,
+                "parent_object_id": None,
+                "z": 0,
+            }
         ]
 
     async def test_a_layout_for_an_unknown_diagram_is_a_404(
@@ -209,7 +228,7 @@ class TestTheLayout:
 
         response = await client.put(
             f"/diagrams/{diagram['id']}/layout",
-            json={"nodes": [{"element_id": element, "x": 1e9, "y": 0, "width": 132, "height": 46}]},
+            json={**layout(element), "nodes": [{**layout(element)["nodes"][0], "x": 1e9}]},
         )
 
         assert response.status_code == 422

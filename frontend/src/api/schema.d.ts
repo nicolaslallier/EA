@@ -213,9 +213,13 @@ export interface paths {
         get?: never;
         /**
          * Replace Diagram Layout
-         * @description Replace every box of a diagram at once.
+         * @description Replace the whole scene of a diagram at once.
          *
-         *     Each element must exist and appear once; otherwise nothing is written.
+         *     `revision` is the one the client read; if somebody saved since, nothing is
+         *     written and the answer is a 409 `diagram_revision_conflict`. Otherwise the
+         *     new revision comes back in `X-Diagram-Revision`. Each element must exist
+         *     and appear once, and a route may only name a link joining two placed
+         *     elements; otherwise nothing is written.
          */
         put: operations["replace_diagram_layout_diagrams__diagram_id__layout_put"];
         post?: never;
@@ -1599,12 +1603,34 @@ export interface components {
             package_id?: string | null;
         };
         /**
+         * DiagramEdge
+         * @description The route of one link on this diagram. A link with no row is drawn straight.
+         */
+        DiagramEdge: {
+            /**
+             * Relationship Id
+             * Format: uuid
+             */
+            relationship_id: string;
+            /** Waypoints */
+            waypoints: components["schemas"]["DiagramPoint"][];
+        };
+        /**
          * DiagramLayout
-         * @description Every box of a diagram. It replaces the stored layout whole.
+         * @description The whole scene of a diagram, replacing the stored one — against the revision the client saw.
+         *
+         *     Every field is required, empty lists included: an optional one would split
+         *     this model into `-Input` and `-Output` schemas (docs/adr/0035).
          */
         DiagramLayout: {
+            /** Edges */
+            edges: components["schemas"]["DiagramEdge"][];
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Objects */
+            objects: components["schemas"]["DiagramObject"][];
+            /** Revision */
+            revision: number;
         };
         /**
          * DiagramNode
@@ -1618,8 +1644,49 @@ export interface components {
             element_id: string;
             /** Height */
             height: number;
+            /** Parent Object Id */
+            parent_object_id: string | null;
             /** Width */
             width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /**
+         * DiagramObject
+         * @description A note (its text is the body) or a group (its text is the title). Never a fact.
+         */
+        DiagramObject: {
+            /** Anchor Element Id */
+            anchor_element_id: string | null;
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["ObjectKind"];
+            /** Parent Id */
+            parent_id: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** DiagramPoint */
+        DiagramPoint: {
             /** X */
             x: number;
             /** Y */
@@ -1637,6 +1704,8 @@ export interface components {
             created_at: string;
             /** Description */
             description: string;
+            /** Edges */
+            edges: components["schemas"]["DiagramEdge"][];
             /** Elements */
             elements: components["schemas"]["ElementRead"][];
             /**
@@ -1658,6 +1727,8 @@ export interface components {
             name: string;
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Objects */
+            objects: components["schemas"]["DiagramObject"][];
             /** Package Id */
             package_id: string | null;
             /**
@@ -1665,6 +1736,11 @@ export interface components {
              * @description Only the relationships whose two ends are both on the diagram.
              */
             relationships: components["schemas"]["RelationshipRead"][];
+            /**
+             * Revision
+             * @description Send it back with the next PUT /layout: a stale one is a 409.
+             */
+            revision: number;
             /**
              * Updated At
              * Format: date-time
@@ -2443,6 +2519,11 @@ export interface components {
              */
             package_id: string | null;
         };
+        /**
+         * ObjectKind
+         * @enum {string}
+         */
+        ObjectKind: "note" | "group";
         /** PackageCreate */
         PackageCreate: {
             /**
@@ -3958,6 +4039,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

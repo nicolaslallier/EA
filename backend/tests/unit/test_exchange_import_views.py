@@ -18,7 +18,13 @@ from ea.domain.exchange import (
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
-from tests.conftest import FIXED_NOW, InMemoryDiagrams, InMemoryExchange, InMemoryRepository
+from tests.conftest import (
+    FIXED_NOW,
+    InMemoryDiagrams,
+    InMemoryExchange,
+    InMemoryRepository,
+    lay_out,
+)
 from tests.exchange_files import DATA, el, exchange_xml
 
 pytestmark = pytest.mark.asyncio
@@ -350,7 +356,7 @@ async def test_the_layout_replacing_a_view_is_checked_against_the_catalogue(
     from ea.domain.errors import UnknownLayoutElementError
 
     with pytest.raises(UnknownLayoutElementError):
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(uuid4(), 0, 0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(uuid4(), 0, 0)])
 
 
 async def test_a_long_name_that_needed_cutting_is_found_again_on_every_reimport(

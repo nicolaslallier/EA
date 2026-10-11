@@ -13,12 +13,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import UUID, uuid4
 
 from ea.domain.model import reject_nul
 from ea.domain.packages import UNSET, Unset
 from ea.domain.ports import GraphView
+
+if TYPE_CHECKING:
+    from ea.domain.diagram_objects import DiagramEdge, DiagramObject
 
 MAX_DIAGRAM_NAME_LENGTH: Final = 200
 #: The size a box is drawn at until someone resizes it — the rings' own box.
@@ -71,6 +74,8 @@ class Diagram:
     created_at: datetime
     updated_at: datetime
     node_count: int = 0
+    #: Moves on by one at every saved scene: the optimistic-concurrency token (docs/adr/0063).
+    revision: int = 0
     #: The package that files this view; `None` is "at the root".
     package_id: UUID | None = None
 
@@ -120,6 +125,9 @@ class Diagram:
     def with_node_count(self, node_count: int) -> Diagram:
         return replace(self, node_count=node_count)
 
+    def with_revision(self, revision: int) -> Diagram:
+        return replace(self, revision=revision)
+
 
 @dataclass(frozen=True, slots=True)
 class DiagramDetail:
@@ -128,6 +136,8 @@ class DiagramDetail:
     diagram: Diagram
     nodes: tuple[DiagramNode, ...]
     graph: GraphView
+    objects: tuple[DiagramObject, ...] = ()
+    edges: tuple[DiagramEdge, ...] = ()
     #: On the `as_of` day asked, what is out of period - greyed by the SPA, never removed.
     inactive_elements: frozenset[UUID] = frozenset()
     inactive_relationships: frozenset[UUID] = frozenset()

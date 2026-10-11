@@ -33,6 +33,7 @@ from ea.api.dependencies import (
     saved_query_service_of,
     timeline_service_of,
 )
+from ea.api.diagrams import REVISION_HEADER
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
@@ -734,6 +735,7 @@ def create_app(
             "Content-Disposition",
             "X-Export-Skipped-Views",
             "Retry-After",
+            REVISION_HEADER,
         ],
     )
     # Added last, so it is the outermost layer: it then times and reports the

@@ -33,6 +33,7 @@ from ea.domain.errors import (
     CyclicContainmentError,
     CyclicPackageError,
     DiagramNotFoundError,
+    DiagramRevisionConflictError,
     DocumentNotFoundError,
     DomainError,
     DuplicateBaselineError,
@@ -136,6 +137,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     SavedQueryNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateSavedQueryError: (status.HTTP_409_CONFLICT, "duplicate"),
     UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
+    DiagramRevisionConflictError: (status.HTTP_409_CONFLICT, "diagram_revision_conflict"),
     # A deployment with `EA_EMBEDDINGS_ENABLED` off, which is a configuration
     # and not a request that was wrong — hence 503 and not 4xx.
     SearchUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "search_unavailable"),

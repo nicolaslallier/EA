@@ -13,7 +13,18 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Double, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Double,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ea.db.base import Base
@@ -36,6 +47,9 @@ class DiagramRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Moves on by one at every `PUT /layout` (docs/adr/0063) so a save
+    # made on a stale copy is refused instead of overwriting a colleague's.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
 
 class DiagramNodeRecord(Base):
@@ -56,3 +70,55 @@ class DiagramNodeRecord(Base):
     # A server default so the boxes stored before 0007 keep the size they were drawn at.
     width: Mapped[float] = mapped_column(Double, nullable=False, server_default="132")
     height: Mapped[float] = mapped_column(Double, nullable=False, server_default="46")
+    parent_object_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("diagram_objects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    z: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+
+class DiagramObjectRecord(Base):
+    """A note or a group: drawn on one diagram, owning no fact.
+
+    One table for both: same geometry, same stacking, same nesting; only the
+    meaning of `text` differs (a group's title, a note's body).
+    """
+
+    __tablename__ = "diagram_objects"
+    __table_args__ = (
+        CheckConstraint("kind in ('note', 'group')", name="kind"),
+        CheckConstraint("kind = 'note' or anchor_element_id is null", name="group_has_no_anchor"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    diagram_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("diagrams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    parent_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("diagram_objects.id", ondelete="SET NULL"), nullable=True
+    )
+    x: Mapped[float] = mapped_column(Double, nullable=False)
+    y: Mapped[float] = mapped_column(Double, nullable=False)
+    width: Mapped[float] = mapped_column(Double, nullable=False)
+    height: Mapped[float] = mapped_column(Double, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    colour: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    z: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Indexed on its own: deleting an element sets this to NULL, and must not scan.
+    anchor_element_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("elements.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+
+class DiagramEdgeRecord(Base):
+    """The route of one link on one diagram. No row = a straight segment."""
+
+    __tablename__ = "diagram_edges"
+
+    diagram_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("diagrams.id", ondelete="CASCADE"), primary_key=True
+    )
+    relationship_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("relationships.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    waypoints: Mapped[list[list[float]]] = mapped_column(JSONB, nullable=False, server_default="[]")

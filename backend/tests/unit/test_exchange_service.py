@@ -40,7 +40,7 @@ from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
-from tests.conftest import FIXED_NOW, InMemoryRepository, a_reader
+from tests.conftest import FIXED_NOW, InMemoryRepository, a_reader, lay_out
 
 pytestmark = pytest.mark.asyncio
 NS = {"x": NAMESPACE}
@@ -443,7 +443,7 @@ class TestViewsInTheExport:
             element_type=E.NODE, name="srv", properties={SOURCE_ID: "n-1"}
         )
         diagram = await diagram_service.create(name="Overview", description="Main")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 10, 20, 100, 50)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(a.id, 10, 20, 100, 50)])
 
         root = DefusedET.fromstring(await exported(exchange_service))
 
@@ -461,7 +461,7 @@ class TestViewsInTheExport:
     ) -> None:
         a = await service.create_element(element_type=E.NODE, name="srv")
         diagram = await diagram_service.create(name="Overview")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(a.id, 0, 0)])
 
         root = DefusedET.fromstring(
             await exported(exchange_service, ExportRequest(with_views=False))
@@ -490,7 +490,7 @@ class TestViewsInTheExport:
             element_type=E.NODE, name="srv", properties={SOURCE_ID: "view-Overview"}
         )
         diagram = await diagram_service.create(name="Overview")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(a.id, 0, 0)])
 
         root = DefusedET.fromstring(await exported(exchange_service))
 
@@ -506,7 +506,7 @@ class TestViewsInTheExport:
     ) -> None:
         a = await service.create_element(element_type=E.NODE, name="srv")
         diagram = await diagram_service.create(name="Overview")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(a.id, 0, 0)])
 
         archive = zipfile.ZipFile(io.BytesIO(await zip_of(exchange_service)))
 
@@ -619,10 +619,12 @@ class TestScopes:
     ) -> None:  # type: ignore[no-untyped-def]
         top, _, made = await self.arranged(service, package_service, repository)
         whole = await diagram_service.create(name="whole")
-        await diagram_service.replace_layout(whole.id, [DiagramNode(made["in"].id, 0, 0)])
+        await lay_out(diagram_service, whole.id, [DiagramNode(made["in"].id, 0, 0)])
         straddling = await diagram_service.create(name="straddling")
-        await diagram_service.replace_layout(
-            straddling.id, [DiagramNode(made["in"].id, 0, 0), DiagramNode(made["out"].id, 5, 5)]
+        await lay_out(
+            diagram_service,
+            straddling.id,
+            [DiagramNode(made["in"].id, 0, 0), DiagramNode(made["out"].id, 5, 5)],
         )
         request = ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=top))
 

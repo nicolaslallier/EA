@@ -43,6 +43,10 @@ class DuplicateDiagramError(DomainError):
     """A diagram name is already taken."""
 
 
+class DiagramRevisionConflictError(DomainError):
+    """A layout was saved against a revision someone else has since moved on from."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 

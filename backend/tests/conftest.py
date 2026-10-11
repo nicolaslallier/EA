@@ -44,12 +44,14 @@ from ea.domain.audit import (
 )
 from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
+from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     BaselineNotFoundError,
     DiagramNotFoundError,
+    DiagramRevisionConflictError,
     DocumentNotFoundError,
     DomainError,
     DuplicateBaselineError,
@@ -976,9 +978,14 @@ class InMemoryDiagrams:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.diagrams: dict[UUID, Diagram] = {}
         self.nodes: dict[UUID, tuple[DiagramNode, ...]] = {}
+        self.objects: dict[UUID, tuple[DiagramObject, ...]] = {}
+        self.edges: dict[UUID, tuple[DiagramEdge, ...]] = {}
+        self.revisions: dict[UUID, int] = {}
 
     def _counted(self, diagram: Diagram) -> Diagram:
-        return diagram.with_node_count(len(self.nodes.get(diagram.id, ())))
+        return diagram.with_node_count(len(self.nodes.get(diagram.id, ()))).with_revision(
+            self.revisions.get(diagram.id, 0)
+        )
 
     def _refuse_a_taken_name(self, diagram: Diagram) -> None:
         if any(d.name == diagram.name and d.id != diagram.id for d in self.diagrams.values()):
@@ -1024,26 +1031,62 @@ class InMemoryDiagrams:
             return False
         events = events_for(audit, stored)
         self.nodes.pop(diagram_id, None)
+        self.objects.pop(diagram_id, None)
+        self.edges.pop(diagram_id, None)
+        self.revisions.pop(diagram_id, None)
         del self.diagrams[diagram_id]
         self.audit_log.append(events)
         return True
 
+    async def objects_of(self, diagram_id: UUID) -> tuple[DiagramObject, ...]:
+        return self.objects.get(diagram_id, ())
+
+    async def edges_of(self, diagram_id: UUID) -> tuple[DiagramEdge, ...]:
+        return self.edges.get(diagram_id, ())
+
     async def replace_layout(
         self,
         diagram_id: UUID,
-        nodes: Sequence[DiagramNode],
+        scene: DiagramScene,
         *,
+        revision: int,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]],
-    ) -> bool:
+        audit: AuditOf[DiagramScene],
+    ) -> int | None:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
-            return False
-        events = events_for(audit, self.nodes.get(diagram_id, ()))
-        self.nodes[diagram_id] = tuple(nodes)
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        before = DiagramScene(
+            nodes=self.nodes.get(diagram_id, ()),
+            objects=self.objects.get(diagram_id, ()),
+            edges=self.edges.get(diagram_id, ()),
+        )
+        events = events_for(audit, before)
+        self.nodes[diagram_id] = scene.nodes
+        self.objects[diagram_id] = scene.objects
+        self.edges[diagram_id] = scene.edges
+        self.revisions[diagram_id] = current + 1
         self.diagrams[diagram_id] = stored.touched(now)
         self.audit_log.append(events)
-        return True
+        return current + 1
+
+
+async def lay_out(
+    service: DiagramService,
+    diagram_id: UUID,
+    nodes: Sequence[DiagramNode],
+    objects: Sequence[DiagramObject] = (),
+    edges: Sequence[DiagramEdge] = (),
+) -> int:
+    """Save a scene on the diagram's *current* revision — the single-writer case."""
+    current = await service.get(diagram_id)
+    return await service.replace_layout(
+        diagram_id, revision=current.revision, nodes=nodes, objects=objects, edges=edges
+    )
 
 
 class InMemoryBaselines:

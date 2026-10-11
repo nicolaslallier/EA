@@ -854,10 +854,21 @@ class TestScopesOverHttp:
         repository.elements[inside.id] = dataclasses.replace(inside, package_id=UUID(top))
         view = (await client.post("/diagrams", json={"name": "straddling"})).json()["id"]
         nodes = [
-            {"element_id": str(e.id), "x": 0, "y": 0, "width": 100, "height": 50}
+            {
+                "element_id": str(e.id),
+                "x": 0,
+                "y": 0,
+                "width": 100,
+                "height": 50,
+                "parent_object_id": None,
+                "z": 0,
+            }
             for e in (inside, outside)
         ]
-        await client.put(f"/diagrams/{view}/layout", json={"nodes": nodes})
+        await client.put(
+            f"/diagrams/{view}/layout",
+            json={"revision": 0, "nodes": nodes, "objects": [], "edges": []},
+        )
 
         response = await client.get(
             "/exchanges/export", params={"scope": "package", "package_id": top}

@@ -929,10 +929,43 @@
         "title": "DiagramCreate",
         "type": "object"
       },
+      "DiagramEdge": {
+        "additionalProperties": false,
+        "description": "The route of one link on this diagram. A link with no row is drawn straight.",
+        "properties": {
+          "relationship_id": {
+            "format": "uuid",
+            "title": "Relationship Id",
+            "type": "string"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramPoint"
+            },
+            "maxItems": 20,
+            "title": "Waypoints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "relationship_id",
+          "waypoints"
+        ],
+        "title": "DiagramEdge",
+        "type": "object"
+      },
       "DiagramLayout": {
         "additionalProperties": false,
-        "description": "Every box of a diagram. It replaces the stored layout whole.",
+        "description": "The whole scene of a diagram, replacing the stored one \u2014 against the revision the client saw.\n\nEvery field is required, empty lists included: an optional one would split\nthis model into `-Input` and `-Output` schemas (docs/adr/0035).",
         "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramEdge"
+            },
+            "maxItems": 2000,
+            "title": "Edges",
+            "type": "array"
+          },
           "nodes": {
             "items": {
               "$ref": "#/components/schemas/DiagramNode"
@@ -940,10 +973,26 @@
             "maxItems": 500,
             "title": "Nodes",
             "type": "array"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramObject"
+            },
+            "maxItems": 500,
+            "title": "Objects",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
           }
         },
         "required": [
-          "nodes"
+          "revision",
+          "nodes",
+          "objects",
+          "edges"
         ],
         "title": "DiagramLayout",
         "type": "object"
@@ -963,6 +1012,18 @@
             "title": "Height",
             "type": "number"
           },
+          "parent_object_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Object Id"
+          },
           "width": {
             "maximum": 5000.0,
             "minimum": 20.0,
@@ -980,6 +1041,12 @@
             "minimum": -100000.0,
             "title": "Y",
             "type": "number"
+          },
+          "z": {
+            "maximum": 10000.0,
+            "minimum": -10000.0,
+            "title": "Z",
+            "type": "integer"
           }
         },
         "required": [
@@ -987,9 +1054,134 @@
           "x",
           "y",
           "width",
-          "height"
+          "height",
+          "parent_object_id",
+          "z"
         ],
         "title": "DiagramNode",
+        "type": "object"
+      },
+      "DiagramObject": {
+        "additionalProperties": false,
+        "description": "A note (its text is the body) or a group (its text is the title). Never a fact.",
+        "properties": {
+          "anchor_element_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Element Id"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ObjectKind"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "maximum": 10000.0,
+            "minimum": -10000.0,
+            "title": "Z",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "x",
+          "y",
+          "width",
+          "height",
+          "text",
+          "colour",
+          "z",
+          "parent_id",
+          "anchor_element_id"
+        ],
+        "title": "DiagramObject",
+        "type": "object"
+      },
+      "DiagramPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "DiagramPoint",
         "type": "object"
       },
       "DiagramRead": {
@@ -1003,6 +1195,13 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramEdge"
+            },
+            "title": "Edges",
+            "type": "array"
           },
           "elements": {
             "items": {
@@ -1045,6 +1244,13 @@
             "title": "Nodes",
             "type": "array"
           },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramObject"
+            },
+            "title": "Objects",
+            "type": "array"
+          },
           "package_id": {
             "anyOf": [
               {
@@ -1065,6 +1271,11 @@
             "title": "Relationships",
             "type": "array"
           },
+          "revision": {
+            "description": "Send it back with the next PUT /layout: a stale one is a 409.",
+            "title": "Revision",
+            "type": "integer"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1078,7 +1289,10 @@
           "created_at",
           "updated_at",
           "package_id",
+          "revision",
           "nodes",
+          "objects",
+          "edges",
           "elements",
           "relationships"
         ],
@@ -2756,6 +2970,14 @@
         ],
         "title": "MoveElements",
         "type": "object"
+      },
+      "ObjectKind": {
+        "enum": [
+          "note",
+          "group"
+        ],
+        "title": "ObjectKind",
+        "type": "string"
       },
       "PackageCreate": {
         "additionalProperties": false,
@@ -5526,7 +5748,7 @@
     },
     "/diagrams/{diagram_id}/layout": {
       "put": {
-        "description": "Replace every box of a diagram at once.\n\nEach element must exist and appear once; otherwise nothing is written.",
+        "description": "Replace the whole scene of a diagram at once.\n\n`revision` is the one the client read; if somebody saved since, nothing is\nwritten and the answer is a 409 `diagram_revision_conflict`. Otherwise the\nnew revision comes back in `X-Diagram-Revision`. Each element must exist\nand appear once, and a route may only name a link joining two placed\nelements; otherwise nothing is written.",
         "operationId": "replace_diagram_layout_diagrams__diagram_id__layout_put",
         "parameters": [
           {
@@ -5583,6 +5805,16 @@
               }
             },
             "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {

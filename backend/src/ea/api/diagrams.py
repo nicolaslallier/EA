@@ -7,7 +7,7 @@ no diagram-specific way to change the graph.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
@@ -26,6 +26,9 @@ from ea.domain.packages import UNSET
 
 router = APIRouter(tags=["diagrams"])
 
+#: The revision a save returns, which the SPA keeps for the next one.
+REVISION_HEADER: Final = "X-Diagram-Revision"
+
 _ERROR = {"model": ErrorResponse}
 NOT_FOUND: dict[int | str, dict[str, type[ErrorResponse]]] = {status.HTTP_404_NOT_FOUND: _ERROR}
 CONFLICT: dict[int | str, dict[str, type[ErrorResponse]]] = {status.HTTP_409_CONFLICT: _ERROR}
@@ -35,6 +38,7 @@ REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
 }
 LAYOUT_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: _ERROR,
+    status.HTTP_409_CONFLICT: _ERROR,
     status.HTTP_422_UNPROCESSABLE_CONTENT: _ERROR,
 }
 
@@ -106,9 +110,21 @@ async def delete_diagram(diagram_id: UUID, diagrams: Diagrams) -> Response:
 async def replace_diagram_layout(
     diagram_id: UUID, body: DiagramLayout, diagrams: Diagrams
 ) -> Response:
-    """Replace every box of a diagram at once.
+    """Replace the whole scene of a diagram at once.
 
-    Each element must exist and appear once; otherwise nothing is written.
+    `revision` is the one the client read; if somebody saved since, nothing is
+    written and the answer is a 409 `diagram_revision_conflict`. Otherwise the
+    new revision comes back in `X-Diagram-Revision`. Each element must exist
+    and appear once, and a route may only name a link joining two placed
+    elements; otherwise nothing is written.
     """
-    await diagrams.replace_layout(diagram_id, [node.placed() for node in body.nodes])
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    revision = await diagrams.replace_layout(
+        diagram_id,
+        revision=body.revision,
+        nodes=[node.placed() for node in body.nodes],
+        objects=[item.placed() for item in body.objects],
+        edges=[edge.placed() for edge in body.edges],
+    )
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT, headers={REVISION_HEADER: str(revision)}
+    )
