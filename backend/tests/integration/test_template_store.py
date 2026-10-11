@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -10,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType
-from ea.domain.diagram_templates import Binding, DiagramTemplate, parse_body
-from ea.domain.errors import DuplicateElementError, DuplicateTemplateError
+from ea.domain.diagram_templates import MAX_TEMPLATES, Binding, DiagramTemplate, parse_body
+from ea.domain.errors import DuplicateElementError, DuplicateTemplateError, TemplateLimitError
 from ea.domain.ports import ElementFilter
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
@@ -88,3 +89,19 @@ async def test_an_instantiation_that_fails_half_way_leaves_nothing_behind(
 
     assert len(await architecture.list_elements(ElementFilter())) == before
     assert await diagrams.list_diagrams() == ()
+
+
+async def test_two_concurrent_saves_at_the_edge_cannot_both_get_in(
+    templates: PostgresTemplateRepository,
+) -> None:
+    for i in range(MAX_TEMPLATES - 1):
+        await templates.add(a_template(f"T{i}"), audit=())
+
+    outcomes = await asyncio.gather(
+        templates.add(a_template("last-a"), audit=()),
+        templates.add(a_template("last-b"), audit=()),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(o, TemplateLimitError) for o in outcomes) == 1
+    assert len(await templates.list_all()) == MAX_TEMPLATES

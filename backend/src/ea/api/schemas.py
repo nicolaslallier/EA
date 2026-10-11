@@ -2375,9 +2375,13 @@ class InstantiateBinding(_Input):
         )
 
 
+#: One binding per slot at most: shared by the HTTP body and the MCP tool.
+InstantiateBindings = Annotated[list[InstantiateBinding], Field(max_length=MAX_SLOTS)]
+
+
 class InstantiateRequest(_Input):
     name: Name
-    bindings: Annotated[list[InstantiateBinding], Field(max_length=MAX_SLOTS)]
+    bindings: InstantiateBindings
     # Off unless asked for: a template's links are what its author drew, not facts nobody decided.
     create_relationships: bool = False
 

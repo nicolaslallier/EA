@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.diagram_template import DiagramTemplateRecord
 from ea.db.unit_of_work import reading, work
 from ea.domain.audit import events_for
-from ea.domain.diagram_templates import DiagramTemplate, body_to_json, parse_body
-from ea.domain.errors import DuplicateTemplateError, TemplateNotFoundError
+from ea.domain.diagram_templates import MAX_TEMPLATES, DiagramTemplate, body_to_json, parse_body
+from ea.domain.errors import DuplicateTemplateError, TemplateLimitError, TemplateNotFoundError
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from ea.domain.audit import AuditOf
+
+
+#: Serialises the count-then-insert of `add`: two writers cannot both see 199 and both insert.
+_LIBRARY_LOCK = 0x45_41_00_06
 
 
 def _to_template(row: DiagramTemplateRecord) -> DiagramTemplate:
@@ -62,6 +66,11 @@ class PostgresTemplateRepository:
     ) -> DiagramTemplate:
         events = events_for(audit, template)
         async with work(self._sessions) as session:
+            await session.execute(select(func.pg_advisory_xact_lock(_LIBRARY_LOCK)))
+            held = await session.scalar(select(func.count()).select_from(DiagramTemplateRecord))
+            if (held or 0) >= MAX_TEMPLATES:
+                msg = f"the library holds {MAX_TEMPLATES} templates at most"
+                raise TemplateLimitError(msg)
             session.add(
                 DiagramTemplateRecord(
                     id=template.id,

@@ -110,7 +110,7 @@ from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
 from ea.services.saved_queries import SavedQueryService
-from ea.services.templates import TemplateService
+from ea.services.templates import TemplateService, build_admission
 from ea.services.timeline import TimelineService
 from ea.services.view_sources import QueriesAndPackages
 
@@ -414,7 +414,10 @@ def _lifespan(
                 )
             if template_store is not None and diagram_store is not None:
                 app.state.template_service = TemplateService(
-                    template_store, architecture_service_of(app), app.state.diagram_service
+                    template_store,
+                    architecture_service_of(app),
+                    app.state.diagram_service,
+                    admission=app.state.template_admission,
                 )
             if profile_store is not None:
                 app.state.profile_service = ProfileService(
@@ -694,6 +697,7 @@ def create_app(
     # admission for the analyses that read the whole model, whichever door they come through.
     app.state.quality_params = build_quality_params(settings)
     app.state.analysis_admission = analysis_admission()
+    app.state.template_admission = build_admission()
     # One admission for every door an import comes through: HTTP's (in the middleware below),
     # MCP's and a script's (in the service), so that three doors cannot hold six places.
     admission = Admission(
@@ -738,7 +742,10 @@ def create_app(
             app.state.profile_service = ProfileService(profiles, architecture_service)
         if templates is not None and diagrams is not None:
             app.state.template_service = TemplateService(
-                templates, architecture_service, app.state.diagram_service
+                templates,
+                architecture_service,
+                app.state.diagram_service,
+                admission=app.state.template_admission,
             )
         if exchanges is not None:
             app.state.exchange_service = ExchangeService(

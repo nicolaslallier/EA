@@ -75,7 +75,7 @@ from ea.api.schemas import (
     FindingsLimit,
     GraphRead,
     ImportReportRead,
-    InstantiateBinding,
+    InstantiateBindings,
     Limit,
     LinkName,
     MatrixRead,
@@ -1084,7 +1084,7 @@ def build_mcp_server(
         ],
         name: Name,
         bindings: Annotated[
-            list[InstantiateBinding],
+            InstantiateBindings,
             Field(
                 description=(
                     "One per slot to fill: an existing `element_id` of the slot's type, "

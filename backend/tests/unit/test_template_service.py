@@ -7,14 +7,19 @@ import pytest
 
 from ea.domain.archimate import ElementType, RelationshipType
 from ea.domain.diagram_objects import DiagramObject, ObjectKind
-from ea.domain.diagram_templates import Binding
+from ea.domain.diagram_templates import MAX_SLOTS, MAX_TEMPLATES, Binding, parse_body
 from ea.domain.diagrams import DiagramNode
-from ea.domain.errors import DuplicateDiagramError, NotAuthorisedError
+from ea.domain.errors import (
+    DuplicateDiagramError,
+    NotAuthorisedError,
+    TemplateBusyError,
+    TemplateLimitError,
+)
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
-from ea.services.templates import TemplateService
+from ea.services.templates import TemplateService, build_admission
 from tests.conftest import InMemoryAuditLog, a_reader, lay_out
 
 BODY: dict[str, Any] = {
@@ -273,3 +278,73 @@ class TestTheTrailAndTheLimits:
             await template_service.instantiate(
                 template.id, name="V", bindings=[Binding("app", create_name="A")]
             )
+
+
+@pytest.mark.asyncio
+class TestTheCapsCannotBeGoneAround:
+    """Adversarial: each ceiling holds on its own door, before anything is written."""
+
+    async def test_the_library_is_full_at_the_cap_and_a_save_from_a_diagram_hits_it_too(
+        self, template_service: TemplateService, diagram_service: DiagramService
+    ) -> None:
+        for i in range(MAX_TEMPLATES):
+            await template_service.create_template(name=f"T{i}", body=BODY)
+        diagram = await diagram_service.create(name="Source")
+
+        with pytest.raises(TemplateLimitError):
+            await template_service.create_template(name="one too many", body=BODY)
+        with pytest.raises(TemplateLimitError):
+            await template_service.create_from_diagram(diagram.id, name="one too many")
+        # Deleting one makes room again: the cap counts what is stored, not what was written.
+        first = (await template_service.list_templates())[0]
+        await template_service.delete_template(first.id)
+        await template_service.create_template(name="room again", body=BODY)
+
+    async def test_an_oversized_body_is_refused_on_reading_before_any_slot_is_built(self) -> None:
+        huge = {**BODY, "slots": [BODY["slots"][0]] * 2_000_000}
+
+        with pytest.raises(ValueError, match="at most"):
+            parse_body(huge)
+
+    async def test_more_bindings_than_slots_are_refused_before_any_element_is_read(
+        self, template_service: TemplateService
+    ) -> None:
+        template = await template_service.create_template(name="T", body=BODY)
+        flood = [Binding("app", element_id=uuid4()) for _ in range(MAX_SLOTS + 1)]
+
+        with pytest.raises(ValueError, match="at most"):
+            await template_service.instantiate(template.id, name="V", bindings=flood)
+
+    async def test_builds_beyond_the_admission_are_refused_not_queued(
+        self,
+        templates: object,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+    ) -> None:
+        busy = build_admission(limit=1)
+        guarded = TemplateService(templates, service, diagram_service, admission=busy)  # type: ignore[arg-type]
+        template = await guarded.create_template(name="T", body=BODY)
+
+        async with busy.lease("somebody else"):
+            with pytest.raises(TemplateBusyError):
+                await guarded.instantiate(
+                    template.id, name="V", bindings=[Binding("app", create_name="A")]
+                )
+        await guarded.instantiate(template.id, name="V", bindings=[Binding("app", create_name="A")])
+        assert busy.in_flight == 0
+
+    async def test_n_builds_write_exactly_n_times_the_bound_and_never_more(
+        self, template_service: TemplateService, service: ArchitectureService
+    ) -> None:
+        template = await template_service.create_template(name="T", body=BODY)
+        for i in range(3):
+            await template_service.instantiate(
+                template.id,
+                name=f"V{i}",
+                bindings=[
+                    Binding("app", create_name=f"A{i}"),
+                    Binding("host", create_name=f"H{i}"),
+                ],
+            )
+
+        assert len(await service.list_elements(ElementFilter())) == 3 * len(BODY["slots"])

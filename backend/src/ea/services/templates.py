@@ -15,7 +15,9 @@ element and no audit event behind.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -24,6 +26,7 @@ from uuid import UUID, uuid4
 from ea.domain.audit import AuditAction, template_view
 from ea.domain.diagram_objects import DiagramObject, DiagramScene, ObjectKind
 from ea.domain.diagram_templates import (
+    MAX_SLOTS,
     Binding,
     DiagramTemplate,
     TemplateLink,
@@ -33,9 +36,10 @@ from ea.domain.diagram_templates import (
     template_from_scene,
 )
 from ea.domain.diagrams import DiagramNode
-from ea.domain.errors import TemplateNotFoundError
+from ea.domain.errors import TemplateBusyError, TemplateNotFoundError
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_caller, require_editor
+from ea.services.exchange_admission import Admission, Lease
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
@@ -47,6 +51,27 @@ if TYPE_CHECKING:
 Clock = Callable[[], datetime]
 
 logger = logging.getLogger(__name__)
+
+
+#: How many diagrams may be built from templates at once, and how many one caller may hold.
+#: One build writes up to `MAX_SLOTS` elements and `MAX_TEMPLATE_LINKS` links in one transaction,
+#: so the amplification of a request is bounded here, and the number of requests in flight there.
+MAX_BUILDS_IN_FLIGHT = 4
+MAX_BUILDS_PER_CALLER = 2
+BUILD_LEASE_SECONDS = 60.0
+
+
+def build_admission(
+    *, limit: int = MAX_BUILDS_IN_FLIGHT, clock: Callable[[], float] = time.monotonic
+) -> Admission:
+    return Admission(
+        limit,
+        per_caller=min(MAX_BUILDS_PER_CALLER, limit),
+        lease_seconds=BUILD_LEASE_SECONDS,
+        refusal=lambda: TemplateBusyError("other diagrams are being built: try again shortly"),
+        kind="template_build",
+        clock=clock,
+    )
 
 
 def _utc_now() -> datetime:
@@ -61,7 +86,9 @@ class TemplateService:
         diagrams: DiagramService,
         *,
         clock: Clock = _utc_now,
+        admission: Admission | None = None,
     ) -> None:
+        self._admission = admission
         self._repository = repository
         self._architecture = architecture
         self._diagrams = diagrams
@@ -210,7 +237,29 @@ class TemplateService:
         the likeliest collision, so it comes before any element), the elements, the
         relationships only if asked, and the scene.
         """
-        require_editor()
+        caller = require_editor()
+        async with self._place(caller.subject):
+            return await self._build(
+                template_id,
+                name=name,
+                bindings=bindings,
+                create_relationships=create_relationships,
+            )
+
+    def _place(self, key: str) -> AbstractAsyncContextManager[Lease | None]:
+        return self._admission.lease(key) if self._admission is not None else nullcontext(None)
+
+    async def _build(
+        self,
+        template_id: UUID,
+        *,
+        name: str,
+        bindings: Sequence[Binding],
+        create_relationships: bool,
+    ) -> DiagramDetail:
+        if len(bindings) > MAX_SLOTS:
+            msg = f"a template has at most {MAX_SLOTS} slots to bind"
+            raise ValueError(msg)
         template = await self.get_template(template_id)
         body = template.body
         types = {}

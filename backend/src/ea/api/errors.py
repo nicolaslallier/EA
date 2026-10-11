@@ -93,6 +93,8 @@ from ea.domain.errors import (
     StereotypeNotFoundError,
     StoredFileExistsError,
     StoredFileNotFoundError,
+    TemplateBusyError,
+    TemplateLimitError,
     TemplateNotFoundError,
     TooManyPackagesError,
     TooManyRefusedRowsError,
@@ -154,6 +156,8 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # --- Diagram templates (docs/adr/0066) ---
     TemplateNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateTemplateError: (status.HTTP_409_CONFLICT, "duplicate"),
+    TemplateLimitError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "template_limit"),
+    TemplateBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "template_busy"),
     # --- Generated views (docs/adr/0065) ---
     GeneratedViewTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "generated_view_too_large"),
     GeneratedViewsUnavailableError: (

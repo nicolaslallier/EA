@@ -30,6 +30,8 @@ MAX_TEMPLATE_NAME: Final = 200
 MAX_SLOTS: Final = 50
 MAX_TEMPLATE_OBJECTS: Final = 100
 MAX_TEMPLATE_LINKS: Final = 100
+#: How many templates the library holds: it is listed whole, by the API and by an agent.
+MAX_TEMPLATES: Final = 200
 _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -203,8 +205,24 @@ def check_body(body: TemplateBody) -> None:
         seen.add(triple)
 
 
+def _refuse_oversized(raw: Mapping[str, Any]) -> None:
+    """Count before building: a stored or imported body is bounded when read, not after."""
+    limits = (
+        ("slots", MAX_SLOTS),
+        ("groups", MAX_TEMPLATE_OBJECTS),
+        ("notes", MAX_TEMPLATE_OBJECTS),
+        ("links", MAX_TEMPLATE_LINKS),
+    )
+    for key, limit in limits:
+        items = raw.get(key)
+        if isinstance(items, (list, tuple)) and len(items) > limit:
+            msg = f"a template has at most {limit} {key}"
+            raise ValueError(msg)
+
+
 def parse_body(raw: Mapping[str, Any]) -> TemplateBody:
     """A body from its JSON form — the same validators for a manual write and an import."""
+    _refuse_oversized(raw)
     try:
         body = TemplateBody(
             version=raw["version"],

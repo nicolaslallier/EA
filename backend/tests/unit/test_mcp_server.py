@@ -27,6 +27,7 @@ from ea.api.schemas import (
     ElementQuerySchema,
     ElementUpdate,
     FileDetailsWrite,
+    InstantiateRequest,
     MoveElements,
     PackageCreate,
     PackageUpdate,
@@ -1824,6 +1825,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("create_baseline", "description", BaselineCreate, "description"),
             ("restore_baseline", "expected_digest", RestoreRequest, "expected_digest"),
             ("transition_element", "expected_revision", ApprovalRequest, "expected_revision"),
+            ("instantiate_diagram_template", "name", InstantiateRequest, "name"),
+            ("instantiate_diagram_template", "bindings", InstantiateRequest, "bindings"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(

@@ -95,6 +95,14 @@ class TemplateNotFoundError(DomainError):
     """A diagram template referenced by id is absent from the store."""
 
 
+class TemplateLimitError(DomainError):
+    """The library holds as many templates as it may: delete one before saving another."""
+
+
+class TemplateBusyError(DomainError):
+    """As many diagrams are being built from templates as the process allows: retry shortly."""
+
+
 class DuplicateTemplateError(DomainError):
     """A diagram template name is already taken."""
 

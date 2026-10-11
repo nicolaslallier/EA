@@ -45,7 +45,7 @@ from ea.domain.audit import (
 from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
-from ea.domain.diagram_templates import DiagramTemplate
+from ea.domain.diagram_templates import MAX_TEMPLATES, DiagramTemplate
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
@@ -78,6 +78,7 @@ from ea.domain.errors import (
     StereotypeInUseError,
     StereotypeNotFoundError,
     StoredFileNotFoundError,
+    TemplateLimitError,
     TemplateNotFoundError,
     TooManyRefusedRowsError,
     WriteConflictError,
@@ -1322,6 +1323,11 @@ class InMemoryTemplates:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.templates: dict[UUID, DiagramTemplate] = {}
 
+    def _refuse_a_full_library(self) -> None:
+        if len(self.templates) >= MAX_TEMPLATES:
+            msg = f"the library holds {MAX_TEMPLATES} templates at most"
+            raise TemplateLimitError(msg)
+
     def _refuse_a_taken_name(self, template: DiagramTemplate) -> None:
         if any(t.name == template.name and t.id != template.id for t in self.templates.values()):
             msg = f"a template is already named {template.name!r}"
@@ -1336,6 +1342,7 @@ class InMemoryTemplates:
     async def add(
         self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
     ) -> DiagramTemplate:
+        self._refuse_a_full_library()
         self._refuse_a_taken_name(template)
         events = events_for(audit, template)
         self.templates[template.id] = template
