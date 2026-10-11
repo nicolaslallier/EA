@@ -91,6 +91,14 @@ class SourceInUseError(DomainError):
     """A query or a package is read by a generated view and cannot be deleted from under it."""
 
 
+class TemplateNotFoundError(DomainError):
+    """A diagram template referenced by id is absent from the store."""
+
+
+class DuplicateTemplateError(DomainError):
+    """A diagram template name is already taken."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 
