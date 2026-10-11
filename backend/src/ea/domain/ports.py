@@ -772,6 +772,15 @@ class ExportSnapshot(Protocol):
 
     async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]: ...
 
+    async def skipped_views(self) -> int:
+        """Views a scoped export leaves out because a box shows an element outside it — counted
+        in this very snapshot, so the number and the file agree."""
+        ...
+
+    async def check_scope(self) -> None:
+        """Run the scope's filter once; a filter the database cannot run is `UnknownScopeError`."""
+        ...
+
     async def packages(self) -> tuple[PackageNode, ...]:
         """The packages of the export, with the parent each names (the scope may cut the tree)."""
         ...
@@ -819,10 +828,6 @@ class ExchangeRepository(Protocol):
 
     async def known_relationship_keys(self) -> frozenset[tuple[RelationshipType, UUID, UUID]]:
         """`(type, source, target)` of every link, to tell a new link from an existing one."""
-        ...
-
-    async def count_skipped_views(self, scope: ExportScope) -> int:
-        """Views a scoped export leaves out because a box shows an element outside it."""
         ...
 
     async def lock_package_tree(self) -> None:

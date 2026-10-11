@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, Text, cast, exists, func, select
+from sqlalchemy.exc import DBAPIError, StatementError
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
@@ -21,6 +22,7 @@ from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.package import PackageRecord
 from ea.db.unit_of_work import apply_rows, in_unit, reading, shared_transaction
 from ea.domain.archimate import RelationshipType
+from ea.domain.errors import UnknownScopeError
 from ea.domain.exchange import SOURCE_ID, ExportedBox, ExportedView, PackageNode
 from ea.domain.ports import ElementFilter
 from ea.repositories.architecture_store import (
@@ -114,6 +116,24 @@ class _Snapshot:
         )
         return tuple(relationship_from_row(row) for row in await self._session.scalars(statement))
 
+    async def skipped_views(self) -> int:
+        if not self._clauses:
+            return 0
+        statement = (
+            select(func.count())
+            .select_from(DiagramRecord)
+            .where(_leaving_the_scope(self._inside()))
+        )
+        return int((await self._session.execute(statement)).scalar_one())
+
+    async def check_scope(self) -> None:
+        try:
+            await self._session.execute(select(ElementRecord.id).where(*self._clauses).limit(1))
+        except (DBAPIError, StatementError):
+            # Never the database's words: the filter is a person's, and so is what it quotes.
+            msg = "the saved query cannot be run against the catalogue"
+            raise UnknownScopeError(msg) from None
+
     def _ends_inside(self) -> list[ColumnElement[bool]]:
         if not self._clauses:
             return []
@@ -183,17 +203,6 @@ class PostgresExchangeRepository:
             # A snapshot starts at the first statement, not at `connection()`.
             await session.execute(select(1))
             yield _Snapshot(session, scope)
-
-    async def count_skipped_views(self, scope: ExportScope) -> int:
-        clauses = _scope_clauses(scope)
-        if not clauses:
-            return 0
-        inside = select(ElementRecord.id).where(*clauses)
-        statement = (
-            select(func.count()).select_from(DiagramRecord).where(_leaving_the_scope(inside))
-        )
-        async with self._sessions() as session:
-            return int((await session.execute(statement)).scalar_one())
 
     def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
         return shared_transaction(self._sessions, commit=commit, exclusive=True)

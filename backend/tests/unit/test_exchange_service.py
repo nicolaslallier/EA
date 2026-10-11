@@ -39,6 +39,7 @@ from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
 from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 from tests.conftest import FIXED_NOW, InMemoryRepository, a_reader
 
 pytestmark = pytest.mark.asyncio
@@ -760,3 +761,85 @@ class TestScopes:
             await exchange_service.export(
                 ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=uuid4()))
             )
+
+
+class TestTheSnapshotOfAnExport:
+    def watching(self, store: object, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        from contextlib import asynccontextmanager
+
+        events: list[str] = []
+        original = store.snapshot  # type: ignore[attr-defined]
+
+        @asynccontextmanager
+        async def snapshot(scope):  # type: ignore[no-untyped-def]
+            events.append("open")
+            async with original(scope) as opened:
+                yield opened
+            events.append("closed")
+
+        monkeypatch.setattr(store, "snapshot", snapshot)
+        return events
+
+    async def test_it_is_open_before_the_first_byte_and_given_back_if_none_is_ever_read(
+        self,
+        exchange_service: ExchangeService,
+        exchange_store: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events = self.watching(exchange_store, monkeypatch)
+
+        export = await exchange_service.export(ExportRequest())
+        assert events == ["open"]  # the count of the header and the file share this reading
+        await export.chunks.aclose()  # type: ignore[attr-defined]
+
+        assert events == ["open", "closed"]
+
+    async def test_it_is_given_back_at_the_end_of_the_body_and_when_the_client_leaves(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        exchange_store: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await two_linked_elements(service)
+        events = self.watching(exchange_store, monkeypatch)
+
+        for request in (ExportRequest(), CSV):
+            events.clear()
+            export = await exchange_service.export(request)
+            _ = [chunk async for chunk in export.chunks]
+            assert events == ["open", "closed"]
+
+        events.clear()
+        export = await exchange_service.export(ExportRequest())
+        iterator = export.chunks.__aiter__()
+        await iterator.__anext__()  # the client reads a piece and leaves
+        await export.chunks.aclose()  # type: ignore[attr-defined]
+        assert events == ["open", "closed"]
+
+    async def test_a_query_scope_is_run_once_before_the_download_starts(
+        self,
+        exchange_service: ExchangeService,
+        saved_query_service: SavedQueryService,
+        exchange_store: object,
+    ) -> None:
+        saved = await saved_query_service.create(name="q", query=ElementQuery())
+        seen: list[object] = []
+        original = exchange_store.snapshot  # type: ignore[attr-defined]
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def snapshot(scope):  # type: ignore[no-untyped-def]
+            async with original(scope) as opened:
+                yield opened
+                seen.append(opened.scope_checked)
+
+        exchange_store.snapshot = snapshot  # type: ignore[attr-defined]
+
+        export = await exchange_service.export(
+            ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=saved.id))
+        )
+        await export.chunks.aclose()  # type: ignore[attr-defined]
+
+        assert seen == [True]

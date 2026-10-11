@@ -1323,6 +1323,19 @@ class _MemorySnapshot:
         self._packages = packages
         self._scope = scope or ExportScope()
         self.inside = scoped_elements(repository, self._scope)
+        self.scope_checked = False
+
+    async def skipped_views(self) -> int:
+        if self.inside is None or self._diagrams is None:
+            return 0
+        diagrams = self._diagrams
+        return sum(
+            any(n.element_id not in self.inside for n in diagrams.nodes.get(d.id, ()))
+            for d in diagrams.diagrams.values()
+        )
+
+    async def check_scope(self) -> None:
+        self.scope_checked = True
 
     async def packages(self) -> tuple[PackageNode, ...]:
         if self._packages is None:
@@ -1535,16 +1548,6 @@ class InMemoryExchange:
         return frozenset(
             (link.relationship_type, link.source_id, link.target_id)
             for link in self.repository.relationships.values()
-        )
-
-    async def count_skipped_views(self, scope: ExportScope) -> int:
-        inside = scoped_elements(self.repository, scope)
-        if inside is None or self.diagrams is None:
-            return 0
-        diagrams = self.diagrams
-        return sum(
-            any(n.element_id not in inside for n in diagrams.nodes.get(d.id, ()))
-            for d in diagrams.diagrams.values()
         )
 
     async def lock_package_tree(self) -> None:

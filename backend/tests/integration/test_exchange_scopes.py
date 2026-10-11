@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.exchange import ExportScope, ScopeKind
+from ea.domain.exchange import ExportRequest, ExportScope, ScopeKind
 from ea.domain.query import ElementQuery
 from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.services.architecture import ArchitectureService
 from tests.integration.exchange_support import file_element, make_package, make_view
+from tests.integration.test_exchange_roundtrip import whole  # noqa: F401
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
 
@@ -40,7 +43,7 @@ async def test_a_package_scope_keeps_elements_links_packages_and_whole_views_ins
         assert len(await snapshot.relationships_page(0, 10)) == 1
         assert [v.name for v in await snapshot.views_page(0, 10)] == ["inside"]
         assert {p.name for p in await snapshot.packages()} == {"Top", "Sub"}
-    assert await store.count_skipped_views(scope) == 1
+        assert await snapshot.skipped_views() == 1
 
 
 async def test_a_package_scope_without_its_subpackages(
@@ -85,7 +88,7 @@ async def test_a_query_scope_applies_the_saved_filter_and_keeps_the_whole_tree(
         assert len(await snapshot.relationships_page(0, 10)) == 1  # srv-other, never srv-alice
         assert [v.name for v in await snapshot.views_page(0, 10)] == ["nodes only"]
         assert [p.name for p in await snapshot.packages()] == ["Skeleton"]
-    assert await store.count_skipped_views(scope) == 1
+        assert await snapshot.skipped_views() == 1
 
 
 async def test_the_whole_model_skips_nothing_and_filters_nothing(
@@ -98,4 +101,58 @@ async def test_the_whole_model_skips_nothing_and_filters_nothing(
 
     async with store.snapshot(ExportScope()) as snapshot:
         assert len(await snapshot.views_page(0, 10)) == 1
-    assert await store.count_skipped_views(ExportScope()) == 0
+        assert await snapshot.skipped_views() == 0
+
+
+async def test_the_count_and_the_file_are_one_reading_of_the_database(
+    whole: Any,  # noqa: F811
+) -> None:
+    """A view that straddles the scope is committed after the export began: neither the count
+    nor the file knows it — they would disagree if the count were taken apart from the stream."""
+    architecture, _, packages, exchange, (sessions, _) = whole
+    top = (await packages.create(name="Top")).package.id
+    other = (await packages.create(name="Other")).package.id
+    a = await architecture.create_element(element_type=E.NODE, name="a")
+    c = await architecture.create_element(element_type=E.NODE, name="c")
+    await packages.move_elements([a.id], top)
+    await packages.move_elements([c.id], other)
+    await make_view(sessions, "inside", [a.id])
+    await make_view(sessions, "straddling-before", [a.id, c.id])
+
+    export = await exchange.export(
+        ExportRequest(scope=ExportScope(ScopeKind.PACKAGE, package_id=top))
+    )
+    await make_view(sessions, "straddling-late", [a.id, c.id])  # committed meanwhile
+    text = b"".join([chunk async for chunk in export.chunks]).decode()
+
+    assert export.skipped_views == 1
+    assert "view-inside" in text
+    assert "straddling" not in text  # neither the one counted nor the one that came late
+
+
+async def test_a_saved_query_the_database_cannot_run_fails_before_any_header(
+    whole: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy import Integer, cast
+
+    from ea.db.models.architecture import ElementRecord
+    from ea.domain.errors import UnknownScopeError
+
+    architecture, _, _, exchange, (_, queries) = whole
+    await architecture.create_element(element_type=E.NODE, name="not a number")
+    saved = await queries.create(name="q", query=ElementQuery())
+    # A filter that parses and compiles, and fails when it meets a row: `cast(name as int)`.
+    monkeypatch.setattr(
+        "ea.repositories.exchange_store._scope_clauses",
+        lambda scope: [cast(ElementRecord.name, Integer) > 0],
+    )
+
+    with pytest.raises(UnknownScopeError) as raised:
+        await exchange.export(ExportRequest(scope=ExportScope(ScopeKind.QUERY, query_id=saved.id)))
+
+    assert "not a number" not in str(raised.value) and "integer" not in str(raised.value)
+    # and the snapshot it had opened was given back: the next export runs
+    monkeypatch.undo()
+    export = await exchange.export(ExportRequest())
+    assert b"not a number" in b"".join([chunk async for chunk in export.chunks])

@@ -91,6 +91,11 @@ chemin SQL commun (`_matching`), n'exporte une relation que si **ses deux extré
 vue que si **toutes ses boîtes** y sont (les autres sont comptées dans `X-Export-Skipped-Views`), et l'arbre des
 paquets du sous-arbre demandé (la racine devient un dossier de premier niveau) ou, pour une requête, tout l'arbre.
 
+**Un seul instantané par export.** L'instantané (`REPEATABLE READ`) est ouvert dans `export()`, avant le premier
+octet : le nombre de vues écartées (`X-Export-Skipped-Views`) et le fichier sont une seule lecture de la base, et une
+requête enregistrée que la base ne peut pas exécuter échoue en 422 `unknown_scope` *avant* les en-têtes (le filtre
+est lancé une fois, `LIMIT 1`). Le corps rend l'instantané à la fin, si le client part, ou si on ne lit jamais rien.
+
 ## Alternatives envisagées et écartées
 
 - Déplacer un élément déjà rangé ailleurs : modification de contenu qui contourne la garde d'approbation.
