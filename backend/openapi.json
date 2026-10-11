@@ -512,11 +512,31 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "elements": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`elements.csv`; required for `csv`.",
+            "title": "Elements"
+          },
           "file": {
-            "contentMediaType": "application/octet-stream",
-            "description": "An ArchiMate exchange file (XML).",
-            "title": "File",
-            "type": "string"
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An ArchiMate exchange file (XML); `archimate-xml`.",
+            "title": "File"
           },
           "format": {
             "$ref": "#/components/schemas/ExchangeFormat",
@@ -526,6 +546,38 @@
             "$ref": "#/components/schemas/ConflictPolicy",
             "default": "reuse"
           },
+          "properties": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`properties.csv` (`csv`).",
+            "title": "Properties"
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`relations.csv` (`csv`).",
+            "title": "Relations"
+          },
+          "safe_cells": {
+            "default": true,
+            "description": "CSV only. Give back a cell the export had prefixed with `'`.",
+            "title": "Safe Cells",
+            "type": "boolean"
+          },
           "strict": {
             "default": false,
             "description": "If any row is refused, write nothing at all.",
@@ -533,9 +585,6 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "file"
-        ],
         "title": "Body_import_model_exchanges_imports_post",
         "type": "object"
       },
@@ -1534,7 +1583,8 @@
       },
       "ExchangeFormat": {
         "enum": [
-          "archimate-xml"
+          "archimate-xml",
+          "csv"
         ],
         "title": "ExchangeFormat",
         "type": "string"
@@ -5885,7 +5935,7 @@
     },
     "/exchanges/export": {
       "get": {
-        "description": "Download the model as an ArchiMate Exchange XML file (a reader may).",
+        "description": "Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).",
         "operationId": "export_model_exchanges_export_get",
         "parameters": [
           {
@@ -5918,6 +5968,18 @@
               "title": "With Views",
               "type": "boolean"
             }
+          },
+          {
+            "description": "CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are.",
+            "in": "query",
+            "name": "safe_cells",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are.",
+              "title": "Safe Cells",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5928,9 +5990,15 @@
                   "format": "binary",
                   "type": "string"
                 }
+              },
+              "application/zip": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
-            "description": "The model as an ArchiMate exchange file, as an attachment."
+            "description": "The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV)."
           },
           "401": {
             "content": {
@@ -5976,7 +6044,7 @@
     },
     "/exchanges/imports": {
       "post": {
-        "description": "Simulate (the default) or apply an exchange file; editors only, simulation included.\n\nWriting needs `dry_run=false`, said outright: a client that forgets destroys nothing.\nTo confirm, send the same file again with `dry_run=false`; the report's `sha256` says it\nis the file that was simulated. The import is idempotent (an existing element or link is\nreused), so a client whose connection was cut can send it again.\nNeither the file's name nor its declared type is read.",
+        "description": "Simulate (the default) or apply an exchange file; editors only, simulation included.\n\nWriting needs `dry_run=false`, said outright: a client that forgets destroys nothing.\nTo confirm, send the same file(s) again with `dry_run=false`; the report's `sha256` says\nit is what was simulated. The import is idempotent (an existing element or link is\nreused), so a client whose connection was cut can send it again. XML takes `file`; CSV\ntakes `elements` and, optionally, `relations` and `properties` \u2014 three files, never an\narchive. The ceiling is on their sum. Neither a file's name nor its declared type is read.",
         "operationId": "import_model_exchanges_imports_post",
         "requestBody": {
           "content": {
@@ -5985,8 +6053,7 @@
                 "$ref": "#/components/schemas/Body_import_model_exchanges_imports_post"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

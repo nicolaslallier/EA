@@ -452,7 +452,7 @@ export interface paths {
         };
         /**
          * Export Model
-         * @description Download the model as an ArchiMate Exchange XML file (a reader may).
+         * @description Download the model: ArchiMate Exchange XML, or Archi-style CSV in a zip (a reader may).
          */
         get: operations["export_model_exchanges_export_get"];
         put?: never;
@@ -477,10 +477,11 @@ export interface paths {
          * @description Simulate (the default) or apply an exchange file; editors only, simulation included.
          *
          *     Writing needs `dry_run=false`, said outright: a client that forgets destroys nothing.
-         *     To confirm, send the same file again with `dry_run=false`; the report's `sha256` says it
-         *     is the file that was simulated. The import is idempotent (an existing element or link is
-         *     reused), so a client whose connection was cut can send it again.
-         *     Neither the file's name nor its declared type is read.
+         *     To confirm, send the same file(s) again with `dry_run=false`; the report's `sha256` says
+         *     it is what was simulated. The import is idempotent (an existing element or link is
+         *     reused), so a client whose connection was cut can send it again. XML takes `file`; CSV
+         *     takes `elements` and, optionally, `relations` and `properties` — three files, never an
+         *     archive. The ceiling is on their sum. Neither a file's name nor its declared type is read.
          */
         post: operations["import_model_exchanges_imports_post"];
         delete?: never;
@@ -1211,14 +1212,35 @@ export interface components {
              */
             dry_run?: boolean;
             /**
-             * File
-             * @description An ArchiMate exchange file (XML).
+             * Elements
+             * @description `elements.csv`; required for `csv`.
              */
-            file: string;
+            elements?: string | null;
+            /**
+             * File
+             * @description An ArchiMate exchange file (XML); `archimate-xml`.
+             */
+            file?: string | null;
             /** @default archimate-xml */
             format?: components["schemas"]["ExchangeFormat"];
             /** @default reuse */
             on_conflict?: components["schemas"]["ConflictPolicy"];
+            /**
+             * Properties
+             * @description `properties.csv` (`csv`).
+             */
+            properties?: string | null;
+            /**
+             * Relations
+             * @description `relations.csv` (`csv`).
+             */
+            relations?: string | null;
+            /**
+             * Safe Cells
+             * @description CSV only. Give back a cell the export had prefixed with `'`.
+             * @default true
+             */
+            safe_cells?: boolean;
             /**
              * Strict
              * @description If any row is refused, write nothing at all.
@@ -1689,7 +1711,7 @@ export interface components {
          * ExchangeFormat
          * @enum {string}
          */
-        ExchangeFormat: "archimate-xml";
+        ExchangeFormat: "archimate-xml" | "csv";
         /** FieldChangeRead */
         FieldChangeRead: {
             /** After */
@@ -4285,6 +4307,8 @@ export interface operations {
                 /** @description What to export: `model` (the whole catalogue). */
                 scope?: string;
                 with_views?: boolean;
+                /** @description CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are. */
+                safe_cells?: boolean;
             };
             header?: never;
             path?: never;
@@ -4292,13 +4316,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The model as an ArchiMate exchange file, as an attachment. */
+            /** @description The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/xml": string;
+                    "application/zip": string;
                 };
             };
             /** @description Unauthorized */
@@ -4337,7 +4362,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_import_model_exchanges_imports_post"];
             };
