@@ -296,12 +296,19 @@ class AuditPage:
 
 
 def _utc(moment: datetime) -> datetime:
-    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment
+    """UTC, whatever the offset typed: a moment whose UTC form is out of range is an error."""
+    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
 
 
 def aware(moment: datetime | None) -> datetime | None:
     """A moment typed without a zone is read as UTC; comparing it to a `timestamptz` would crash."""
-    return None if moment is None else _utc(moment)
+    if moment is None:
+        return None
+    try:
+        return _utc(moment)
+    except OverflowError as error:
+        msg = "that moment is outside the dates the trail can hold"
+        raise ValueError(msg) from error
 
 
 def encode_cursor(at: datetime, event_id: UUID) -> str:
@@ -314,6 +321,6 @@ def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
         padded = cursor + "=" * (-len(cursor) % 4)
         at, event_id = json.loads(base64.urlsafe_b64decode(padded))
         return _utc(datetime.fromisoformat(at)), UUID(event_id)
-    except (ValueError, TypeError, binascii.Error, AttributeError) as error:
+    except (ValueError, TypeError, binascii.Error, AttributeError, OverflowError) as error:
         msg = "the cursor is not one this server issued"
         raise InvalidCursorError(msg) from error

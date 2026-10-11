@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Audit Events
+         * @description Who changed what, and when — newest first. `since` is inclusive, `until` exclusive.
+         */
+        get: operations["list_audit_events_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams": {
         parameters: {
             query?: never;
@@ -222,6 +242,26 @@ export interface paths {
          *     is `PUT /documents/{document_id}`.
          */
         post: operations["attach_document_elements__element_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/{element_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Element History
+         * @description The trail of one element — still readable once the element is deleted.
+         */
+        get: operations["read_element_history_elements__element_id__history_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -876,6 +916,68 @@ export interface components {
          * @enum {string}
          */
         Aspect: "active_structure" | "behavior" | "passive_structure" | "motivation" | "composite" | "connector";
+        /**
+         * AuditAction
+         * @description The closed list of things the trail can say. Never a free string.
+         * @enum {string}
+         */
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted";
+        /**
+         * AuditChannel
+         * @description Which door the caller came through — said by the adapter, never by the caller.
+         * @enum {string}
+         */
+        AuditChannel: "http" | "mcp" | "system";
+        /**
+         * AuditEventRead
+         * @description One use case that changed the catalogue — the diff is computed server-side,
+         *     so a client displays it and never decides what counts as a change.
+         */
+        AuditEventRead: {
+            action: components["schemas"]["AuditAction"];
+            /** Actor Name */
+            actor_name: string;
+            /** Actor Sub */
+            actor_sub: string;
+            /** After */
+            after: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
+            /** Changes */
+            changes: components["schemas"]["FieldChangeRead"][];
+            channel: components["schemas"]["AuditChannel"];
+            /** Correlation */
+            correlation: string | null;
+            /** Entity Id */
+            entity_id: string | null;
+            entity_kind: components["schemas"]["EntityKind"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /** AuditPageRead */
+        AuditPageRead: {
+            /** Items */
+            items: components["schemas"]["AuditEventRead"][];
+            /**
+             * Next Cursor
+             * @description Pass it back as `cursor` for the next page; absent on the last one.
+             */
+            next_cursor: string | null;
+        };
         /** Body_attach_document_elements__element_id__documents_post */
         Body_attach_document_elements__element_id__documents_post: {
             /**
@@ -1273,6 +1375,11 @@ export interface components {
             } | null;
         };
         /**
+         * EntityKind
+         * @enum {string}
+         */
+        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document";
+        /**
          * ErrorResponse
          * @description The single error envelope every failing endpoint returns.
          */
@@ -1287,6 +1394,15 @@ export interface components {
              * @description Stable machine-readable code.
              */
             error: string;
+        };
+        /** FieldChangeRead */
+        FieldChangeRead: {
+            /** After */
+            after?: unknown;
+            /** Before */
+            before?: unknown;
+            /** Field */
+            field: string;
         };
         /**
          * FileDetailsWrite
@@ -1915,6 +2031,63 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_audit_events_audit_get: {
+        parameters: {
+            query?: {
+                entity_kind?: components["schemas"]["EntityKind"] | null;
+                entity_id?: string | null;
+                actor?: string | null;
+                action?: components["schemas"]["AuditAction"] | null;
+                since?: string | null;
+                until?: string | null;
+                request_id?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_diagrams_diagrams_get: {
         parameters: {
             query?: {
@@ -2986,6 +3159,58 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_element_history_elements__element_id__history_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

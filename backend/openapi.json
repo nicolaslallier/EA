@@ -143,6 +143,178 @@
         "title": "Aspect",
         "type": "string"
       },
+      "AuditAction": {
+        "description": "The closed list of things the trail can say. Never a free string.",
+        "enum": [
+          "element.created",
+          "element.updated",
+          "element.deleted",
+          "relationship.created",
+          "relationship.deleted",
+          "diagram.created",
+          "diagram.updated",
+          "diagram.deleted",
+          "diagram.layout_replaced",
+          "document.attached",
+          "document.revised",
+          "document.discarded",
+          "package.created",
+          "package.updated",
+          "package.deleted",
+          "package.elements_moved",
+          "saved_query.created",
+          "saved_query.updated",
+          "saved_query.deleted"
+        ],
+        "title": "AuditAction",
+        "type": "string"
+      },
+      "AuditChannel": {
+        "description": "Which door the caller came through \u2014 said by the adapter, never by the caller.",
+        "enum": [
+          "http",
+          "mcp",
+          "system"
+        ],
+        "title": "AuditChannel",
+        "type": "string"
+      },
+      "AuditEventRead": {
+        "description": "One use case that changed the catalogue \u2014 the diff is computed server-side,\nso a client displays it and never decides what counts as a change.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "actor_name": {
+            "title": "Actor Name",
+            "type": "string"
+          },
+          "actor_sub": {
+            "title": "Actor Sub",
+            "type": "string"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/FieldChangeRead"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/AuditChannel"
+          },
+          "correlation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "entity_kind": {
+            "$ref": "#/components/schemas/EntityKind"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "actor_sub",
+          "actor_name",
+          "action",
+          "entity_kind",
+          "entity_id",
+          "before",
+          "after",
+          "request_id",
+          "channel",
+          "correlation",
+          "changes"
+        ],
+        "title": "AuditEventRead",
+        "type": "object"
+      },
+      "AuditPageRead": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass it back as `cursor` for the next page; absent on the last one.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AuditPageRead",
+        "type": "object"
+      },
       "Body_attach_document_elements__element_id__documents_post": {
         "properties": {
           "file": {
@@ -1002,6 +1174,18 @@
         "title": "ElementUpdate",
         "type": "object"
       },
+      "EntityKind": {
+        "enum": [
+          "element",
+          "relationship",
+          "package",
+          "saved_query",
+          "diagram",
+          "document"
+        ],
+        "title": "EntityKind",
+        "type": "string"
+      },
       "ErrorResponse": {
         "description": "The single error envelope every failing endpoint returns.",
         "properties": {
@@ -1021,6 +1205,25 @@
           "detail"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FieldChangeRead": {
+        "properties": {
+          "after": {
+            "title": "After"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "FieldChangeRead",
         "type": "object"
       },
       "FileDetailsWrite": {
@@ -2216,6 +2419,213 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/audit": {
+      "get": {
+        "description": "Who changed what, and when \u2014 newest first. `since` is inclusive, `until` exclusive.",
+        "operationId": "list_audit_events_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "entity_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EntityKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AuditAction"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Audit Events",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
     "/diagrams": {
       "get": {
         "description": "Every saved diagram, sorted by name \u2014 or only those filed in a package.",
@@ -3782,6 +4192,104 @@
         "summary": "Attach Document",
         "tags": [
           "documents"
+        ]
+      }
+    },
+    "/elements/{element_id}/history": {
+      "get": {
+        "description": "The trail of one element \u2014 still readable once the element is deleted.",
+        "operationId": "read_element_history_elements__element_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Element History",
+        "tags": [
+          "audit"
         ]
       }
     },

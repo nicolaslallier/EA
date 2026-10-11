@@ -9,7 +9,7 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +22,14 @@ from ea.domain.archimate import (
     RelationshipCategory,
     RelationshipType,
     permitted_relationships,
+)
+from ea.domain.audit import (
+    AuditAction,
+    AuditChannel,
+    AuditEvent,
+    AuditPage,
+    EntityKind,
+    FieldChange,
 )
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
@@ -119,6 +127,12 @@ Offset = Annotated[int, Field(ge=0)]
 Depth = Annotated[int, Field(ge=1, le=MAX_TRAVERSAL_DEPTH)]
 Search = Annotated[str, Field(max_length=200)]
 LinkName = Annotated[str, Field(max_length=200)]
+#: The audit filters, bounded once for both adapters (docs/adr/0044). A NUL is
+#: refused here because PostgreSQL cannot compare a `text` column to one: it
+#: would reach the driver and come back as a 500.
+Actor = Annotated[str, Field(max_length=200, pattern=r"^[^\x00]*$")]
+RequestIdFilter = Annotated[str, Field(max_length=128, pattern=r"^[^\x00]*$")]
+CursorToken = Annotated[str, Field(max_length=512)]
 
 # --- Files in MinIO (docs/adr/0036), and what is known about them (docs/adr/0039) ---
 FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
@@ -1082,4 +1096,68 @@ class SavedQueryRead(SavedQuerySummaryRead):
         return cls(
             **SavedQuerySummaryRead.of(saved.summary).model_dump(),
             query=ElementQuerySchema.of(saved.query),
+        )
+
+
+# --- The audit trail (docs/adr/0044) ----------------------------------------
+
+
+class FieldChangeRead(BaseModel):
+    field: str
+    before: Any = None
+    after: Any = None
+
+
+class AuditEventRead(BaseModel):
+    """One use case that changed the catalogue — the diff is computed server-side,
+    so a client displays it and never decides what counts as a change."""
+
+    id: UUID
+    at: datetime
+    actor_sub: str
+    actor_name: str
+    action: AuditAction
+    entity_kind: EntityKind
+    entity_id: UUID | None
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+    request_id: str
+    channel: AuditChannel
+    correlation: str | None
+    changes: list[FieldChangeRead]
+
+    @classmethod
+    def of(cls, event: AuditEvent) -> AuditEventRead:
+        return cls(
+            id=event.id,
+            at=event.at,
+            actor_sub=event.actor_sub,
+            actor_name=event.actor_name,
+            action=event.action,
+            entity_kind=event.entity_kind,
+            entity_id=event.entity_id,
+            before=dict(event.before) if event.before is not None else None,
+            after=dict(event.after) if event.after is not None else None,
+            request_id=event.request_id,
+            channel=event.channel,
+            correlation=event.correlation,
+            changes=[_change(change) for change in event.changes],
+        )
+
+
+def _change(change: FieldChange) -> FieldChangeRead:
+    return FieldChangeRead(field=change.field, before=change.before, after=change.after)
+
+
+class AuditPageRead(BaseModel):
+    items: list[AuditEventRead]
+    next_cursor: str | None = Field(
+        description="Pass it back as `cursor` for the next page; absent on the last one."
+    )
+
+    @classmethod
+    def of(cls, page: AuditPage) -> AuditPageRead:
+        return cls(
+            items=[AuditEventRead.of(event) for event in page.events],
+            next_cursor=page.next_cursor,
         )

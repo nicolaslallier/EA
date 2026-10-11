@@ -13,6 +13,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from ea.api.architecture import router as architecture_router
+from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
@@ -41,6 +42,7 @@ from ea.db.postgres import create_engine, create_session_factory
 from ea.domain.auth import Caller
 from ea.domain.ports import (
     AccessTokenVerifier,
+    AuditRepository,
     DiagramRepository,
     DocumentRepository,
     FileMetadataRepository,
@@ -54,6 +56,7 @@ from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.architecture_store import PostgresArchitectureRepository
+from ea.repositories.audit_store import PostgresAuditRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
@@ -63,6 +66,7 @@ from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
@@ -160,6 +164,7 @@ def _lifespan(
     packages: PackageRepository | None = None,
     queries: SavedQueryRepository | None = None,
     file_metadata: FileMetadataRepository | None = None,
+    audit: AuditRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -227,6 +232,7 @@ def _lifespan(
             package_store = packages
             query_store = queries
             metadata_store = file_metadata
+            audit_store = audit
             if settings.postgres_enabled:
                 engine = create_engine(settings)
                 stack.push_async_callback(engine.dispose)
@@ -242,6 +248,8 @@ def _lifespan(
                     query_store = PostgresSavedQueryRepository(app.state.db_sessions)
                 if metadata_store is None:
                     metadata_store = PostgresFileMetadataRepository(app.state.db_sessions)
+                if audit_store is None:
+                    audit_store = PostgresAuditRepository(app.state.db_sessions)
                 logger.info(
                     "relational store ready at %s:%s/%s",
                     settings.postgres_host,
@@ -293,6 +301,8 @@ def _lifespan(
                 app.state.diagram_service = DiagramService(
                     diagram_store, architecture_service_of(app), packages=package_store
                 )
+            if audit_store is not None:
+                app.state.audit_service = AuditService(audit_store)
             # Files live in MinIO, beside every other store (docs/adr/0036). The
             # service is attached either way, so a deployment without it answers
             # 503 on every file route and tool instead of 500.
@@ -472,6 +482,7 @@ def create_app(
     queries: SavedQueryRepository | None = None,
     files: ObjectStore | None = None,
     file_metadata: FileMetadataRepository | None = None,
+    audit: AuditRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -491,7 +502,8 @@ def create_app(
     `diagrams` does the same for the saved diagrams (docs/adr/0031), and
     `packages` for the classification tree and `queries` for the saved queries.
     `files` does the same for the bucket (docs/adr/0036), and `file_metadata`
-    for the catalogue kept beside it (docs/adr/0039).
+    for the catalogue kept beside it (docs/adr/0039), and `audit` for the audit
+    trail (docs/adr/0044).
     `verifier` does the same for authentication: given one — `StaticVerifier`
     in tests, a `JwtVerifier` over `httpx.MockTransport` — every route answers
     without reaching Keycloak; given none, the lifespan builds and probes the
@@ -520,6 +532,7 @@ def create_app(
             packages=packages,
             queries=queries,
             file_metadata=file_metadata,
+            audit=audit,
         ),
     )
     app.state.settings = settings
@@ -545,6 +558,8 @@ def create_app(
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
+    if audit is not None:
+        app.state.audit_service = AuditService(audit)
 
     # Added first, so it is the *innermost* layer: the envelope it sends for an
     # unhandled failure then passes back out through CORS and the request id,
@@ -575,6 +590,7 @@ def create_app(
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     if settings.mcp_enabled:
         _mount_mcp(app, settings)
