@@ -20,6 +20,7 @@ from ea.db.models.baseline import (
 from ea.db.models.chunk import DocumentChunk
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.models.document import ElementDocument
+from ea.db.models.external import ExternalReferenceRecord
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
 from ea.db.models.saved_query import SavedQueryRecord
@@ -36,6 +37,7 @@ __all__ = [
     "DocumentChunk",
     "ElementDocument",
     "ElementRecord",
+    "ExternalReferenceRecord",
     "FileMetadataRecord",
     "PackageRecord",
     "RelationshipRecord",
