@@ -70,13 +70,14 @@ def _runs_as_formula(value: str) -> bool:
     """Whether a spreadsheet may read `value` as a formula.
 
     A leading tab or carriage return is dangerous by itself; otherwise the first character
-    that is not a blank, a control or an invisible format character (zero-width space, BOM,
-    bidi override...) decides: some applications skip those before looking for `=`.
+    that is not a blank, a control, an invisible format character or a combining mark
+    (zero-width space, BOM, bidi override, CGJ...) decides: some applications skip those
+    before looking for `=`.
     """
     if value[:1] in ("\t", "\r"):
         return True
     for character in value:
-        if character.isspace() or unicodedata.category(character) in ("Cc", "Cf"):
+        if character.isspace() or unicodedata.category(character) in ("Cc", "Cf", "Mn"):
             continue
         return character in _FORMULA
     return False

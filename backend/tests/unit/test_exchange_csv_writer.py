@@ -150,6 +150,8 @@ HIDDEN_FORMULAS = [
     "\t",
     " =1",
     "  \t+1",
+    "\N{COMBINING GRAPHEME JOINER}=1",  # a mark (Mn), invisible
+    "\N{COMBINING ACUTE ACCENT}@x",
     "\N{ZERO WIDTH SPACE}=1",  # zero-width space
     "\N{ZERO WIDTH NO-BREAK SPACE}=1",  # byte order mark
     "\N{RIGHT-TO-LEFT OVERRIDE}=1",  # right-to-left override
