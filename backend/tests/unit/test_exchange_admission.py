@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -153,13 +154,24 @@ async def settle() -> None:
         await asyncio.sleep(0)
 
 
+async def until(condition: Callable[[], bool], what: str, seconds: float = 5.0) -> None:
+    """Wait for the real condition, with a deadline - not for a number of loop turns."""
+    deadline = asyncio.get_running_loop().time() + seconds
+    while not condition():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"still waiting for {what} after {seconds} s")
+        await asyncio.sleep(0.01)
+
+
 async def two_in_flight(app: Any, parser: Parser) -> list[tuple[Wire, asyncio.Task[None]]]:
     held = []
-    for _ in range(2):
+    for taken in (1, 2):
         wire = Wire()
         held.append((wire, run(app, wire)))
-        await settle()
-    await asyncio.to_thread(parser.entered.wait, 5)
+        await until(
+            lambda taken=taken: app.state.import_admission.in_flight == taken, f"place {taken}"
+        )
+    assert await asyncio.to_thread(parser.entered.wait, 5), "the parser never started"
     return held
 
 
@@ -251,6 +263,7 @@ async def test_the_place_comes_back_when_the_client_leaves_while_waiting(
     waiting.cancel()
     await asyncio.gather(waiting, return_exceptions=True)
 
+    await until(lambda: app.state.import_admission.in_flight == 1, "the waiting place to return")
     assert app.state.import_admission.in_flight == 1  # only the one parsing
     await finish(parser, first[:1])
     assert app.state.import_admission.in_flight == 0
