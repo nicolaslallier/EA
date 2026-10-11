@@ -26,7 +26,6 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import func, select, text
@@ -40,7 +39,7 @@ from ea.domain.errors import (
     TooManyRefusedRowsError,
     WriteConflictError,
 )
-from ea.domain.ports import Transaction
+from ea.domain.ports import RowRefusal, Transaction
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -271,12 +270,6 @@ async def savepoint() -> AsyncIterator[None]:
             yield
     finally:
         unit.batched -= 1
-
-
-@dataclass(frozen=True, slots=True)
-class RowRefusal:
-    index: int
-    error: Exception
 
 
 async def apply_rows[Row](

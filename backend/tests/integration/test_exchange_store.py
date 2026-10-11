@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+
 import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.exchange import ExportScope
+from ea.db.models.architecture import ElementRecord
+from ea.domain.errors import ImportInProgressError
+from ea.domain.exchange import SOURCE_ID, ExportScope
 from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.services.architecture import ArchitectureService
 
@@ -79,3 +86,67 @@ async def test_a_write_committed_after_the_snapshot_began_is_invisible_to_it(
         assert len(await snapshot.elements_page(0, 10)) == 1
         await graph_service.create_element(element_type=E.NODE, name="after")
         assert len(await snapshot.elements_page(0, 10)) == 1
+
+
+async def test_a_second_import_is_refused_while_the_first_holds_the_lock(
+    exchange: PostgresExchangeRepository,
+) -> None:
+    async def another() -> None:
+        async with exchange.transaction(commit=False):
+            pass
+
+    async with exchange.transaction(commit=False):
+        # a fresh context: a task copies the current one, session included
+        task = asyncio.create_task(another(), context=contextvars.Context())
+        with pytest.raises(ImportInProgressError):
+            await task
+
+    async with exchange.transaction(commit=False):  # released with the first
+        pass
+
+
+async def test_the_known_maps_see_what_the_transaction_wrote(
+    exchange: PostgresExchangeRepository, graph_service: ArchitectureService
+) -> None:
+    async with exchange.transaction(commit=False):
+        a = await graph_service.create_element(
+            element_type=E.NODE, name="a", properties={SOURCE_ID: "n-1"}
+        )
+        b = await graph_service.create_element(element_type=E.NODE, name="b")
+        await graph_service.connect(relationship_type=R.FLOW, source_id=a.id, target_id=b.id)
+
+        elements = await exchange.known_elements()
+        keys = await exchange.known_relationship_keys()
+
+    assert {e.name for e in elements} == {"a", "b"}
+    assert keys == frozenset({(R.FLOW, a.id, b.id)})
+
+
+async def test_the_known_maps_need_a_transaction(exchange: PostgresExchangeRepository) -> None:
+    with pytest.raises(RuntimeError, match="shared transaction"):
+        await exchange.known_elements()
+    with pytest.raises(RuntimeError, match="shared transaction"):
+        await exchange.lock_elements([])
+
+
+async def test_locked_elements_make_another_writer_wait_and_the_order_is_by_id(
+    exchange: PostgresExchangeRepository,
+    graph_service: ArchitectureService,
+    engine_at_head: AsyncEngine,
+) -> None:
+    first = await graph_service.create_element(element_type=E.NODE, name="first")
+    second = await graph_service.create_element(element_type=E.NODE, name="second")
+
+    async with exchange.transaction(commit=False):
+        await exchange.lock_elements([second.id, first.id, second.id])
+        async with engine_at_head.connect() as other:
+            await other.begin()
+            for element in (first, second):
+                with pytest.raises(DBAPIError):  # NOWAIT: the row is held, not waited for
+                    await other.execute(
+                        select(ElementRecord.id)
+                        .where(ElementRecord.id == element.id)
+                        .with_for_update(nowait=True)
+                    )
+                await other.rollback()
+                await other.begin()

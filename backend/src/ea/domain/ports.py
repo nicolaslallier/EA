@@ -6,7 +6,15 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -37,6 +45,14 @@ class Transaction:
     """The handle of a shared transaction: set `commit` to `False` to roll it back instead."""
 
     commit: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RowRefusal:
+    """A row of an import the rules refused: its position in the rows given, and why."""
+
+    index: int
+    error: Exception
 
 
 @dataclass(frozen=True, slots=True)
@@ -757,4 +773,38 @@ class ExchangeRepository(Protocol):
 
     def snapshot(self, scope: ExportScope) -> AbstractAsyncContextManager[ExportSnapshot]:
         """A `REPEATABLE READ`, read-only view of what `scope` selects."""
+        ...
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """The one transaction every write of an import joins, held by one import at a time.
+
+        Rolled back unless `commit` is still true on a normal exit. A second import
+        is refused at once (`ImportInProgressError`), never queued (docs/adr/0050).
+        """
+        ...
+
+    async def apply_rows[Row](
+        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+    ) -> list[RowRefusal]:
+        """Apply each row in the transaction; a refused row is skipped, the others stay.
+
+        Rows run in batches of one `SAVEPOINT`, and a refusal replays the rows of its batch
+        that precede it: `apply` must be re-runnable, deriving its state from what it does now.
+        """
+        ...
+
+    async def known_elements(self) -> tuple[Element, ...]:
+        """Every element of the catalogue — the map an import matches `(type, name)` against."""
+        ...
+
+    async def known_relationship_keys(self) -> frozenset[tuple[RelationshipType, UUID, UUID]]:
+        """`(type, source, target)` of every link, to tell a new link from an existing one."""
+        ...
+
+    async def lock_elements(self, ids: Iterable[UUID]) -> None:
+        """Take the row locks of these existing elements, in id order, without writing.
+
+        Done before the first write so that an import and an ordinary write meet the
+        elements in the same order (docs/adr/0050, the interlock limit).
+        """
         ...

@@ -11,21 +11,31 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from sqlalchemy import ColumnElement, Text, cast, func, select
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
+from ea.db.unit_of_work import apply_rows, in_unit, reading, shared_transaction
+from ea.domain.archimate import RelationshipType
 from ea.domain.exchange import SOURCE_ID
-from ea.repositories.architecture_store import element_from_row, relationship_from_row
+from ea.repositories.architecture_store import (
+    element_from_row,
+    lock_elements,
+    relationship_from_row,
+)
+from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+    from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from ea.domain.exchange import ExportScope
     from ea.domain.model import Element, Relationship
+    from ea.domain.ports import RowRefusal, Transaction
 
 
 def _identifier(record: Any) -> ColumnElement[str]:
@@ -94,3 +104,47 @@ class PostgresExchangeRepository:
             # A snapshot starts at the first statement, not at `connection()`.
             await session.execute(select(1))
             yield _Snapshot(session)
+
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        return shared_transaction(self._sessions, commit=commit, exclusive=True)
+
+    async def apply_rows[Row](
+        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+    ) -> list[RowRefusal]:
+        return await apply_rows(rows, apply)
+
+    @staticmethod
+    def _inside_a_transaction() -> None:
+        if not in_unit():
+            msg = "this needs the shared transaction of an import: open one with `transaction()`"
+            raise RuntimeError(msg)
+
+    async def known_elements(self) -> tuple[Element, ...]:
+        self._inside_a_transaction()
+        async with reading(self._sessions) as session:
+            rows = await session.scalars(select(ElementRecord))
+            return tuple(element_from_row(row) for row in rows)
+
+    async def known_relationship_keys(
+        self,
+    ) -> frozenset[tuple[RelationshipType, UUID, UUID]]:
+        self._inside_a_transaction()
+        async with reading(self._sessions) as session:
+            rows = await session.execute(
+                select(
+                    RelationshipRecord.relationship_type,
+                    RelationshipRecord.source_id,
+                    RelationshipRecord.target_id,
+                )
+            )
+            return frozenset(
+                (RelationshipType(kind), source, target) for kind, source, target in rows
+            )
+
+    @replayable
+    async def lock_elements(self, ids: Iterable[UUID]) -> None:
+        # A lock is not a write: no event, hence `reading`. A lock that times out (55P03)
+        # still condemns the import, which is what `replayable` is for.
+        self._inside_a_transaction()
+        async with reading(self._sessions) as session:
+            await lock_elements(session, ids, key_only=True)
