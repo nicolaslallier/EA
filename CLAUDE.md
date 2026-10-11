@@ -655,7 +655,8 @@ request id: the adapter that knows who is calling sets it — `api/auth.py`'s
 bearer dependency, `speaking_plainly` for `/mcp`, `acting_as(SYSTEM)` in
 `ea.reindex` — and the service reads it. **Every public method of
 `ArchitectureService`, `DocumentService`, `IpamService`, `DiagramService`,
-`PackageService`, `SavedQueryService`, `AuditService` and `BaselineService`
+`FileService`, `PackageService`, `SavedQueryService`, `AuditService` and
+`BaselineService`
 starts with `require_caller()` (a read) or `require_editor()` (a write)**, and nobody set
 means `NotAuthenticatedError`: a forgotten wire-up is a 401 in a test, not an
 open door. `tests/unit/test_service_guards.py` reads the source (AST) and fails
