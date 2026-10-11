@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
-def _summaries() -> Select[tuple[DiagramRecord, int]]:
+def _summaries() -> Select[DiagramRecord, int]:
     """Diagrams with their node count, computed by the server rather than stored."""
     count = (
         select(func.count())
