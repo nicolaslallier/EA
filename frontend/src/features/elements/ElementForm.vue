@@ -29,6 +29,13 @@ const PROPERTY_KEY = /^[A-Za-z][A-Za-z0-9_]{0,62}$/
 
 type PropertyRow = { key: string; value: string }
 
+// The validity dates (docs/adr/0059) are properties like any other for the API,
+// but they get their own date inputs here: a PATCH replaces the whole map, so a
+// form that dropped them on save would silently erase them. The API stays the
+// judge of the format.
+const VALID_FROM = 'valid_from'
+const VALID_UNTIL = 'valid_until'
+
 const isEditing = computed(() => Boolean(props.element))
 
 const elementType = ref<ElementType>(props.element?.element_type ?? 'application_component')
@@ -36,10 +43,14 @@ const name = ref(props.element?.name ?? '')
 const description = ref(props.element?.description ?? '')
 const documentation = ref(props.element?.documentation ?? '')
 const properties = ref<PropertyRow[]>(rowsOf(props.element))
+const validFrom = ref(props.element?.properties?.[VALID_FROM] ?? '')
+const validUntil = ref(props.element?.properties?.[VALID_UNTIL] ?? '')
 const invalid = ref('')
 
 function rowsOf(element?: ElementRead | null): PropertyRow[] {
-  return Object.entries(element?.properties ?? {}).map(([key, value]) => ({ key, value }))
+  return Object.entries(element?.properties ?? {})
+    .filter(([key]) => key !== VALID_FROM && key !== VALID_UNTIL)
+    .map(([key, value]) => ({ key, value }))
 }
 
 // The parent reuses one form for "new" and for "edit that row", so a changed
@@ -52,6 +63,8 @@ watch(
     description.value = element?.description ?? ''
     documentation.value = element?.documentation ?? ''
     properties.value = rowsOf(element)
+    validFrom.value = element?.properties?.[VALID_FROM] ?? ''
+    validUntil.value = element?.properties?.[VALID_UNTIL] ?? ''
     invalid.value = ''
   },
 )
@@ -90,6 +103,12 @@ function onSubmit(): void {
   const collected = collectProperties()
   if (collected === null) {
     return
+  }
+  if (validFrom.value) {
+    collected[VALID_FROM] = validFrom.value
+  }
+  if (validUntil.value) {
+    collected[VALID_UNTIL] = validUntil.value
   }
 
   const common = {
@@ -137,6 +156,17 @@ function onSubmit(): void {
     <div class="field">
       <label for="element-documentation">Documentation</label>
       <textarea id="element-documentation" v-model="documentation" rows="3" maxlength="20000" />
+    </div>
+
+    <div class="field">
+      <label for="element-valid-from">En service à partir du</label>
+      <input id="element-valid-from" v-model="validFrom" type="date" />
+    </div>
+
+    <div class="field">
+      <label for="element-valid-until">Jusqu'au (inclus)</label>
+      <input id="element-valid-until" v-model="validUntil" type="date" />
+      <p class="hint">Laisser vide : sans date. L'API reste juge du format.</p>
     </div>
 
     <fieldset class="properties">

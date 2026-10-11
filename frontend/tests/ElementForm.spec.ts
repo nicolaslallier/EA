@@ -33,6 +33,66 @@ async function fill(label: RegExp, value: string) {
 }
 
 describe('ElementForm', () => {
+  it('sends the two dates among the properties, and nothing when they are empty', async () => {
+    const rendered = renderForm()
+    await fill(/nom/i, 'Facturation')
+
+    await fireEvent.submit(screen.getByRole('form'))
+    expect(rendered.emitted().submit[0]).toEqual([
+      {
+        element_type: 'application_component',
+        name: 'Facturation',
+        description: '',
+        documentation: '',
+        properties: {},
+      },
+    ])
+
+    await fill(/en service à partir du/i, '2024-03-01')
+    await fill(/jusqu'au/i, '2027-06-30')
+    await fireEvent.submit(screen.getByRole('form'))
+    expect(rendered.emitted().submit[1]).toEqual([
+      {
+        element_type: 'application_component',
+        name: 'Facturation',
+        description: '',
+        documentation: '',
+        properties: { valid_from: '2024-03-01', valid_until: '2027-06-30' },
+      },
+    ])
+  })
+
+  it('keeps the dates of the element being edited when it is saved without touching them', async () => {
+    // PATCH replaces the whole property map: a form that dropped the dates would erase them.
+    const element = anElement({
+      properties: { owner: 'finance', valid_from: '2024-03-01', valid_until: '2027-06-30' },
+    })
+    const rendered = renderForm({ element })
+
+    expect(screen.getByLabelText(/en service à partir du/i)).toHaveValue('2024-03-01')
+    expect(screen.queryByLabelText("Clé de l'attribut 2")).toBeNull() // dates are not free rows
+    await fireEvent.submit(screen.getByRole('form'))
+
+    expect(rendered.emitted().submit[0]).toEqual([
+      {
+        name: element.name,
+        description: element.description,
+        documentation: element.documentation,
+        properties: { owner: 'finance', valid_from: '2024-03-01', valid_until: '2027-06-30' },
+      },
+    ])
+  })
+
+  it('removes a date that was emptied rather than sending a blank', async () => {
+    const element = anElement({ properties: { valid_until: '2027-06-30' } })
+    const rendered = renderForm({ element })
+
+    await fill(/jusqu'au/i, '')
+    await fireEvent.submit(screen.getByRole('form'))
+
+    expect((rendered.emitted().submit[0] as unknown[])[0]).toMatchObject({ properties: {} })
+  })
+
   it('emits the element to create, type included', async () => {
     const rendered = renderForm()
 
