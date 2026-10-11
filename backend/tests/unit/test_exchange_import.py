@@ -1192,3 +1192,31 @@ def test_the_bounds_have_the_values_the_plan_states() -> None:
     assert MAX_EXCHANGE_ITEMS == 50_000
     assert MAX_EXCHANGE_BYTES == 20 * 1024 * 1024
     assert MAX_NESTING_DEPTH == 250  # 200 levels of organizations, and the frame around them
+
+
+class TestARowRefusedOnlyTheSecondTime:
+    async def test_the_import_is_condemned_not_continued(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        real = service.create_element
+        calls: dict[str, int] = {}
+
+        async def create(**kwargs: object) -> object:
+            name = str(kwargs["name"])
+            calls[name] = calls.get(name, 0) + 1
+            if name == "B" or (name == "A" and calls[name] > 1):  # A is refused on its replay
+                raise DuplicateElementError("not reproducible")
+            return await real(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(service, "create_element", create)
+
+        with pytest.raises(WriteConflictError):
+            await exchange_service.import_exchange(
+                xml(exchange_xml(el("a", "Node", "A") + el("b", "Node", "B"))), REAL
+            )
+
+        assert repository.elements == {}

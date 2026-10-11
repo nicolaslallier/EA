@@ -1395,10 +1395,20 @@ class InMemoryExchange:
                 if len(refused) > MAX_REFUSED_ROWS:
                     msg = f"more than {MAX_REFUSED_ROWS} rows were refused"
                     raise TooManyRefusedRowsError(msg) from error
-                for index in range(start, position):  # the replay, without a savepoint
+                # The replay, without a savepoint. Like the real `apply_rows`, a row refused the
+                # second time condemns the import. Database errors (IntegrityError, DataError)
+                # are not raised by this double: `tests/integration/test_exchange_import.py`
+                # and `test_unit_of_work.py` cover them against PostgreSQL.
+                for index in range(start, position):
                     self.applied += 1
                     self.replayed += 1
-                    await apply(rows[index])
+                    try:
+                        await apply(rows[index])
+                    except self.NOT_THE_ROWS:
+                        raise
+                    except DomainError as again:
+                        msg = "rows applied once were refused the second time"
+                        raise WriteConflictError(msg) from again
                 start = position + 1
             else:
                 start = end
