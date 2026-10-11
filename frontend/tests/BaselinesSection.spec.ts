@@ -6,7 +6,7 @@ import { createMemoryHistory } from 'vue-router'
 import BaselinesSection from '../src/features/baselines/BaselinesSection.vue'
 import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
-import { aBaseline, aDiff, stubApi, type Route } from './support/api'
+import { aBaseline, aDiff, aRestore, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -51,7 +51,11 @@ describe('BaselinesSection', () => {
 
   it('shows a failed load as an error and not as an empty list', async () => {
     await open('', [
-      { path: '/baselines', status: 500, body: { error: 'internal_error', detail: 'boom' } },
+      {
+        path: '/baselines',
+        status: 500,
+        body: { error: 'internal_error', detail: 'boom' },
+      },
     ])
 
     expect((await screen.findByRole('alert')).textContent).toContain('boom')
@@ -61,14 +65,22 @@ describe('BaselinesSection', () => {
   it('captures a baseline under the name typed', async () => {
     const { calls } = await open('', [
       LIST,
-      { method: 'POST', path: '/baselines', status: 201, body: aBaseline({ name: 'v2' }) },
+      {
+        method: 'POST',
+        path: '/baselines',
+        status: 201,
+        body: aBaseline({ name: 'v2' }),
+      },
     ])
 
     await fireEvent.update(await screen.findByLabelText('Nom'), 'v2')
     await fireEvent.click(screen.getByRole('button', { name: 'Capturer' }))
 
     await waitFor(() =>
-      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'v2', description: '' }),
+      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+        name: 'v2',
+        description: '',
+      }),
     )
   })
 
@@ -122,7 +134,10 @@ describe('BaselinesSection', () => {
   })
 
   it('compares with a second baseline named in the URL', async () => {
-    const other = aBaseline({ id: '44444444-4444-4444-8444-444444444444', name: 'Après' })
+    const other = aBaseline({
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'Après',
+    })
     const { calls } = await open(`?a=${aBaseline().id}&b=${other.id}`, [
       { path: '/baselines', body: [aBaseline(), other] },
       { path: DIFF_PATH, body: aDiff() },
@@ -138,7 +153,11 @@ describe('BaselinesSection', () => {
   it('tells an unchanged model from a diff that failed', async () => {
     await open(`?a=${aBaseline().id}`, [
       LIST,
-      { path: DIFF_PATH, status: 404, body: { error: 'not_found', detail: 'gone' } },
+      {
+        path: DIFF_PATH,
+        status: 404,
+        body: { error: 'not_found', detail: 'gone' },
+      },
     ])
 
     expect((await screen.findByRole('alert')).textContent).toContain('gone')
@@ -152,7 +171,10 @@ describe('BaselinesSection', () => {
       label: `added-${String(i).padStart(3, '0')}`,
       type: 'node',
     }))
-    await open(`?a=${aBaseline().id}`, [LIST, { path: DIFF_PATH, body: aDiff({ elements_added: added }) }])
+    await open(`?a=${aBaseline().id}`, [
+      LIST,
+      { path: DIFF_PATH, body: aDiff({ elements_added: added }) },
+    ])
 
     expect(await screen.findByText('added-000')).toBeTruthy()
     expect(screen.queryByText('added-129')).toBeNull()
@@ -163,9 +185,7 @@ describe('BaselinesSection', () => {
   it('writes the chosen pair in the URL', async () => {
     const { router } = await open()
 
-    await fireEvent.click(
-      await screen.findByRole('button', { name: 'Comparer au modèle courant' }),
-    )
+    await fireEvent.click(await screen.findByRole('button', { name: 'Comparer au modèle courant' }))
 
     await waitFor(() => expect(router.currentRoute.value.query.a).toBe(aBaseline().id))
   })
@@ -183,6 +203,22 @@ describe('BaselinesSection', () => {
 
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE')).toBe(true))
     await waitFor(() => expect(router.currentRoute.value.query.a).toBeUndefined())
+  })
+
+  it('opens the restoration dialog on the baseline chosen, and closes it on Annuler', async () => {
+    const { calls } = await open('', [
+      LIST,
+      { method: 'POST', path: `/baselines/${aBaseline().id}/restore`, body: aRestore() },
+    ])
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Restaurer' }))
+
+    expect(await screen.findByRole('dialog', { name: /Avant migration/ })).toBeTruthy()
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ dry_run: true }),
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('offers a reader no capture, no restoration and no deletion', async () => {

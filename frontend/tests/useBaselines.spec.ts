@@ -11,7 +11,12 @@ describe('useBaselines', () => {
   it('lists, captures and removes', async () => {
     const calls = stubApi([
       { path: '/baselines', body: [aBaseline()] },
-      { method: 'POST', path: '/baselines', status: 201, body: aBaseline({ name: 'v2' }) },
+      {
+        method: 'POST',
+        path: '/baselines',
+        status: 201,
+        body: aBaseline({ name: 'v2' }),
+      },
       { method: 'DELETE', path: `/baselines/${aBaseline().id}`, status: 204 },
     ])
     const baselines = useBaselines()
@@ -72,7 +77,9 @@ describe('useBaselines', () => {
       },
     ])
 
-    const answer = await useBaselines().restore(aBaseline().id, { dry_run: true })
+    const answer = await useBaselines().restore(aBaseline().id, {
+      dry_run: true,
+    })
 
     expect(calls[0]?.body).toEqual({ dry_run: true })
     expect(answer.plan.elements_to_delete).toBe(3)

@@ -36,7 +36,11 @@ export function useBaselines() {
   }
 
   async function remove(id: string): Promise<void> {
-    unwrap(await api.DELETE('/baselines/{baseline_id}', { params: { path: { baseline_id: id } } }))
+    unwrap(
+      await api.DELETE('/baselines/{baseline_id}', {
+        params: { path: { baseline_id: id } },
+      }),
+    )
     await load()
   }
 
@@ -63,11 +67,17 @@ export function useBaselines() {
     diff.value = null
   }
 
-  async function restore(id: string, request: RestoreRequest): Promise<RestoreResult> {
+  /** A dry run when `request.dry_run` is true (the plan, nothing written); else the restoration. */
+  async function restore(
+    id: string,
+    request: RestoreRequest,
+    signal?: AbortSignal,
+  ): Promise<RestoreResult> {
     return unwrap(
       await api.POST('/baselines/{baseline_id}/restore', {
         params: { path: { baseline_id: id } },
         body: request,
+        signal,
       }),
     )
   }

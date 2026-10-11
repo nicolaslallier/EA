@@ -94,8 +94,7 @@ async function confirmDelete(): Promise<void> {
 const diffIsEmpty = computed(() => {
   const found = store.diff.value
   return (
-    found !== null &&
-    Object.values(found).every((entries) => (entries as unknown[]).length === 0)
+    found !== null && Object.values(found).every((entries) => (entries as unknown[]).length === 0)
   )
 })
 
@@ -140,8 +139,13 @@ function when(iso: string): string {
     <p v-if="store.status.value === 'loading' && store.baselines.value.length === 0" role="status">
       Chargement…
     </p>
-    <p v-else-if="store.status.value === 'error'" role="alert">{{ store.error.value }}</p>
-    <p v-else-if="store.status.value === 'ready' && store.baselines.value.length === 0" class="empty">
+    <p v-else-if="store.status.value === 'error'" role="alert">
+      {{ store.error.value }}
+    </p>
+    <p
+      v-else-if="store.status.value === 'ready' && store.baselines.value.length === 0"
+      class="empty"
+    >
       Aucune baseline.
     </p>
 
@@ -150,7 +154,8 @@ function when(iso: string): string {
         <strong :id="`baseline-${baseline.id}`">{{ baseline.name }}</strong>
         <span>
           {{ baseline.element_count }} éléments, {{ baseline.relationship_count }} relations,
-          {{ baseline.box_count }} boîtes — {{ baseline.created_by }}, {{ when(baseline.created_at) }}
+          {{ baseline.box_count }} boîtes — {{ baseline.created_by }},
+          {{ when(baseline.created_at) }}
         </span>
         <span v-if="baseline.description" class="description">{{ baseline.description }}</span>
         <button
@@ -189,9 +194,14 @@ function when(iso: string): string {
     </ul>
 
     <section v-if="a" class="diff" aria-label="Différences">
-      <h3>« {{ subject?.name ?? a }} » → {{ b ? `« ${other?.name ?? b} »` : 'modèle courant' }}</h3>
+      <h3>
+        « {{ subject?.name ?? a }} » →
+        {{ b ? `« ${other?.name ?? b} »` : 'modèle courant' }}
+      </h3>
       <p v-if="store.diffStatus.value === 'loading'" role="status">Comparaison…</p>
-      <p v-else-if="store.diffStatus.value === 'error'" role="alert">{{ store.diffError.value }}</p>
+      <p v-else-if="store.diffStatus.value === 'error'" role="alert">
+        {{ store.diffError.value }}
+      </p>
       <template v-else-if="store.diff.value">
         <p v-if="diffIsEmpty" class="empty">Aucune différence.</p>
         <div v-else class="columns">
@@ -218,7 +228,7 @@ function when(iso: string): string {
     </section>
 
     <RestoreDialog
-      v-if="restoring"
+      v-if="restoring && canWrite"
       :baseline="restoring"
       @close="restoring = null"
       @restored="onRestored"
