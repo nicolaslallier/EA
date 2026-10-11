@@ -16,6 +16,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Final
 from uuid import UUID
@@ -185,4 +186,49 @@ def check_required_properties(
                         f"« {element.name} » n'a pas de valeur pour « {key} ».",
                     )
                 )
+    return findings
+
+
+def _alike(one: str, other: str, similarity: float) -> bool:
+    if one == other:
+        return True
+    matcher = SequenceMatcher(None, one, other)
+    # The two upper bounds are cheap and rule most pairs out before `ratio()`.
+    return (
+        matcher.real_quick_ratio() >= similarity
+        and matcher.quick_ratio() >= similarity
+        and matcher.ratio() >= similarity
+    )
+
+
+def check_duplicates(elements: Sequence[Element], similarity: float) -> list[Finding]:
+    """Same type, names equal once normalised or at least `similarity` alike.
+
+    Compared per (type, first normalised letter), so a thousand elements are
+    not a million pairs. A typo in the *first* letter slips through — accepted:
+    this is a warning, never an error, and the threshold is a setting.
+    """
+    # ponytail: pairwise within a block, bounded by MAX_QUALITY_ELEMENTS;
+    # a MinHash/n-gram index if a block ever holds thousands of near names.
+    blocks: dict[tuple[ElementType, str], list[tuple[str, Element]]] = {}
+    for element in sorted(elements, key=lambda e: (e.name, str(e.id))):
+        normalised = _normalise(element.name)
+        if normalised:
+            blocks.setdefault((element.element_type, normalised[0]), []).append(
+                (normalised, element)
+            )
+    findings: list[Finding] = []
+    for block in blocks.values():
+        for index, (normalised, later) in enumerate(block):
+            for earlier_normalised, earlier in block[:index]:
+                if _alike(normalised, earlier_normalised, similarity):
+                    findings.append(
+                        _finding(
+                            RuleCode.DUPLICATE_PROBABLE,
+                            later,
+                            f"« {later.name} » ressemble à « {earlier.name} ».",
+                            earlier,
+                        )
+                    )
+                    break
     return findings

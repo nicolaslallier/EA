@@ -14,6 +14,7 @@ from ea.domain.quality import (
     RuleCode,
     Severity,
     check_descriptions,
+    check_duplicates,
     check_naming,
     check_orphans,
     check_required_properties,
@@ -129,3 +130,55 @@ class TestTheParameters:
     def test_a_similarity_outside_zero_to_one_is_refused(self) -> None:
         with pytest.raises(ValueError, match="similarity"):
             QualityParams.from_settings(1.5, {})
+
+
+class TestDuplicates:
+    def pair(self, one: str, other: str, *, type_: E = E.APPLICATION_COMPONENT):  # type: ignore[no-untyped-def]
+        return an_element(type_, one), an_element(type_, other)
+
+    def flagged(self, a, b, similarity: float = 0.9):  # type: ignore[no-untyped-def]
+        findings = check_duplicates([a, b], similarity)
+        assert len(findings) == 1
+        assert {findings[0].element_id, findings[0].related_id} == {a.id, b.id}
+        assert findings[0].rule is RuleCode.DUPLICATE_PROBABLE
+        assert findings[0].severity is Severity.WARNING
+
+    def test_names_equal_after_case_are_flagged(self) -> None:
+        self.flagged(*self.pair("Facturation", "facturation"))
+
+    def test_names_equal_after_accents_are_flagged(self) -> None:
+        self.flagged(*self.pair("Café", "Cafe"))
+
+    def test_names_equal_after_punctuation_are_flagged(self) -> None:
+        self.flagged(*self.pair("Billing API", "Billing-API"))
+
+    def test_very_similar_names_are_flagged_over_the_threshold(self) -> None:
+        self.flagged(*self.pair("Facturation client", "Facturation clients"))
+
+    def test_the_threshold_is_a_parameter(self) -> None:
+        a, b = self.pair("Facturation client", "Facturation clients")
+
+        assert check_duplicates([a, b], 0.999) == []
+
+    def test_different_names_are_not_flagged(self) -> None:
+        a, b = self.pair("Billing", "Backup")
+
+        assert check_duplicates([a, b], 0.9) == []
+
+    def test_the_same_name_under_two_types_is_not_a_duplicate(self) -> None:
+        a = an_element(E.APPLICATION_COMPONENT, "Billing")
+        b = an_element(E.BUSINESS_PROCESS, "Billing")
+
+        assert check_duplicates([a, b], 0.9) == []
+
+    def test_an_element_alone_of_its_type_has_no_duplicate(self) -> None:
+        assert check_duplicates([an_element(E.NODE, "srv-01")], 0.9) == []
+
+    def test_three_copies_make_two_findings_and_never_flag_the_first(self) -> None:
+        copies = [an_element(E.NODE, name) for name in ("srv-01", "SRV-01", "srv 01")]
+
+        findings = check_duplicates(copies, 0.9)
+
+        assert len(findings) == 2
+        first = min(copies, key=lambda e: (e.name, str(e.id)))
+        assert first.id not in {f.element_id for f in findings}
