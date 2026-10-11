@@ -314,3 +314,7 @@ class RowRefusedError(DomainError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class MatrixAxisTooLargeError(DomainError):
+    """An axis of the relationship matrix names more elements than the grid shows."""
