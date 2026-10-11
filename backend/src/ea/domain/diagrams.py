@@ -45,13 +45,20 @@ def _clean_name(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DiagramNode:
-    """One box: an element, the top-left corner it is drawn at, and its size."""
+    """One box: an element, the top-left corner it is drawn at, and its size.
+
+    `parent_object_id` names the group (docs/adr/0063) the box is drawn inside,
+    `z` its stacking order. Both are presentation: a group is not an element and
+    creates no relationship.
+    """
 
     element_id: UUID
     x: float
     y: float
     width: float = DEFAULT_BOX_WIDTH
     height: float = DEFAULT_BOX_HEIGHT
+    parent_object_id: UUID | None = None
+    z: int = 0
 
 
 @dataclass(frozen=True, slots=True)
