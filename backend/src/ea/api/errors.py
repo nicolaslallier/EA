@@ -14,6 +14,7 @@ sent from outside every middleware this app adds — see
 from __future__ import annotations
 
 import logging
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import FastAPI, Request, status
@@ -255,29 +256,85 @@ async def _handle_unexpected_error(_: Request, error: Exception) -> JSONResponse
 
 
 _DRIVERS = ("sqlalchemy", "asyncpg", "psycopg")
+#: The only things a database failure may say to a log: where and which rule, never with what.
+_STRUCTURE = ("sqlstate", "constraint_name", "table_name", "column_name", "schema_name")
+#: Exceptions followed through causes, contexts and groups before the chain is distrusted.
+_CHAIN_LIMIT = 20
+#: The doors an import comes through: a failure there is logged without its message.
+IMPORTING_PATHS = ("/exchanges/imports", "/mcp")
+ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None]
 
 
-def without_database_detail(error: BaseException) -> BaseException:
-    """The error to put in a log: itself, unless the database spoke in it.
+def _chain(error: BaseException) -> tuple[list[BaseException], bool]:
+    """The exception, then what it was raised from, in what context, or grouped with — breadth
+    first, bounded; the flag says the bound was reached and the rest is unknown."""
+    seen: list[BaseException] = []
+    queue = [error]
+    while queue:
+        link = queue.pop(0)
+        if any(link is known for known in seen):
+            continue
+        if len(seen) >= _CHAIN_LIMIT:
+            return seen, True
+        seen.append(link)
+        queue.extend(
+            e
+            for e in (link.__cause__, link.__context__, getattr(link, "orig", None))
+            if isinstance(e, BaseException)
+        )
+        queue.extend(getattr(link, "exceptions", ()))
+    return seen, False
 
-    A driver's message quotes the value it refused (`DETAIL: Key (name)=(...) already exists`)
-    and SQLAlchemy's carries the statement and its parameters: during an import those are the
-    file's content, in a traceback that goes to a collector. Whoever reads the log needs the kind
-    of failure and where it happened, not the row. So a failure with a driver's exception in its
-    chain is logged as a stand-in naming the type and keeping the traceback's frames.
+
+def _structure_of(database: BaseException) -> dict[str, object]:
+    """Only the whitelisted structural fields, from the exception or the driver's under it."""
+    orig = getattr(database, "orig", None)
+    holders = [database, orig, getattr(orig, "__cause__", None), database.__cause__]
+    found: dict[str, object] = {"db_error": type(database).__name__}
+    for name in _STRUCTURE:
+        for holder in holders:
+            value = getattr(holder, name, None)
+            if isinstance(value, str) and value:
+                found[name] = value
+                break
+    return found
+
+
+def _stand_in(message: str, error: BaseException) -> ExcInfo:
+    """A fresh exception with our words and the real one's frames (source lines, not values)."""
+    stand_in = RuntimeError(message)
+    stand_in.__suppress_context__ = True
+    return RuntimeError, stand_in, error.__traceback__
+
+
+def safe_failure(error: BaseException, *, importing: bool) -> tuple[ExcInfo, dict[str, object]]:
+    """What may be logged of a failure nobody handled: `(exc_info, extra fields)`.
+
+    Fails closed. A failure with the database anywhere in its chain (a cause, a context, a member
+    of a group) is logged as its structure alone, the traceback's frames and a fixed sentence:
+    never its message, its statement, its parameters or the text of anything it was raised from.
+    A failure of any other kind keeps its message outside an import and loses it during one
+    (what is not recognised is replaced, not matched). A chain too long to follow is not trusted.
+    If this function itself fails, one fixed sentence and the class are what remain.
     """
-    link: BaseException | None = error
-    for _ in range(10):  # a chain is short; a cycle is not worth following
-        if link is None:
-            return error
-        if type(link).__module__.startswith(_DRIVERS):
-            stand_in = RuntimeError(
-                f"{type(link).__name__}: the database refused a statement (detail withheld)"
-            )
-            stand_in.__suppress_context__ = True
-            return stand_in.with_traceback(error.__traceback__)
-        link = link.__cause__ or link.__context__
-    return error
+    try:
+        chain, truncated = _chain(error)
+        database = next((e for e in chain if type(e).__module__.startswith(_DRIVERS)), None)
+        if database is not None:
+            fields = _structure_of(database)
+            outer = fields["db_error"]
+            return _stand_in(
+                f"{outer}: the database refused a statement (detail withheld)", error
+            ), fields
+        if importing or truncated:
+            name = type(error).__name__
+            return _stand_in(f"{name}: failure during an import (message withheld)", error), {
+                "error": name
+            }
+        return (type(error), error, error.__traceback__), {}
+    except Exception:
+        fields = {"db_error": type(error).__name__}
+        return _stand_in("unsanitisable database error", error), fields
 
 
 class AnsweringUnexpectedFailures:
@@ -332,10 +389,10 @@ class AnsweringUnexpectedFailures:
                 "method": scope.get("method", ""),
                 "path": scope.get("path", ""),
             }
+            path = str(scope.get("path", ""))
+            info, said = safe_failure(error, importing=path.endswith(IMPORTING_PATHS))
             logger.exception(
-                "the request failed with no handler for it",
-                exc_info=without_database_detail(error),
-                extra=fields,
+                "the request failed with no handler for it", exc_info=info, extra={**fields, **said}
             )
             await _internal_error()(scope, receive, send)
 

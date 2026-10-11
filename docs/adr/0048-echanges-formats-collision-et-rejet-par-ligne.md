@@ -189,6 +189,19 @@ CORS et identifiant de requête), la place est rendue par le `finally`. Ces dél
 réception : l'analyse et l'import sont longs par nature. Le `client_body_timeout` de NGINX s'applique aussi
 devant et se cumule avec eux : c'est le plus court des deux qui coupe.
 
+## Les journaux ne citent pas le fichier
+
+Un nom venu d'un fichier est cité par `logged()` dans tout service (`test_log_names_guard.py`), et une défaillance que
+personne n'a rattrapée est journalisée par `safe_failure` (`api/errors.py`), qui **échoue fermé** : si la base est
+quelque part dans la chaîne (cause, contexte, membre d'un groupe), seuls la classe, le SQLSTATE et les noms de
+contrainte, de table, de colonne et de schéma sont dits, avec les frames de la trace et une phrase fixe, jamais le
+message, l'instruction, les paramètres ni le texte de ce dont l'erreur est issue ; toute autre exception perd son
+message quand elle vient d'un import (`/exchanges/imports`, `/mcp`) ; une chaîne trop longue pour être suivie n'est pas
+crue ; et si l'assainisseur lève, « unsanitisable database error » et la classe sont tout ce qui reste. Rien ne
+dépend d'un motif qui devrait reconnaître le texte sensible. **`EA_LOG_SQL=true` journalise les paramètres de chaque
+instruction, donc les valeurs du fichier : il est fermé par défaut et ne doit pas être ouvert sur un déploiement qui
+importe.**
+
 ## Références
 
 - ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md), [0049](0049-defusedxml-et-validation-xsd.md)
