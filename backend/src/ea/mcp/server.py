@@ -871,10 +871,12 @@ def build_mcp_server(
     @speaking_plainly
     async def update_relationship(
         relationship_id: ElementId,
-        name: LinkName | None = None,
-        access_type: AccessType | None = None,
-        directed: bool | None = None,
-        properties: Properties = None,
+        # Not `| None`: an omitted argument keeps its value, an explicit null is refused, as
+        # `PATCH /relationships` refuses it (the default is the "omitted" of the service).
+        name: LinkName = None,  # type: ignore[assignment]
+        access_type: AccessType = None,  # type: ignore[assignment]
+        directed: bool = None,  # type: ignore[assignment]
+        properties: dict[str, str] = None,  # type: ignore[assignment]
     ) -> RelationshipRead:
         """Change what a link says. An omitted field keeps its stored value.
 

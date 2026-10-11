@@ -704,6 +704,28 @@ class TestRelationships:
             False,
         )
 
+    async def test_an_explicit_null_is_refused_as_the_http_adapter_refuses_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+            properties={"k": "v"},
+        )
+
+        for field in ("name", "properties", "directed", "access_type"):
+            with pytest.raises(ToolError):
+                await server.call_tool(
+                    "update_relationship", {"relationship_id": link["id"], field: None}
+                )
+        kept = await call(server, "update_relationship", relationship_id=link["id"])
+        assert kept["properties"] == {"k": "v"}  # omitted, not nulled
+
     async def test_a_link_can_be_removed(self, server: MCPServer[Any]) -> None:
         source = await an_element(server, "application_component", "Billing")
         target = await an_element(server, "application_service", "Invoice API")
