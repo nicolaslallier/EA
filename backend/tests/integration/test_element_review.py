@@ -870,3 +870,26 @@ async def test_a_restoration_changing_a_link_bumps_the_revision_of_a_draft_end(
 
     for element_id in (left.id, right.id):
         assert await authored(engine_at_head, element_id) == ("restorer", before[element_id][1] + 1)
+
+
+async def test_revising_a_document_is_a_change_to_its_element_but_a_reindex_is_not(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.domain.audit import UNAUDITED_REINDEX
+    from ea.repositories.document_store import PostgresDocumentRepository
+
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)
+    document = await documents.attach_text(element_id, filename="a.md", content="# A")
+    before = await authored(engine_at_head, element_id)
+
+    with acting_as(an_editor(subject="reviser", username="reviser")):
+        await documents.revise_text(document.id, filename="a.md", content="# B")
+    assert await authored(engine_at_head, element_id) == ("reviser", before[1] + 1)
+
+    stored = await documents.get(document.id)
+    await PostgresDocumentRepository(create_session_factory(engine_at_head)).replace(
+        stored, (), audit=UNAUDITED_REINDEX
+    )  # same text: passages only
+    assert await authored(engine_at_head, element_id) == ("reviser", before[1] + 1)
