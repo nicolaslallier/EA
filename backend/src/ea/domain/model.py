@@ -68,6 +68,16 @@ def _freeze(properties: Mapping[str, str] | None) -> Mapping[str, str]:
 
 
 @dataclass(frozen=True, slots=True)
+class StereotypeRef:
+    """What an element carries of a stereotype: enough to draw it, nothing of its rules."""
+
+    id: UUID
+    name: str
+    colour: str | None
+    icon_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class Element:
     """A single ArchiMate concept: one application, one capability, one node."""
 
@@ -97,6 +107,9 @@ class Element:
     #: never by a client. Unknown (`None`) is not "nobody": the separation of
     #: duties refuses to approve an element whose last author is unknown.
     last_modified_by_sub: str | None = None
+    #: The stereotypes laid on the element (docs/adr/0064): labels, not types. Read-only
+    #: here, filled by `ArchitectureService` and never by a repository of the graph.
+    stereotypes: tuple[StereotypeRef, ...] = ()
 
     @classmethod
     def create(
