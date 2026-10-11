@@ -903,16 +903,14 @@ class PostgresArchitectureRepository:
             preview = change(glimpsed)
             if relationship_row(preview) == relationship_row(glimpsed):
                 return glimpsed
-            reviewed = (
-                await _review_ends(
-                    session,
-                    (found.source_id, found.target_id),
-                    ends,
-                    author_of(events_for(audit, RelationshipChange(glimpsed, preview))),
-                )
-                if ends is not None
-                else []
+            author = author_of(events_for(audit, RelationshipChange(glimpsed, preview)))
+            # The ends are locked (and must exist) before the link; they are reviewed only once
+            # the patch is known to change something, so a no-op writes — and undoes — nothing.
+            end_rows = await lock_elements(
+                session, (found.source_id, found.target_id), key_only=True
             )
+            if end_rows.keys() != {found.source_id, found.target_id}:
+                raise ElementNotFoundError("cannot update: an element at one end does not exist")
             row = await session.get(
                 RelationshipRecord, relationship_id, with_for_update=True, populate_existing=True
             )
@@ -922,10 +920,10 @@ class PostgresArchitectureRepository:
             after = change(before)
             wanted = relationship_row(after)
             if wanted == relationship_row(before):
-                # Nothing to say after all: undo the review of the ends already flushed,
-                # so no element changes without the link event that explains it.
-                await session.rollback()
                 return before
+            reviewed = (
+                await _review_rows(session, end_rows, ends, author) if ends is not None else []
+            )
             events = events_for(audit, RelationshipChange(before, after))
             for column in ("name", "access_type", "directed", "properties"):
                 setattr(row, column, wanted[column])

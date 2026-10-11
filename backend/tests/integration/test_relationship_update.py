@@ -189,3 +189,39 @@ async def test_an_empty_patch_reviews_no_end_and_writes_nothing(
     await world.graph.update_relationship(link.id)
 
     assert await state_of(engine_at_head, a.id) == before
+
+
+async def test_a_patch_with_nothing_left_to_say_keeps_the_work_of_its_shared_transaction(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """Under lock the patch turns out to change nothing: the ends are not reviewed, and the
+    other rows of the import (a shared transaction) are neither lost nor an error."""
+    from ea.db.unit_of_work import shared_transaction
+    from ea.domain.ports import EndsReview
+    from ea.domain.approval import reviewed_after_change
+    from dataclasses import replace
+    from ea.repositories.architecture_store import PostgresArchitectureRepository
+
+    world = World(engine_at_head)
+    a = await world.graph.create_element(element_type=E.NODE, name="a")
+    b = await world.graph.create_element(element_type=E.NODE, name="b")
+    link = await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=a.id, target_id=b.id
+    )
+    await put_in_state(engine_at_head, a.id, "approved")
+    before = await state_of(engine_at_head, a.id)
+    sessions = create_session_factory(engine_at_head)
+    repository = PostgresArchitectureRepository(sessions)
+    calls = []
+
+    def flickering(stored):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return replace(stored, name="x") if len(calls) == 1 else stored
+
+    ends = EndsReview(change=reviewed_after_change, audit=lambda change: ())
+    async with shared_transaction(sessions, commit=True):
+        other = await world.graph.create_element(element_type=E.NODE, name="other-row")
+        await repository.update_relationship(link.id, flickering, audit=(), ends=ends)
+
+    assert await world.graph.get_element(other.id)
+    assert await state_of(engine_at_head, a.id) == before
