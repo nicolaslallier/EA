@@ -34,10 +34,13 @@ VALID_UNTIL: Final = "valid_until"
 _MAX_DAY_LENGTH: Final = 16
 
 
-def parse_day(value: str, *, key: str) -> date:
-    """A day written `YYYY-MM-DD` — or refuse, naming the key and never echoing the value."""
-    raw = value.strip()
-    if len(raw) <= _MAX_DAY_LENGTH:
+def parse_day(value: object, *, key: str) -> date:
+    """A day written `YYYY-MM-DD` — or refuse, naming the key and never echoing the value.
+
+    `properties` is a jsonb map: whatever it holds, a value that is not a string is not a day.
+    """
+    raw = value.strip() if isinstance(value, str) else None
+    if raw is not None and len(raw) <= _MAX_DAY_LENGTH:
         try:
             return date.fromisoformat(raw)
         except ValueError:
@@ -47,8 +50,10 @@ def parse_day(value: str, *, key: str) -> date:
 
 
 def _read(properties: Mapping[str, str], key: str) -> date | None:
-    raw = properties.get(key, "").strip()
-    return parse_day(raw, key=key) if raw else None
+    raw = properties.get(key, "")
+    if isinstance(raw, str) and not raw.strip():
+        return None
+    return parse_day(raw, key=key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,16 +95,17 @@ def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str
     out = dict(properties)
     days: dict[str, date] = {}
     for key in (VALID_FROM, VALID_UNTIL):
-        raw = properties.get(key)
-        if raw is None:
+        if key not in properties:
             continue
-        if not raw.strip():
+        raw: object = properties[key]
+        if isinstance(raw, str) and not raw.strip():
             del out[key]
             continue
         try:
             days[key] = parse_day(raw, key=key)
         except InvalidLifespanError:
-            out[f"legacy_{key}"] = out.pop(key)
+            out[f"legacy_{key}"] = out.pop(key) if isinstance(raw, str) else str(raw)
+            out.pop(key, None)
         else:
             out[key] = days[key].isoformat()
     if VALID_FROM in days and VALID_UNTIL in days and days[VALID_UNTIL] < days[VALID_FROM]:
@@ -122,10 +128,10 @@ def validate_lifespan_properties(
     canonical = dict(properties)
     days: dict[str, date] = {}
     for key in (VALID_FROM, VALID_UNTIL):
-        raw = properties.get(key)
-        if raw is None:
+        if key not in properties:
             continue
-        if not raw.strip():
+        raw: object = properties[key]
+        if isinstance(raw, str) and not raw.strip():
             del canonical[key]
             continue
         days[key] = parse_day(raw, key=key)
@@ -234,6 +240,11 @@ class Roadmap:
     edges: tuple[RoadmapEdge, ...]
     window_from: date | None
     window_to: date | None
+    #: The bounds of the dated data, whatever window was drawn.
+    data_from: date | None = None
+    data_to: date | None = None
+    #: The default window was cut to 20 years and left dated items out: say so, never silently.
+    window_truncated: bool = False
 
 
 def check_window(start: date | None, end: date | None) -> None:
@@ -317,4 +328,13 @@ def build_roadmap(
             key=lambda e: (str(e.source_id), str(e.target_id), e.relationship_type.value),
         )
     )
-    return Roadmap(items, edges, low, high)
+    days = [d for span in spans.values() for d in (span.start, span.end) if d is not None]
+    data_from, data_to = (min(days), max(days)) if days else (None, None)
+    truncated = (
+        low is not None
+        and high is not None
+        and data_from is not None
+        and data_to is not None
+        and ((start is None and data_from < low) or (end is None and data_to > high))
+    )
+    return Roadmap(items, edges, low, high, data_from, data_to, truncated)

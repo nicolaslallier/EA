@@ -65,6 +65,8 @@ export function useGap() {
 
   return {
     plateaus,
+    plateausStatus: listing.status,
+    plateausError: listing.error,
     comparison,
     status: comparing.status,
     error: comparing.error,

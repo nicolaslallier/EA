@@ -4468,6 +4468,32 @@
       "RoadmapRead": {
         "description": "Plateaus, work packages and deliverables with their dates, and the links between them.",
         "properties": {
+          "data_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The earliest date of the data, drawn or not.",
+            "title": "Data From"
+          },
+          "data_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest date of the data, drawn or not.",
+            "title": "Data To"
+          },
           "edges": {
             "items": {
               "$ref": "#/components/schemas/RoadmapEdgeRead"
@@ -4506,13 +4532,21 @@
               }
             ],
             "title": "Window To"
+          },
+          "window_truncated": {
+            "description": "The default window was cut to 20 years: dated items outside it are not drawn.",
+            "title": "Window Truncated",
+            "type": "boolean"
           }
         },
         "required": [
           "items",
           "edges",
           "window_from",
-          "window_to"
+          "window_to",
+          "window_truncated",
+          "data_from",
+          "data_to"
         ],
         "title": "RoadmapRead",
         "type": "object"

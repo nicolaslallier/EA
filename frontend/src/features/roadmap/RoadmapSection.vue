@@ -43,6 +43,12 @@ function open(id: string): void {
     </p>
 
     <template v-else-if="roadmap.roadmap.value">
+      <p v-if="roadmap.roadmap.value.window_truncated" class="banner banner--warn" role="status">
+        La frise est limitée à 20 ans ({{ roadmap.roadmap.value.window_from }} →
+        {{ roadmap.roadmap.value.window_to }}) : des éléments datés entre
+        {{ roadmap.roadmap.value.data_from }} et {{ roadmap.roadmap.value.data_to }} n'y figurent pas.
+        Une date ancienne ou erronée en est souvent la cause.
+      </p>
       <RoadmapChart
         v-if="roadmap.window.value"
         :items="roadmap.roadmap.value.items"
@@ -75,6 +81,7 @@ header h2 {
   margin: 0;
   opacity: 0.75;
 }
+.banner--warn,
 .banner--error {
   margin: 0;
   padding: 0.5rem 0.8rem;

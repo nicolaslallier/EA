@@ -3524,6 +3524,16 @@ export interface components {
          * @description Plateaus, work packages and deliverables with their dates, and the links between them.
          */
         RoadmapRead: {
+            /**
+             * Data From
+             * @description The earliest date of the data, drawn or not.
+             */
+            data_from: string | null;
+            /**
+             * Data To
+             * @description The latest date of the data, drawn or not.
+             */
+            data_to: string | null;
             /** Edges */
             edges: components["schemas"]["RoadmapEdgeRead"][];
             /** Items */
@@ -3535,6 +3545,11 @@ export interface components {
             window_from: string | null;
             /** Window To */
             window_to: string | null;
+            /**
+             * Window Truncated
+             * @description The default window was cut to 20 years: dated items outside it are not drawn.
+             */
+            window_truncated: boolean;
         };
         /**
          * RuleCode

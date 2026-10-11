@@ -190,3 +190,35 @@ class TestBuildingTheRoadmap:
 
         assert roadmap.edges == ()
         assert uuid4() not in {i.element.id for i in roadmap.items}
+
+
+class TestADefaultWindowThatLosesSomethingSaysSo:
+    def test_a_default_window_cut_to_twenty_years_is_flagged_with_the_real_bounds(self) -> None:
+        old = an_element(E.WORK_PACKAGE, "Old", valid_from="1999-01-01")
+        recent = an_element(E.WORK_PACKAGE, "Recent", valid_from="2027-01-01")
+
+        roadmap = build_roadmap([old, recent], [], None, None)
+
+        assert roadmap.window_truncated is True
+        assert (roadmap.data_from, roadmap.data_to) == (date(1999, 1, 1), date(2027, 1, 1))
+        assert {i.element.name for i in roadmap.items} == {"Old"}
+
+    def test_a_window_that_lost_nothing_is_not_flagged(self) -> None:
+        a = an_element(E.WORK_PACKAGE, "A", valid_from="2026-01-01", valid_until="2027-01-01")
+
+        roadmap = build_roadmap([a], [], None, None)
+
+        assert roadmap.window_truncated is False
+        assert (roadmap.data_from, roadmap.data_to) == (date(2026, 1, 1), date(2027, 1, 1))
+
+    def test_an_explicit_window_is_the_callers_choice_and_never_flagged(self) -> None:
+        old = an_element(E.WORK_PACKAGE, "Old", valid_from="1999-01-01")
+
+        roadmap = build_roadmap([old], [], date(2026, 1, 1), date(2026, 12, 31))
+
+        assert roadmap.window_truncated is False
+
+    def test_no_dated_data_has_no_bounds(self) -> None:
+        roadmap = build_roadmap([an_element(E.DELIVERABLE, "D")], [], None, None)
+
+        assert (roadmap.data_from, roadmap.data_to, roadmap.window_truncated) == (None, None, False)

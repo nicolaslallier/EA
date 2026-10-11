@@ -37,16 +37,18 @@ dates différentes.
   (`422 invalid_timeline`). Chaque ensemble est lu en SQL avec un `LIMIT` d'**un de plus** que son plafond
   (500 plateaux, 5 000 membres par plateau, 1 000 éléments de frise, 5 000 liens) et refusé s'il le dépasse
   (`422 scope_too_large`), jamais tronqué : une frise partielle se lirait comme complète. Une borne déduite des
-  données (pas demandée) est rognée à 20 ans, pas refusée.
+  données (pas demandée) est rognée à 20 ans, pas refusée — **mais jamais en silence** : la réponse porte
+  `window_truncated`, `data_from` et `data_to` (les bornes réelles des données), et le SPA affiche un bandeau.
 - **Le calcul est hors de la boucle d'événements.** La comparaison et la construction de la frise tournent dans un
   thread (`off_the_loop`), sous une place de l'admission des analyses (`Admission`, globale et par appelant,
   `lease.hold` jusqu'à la fin réelle du thread) : plus de places que le plafond, `429 analysis_busy`.
 - **Aucune valeur de l'utilisateur dans une erreur ni un journal.** Les refus nomment des clés et des plafonds,
   jamais un nom d'élément ni une valeur de date reçue.
 - **Lectures `require_caller()`, `POST /plateaus/gap` `require_editor()`**, en tête de méthode (garde AST).
-- **MCP** : `list_plateaus` (lecture) et `gap_between(a, b, create_gap=False)`. Le protocole n'a qu'un jeu
-  d'annotations par outil : `gap_between` porte celle d'une écriture, et sa description dit qu'il ne lit que tant
-  que `create_gap` est faux. La frise n'a pas d'outil : un agent lit les dates des éléments avec `list_elements`.
+- **MCP** : `list_plateaus` et `gap_between(a, b)` (lecture seule), et `create_gap(a, b)` (ajout). Le
+  protocole n'a qu'un jeu d'annotations par outil : un seul outil « lit ou écrit » aurait demandé une approbation
+  pour une lecture, d'où deux outils. `create_gap` sur un couple déjà relié n'échoue pas : il renvoie la comparaison
+  avec `already_drawn: true`. La frise n'a pas d'outil : un agent lit les dates des éléments avec `list_elements`.
 - **SPA** : section « Feuille de route » (`/analyse/feuille-de-route`) — frise SVG dessinée à la main par un module pur
   (`lib/roadmapLayout.ts`), panneau « Comparer deux plateaux » (`?a=`, `?b=`), « Créer l'écart » caché à un lecteur
   (l'API décide). Aucune règle de métamodèle ni de calcul d'écart en TypeScript.

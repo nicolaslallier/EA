@@ -127,7 +127,7 @@ from ea.domain.archimate import (
 )
 from ea.domain.audit import DEFAULT_AUDIT_PAGE, AuditAction, AuditFilter, EntityKind, aware
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
-from ea.domain.errors import ExportTooLargeError
+from ea.domain.errors import DuplicateGapError, ExportTooLargeError
 from ea.domain.exchange import (
     ConflictPolicy,
     ExchangeFormat,
@@ -329,8 +329,8 @@ open) — never `2027-06` or `2027-Q2`. `as_of` on `list_elements`, `neighbourho
 and `impact_of` reads the model as it is on a day. A plateau is a state of the
 architecture, containing what it composes or aggregates: `list_plateaus` lists
 them by date, `gap_between` says what leaves, arrives and stays from one to
-another. Never work that out by hand. `create_gap=true` also draws the `gap`
-element — it writes, so ask first.
+another. Never work that out by hand. `create_gap` draws the `gap` element
+between two plateaus — it writes, so ask first.
 
 A diagram is a saved *view* of the catalogue: `list_diagrams` names them and
 `get_diagram` opens one with its boxes, notes, groups and routed links. A group on
@@ -375,6 +375,14 @@ TemplateProvider = Callable[[], TemplateService]
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
 ]
+
+
+class DrawnGapRead(PlateauGapRead):
+    """The comparison after `create_gap`, and whether the gap was already there."""
+
+    already_drawn: bool
+
+
 AsOfArgument = Annotated[
     AsOf | None,
     Field(
@@ -1123,27 +1131,40 @@ def build_mcp_server(
         """
         return [PlateauRead.of(summary) for summary in await get_timeline().list_plateaus()]
 
-    @server.tool(annotations=ADDS)
+    @server.tool(annotations=READS)
     @speaking_plainly
     async def gap_between(
         a: Annotated[UUID, Field(description="The id of the plateau to start from.")],
         b: Annotated[UUID, Field(description="The id of the plateau to reach.")],
-        create_gap: Annotated[
-            bool,
-            Field(description="Also draw the `gap` element between them (writes). Default: no."),
-        ] = False,
     ) -> PlateauGapRead:
         """What leaves, arrives and stays from plateau `a` to plateau `b`: compare two states.
 
         The answer lists the elements `only_in_a` (leaving), `only_in_b` (arriving) and
-        `common`, plus the `gaps` already drawn between the two. It only reads as long as
-        `create_gap` is false; with `create_gap=true` it also creates a `gap` element
-        associated to both plateaus (refused if one already exists) and is a write.
+        `common`, plus the `gaps` already drawn between the two. It only reads; to draw the
+        gap element itself use `create_gap`.
+        """
+        return PlateauGapRead.of(await get_timeline().plateau_gap(a, b))
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_gap(
+        a: Annotated[UUID, Field(description="The id of the plateau to start from.")],
+        b: Annotated[UUID, Field(description="The id of the plateau to reach.")],
+    ) -> DrawnGapRead:
+        """Draw the `gap` element between plateau `a` and plateau `b`: it writes.
+
+        Creates a `gap` element associated to both plateaus and answers with the comparison
+        (as `gap_between`). If a gap already stands between them nothing is written and
+        `already_drawn` is true. A locked or approved plateau refuses, as for any link.
         """
         timeline = get_timeline()
-        if create_gap:
+        try:
             await timeline.create_gap(a, b)
-        return PlateauGapRead.of(await timeline.plateau_gap(a, b))
+            already = False
+        except DuplicateGapError:
+            already = True
+        comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
+        return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
 
     # --- Documents --------------------------------------------------------
     # The markdown attached to an element, which lives in PostgreSQL while the
