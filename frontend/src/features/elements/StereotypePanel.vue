@@ -101,14 +101,14 @@ async function saveValues(): Promise<void> {
     <h4>Stéréotypes</h4>
     <p v-if="element.stereotypes.length === 0" class="empty">Aucun stéréotype.</p>
     <ul v-else class="chips">
-      <li v-for="ref in element.stereotypes" :key="ref.id">
-        <span>{{ stereotypeLabel([ref]) }}</span>
+      <li v-for="tag in element.stereotypes" :key="tag.id">
+        <span>{{ stereotypeLabel([tag]) }}</span>
         <button
           v-if="canWrite"
           type="button"
           class="secondary"
-          :aria-label="`Retirer ${ref.name}`"
-          @click="apply(element.stereotypes.filter((other) => other.id !== ref.id).map((other) => other.id))"
+          :aria-label="`Retirer ${tag.name}`"
+          @click="apply(element.stereotypes.filter((other) => other.id !== tag.id).map((other) => other.id))"
         >
           ×
         </button>

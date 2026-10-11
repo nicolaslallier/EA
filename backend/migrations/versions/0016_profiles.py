@@ -57,7 +57,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_stereotypes")),
-        sa.UniqueConstraint("profile_id", "name", name=op.f("uq_profile_stereotypes_profile_id_name")),
+        sa.UniqueConstraint(
+            "profile_id", "name", name=op.f("uq_profile_stereotypes_profile_id_name")
+        ),
     )
     op.create_table(
         "profile_properties",
