@@ -79,6 +79,7 @@ from ea.domain.requirements import MAX_JUNCTION_HOPS, REQUIREMENT_TYPES
 from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
+from ea.repositories.diagram_revision import bump_diagrams_of
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -838,6 +839,7 @@ class PostgresArchitectureRepository:
                 if ends is not None
                 else []
             )
+            await bump_diagrams_of(session, element_ids=[element_id])
             await session.execute(delete(ElementRecord).where(ElementRecord.id == element_id))
             write_events(session, events)
             for end in reviewed:
@@ -1003,6 +1005,7 @@ class PostgresArchitectureRepository:
             )
             if row is None:
                 return False
+            await bump_diagrams_of(session, relationship_ids=[relationship_id])
             await session.execute(
                 delete(RelationshipRecord).where(RelationshipRecord.id == relationship_id)
             )

@@ -14,6 +14,7 @@ from ea.domain.archimate import ElementType as E
 from ea.domain.audit import AuditAction, AuditEvent, AuditFilter
 from ea.domain.baselines import RestorePlan
 from ea.domain.diagram_objects import DiagramScene
+from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import RestoreBlockedError, RestoreConflictError
 from ea.domain.model import Element
 from ea.repositories.baseline_store import PostgresBaselineRepository
@@ -75,6 +76,30 @@ async def test_a_restoration_recreates_reverts_deletes_and_leaves_one_trace(
     # The boxes moved under the editors' feet: their copy is stale, so their next save is a 409.
     diagram = await model.diagrams.get(model.diagram.id)
     assert diagram is not None and diagram.revision == 3
+
+
+async def test_a_restoration_that_deletes_an_element_on_a_diagram_moves_its_revision(
+    engine_at_head: AsyncEngine,
+) -> None:
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    fresh = await model.graph.add_element(
+        Element.create(element_type=E.NODE, name="fresh", now=LATER), audit=()
+    )
+    scene = DiagramScene(
+        nodes=(*await model.diagrams.nodes_of(model.diagram.id), DiagramNode(fresh.id, 1, 1))
+    )
+    stored = await model.diagrams.get(model.diagram.id)
+    assert stored is not None
+    revision = await model.diagrams.replace_layout(
+        model.diagram.id, scene, revision=stored.revision, now=LATER, audit=()
+    )
+
+    await restore(model, baseline.id)  # deletes `fresh`, and its box with it
+
+    diagram = await model.diagrams.get(model.diagram.id)
+    assert diagram is not None and diagram.revision > revision
 
 
 async def test_a_vanished_package_sends_the_element_to_the_root_and_violates_nothing(
