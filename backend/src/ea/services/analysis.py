@@ -11,7 +11,10 @@ are reads.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -42,7 +45,7 @@ from ea.domain.quality import (
     run_checks,
 )
 from ea.services.caller import require_caller
-from ea.services.exchange_admission import Admission
+from ea.services.exchange_admission import Admission, Lease
 
 if TYPE_CHECKING:
     from ea.domain.ports import AnalysisRepository
@@ -58,7 +61,9 @@ MAX_ANALYSES_PER_CALLER = 2
 ANALYSIS_LEASE_SECONDS = 120.0
 
 
-def analysis_admission(*, limit: int = MAX_ANALYSES_IN_FLIGHT) -> Admission:
+def analysis_admission(
+    *, limit: int = MAX_ANALYSES_IN_FLIGHT, clock: Callable[[], float] = time.monotonic
+) -> Admission:
     """The places for the analyses that read the whole model (docs/adr/0057)."""
     return Admission(
         limit,
@@ -66,7 +71,18 @@ def analysis_admission(*, limit: int = MAX_ANALYSES_IN_FLIGHT) -> Admission:
         lease_seconds=ANALYSIS_LEASE_SECONDS,
         refusal=lambda: AnalysisBusyError("other analyses are running: try again in a moment"),
         kind="analysis",
+        clock=clock,
     )
+
+
+async def _off_the_loop[**P, R](
+    lease: Lease | None, function: Callable[P, R], *args: P.args, **kwargs: P.kwargs
+) -> R:
+    """Run a CPU-bound function in a thread; the lease is held until the thread ends."""
+    work = asyncio.ensure_future(asyncio.to_thread(function, *args, **kwargs))
+    if lease is not None:
+        lease.hold(work)
+    return await asyncio.shield(work)
 
 
 class AnalysisService:
@@ -128,11 +144,16 @@ class AnalysisService:
         silently checked in part: a partial report reads as a clean one.
         """
         caller = require_caller()
-        async with self._place(caller.subject):
-            return await self._check(severity, code, limit, cursor)
+        async with self._place(caller.subject) as lease:
+            return await self._check(lease, severity, code, limit, cursor)
 
     async def _check(
-        self, severity: Severity | None, code: RuleCode | None, limit: int, cursor: int
+        self,
+        lease: Lease | None,
+        severity: Severity | None,
+        code: RuleCode | None,
+        limit: int,
+        cursor: int,
     ) -> QualityPage:
         started = perf_counter()
         ceiling = self._params.max_elements
@@ -141,7 +162,9 @@ class AnalysisService:
             msg = f"the catalogue holds more than {ceiling} elements; a run takes at most {ceiling}"
             raise ScopeTooLargeError(msg)
         links = await self._repository.links_touching([element.id for element in elements])
-        report = run_checks(elements, links, self._params)
+        # CPU-bound (pairwise name comparison): off the event loop, and the place is held until
+        # the thread has really ended, even if the client hangs up or the lease expires.
+        report = await _off_the_loop(lease, run_checks, elements, links, self._params)
         logger.info(
             "quality run: %d findings over %d elements",
             len(report.findings),
@@ -154,9 +177,9 @@ class AnalysisService:
         )
         return page_of(report, severity=severity, code=code, limit=limit, cursor=cursor)
 
-    def _place(self, key: str) -> AbstractAsyncContextManager[object]:
+    def _place(self, key: str) -> AbstractAsyncContextManager[Lease | None]:
         """A place among the analyses reading the whole model, or no limit where none is set."""
-        return self._admission.lease(key) if self._admission is not None else nullcontext()
+        return self._admission.lease(key) if self._admission is not None else nullcontext(None)
 
     async def _axis(self, selection: AxisSelection) -> MatrixAxis:
         if selection.element_ids:

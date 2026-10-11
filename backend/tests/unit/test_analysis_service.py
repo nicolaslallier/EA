@@ -16,7 +16,7 @@ from ea.domain.errors import (
     ScopeTooLargeError,
 )
 from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection
-from ea.domain.quality import QualityParams, RuleCode, Severity
+from ea.domain.quality import QualityParams, QualityReport, RuleCode, Severity
 from ea.services.analysis import AnalysisService, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
@@ -241,4 +241,65 @@ class TestTheAdmission:
         await guarded.check()
         await guarded.check()
 
+        assert busy.in_flight == 0
+
+
+@pytest.mark.asyncio
+class TestTheRunStaysOffTheEventLoop:
+    """A rule run is CPU-bound: it runs in a thread, and its place outlives its deadline."""
+
+    async def test_the_rules_run_in_a_worker_thread(
+        self,
+        analysis: AnalysisService,
+        service: ArchitectureService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import threading
+
+        from ea.domain import quality as rules
+
+        seen: list[str] = []
+        real = rules.run_checks
+
+        def spy(*args: object, **kwargs: object) -> object:
+            seen.append(threading.current_thread().name)
+            return real(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("ea.services.analysis.run_checks", spy)
+        await service.create_element(element_type=E.NODE, name="n")
+
+        await analysis.check()
+
+        assert seen and seen[0] != threading.main_thread().name
+
+    async def test_an_expired_lease_whose_run_is_still_going_keeps_its_place(
+        self,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio
+        import threading
+
+        now = [0.0]
+        busy = analysis_admission(limit=1, clock=lambda: now[0])
+        guarded = AnalysisService(service, repository, admission=busy)
+        started, release = threading.Event(), threading.Event()
+
+        def slow(*args: object, **kwargs: object) -> object:
+            started.set()
+            release.wait(5)
+            return QualityReport(findings=())
+
+        monkeypatch.setattr("ea.services.analysis.run_checks", slow)
+        run = asyncio.create_task(guarded.check())
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+
+        now[0] = 10_000.0  # far past the lease deadline, the thread still computing
+        with pytest.raises(AnalysisBusyError):
+            await guarded.check()
+
+        release.set()
+        await run
         assert busy.in_flight == 0

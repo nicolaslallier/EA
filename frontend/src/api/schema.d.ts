@@ -924,6 +924,29 @@ export interface paths {
         patch: operations["update_package_packages__package_id__patch"];
         trace?: never;
     };
+    "/quality": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Quality
+         * @description Run the quality rules over the catalogue and page through the findings.
+         *
+         *     Computed on every call — nothing is stored. The counts describe the whole
+         *     run; `severity` and `code` narrow the findings only.
+         */
+        get: operations["read_quality_quality_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/queries": {
         parameters: {
             query?: never;
@@ -1939,6 +1962,26 @@ export interface components {
              */
             size: number;
         };
+        /** FindingRead */
+        FindingRead: {
+            /**
+             * Element Id
+             * Format: uuid
+             */
+            element_id: string;
+            /** Element Name */
+            element_name: string;
+            /** Fix Hint */
+            fix_hint: string;
+            /** Message */
+            message: string;
+            /** Related Id */
+            related_id: string | null;
+            /** Related Name */
+            related_name: string | null;
+            rule: components["schemas"]["RuleCode"];
+            severity: components["schemas"]["Severity"];
+        };
         /**
          * GraphRead
          * @description A sub-graph: the nodes and the edges between them, ready to be drawn.
@@ -2251,6 +2294,23 @@ export interface components {
             value: string | null;
         };
         /**
+         * QualityReportRead
+         * @description One page of findings, with the counts of the whole run.
+         */
+        QualityReportRead: {
+            /** Counts */
+            counts: components["schemas"]["RuleCountRead"][];
+            /** Findings */
+            findings: components["schemas"]["FindingRead"][];
+            /** Next Cursor */
+            next_cursor: number | null;
+            /**
+             * Total
+             * @description Findings of the whole run, before any filter.
+             */
+            total: number;
+        };
+        /**
          * QueryOrder
          * @enum {string}
          */
@@ -2485,6 +2545,18 @@ export interface components {
              * @description Keep what was created since; false (exact) when omitted.
              */
             keep_new?: boolean | null;
+        };
+        /**
+         * RuleCode
+         * @enum {string}
+         */
+        RuleCode: "orphan" | "duplicate_probable" | "naming" | "missing_property" | "no_description" | "inconsistent_relationship";
+        /** RuleCountRead */
+        RuleCountRead: {
+            /** Count */
+            count: number;
+            rule: components["schemas"]["RuleCode"];
+            severity: components["schemas"]["Severity"];
         };
         /** SavedQueryCreate */
         SavedQueryCreate: {
@@ -6202,6 +6274,58 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_quality_quality_get: {
+        parameters: {
+            query?: {
+                severity?: components["schemas"]["Severity"] | null;
+                code?: components["schemas"]["RuleCode"] | null;
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityReportRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

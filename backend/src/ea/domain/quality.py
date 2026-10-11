@@ -23,6 +23,7 @@ from typing import Final
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, RelationshipType, permits
+from ea.domain.exchange import Severity as Severity  # one gravity scale for the domain
 from ea.domain.model import PROPERTY_KEY, Element, Relationship
 
 #: Declared here and imported by `api/schemas.py` (a service cannot import the API).
@@ -32,12 +33,6 @@ MAX_QUALITY_ELEMENTS: Final = 5000
 DEFAULT_SIMILARITY: Final = 0.9
 #: Fewer letters than this is an acronym ("CRM", "SAP"), not shouting.
 _MIN_SHOUTING_LETTERS: Final = 4
-
-
-class Severity(StrEnum):
-    ERROR = "error"
-    WARNING = "warning"
-    INFO = "info"
 
 
 class RuleCode(StrEnum):

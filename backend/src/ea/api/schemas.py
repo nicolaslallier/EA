@@ -76,6 +76,7 @@ from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.quality import MAX_FINDINGS, Finding, QualityPage, RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
     MAX_PROPERTY_VALUE,
@@ -1592,4 +1593,68 @@ class MatrixCellDetailRead(BaseModel):
             target_id=cell.target_id,
             links=[RelationshipRead.of(link) for link in cell.links],
             allowed=list(cell.allowed),
+        )
+
+
+# --- Quality checks (docs/adr/0057) ---------------------------------
+
+FindingsLimit = Annotated[int, Field(ge=1, le=MAX_FINDINGS)]
+Cursor = Annotated[int, Field(ge=0, description="Where the previous page stopped.")]
+
+
+def fix_hint_of(finding: Finding) -> str:
+    """An application link to where the finding is fixed — a route, never code."""
+    if finding.rule is RuleCode.INCONSISTENT_RELATIONSHIP:
+        return f"/analyse/voisinage?element={finding.element_id}"
+    return f"/elements?element={finding.element_id}"
+
+
+class FindingRead(BaseModel):
+    rule: RuleCode
+    severity: Severity
+    element_id: UUID
+    element_name: str
+    related_id: UUID | None
+    related_name: str | None
+    message: str
+    fix_hint: str
+
+    @classmethod
+    def of(cls, finding: Finding) -> FindingRead:
+        return cls(
+            rule=finding.rule,
+            severity=finding.severity,
+            element_id=finding.element_id,
+            element_name=finding.element_name,
+            related_id=finding.related_id,
+            related_name=finding.related_name,
+            message=finding.message,
+            fix_hint=fix_hint_of(finding),
+        )
+
+
+class RuleCountRead(BaseModel):
+    rule: RuleCode
+    severity: Severity
+    count: int
+
+
+class QualityReportRead(BaseModel):
+    """One page of findings, with the counts of the whole run."""
+
+    total: int = Field(description="Findings of the whole run, before any filter.")
+    counts: list[RuleCountRead]
+    findings: list[FindingRead]
+    next_cursor: int | None
+
+    @classmethod
+    def of(cls, page: QualityPage) -> QualityReportRead:
+        return cls(
+            total=len(page.report.findings),
+            counts=[
+                RuleCountRead(rule=c.rule, severity=c.severity, count=c.count)
+                for c in page.report.counts
+            ],
+            findings=[FindingRead.of(finding) for finding in page.findings],
+            next_cursor=page.next_cursor,
         )

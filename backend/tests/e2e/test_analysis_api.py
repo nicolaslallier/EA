@@ -164,3 +164,76 @@ class TestWhoMayRead:
 
         assert anonymous.status_code == 401
         assert reader.status_code == 200
+
+
+@pytest.mark.asyncio
+class TestTheQualityReport:
+    async def test_a_lone_element_is_reported_with_where_to_fix_it(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        node = await an_element(client, "node", "Loner")
+
+        body = (await client.get("/quality")).json()
+
+        orphan = next(f for f in body["findings"] if f["rule"] == "orphan")
+        assert orphan["element_id"] == node["id"]
+        assert orphan["severity"] == "warning"
+        assert orphan["fix_hint"] == f"/elements?element={node['id']}"
+        assert {c["rule"] for c in body["counts"]} >= {
+            "orphan",
+            "naming",
+            "inconsistent_relationship",
+        }
+        assert body["total"] == len(body["findings"])
+
+    async def test_filters_are_applied(self, client: httpx.AsyncClient) -> None:
+        await an_element(client, "node", "Loner")
+
+        body = (await client.get("/quality", params={"severity": "info"})).json()
+
+        assert {f["rule"] for f in body["findings"]} == {"no_description"}
+        assert body["total"] >= 2  # the counts' total is not narrowed by the filter
+
+    async def test_paging_walks_the_findings(self, client: httpx.AsyncClient) -> None:
+        for index in range(3):
+            await an_element(client, "node", f"n{index}")
+
+        first = (await client.get("/quality", params={"limit": 4})).json()
+        second = (
+            await client.get("/quality", params={"limit": 4, "cursor": first["next_cursor"]})
+        ).json()
+
+        assert len(first["findings"]) == 4 and first["next_cursor"] == 4
+        assert len(second["findings"]) == 2 and second["next_cursor"] is None
+
+    async def test_a_message_naming_an_element_is_data_not_markup(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await an_element(client, "node", "<script>alert(1)</script>")
+
+        body = (await client.get("/quality")).json()
+
+        assert any(
+            "<script>" in f["message"] for f in body["findings"]
+        )  # carried verbatim; Vue escapes it
+
+    @pytest.mark.parametrize(
+        "params", [{"limit": 0}, {"limit": 1001}, {"cursor": -1}, {"code": "nope"}]
+    )
+    async def test_out_of_bounds_arguments_are_a_422(
+        self, client: httpx.AsyncClient, params: dict[str, Any]
+    ) -> None:
+        assert (await client.get("/quality", params=params)).status_code == 422
+
+    async def test_no_token_is_a_401(
+        self, service: ArchitectureService, repository: InMemoryRepository, nobody_calling: None
+    ) -> None:
+        app = create_app(
+            Settings(debug=True, auth_enabled=True),
+            architecture_service=service,
+            analysis=repository,
+            verifier=StaticVerifier({}),
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as anonymous:
+            assert (await anonymous.get("/quality")).status_code == 401

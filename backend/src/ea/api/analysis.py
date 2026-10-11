@@ -15,11 +15,16 @@ from fastapi import APIRouter, Query, status
 
 from ea.api.dependencies import Analysis
 from ea.api.schemas import (
+    Cursor,
     ErrorResponse,
+    FindingsLimit,
     MatrixCellDetailRead,
     MatrixQuery,
     MatrixRead,
+    QualityReportRead,
 )
+from ea.domain.exchange import Severity
+from ea.domain.quality import RuleCode
 
 router = APIRouter(tags=["analysis"])
 
@@ -54,3 +59,32 @@ async def read_matrix_cell(
 ) -> MatrixCellDetailRead:
     """One pair: the links that exist and the relationships still permitted."""
     return MatrixCellDetailRead.of(await service.cell(source, target))
+
+
+FindingsQuery = Annotated[FindingsLimit, Query()]
+CursorQuery = Annotated[Cursor, Query()]
+
+
+# --- Quality checks -----------------------------------------------------------
+
+
+@router.get(
+    "/quality",
+    response_model=QualityReportRead,
+    responses={status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse}},
+)
+async def read_quality(
+    service: Analysis,
+    severity: Annotated[Severity | None, Query()] = None,
+    code: Annotated[RuleCode | None, Query()] = None,
+    limit: FindingsQuery = 100,
+    cursor: CursorQuery = 0,
+) -> QualityReportRead:
+    """Run the quality rules over the catalogue and page through the findings.
+
+    Computed on every call — nothing is stored. The counts describe the whole
+    run; `severity` and `code` narrow the findings only.
+    """
+    return QualityReportRead.of(
+        await service.check(severity=severity, code=code, limit=limit, cursor=cursor)
+    )

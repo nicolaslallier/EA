@@ -1892,6 +1892,68 @@
         "title": "FileRead",
         "type": "object"
       },
+      "FindingRead": {
+        "properties": {
+          "element_id": {
+            "format": "uuid",
+            "title": "Element Id",
+            "type": "string"
+          },
+          "element_name": {
+            "title": "Element Name",
+            "type": "string"
+          },
+          "fix_hint": {
+            "title": "Fix Hint",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "related_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Id"
+          },
+          "related_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Name"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/RuleCode"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "element_id",
+          "element_name",
+          "related_id",
+          "related_name",
+          "message",
+          "fix_hint"
+        ],
+        "title": "FindingRead",
+        "type": "object"
+      },
       "GraphRead": {
         "description": "A sub-graph: the nodes and the edges between them, ready to be drawn.",
         "properties": {
@@ -2584,6 +2646,49 @@
         "title": "PropertyTestSchema",
         "type": "object"
       },
+      "QualityReportRead": {
+        "description": "One page of findings, with the counts of the whole run.",
+        "properties": {
+          "counts": {
+            "items": {
+              "$ref": "#/components/schemas/RuleCountRead"
+            },
+            "title": "Counts",
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingRead"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "description": "Findings of the whole run, before any filter.",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "counts",
+          "findings",
+          "next_cursor"
+        ],
+        "title": "QualityReportRead",
+        "type": "object"
+      },
       "QueryOrder": {
         "enum": [
           "name",
@@ -3045,6 +3150,39 @@
           }
         },
         "title": "RestoreRequest",
+        "type": "object"
+      },
+      "RuleCode": {
+        "enum": [
+          "orphan",
+          "duplicate_probable",
+          "naming",
+          "missing_property",
+          "no_description",
+          "inconsistent_relationship"
+        ],
+        "title": "RuleCode",
+        "type": "string"
+      },
+      "RuleCountRead": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/RuleCode"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "count"
+        ],
+        "title": "RuleCountRead",
         "type": "object"
       },
       "SavedQueryCreate": {
@@ -8648,6 +8786,120 @@
         "summary": "Update Package",
         "tags": [
           "packages"
+        ]
+      }
+    },
+    "/quality": {
+      "get": {
+        "description": "Run the quality rules over the catalogue and page through the findings.\n\nComputed on every call \u2014 nothing is stored. The counts describe the whole\nrun; `severity` and `code` narrow the findings only.",
+        "operationId": "read_quality_quality_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Severity"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RuleCode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cursor",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityReportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Quality",
+        "tags": [
+          "analysis"
         ]
       }
     },
