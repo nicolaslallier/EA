@@ -79,7 +79,8 @@ from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
-from ea.services.exchanges import ExchangeService
+from ea.services.exchange_admission import ImportAdmission
+from ea.services.exchanges import MAX_PARSES_QUEUED, ExchangeService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -605,10 +606,13 @@ def create_app(
     # The ceiling on an import's body is innermost of all (docs/adr/0048): its 413 is then an
     # ordinary answer to CORS and the request id, and the disconnect it hands the route on
     # overflow never reaches the net below as an unexpected failure.
+    admission = ImportAdmission(MAX_PARSES_QUEUED)
+    app.state.import_admission = admission
     app.add_middleware(
         LimitingRequestBodies,
         path_suffix="/exchanges/imports",
         limit=settings.exchange_max_bytes + BODY_ENVELOPE_MARGIN,
+        admission=admission,
     )
     app.add_middleware(AnsweringUnexpectedFailures)
     app.add_middleware(

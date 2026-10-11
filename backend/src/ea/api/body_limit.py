@@ -32,6 +32,7 @@ from ea.api.auth import caller_of
 from ea.api.errors import domain_error_response
 from ea.domain.auth import EDITOR_ROLE
 from ea.domain.errors import DomainError, ExchangeFileTooLargeError, NotAuthorisedError
+from ea.services.exchange_admission import ImportAdmission, current_ticket
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -42,10 +43,18 @@ BODY_ENVELOPE_MARGIN: Final = 64 * 1024
 
 
 class LimitingRequestBodies:
-    def __init__(self, app: ASGIApp, *, path_suffix: str, limit: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        path_suffix: str,
+        limit: int,
+        admission: ImportAdmission | None = None,
+    ) -> None:
         self._app = app
         self._suffix = path_suffix
         self._limit = limit
+        self._admission = admission
 
     def _too_large(self) -> ExchangeFileTooLargeError:
         ceiling = self._limit - BODY_ENVELOPE_MARGIN
@@ -81,7 +90,22 @@ class LimitingRequestBodies:
         if declared.isdigit() and int(declared) > self._limit:
             await domain_error_response(self._too_large())(scope, receive, send)
             return
+        ticket = None
+        if self._admission is not None:
+            try:
+                ticket = self._admission.admit()  # a place before the first byte is read
+            except DomainError as refusal:  # 409: the body is never touched
+                await domain_error_response(refusal)(scope, receive, send)
+                return
+        marked = current_ticket.set(ticket)
+        try:
+            await self._receive_and_serve(scope, receive, send)
+        finally:
+            current_ticket.reset(marked)
+            if ticket is not None:
+                ticket.release()
 
+    async def _receive_and_serve(self, scope: Scope, receive: Receive, send: Send) -> None:
         seen = 0
         exceeded = False
 

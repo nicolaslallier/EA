@@ -164,6 +164,23 @@ crée aucun doublon, et le rapport du rejeu (`created: 0`, `reused: n`) dit que 
   ou un préfixe en doublon dans le fichier est refusé au plan, et si le premier porteur est ensuite refusé par la
   base, ses suivants restent refusés (conservateur).
 
+## Une place avant la première lecture
+
+La porte d'analyse (un fichier analysé à la fois, file de deux) est franchie *après* que la route a lu le
+corps entier : N éditeurs simultanés détenaient N x 20 Mo pour deux analyses. FastAPI analyse le multipart
+avant toute dépendance, donc la place ne peut être prise ni dans une dépendance ni dans la route : elle est
+prise par la porte ASGI (`api/body_limit.py`), qui a déjà vérifié le jeton, le rôle et la taille annoncée, et
+avant la première lecture du flux. Au-delà de `MAX_PARSES_QUEUED` imports en vol, la réponse est un 409
+`import_in_progress` sans qu'un octet du corps ait été tiré (un anonyme ou un lecteur n'en prennent pas : ils
+sont refusés avant).
+
+La place (`services/exchange_admission.py`) est rendue dans un `finally` à la fin de la requête, annulation du
+client comprise, mais seulement quand le thread d'analyse démarré par cette requête est réellement terminé :
+un client qui raccroche laisse le thread courir, et la place reste prise avec lui. La portée est le processus
+(un compteur par application) : plusieurs workers uvicorn ont chacun leurs places, la mémoire maximale
+théorique des corps détenus est donc workers x 2 x plafond. La porte d'analyse du service reste, pour les
+appelants qui n'arrivent pas par HTTP.
+
 ## Références
 
 - ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md), [0049](0049-defusedxml-et-validation-xsd.md)

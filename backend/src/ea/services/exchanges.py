@@ -46,6 +46,7 @@ from ea.domain.exchange import (
 from ea.formats.archimate_xml import buffered, parse_model, render_model
 from ea.formats.csv_files import parse_csv, render_csv
 from ea.services.caller import names_in_logs, require_caller, require_editor
+from ea.services.exchange_admission import current_ticket
 from ea.services.exchange_import import ImportRun
 
 if TYPE_CHECKING:
@@ -188,6 +189,8 @@ class ExchangeService:
             gate.queued -= 1
             raise
         work = asyncio.ensure_future(asyncio.to_thread(read))
+        if (ticket := current_ticket.get()) is not None:
+            ticket.hold(work)  # the request's place outlives a client that hangs up
 
         def finished(done: asyncio.Future[ExchangeModel]) -> None:
             # A thread cannot be stopped: the place is given back when it *ends*, even if
