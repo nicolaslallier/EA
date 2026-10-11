@@ -38,13 +38,13 @@ from ea.domain.external import (
     JIRA_PROJECT_PATTERN,
     SERVICENOW_TABLES,
     TARGET_NAME_PATTERN,
+    WRITABLE_KINDS,
     ExternalKind,
 )
 from ea.domain.packages import MAX_PACKAGES
 
 _CONFLUENCE_SPACE = re.compile(r"[1-9][0-9]{0,15}")
 _NEEDS_A_USER = frozenset({ExternalKind.JIRA_ISSUE, ExternalKind.SERVICENOW_TICKET})
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 MAX_TOKEN_LENGTH = 4096
 
 
@@ -121,20 +121,26 @@ class ExternalTargetSettings(BaseModel):
         object.__setattr__(self, "allow", normal)
         return self
 
+    @model_validator(mode="after")
+    def _only_some_kinds_can_open_tickets(self) -> "ExternalTargetSettings":
+        if self.writable and self.kind not in WRITABLE_KINDS:
+            msg = f"a {self.kind.value} target cannot be writable: it has no way to open tickets"
+            raise ValueError(msg)
+        return self
+
     @property
     def needs_a_user(self) -> bool:
         return self.kind in _NEEDS_A_USER
 
 
-def _site_problem(url: str, *, allow_plain_loopback: bool, ports: list[int]) -> str | None:
+def _site_problem(url: str, *, ports: list[int]) -> str | None:
     """What is wrong with a target's address, in words that do not repeat it."""
     try:
         parts = urlsplit(url)
         port = parts.port
     except ValueError:
         return "is not an address"
-    plain = parts.scheme == "http" and allow_plain_loopback and parts.hostname in _LOOPBACK_HOSTS
-    if parts.scheme != "https" and not plain:
+    if parts.scheme != "https":
         return "must be https"
     if not parts.hostname:
         return "has no host"
@@ -142,7 +148,7 @@ def _site_problem(url: str, *, allow_plain_loopback: bool, ports: list[int]) -> 
         return "must not carry credentials"
     if parts.query or parts.fragment:
         return "must not carry a query or a fragment"
-    if (port or (80 if plain else 443)) not in ports:
+    if (port or 443) not in ports:
         return "uses a port the target does not declare (port)"
     return None
 
@@ -507,7 +513,7 @@ class Settings(BaseSettings):
                 msg = "a target name is a short lowercase slug (letters, digits, hyphens)"
                 raise ValueError(msg)
             for label, url in (("api_url", target.api_url), ("web_url", target.web_url)):
-                problem = _site_problem(url, allow_plain_loopback=self.debug, ports=target.ports)
+                problem = _site_problem(url, ports=target.ports)
                 if problem:
                     msg = f"external target {label} {problem}"
                     raise ValueError(msg)

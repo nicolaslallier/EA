@@ -66,6 +66,9 @@ class ExternalStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+#: The kinds whose provider can open a ticket from here (the others are read-only).
+WRITABLE_KINDS: Final = frozenset({ExternalKind.GITHUB_ISSUE})
+
 #: The kinds a connector resolves. `url` is a link that is shown, never called.
 RESOLVED_KINDS: Final = frozenset(ExternalKind) - {ExternalKind.URL}
 

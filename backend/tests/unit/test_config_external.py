@@ -104,21 +104,14 @@ class TestWhatCannotBeDeclared:
         with pytest.raises(ValueError, match="web_url"):
             settings({"main": github(web_url=url)})
 
-    def test_plain_http_is_for_the_loopback_of_a_debug_run_and_nothing_else(self) -> None:
+    def test_plain_http_is_refused_even_on_loopback_and_even_in_debug(self) -> None:
+        """Loopback is unreachable by policy anyway: http would only be a way to send a
+        token in clear. Tests double the transport instead of serving on a local port."""
         local = {
             "main": github(api_url="http://127.0.0.1:9", web_url="http://127.0.0.1:9", ports=[9])
         }
-        settings(local)  # debug on: fine
         with pytest.raises(ValueError, match="api_url"):
-            Settings(  # type: ignore[call-arg]
-                _env_file=None,
-                debug=False,
-                postgres_password="x",
-                external_targets=local,
-                external_tokens={"main": TOKEN},
-            )
-        with pytest.raises(ValueError, match="api_url"):
-            settings({"main": github(api_url="http://api.github.test")})
+            settings(local)
 
     def test_the_port_of_a_host_is_a_declared_port(self) -> None:
         settings({"main": github(api_url="https://api.github.test:8443", ports=[443, 8443])})
@@ -134,6 +127,19 @@ class TestWhatCannotBeDeclared:
     ) -> None:
         with pytest.raises(ValueError, match="allow"):
             settings({"main": github(allow=allow)})
+
+    def test_only_a_kind_that_can_open_tickets_may_be_declared_writable(self) -> None:
+        settings({"main": github(writable=True)})
+        jira = {
+            "kind": "jira_issue",
+            "api_url": "https://acme.atlassian.test",
+            "web_url": "https://acme.atlassian.test",
+            "allow": ["PROJ"],
+            "user": "bot@acme.test",
+            "writable": True,
+        }
+        with pytest.raises(ValueError, match="writable"):
+            settings({"jira": jira}, {"jira": "t"})
 
     def test_a_url_target_does_not_exist_a_link_has_no_connector(self) -> None:
         with pytest.raises(ValueError):
