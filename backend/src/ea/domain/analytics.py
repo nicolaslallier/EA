@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
 from ea.domain.errors import InvalidAnalysisError
-from ea.domain.model import PROPERTY_KEY
+from ea.domain.model import PROPERTY_KEY, Element
 
 #: Declared here and imported by `api/schemas.py` (a service cannot import the API).
 MAX_BUCKETS: Final = 200
@@ -161,3 +161,219 @@ def rank_level(rank: int, size: int) -> int:
     if size <= 1:
         return 0
     return int(rank * (LEVELS - 1) / (size - 1) + 0.5)
+
+
+# --- Grouping ------------------------------------------------------------
+#
+# The database groups by the *raw* spelling of each dimension and returns
+# partial sums per group (`RawGroup`); folding spellings together, ordering
+# and colouring are done once, here, in `summarise` — so the SQL path and the
+# in-memory path (`group_elements`) cannot disagree about what "Élevé" means.
+
+
+@dataclass(frozen=True, slots=True)
+class RawGroup:
+    #: The raw value of each dimension, in order; `""` for a property that is absent.
+    keys: tuple[str, ...]
+    count: int
+    #: How many elements of the group carry a readable number, and their sum / extremes.
+    valid: int = 0
+    total: float = 0.0
+    low: float | None = None
+    high: float | None = None
+    #: Elements whose property is present but not a number.
+    invalid: int = 0
+
+
+def _raw_of(dimension: Dimension, element: Element) -> str:
+    match dimension.kind:
+        case DimensionKind.ELEMENT_TYPE:
+            return element.element_type.value
+        case DimensionKind.LAYER:
+            return element.layer
+        case DimensionKind.PROPERTY:
+            return element.properties.get(dimension.key or "", "")
+
+
+def group_elements(
+    elements: Iterable[Element],
+    dimensions: Sequence[Dimension],
+    metric_key: str | None = None,
+) -> tuple[RawGroup, ...]:
+    """The reference grouping, in memory: what the SQL query must agree with."""
+    counts: dict[tuple[str, ...], int] = {}
+    numbers: dict[tuple[str, ...], list[float]] = {}
+    invalid: dict[tuple[str, ...], int] = {}
+    for element in elements:
+        keys = tuple(_raw_of(dimension, element) for dimension in dimensions)
+        counts[keys] = counts.get(keys, 0) + 1
+        if metric_key is None:
+            continue
+        raw = element.properties.get(metric_key, "")
+        if not raw.strip(" "):
+            continue
+        number = read_number(raw)
+        if number is None:
+            invalid[keys] = invalid.get(keys, 0) + 1
+        else:
+            numbers.setdefault(keys, []).append(number)
+    return tuple(
+        RawGroup(
+            keys=keys,
+            count=count,
+            valid=len(numbers.get(keys, ())),
+            total=sum(numbers.get(keys, ())),
+            low=min(numbers.get(keys, ()), default=None),
+            high=max(numbers.get(keys, ()), default=None),
+            invalid=invalid.get(keys, 0),
+        )
+        for keys, count in counts.items()
+    )
+
+
+def _ordered(dimension: Dimension) -> Reading | None:
+    if dimension.kind is not DimensionKind.PROPERTY:
+        return None
+    reading = ANALYTIC_PROPERTIES.get(dimension.key or "")
+    return reading if reading and reading.kind is ReadingKind.ORDERED else None
+
+
+def classify(dimension: Dimension, raw: str) -> str:
+    """The bucket a raw value belongs to: itself, its declared spelling, or a sentinel."""
+    if dimension.kind is not DimensionKind.PROPERTY:
+        return raw
+    text = raw.strip()
+    if not text:
+        return UNSET_KEY
+    reading = _ordered(dimension)
+    if reading is None:
+        return text
+    rank = read_rank(dimension.key or "", text)
+    return reading.order[rank] if rank is not None else INVALID_KEY
+
+
+def _sort_key(dimension: Dimension, key: str) -> tuple[int, int, str]:
+    if key == UNSET_KEY:
+        return (2, 0, "")
+    if key == INVALID_KEY:
+        return (1, 0, "")
+    reading = _ordered(dimension)
+    if reading is not None and key in reading.order:
+        return (0, reading.order.index(key), "")
+    return (0, 0, key.casefold())
+
+
+@dataclass(frozen=True, slots=True)
+class Bucket:
+    keys: tuple[str, ...]
+    count: int
+    #: The metric over the bucket: the count itself for `COUNT`, else over readable values.
+    value: float | None
+    #: 0..4, or `None` for a bucket with nothing to colour.
+    level: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class Aggregate:
+    dimensions: tuple[Dimension, ...]
+    metric: Metric
+    property_key: str | None
+    buckets: tuple[Bucket, ...]
+    #: Elements counted, before any cut.
+    total: int
+    #: Elements whose metric property is present but not a number.
+    unreadable: int
+    truncated: bool
+
+    def axis_keys(self, position: int) -> tuple[str, ...]:
+        """The distinct keys of one dimension, in the order that dimension reads."""
+        dimension = self.dimensions[position]
+        distinct = {bucket.keys[position] for bucket in self.buckets}
+        return tuple(sorted(distinct, key=lambda key: _sort_key(dimension, key)))
+
+
+@dataclass(slots=True)
+class _Merged:
+    count: int = 0
+    valid: int = 0
+    total: float = 0.0
+    low: float | None = None
+    high: float | None = None
+
+
+def _smaller(one: float | None, other: float | None) -> float | None:
+    return other if one is None else one if other is None else min(one, other)
+
+
+def _larger(one: float | None, other: float | None) -> float | None:
+    return other if one is None else one if other is None else max(one, other)
+
+
+def _metric_of(metric: Metric, merged: _Merged) -> float | None:
+    match metric:
+        case Metric.COUNT:
+            return float(merged.count)
+        case Metric.SUM:
+            return merged.total if merged.valid else None
+        case Metric.AVG:
+            return merged.total / merged.valid if merged.valid else None
+        case Metric.MIN:
+            return merged.low
+        case Metric.MAX:
+            return merged.high
+
+
+def summarise(
+    groups: Iterable[RawGroup],
+    dimensions: Sequence[Dimension],
+    metric: Metric,
+    property_key: str | None = None,
+) -> Aggregate:
+    """Fold raw groups into buckets: classify, merge, order, cut and colour."""
+    merged: dict[tuple[str, ...], _Merged] = {}
+    unreadable = 0
+    for group in groups:
+        keys = tuple(
+            classify(dimension, raw) for dimension, raw in zip(dimensions, group.keys, strict=True)
+        )
+        into = merged.setdefault(keys, _Merged())
+        into.count += group.count
+        into.valid += group.valid
+        into.total += group.total
+        into.low = _smaller(into.low, group.low)
+        into.high = _larger(into.high, group.high)
+        unreadable += group.invalid
+
+    ordered = sorted(
+        merged,
+        key=lambda keys: tuple(
+            _sort_key(dimension, key) for dimension, key in zip(dimensions, keys, strict=True)
+        ),
+    )
+    total = sum(entry.count for entry in merged.values())
+    kept = ordered[:MAX_BUCKETS]
+    values = [_metric_of(metric, merged[keys]) for keys in kept]
+
+    reading = _ordered(dimensions[0]) if len(dimensions) == 1 else None
+    if reading is not None and metric is Metric.COUNT:
+        levels: Sequence[int | None] = [
+            rank_level(reading.order.index(keys[0]), len(reading.order))
+            if keys[0] in reading.order
+            else None
+            for keys in kept
+        ]
+    else:
+        levels = scale_for(values)
+
+    return Aggregate(
+        dimensions=tuple(dimensions),
+        metric=metric,
+        property_key=property_key,
+        buckets=tuple(
+            Bucket(keys=keys, count=merged[keys].count, value=value, level=level)
+            for keys, value, level in zip(kept, values, levels, strict=True)
+        ),
+        total=total,
+        unreadable=unreadable,
+        truncated=len(ordered) > MAX_BUCKETS,
+    )
