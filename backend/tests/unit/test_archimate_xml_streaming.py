@@ -165,3 +165,24 @@ class TestAmplification:
 
         assert peaks[40_000] / peaks[10_000] < 2.5  # linear growth would be 4 (and the real
         # peaks are dominated by the input string itself, which the caller already holds)
+
+
+class TestThePropertyDefinitionsBoundary:
+    def definitions(self, count: int) -> bytes:
+        rows = "".join(
+            f'<propertyDefinition identifier="d{i}" type="string"><name>k{i}</name>'
+            "</propertyDefinition>"
+            for i in range(count)
+        )
+        return exchange_xml(extra=f"<propertyDefinitions>{rows}</propertyDefinitions>")
+
+    def test_exactly_the_documented_number_of_definitions_is_read(self) -> None:
+        from ea.domain.exchange import MAX_EXCHANGE_ITEMS
+
+        parse_model(self.definitions(MAX_EXCHANGE_ITEMS))
+
+    def test_one_more_is_refused_for_the_right_reason(self) -> None:
+        from ea.domain.exchange import MAX_EXCHANGE_ITEMS
+
+        with pytest.raises(InvalidExchangeFileError, match="property definitions"):
+            parse_model(self.definitions(MAX_EXCHANGE_ITEMS + 1))

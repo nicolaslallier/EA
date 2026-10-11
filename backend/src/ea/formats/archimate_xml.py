@@ -552,7 +552,8 @@ def _read(data: bytes) -> _Reading:
                 slot = _read_relationship(node, counts["relationship"], reading)
                 reading.links.append(_too_many_properties(slot, Category.RELATIONSHIPS))
             elif section == _q("propertyDefinitions") and tag == _q("propertyDefinition"):
-                _read_definition(node, reading)
+                _read_definition(node, reading)  # clears the definition and its name
+                live = 0
                 tags.pop(), nodes.pop()
                 continue  # the siblings of a definition are the other definitions: keep them
             nodes[1].clear()  # forget what has been handled: memory stays flat
