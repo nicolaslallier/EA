@@ -231,3 +231,124 @@ describe('DiagramCanvas', () => {
     expect(width()).toBe(before)
   })
 })
+
+describe('DiagramCanvas — a selection of several boxes', () => {
+  const both = [A.id, B.id]
+
+  it('toggles a box with shift+click instead of selecting it alone', async () => {
+    const rendered = draw()
+
+    await fireEvent.click(screen.getByRole('button', { name: /Facturation/ }), { shiftKey: true })
+
+    expect(rendered.emitted().toggle).toEqual([[A.id]])
+    expect(rendered.emitted().select).toBeUndefined()
+  })
+
+  it('selects what a dragged band touches', async () => {
+    const rendered = draw()
+
+    await fireEvent(svg(), pointer('pointerdown', 250, 90))
+    await fireEvent(svg(), pointer('pointermove', 50, -10))
+    await fireEvent(svg(), pointer('pointerup', 50, -10))
+
+    expect(rendered.emitted()['select-many']).toEqual([[[A.id]]])
+  })
+
+  it('clears the selection when the empty canvas is clicked', async () => {
+    const rendered = draw({ selection: both })
+
+    await fireEvent(svg(), pointer('pointerdown', 600, 400))
+    await fireEvent(svg(), pointer('pointerup', 600, 400))
+
+    expect(rendered.emitted()['select-many']).toEqual([[[]]])
+  })
+
+  it('selects every box on Ctrl+A', async () => {
+    const rendered = draw()
+
+    await fireEvent.keyDown(svg(), { key: 'a', ctrlKey: true })
+
+    expect(rendered.emitted()['select-many']).toEqual([[both]])
+  })
+
+  it('drags the whole selection when one of its boxes is dragged', async () => {
+    const rendered = draw({ selection: both })
+
+    await fireEvent(screen.getByRole('button', { name: /Facturation/ }), pointer('pointerdown', 10, 10))
+    await fireEvent(svg(), pointer('pointermove', 110, 60))
+    await fireEvent(svg(), pointer('pointerup', 110, 60))
+
+    expect(rendered.emitted().move).toEqual([
+      [A.id, { x: 100, y: 50 }],
+      [B.id, { x: 400, y: 50 }],
+    ])
+    expect(rendered.emitted().moved).toHaveLength(1)
+  })
+
+  it('drags only the box grabbed when it is not part of the selection', async () => {
+    const rendered = draw({ selection: [B.id] })
+
+    await fireEvent(screen.getByRole('button', { name: /Facturation/ }), pointer('pointerdown', 10, 10))
+    await fireEvent(svg(), pointer('pointermove', 20, 10))
+
+    expect(rendered.emitted().move).toEqual([[A.id, { x: 10, y: 0 }]])
+  })
+
+  it('removes all the selected boxes on Delete', async () => {
+    const rendered = draw({ selection: both })
+
+    await fireEvent.keyDown(screen.getByRole('button', { name: /Facturation/ }), { key: 'Delete' })
+
+    expect(rendered.emitted()['remove-many']).toEqual([[both]])
+  })
+
+  it('does nothing to a reader: no move, no removal', async () => {
+    const rendered = draw({ selection: both, readonly: true })
+
+    await fireEvent(screen.getByRole('button', { name: /Facturation/ }), pointer('pointerdown', 10, 10))
+    await fireEvent(svg(), pointer('pointermove', 110, 60))
+    await fireEvent.keyDown(screen.getByRole('button', { name: /Facturation/ }), { key: 'Delete' })
+    await fireEvent.keyDown(screen.getByRole('button', { name: /Facturation/ }), { key: 'ArrowRight' })
+
+    expect(rendered.emitted().move).toBeUndefined()
+    expect(rendered.emitted()['remove-many']).toBeUndefined()
+  })
+})
+
+describe('DiagramCanvas — the keyboard', () => {
+  const key = (name: string, extra: Record<string, unknown> = {}) =>
+    fireEvent.keyDown(screen.getByRole('button', { name: /Facturation/ }), { key: name, ...extra })
+
+  it('nudges a box by one pixel, ten with shift', async () => {
+    const rendered = draw({ boxes: [{ ...BOXES[0], x: 50, y: 50 }, BOXES[1]] })
+
+    await key('ArrowRight')
+    await key('ArrowUp', { shiftKey: true })
+
+    expect(rendered.emitted().move).toEqual([
+      [A.id, { x: 51, y: 50 }],
+      [A.id, { x: 50, y: 40 }],
+    ])
+    expect(rendered.emitted().moved).toEqual([['keyboard'], ['keyboard']])
+  })
+
+  it('never nudges a box out of the canvas', async () => {
+    const rendered = draw()
+
+    await key('ArrowLeft')
+
+    expect(rendered.emitted().move).toEqual([[A.id, { x: 0, y: 0 }]])
+  })
+
+  it('resizes with Alt+arrow, never below the minimum box', async () => {
+    const rendered = draw()
+
+    await key('ArrowRight', { altKey: true, shiftKey: true })
+    await key('ArrowLeft', { altKey: true, shiftKey: true })
+
+    expect(rendered.emitted().resize).toEqual([
+      [A.id, { width: 142, height: 46 }],
+      [A.id, { width: 122, height: 46 }],
+    ])
+  })
+})

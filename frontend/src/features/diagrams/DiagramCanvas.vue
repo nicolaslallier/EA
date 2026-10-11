@@ -11,11 +11,16 @@ import { computed, ref, useTemplateRef } from 'vue'
 import { BOX_TEXT, LAYER_COLOURS } from '../metamodel/useMetamodel'
 import { verbOf } from '../relationships/labels'
 import {
+  MIN_BOX,
+  boxesIn,
   canvasExtent,
   centreOf,
   edgeSegment,
+  nudgeDelta,
   placeCentredAt,
   resizedTo,
+  rubberBand,
+  shortenToWidth,
   toCanvasPoint,
   type Point,
   type Size,
@@ -27,6 +32,8 @@ const props = defineProps<{
   relationships: RelationshipRead[]
   /** The element `?element=` names, or ''. */
   selectedId: string
+  /** Every box selected, `selectedId` included; omitted, the selection is `selectedId` alone. */
+  selection?: string[]
   typeLabel: (value: string) => string
   /** A reader's canvas: boxes can be selected, never dropped, moved, linked or removed. */
   readonly?: boolean
@@ -41,14 +48,18 @@ const emit = defineEmits<{
   move: [elementId: string, to: Point]
   resize: [elementId: string, size: Size]
   /** A move or resize gesture ended: the moment to save. */
-  moved: []
+  moved: [source?: 'keyboard']
   select: [elementId: string]
+  toggle: [elementId: string]
+  'select-many': [elementIds: string[]]
   remove: [elementId: string]
+  'remove-many': [elementIds: string[]]
   connect: [sourceId: string, targetId: string]
 }>()
 
-/** Roughly how wide one character of a box's name is drawn. */
-const CHARACTER_WIDTH = 7.5
+/** A band shorter than this is a click on the background, not a selection. */
+const BAND_SLOP = 4
+
 const ZOOM_STEP = 0.25
 const ZOOM_RANGE = [0.4, 2] as const
 /** Room kept past the furthest box, so there is always somewhere to drop. */
@@ -57,15 +68,24 @@ const MARGIN = 160
 const svg = useTemplateRef<SVGSVGElement>('svg')
 const zoom = ref(1)
 
+type Grab = { elementId: string; offset: Point }
 type Gesture =
-  | { kind: 'move'; elementId: string; offset: Point; moved: boolean }
+  | { kind: 'move'; grabs: Grab[]; moved: boolean }
   | { kind: 'resize'; elementId: string; offset: Point; moved: boolean }
   | { kind: 'link'; sourceId: string; to: Point }
+  | { kind: 'band'; from: Point; to: Point }
 const gesture = ref<Gesture | null>(null)
+
+const chosen = computed(
+  () => new Set([...(props.selection ?? []), ...(props.selectedId ? [props.selectedId] : [])]),
+)
+const several = computed(() => chosen.value.size > 1)
 
 const extent = computed(() => canvasExtent(props.boxes, MARGIN))
 const byId = computed(() => new Map(props.boxes.map((box) => [box.element.id, box])))
-const selected = computed(() => byId.value.get(props.selectedId))
+/** The link and resize handles belong to a lone selected box, never to a set. */
+const selected = computed(() => (several.value ? undefined : byId.value.get(props.selectedId)))
+const rectOf = (box: Box) => ({ id: box.element.id, x: box.x, y: box.y, width: box.width, height: box.height })
 
 /** Links whose two ends are drawn; overlapping boxes have no sensible stroke. */
 const edges = computed(() =>
@@ -82,12 +102,6 @@ const summary = computed(() => {
   const links = edges.value.length
   return `${boxes} élément${boxes > 1 ? 's' : ''}, ${links} relation${links > 1 ? 's' : ''}`
 })
-
-/** As much of `name` as a box `width` wide holds: a wider box shows more of it. */
-function shorten(name: string, width: number): string {
-  const limit = Math.max(4, Math.floor(width / CHARACTER_WIDTH))
-  return name.length > limit ? `${name.slice(0, limit - 1)}…` : name
-}
 
 function step(by: number): void {
   zoom.value = Math.min(ZOOM_RANGE[1], Math.max(ZOOM_RANGE[0], zoom.value + by))
@@ -124,17 +138,32 @@ function onDrop(event: DragEvent): void {
 }
 
 function grab(event: PointerEvent, box: Box): void {
-  if (event.button !== 0 || props.readonly) {
+  if (event.button !== 0 || props.readonly || event.shiftKey) {
     return
   }
   capture(event)
   const pointer = at(event)
+  const members = chosen.value.has(box.element.id)
+    ? props.boxes.filter((candidate) => chosen.value.has(candidate.element.id))
+    : [box]
   gesture.value = {
     kind: 'move',
-    elementId: box.element.id,
-    offset: { x: pointer.x - box.x, y: pointer.y - box.y },
+    grabs: members.map((member) => ({
+      elementId: member.element.id,
+      offset: { x: pointer.x - member.x, y: pointer.y - member.y },
+    })),
     moved: false,
   }
+}
+
+/** A drag that starts on the empty canvas draws a selection band. */
+function startBackground(event: PointerEvent): void {
+  if (event.button !== 0 || event.target !== event.currentTarget) {
+    return
+  }
+  capture(event)
+  const start = at(event)
+  gesture.value = { kind: 'band', from: start, to: start }
 }
 
 /** Grab the selected box's corner; `offset` keeps the box from jumping to the pointer. */
@@ -171,6 +200,10 @@ function drag(event: PointerEvent): void {
     current.to = pointer
     return
   }
+  if (current.kind === 'band') {
+    current.to = pointer
+    return
+  }
   current.moved = true
   if (current.kind === 'resize') {
     const box = byId.value.get(current.elementId)
@@ -180,10 +213,15 @@ function drag(event: PointerEvent): void {
     }
     return
   }
-  emit('move', current.elementId, {
-    x: Math.max(0, pointer.x - current.offset.x),
-    y: Math.max(0, pointer.y - current.offset.y),
-  })
+  for (const held of current.grabs) {
+    // ponytail: each box is clamped to the canvas on its own, so a group
+    // dragged against the left edge squeezes together; clamp the group's
+    // bounding box instead if that is ever noticed.
+    emit('move', held.elementId, {
+      x: Math.max(0, pointer.x - held.offset.x),
+      y: Math.max(0, pointer.y - held.offset.y),
+    })
+  }
 }
 
 /**
@@ -195,7 +233,7 @@ function drag(event: PointerEvent): void {
 function interrupt(): void {
   const current = gesture.value
   gesture.value = null
-  if (current?.kind !== 'link' && current?.moved) {
+  if (current && current.kind !== 'link' && current.kind !== 'band' && current.moved) {
     emit('moved')
   }
 }
@@ -203,6 +241,12 @@ function interrupt(): void {
 function release(event: PointerEvent): void {
   const current = gesture.value
   gesture.value = null
+  if (current?.kind === 'band') {
+    const band = rubberBand(current.from, current.to)
+    const hits = band.width + band.height < BAND_SLOP ? [] : boxesIn(band, props.boxes.map(rectOf))
+    emit('select-many', hits)
+    return
+  }
   if (current && current.kind !== 'link') {
     if (current.moved) {
       emit('moved')
@@ -226,8 +270,55 @@ function release(event: PointerEvent): void {
 }
 
 function removeIfSelected(box: Box): void {
-  if (box.element.id === props.selectedId && !props.readonly) {
+  if (props.readonly || !chosen.value.has(box.element.id)) {
+    return
+  }
+  if (several.value) {
+    emit('remove-many', [...chosen.value])
+  } else {
     emit('remove', box.element.id)
+  }
+}
+
+function onClick(event: MouseEvent, box: Box): void {
+  if (event.shiftKey) {
+    emit('toggle', box.element.id)
+  } else {
+    emit('select', box.element.id)
+  }
+}
+
+/** Arrows nudge (Shift = 10 px); Alt+arrows resize. Every gesture has a keyboard twin. */
+function onNodeKey(event: KeyboardEvent, box: Box): void {
+  const delta = nudgeDelta(event.key, event.shiftKey)
+  if (!delta || props.readonly) {
+    return
+  }
+  event.preventDefault()
+  if (event.altKey) {
+    emit('resize', box.element.id, {
+      width: Math.max(MIN_BOX.width, box.width + delta.x),
+      height: Math.max(MIN_BOX.height, box.height + delta.y),
+    })
+    emit('moved', 'keyboard')
+    return
+  }
+  const targets = chosen.value.has(box.element.id)
+    ? props.boxes.filter((candidate) => chosen.value.has(candidate.element.id))
+    : [box]
+  for (const target of targets) {
+    emit('move', target.element.id, {
+      x: Math.max(0, target.x + delta.x),
+      y: Math.max(0, target.y + delta.y),
+    })
+  }
+  emit('moved', 'keyboard')
+}
+
+function onCanvasKey(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+    event.preventDefault()
+    emit('select-many', props.boxes.map((box) => box.element.id))
   }
 }
 </script>
@@ -254,6 +345,9 @@ function removeIfSelected(box: Box): void {
         :viewBox="`0 0 ${extent.width} ${extent.height}`"
         :width="extent.width * zoom"
         :height="extent.height * zoom"
+        tabindex="0"
+        @pointerdown="startBackground"
+        @keydown="onCanvasKey"
         @dragover.prevent
         @drop.prevent="onDrop"
         @pointermove="drag"
@@ -297,17 +391,18 @@ function removeIfSelected(box: Box): void {
           :key="box.element.id"
           class="canvas__node"
           :class="{
-            'canvas__node--selected': box.element.id === selectedId,
+            'canvas__node--selected': chosen.has(box.element.id),
             'canvas__node--inactive': inactive.has(box.element.id),
           }"
           role="button"
           tabindex="0"
-          :aria-pressed="box.element.id === selectedId"
+          :aria-pressed="chosen.has(box.element.id)"
           :aria-label="`${box.element.name} — ${typeLabel(box.element.element_type)}${
             inactive.has(box.element.id) ? ' — hors période' : ''
           }`"
           @pointerdown="grab($event, box)"
-          @click="emit('select', box.element.id)"
+          @click="onClick($event, box)"
+          @keydown="onNodeKey($event, box)"
           @keydown.enter.prevent="emit('select', box.element.id)"
           @keydown.delete.prevent="removeIfSelected(box)"
         >
@@ -327,7 +422,7 @@ function removeIfSelected(box: Box): void {
             text-anchor="middle"
             :fill="BOX_TEXT"
           >
-            {{ shorten(box.element.name, box.width) }}
+            {{ shortenToWidth(box.element.name, box.width) }}
           </text>
           <text
             class="canvas__type"
@@ -336,9 +431,18 @@ function removeIfSelected(box: Box): void {
             text-anchor="middle"
             :fill="BOX_TEXT"
           >
-            {{ shorten(typeLabel(box.element.element_type), box.width) }}
+            {{ shortenToWidth(typeLabel(box.element.element_type), box.width) }}
           </text>
         </g>
+
+        <rect
+          v-if="gesture?.kind === 'band'"
+          class="canvas__band-rect"
+          :x="Math.min(gesture.from.x, gesture.to.x)"
+          :y="Math.min(gesture.from.y, gesture.to.y)"
+          :width="Math.abs(gesture.to.x - gesture.from.x)"
+          :height="Math.abs(gesture.to.y - gesture.from.y)"
+        />
 
         <line
           v-if="gesture?.kind === 'link' && selected"
@@ -500,6 +604,12 @@ svg {
   stroke: var(--text);
   stroke-width: 2;
   cursor: nwse-resize;
+}
+.canvas__band-rect {
+  fill: color-mix(in srgb, var(--accent, #6b4fbb) 14%, transparent);
+  stroke: var(--accent, #6b4fbb);
+  stroke-dasharray: 4 3;
+  pointer-events: none;
 }
 .canvas__band {
   stroke: var(--text);
