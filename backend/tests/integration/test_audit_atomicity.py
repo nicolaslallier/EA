@@ -85,8 +85,8 @@ async def test_a_save_and_a_link_write_their_events_with_them(engine_at_head: As
     graph = PostgresArchitectureRepository(sessions)
     trail = PostgresAuditRepository(sessions)
     left, right = an_element("a"), an_element("b")
-    await graph.add_element(left)
-    await graph.add_element(right)
+    await graph.add_element(left, audit=())
+    await graph.add_element(right, audit=())
 
     renamed = left.rename("a2", now=NOW)
     await graph.save_element(renamed, audit=(event_for(AuditAction.ELEMENT_UPDATED, left.id),))
@@ -117,13 +117,14 @@ async def test_a_removal_names_what_the_foreign_keys_take(
 
     sessions = create_session_factory(engine_at_head)
     graph = PostgresArchitectureRepository(sessions)
-    element = await graph.add_element(an_element("db-01"))
+    element = await graph.add_element(an_element("db-01"), audit=())
     document = await PostgresDocumentRepository(sessions).add(
-        Document.create(element_id=element.id, filename="a.md", content="# A\n", now=NOW)
+        Document.create(element_id=element.id, filename="a.md", content="# A\n", now=NOW),
+        audit=(),
     )
     diagrams = PostgresDiagramRepository(sessions)
-    diagram = await diagrams.add(Diagram.create(name="Vue", now=NOW))
-    await diagrams.replace_layout(diagram.id, [DiagramNode(element.id, 0, 0)], now=NOW)
+    diagram = await diagrams.add(Diagram.create(name="Vue", now=NOW), audit=())
+    await diagrams.replace_layout(diagram.id, [DiagramNode(element.id, 0, 0)], now=NOW, audit=())
     seen: list[ElementRemoval] = []
 
     def record(removal: ElementRemoval) -> tuple[()]:
@@ -149,7 +150,7 @@ async def test_a_document_and_its_event_commit_or_fail_together(
     graph = PostgresArchitectureRepository(sessions)
     documents = PostgresDocumentRepository(sessions)
     trail = PostgresAuditRepository(sessions)
-    element = await graph.add_element(an_element("db-01"))
+    element = await graph.add_element(an_element("db-01"), audit=())
     first = Document.create(element_id=element.id, filename="a.md", content="# A\n", now=NOW)
     second = Document.create(element_id=element.id, filename="a.md", content="# B\n", now=NOW)
 
@@ -173,7 +174,7 @@ async def test_a_diagram_layout_and_its_event_commit_together(engine_at_head: As
     graph = PostgresArchitectureRepository(sessions)
     diagrams = PostgresDiagramRepository(sessions)
     trail = PostgresAuditRepository(sessions)
-    element = await graph.add_element(an_element("db-01"))
+    element = await graph.add_element(an_element("db-01"), audit=())
     diagram = await diagrams.add(
         Diagram.create(name="Vue", now=NOW),
         audit=(event_for(AuditAction.DIAGRAM_CREATED, None),),

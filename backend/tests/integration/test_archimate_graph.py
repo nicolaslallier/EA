@@ -248,8 +248,12 @@ class TestContainmentCycles:
         a = await graph_service.create_element(element_type=E.GROUPING, name="A")
         b = await graph_service.create_element(element_type=E.GROUPING, name="B")
         c = await graph_service.create_element(element_type=E.GROUPING, name="C")
-        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, a, b, now=now))
-        await graph_repository.add_relationship(Relationship.between(R.COMPOSITION, b, a, now=now))
+        await graph_repository.add_relationship(
+            Relationship.between(R.COMPOSITION, a, b, now=now), audit=()
+        )
+        await graph_repository.add_relationship(
+            Relationship.between(R.COMPOSITION, b, a, now=now), audit=()
+        )
 
         assert not await asyncio.wait_for(
             graph_repository.would_close_a_containment_cycle(c.id, a.id), timeout=5

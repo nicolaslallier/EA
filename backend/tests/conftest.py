@@ -9,7 +9,7 @@ import math
 import os
 import re
 import socket
-from collections.abc import AsyncIterator, Collection, Iterator, Sequence
+from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -26,6 +26,7 @@ from ea.domain.audit import (
     decode_cursor,
     encode_cursor,
     events_for,
+    saved_query_view,
 )
 from ea.domain.auth import EDITOR_ROLE, Caller
 from ea.domain.diagrams import Diagram, DiagramNode
@@ -50,7 +51,7 @@ from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
-from ea.domain.ports import ElementFilter, ElementRemoval, GraphView
+from ea.domain.ports import ElementFilter, ElementRemoval, GraphView, Held, PackageRemoval
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -331,7 +332,7 @@ class InMemoryRepository:
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
         self.audit_log.append(audit)
@@ -346,7 +347,7 @@ class InMemoryRepository:
     async def count_elements(self, criteria: ElementFilter) -> int:
         return len(self.elements)
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
+    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         if element.id not in self.elements:
             raise ElementNotFoundError(str(element.id))
         self._refuse_a_taken_address(element)
@@ -381,9 +382,7 @@ class InMemoryRepository:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
 
-    async def delete_element(
-        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
-    ) -> bool:
+    async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
         element = self.elements.get(element_id)
         if element is None:
             return False
@@ -396,7 +395,7 @@ class InMemoryRepository:
         return True
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
     ) -> Relationship:
         self.relationships[relationship.id] = relationship
         self.audit_log.append(audit)
@@ -416,7 +415,7 @@ class InMemoryRepository:
         return tuple(self.relationships.values())
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship]
     ) -> bool:
         stored = self.relationships.get(relationship_id)
         if stored is None:
@@ -531,7 +530,7 @@ class InMemoryDocuments:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent] = (),
+        audit: Sequence[AuditEvent],
     ) -> Document:
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
@@ -562,7 +561,7 @@ class InMemoryDocuments:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: AuditOf[Document] = (),
+        audit: AuditOf[Document],
     ) -> Document:
         if document.id not in self.documents:
             raise DocumentNotFoundError(str(document.id))
@@ -572,7 +571,7 @@ class InMemoryDocuments:
         self.audit_log.append(events)
         return document
 
-    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool:
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """The passages go with the document — here by hand, in PostgreSQL by
         the foreign key from `document_chunks`."""
         stored = self.documents.get(document_id)
@@ -653,7 +652,7 @@ class InMemoryDiagrams:
         ]
         return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
         self._refuse_a_taken_name(diagram)
         self.diagrams[diagram.id] = diagram
         self.audit_log.append(audit)
@@ -666,7 +665,7 @@ class InMemoryDiagrams:
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]:
         return self.nodes.get(diagram_id, ())
 
-    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         if diagram.id not in self.diagrams:
             raise DiagramNotFoundError(str(diagram.id))
         self._refuse_a_taken_name(diagram)
@@ -675,7 +674,7 @@ class InMemoryDiagrams:
         self.audit_log.append(events)
         return diagram
 
-    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool:
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
             return False
@@ -691,7 +690,7 @@ class InMemoryDiagrams:
         nodes: Sequence[DiagramNode],
         *,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]] = (),
+        audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
@@ -703,12 +702,18 @@ class InMemoryDiagrams:
         return True
 
 
+def _held_ids(ids: Iterable[UUID]) -> Held:
+    found = tuple(sorted(ids))
+    return Held(len(found), found[:100])
+
+
 class InMemoryPackages:
     """A dictionary pretending to be `packages`: the sibling-name rule of its two indexes,
     and the counts and moves that SQL does across tables, reaching into the element and
     diagram doubles it is built over."""
 
     def __init__(self, graph: InMemoryRepository, diagrams: InMemoryDiagrams) -> None:
+        self.audit_log = graph.audit_log
         self.packages: dict[UUID, Package] = {}
         self._graph = graph
         self._diagrams = diagrams
@@ -743,22 +748,30 @@ class InMemoryPackages:
     async def get(self, package_id: UUID) -> Package | None:
         return self.packages.get(package_id)
 
-    async def add(self, package: Package) -> Package:
+    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
         self._require_parent(package)
         self._refuse_a_taken_name(package)
         self.packages[package.id] = package
+        self.audit_log.append(audit)
         return package
 
-    async def save(self, package: Package) -> Package:
+    async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         if package.id not in self.packages:
             raise PackageNotFoundError(str(package.id))
         self._require_parent(package)
         self._refuse_a_taken_name(package)
+        events = events_for(audit, self.packages[package.id])
         self.packages[package.id] = package
+        self.audit_log.append(events)
         return package
 
     async def delete(
-        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+        self,
+        package_id: UUID,
+        *,
+        into: UUID | None,
+        audit: AuditOf[PackageRemoval],
+        require_empty: bool = False,
     ) -> bool:
         if package_id not in self.packages:
             return False
@@ -770,6 +783,20 @@ class InMemoryPackages:
         children = [p for p in self.packages.values() if p.parent_id == package_id]
         for child in children:  # checked before anything moves: all or none
             self._refuse_a_taken_name(replace(child, parent_id=into))
+        events = events_for(
+            audit,
+            PackageRemoval(
+                package=self.packages[package_id],
+                into=into,
+                sub_packages=Held(len(children), tuple(c.id for c in children)),
+                elements=_held_ids(
+                    e.id for e in self._graph.elements.values() if e.package_id == package_id
+                ),
+                diagrams=_held_ids(
+                    d.id for d in self._diagrams.diagrams.values() if d.package_id == package_id
+                ),
+            ),
+        )
         for child in children:
             self.packages[child.id] = replace(child, parent_id=into)
         for element_id, element in list(self._graph.elements.items()):
@@ -779,14 +806,25 @@ class InMemoryPackages:
             if diagram.package_id == package_id:
                 self._diagrams.diagrams[diagram_id] = replace(diagram, package_id=into)
         del self.packages[package_id]
+        self.audit_log.append(events)
         return True
 
-    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+    async def move_elements(
+        self,
+        element_ids: Sequence[UUID],
+        package_id: UUID | None,
+        *,
+        audit: AuditOf[Mapping[UUID, UUID | None]],
+    ) -> None:
         missing = [str(i) for i in element_ids if i not in self._graph.elements]
         if missing:
             raise ElementNotFoundError(f"no element with id {', '.join(missing)}")
         if package_id is not None and package_id not in self.packages:
             raise PackageNotFoundError(str(package_id))
+        events = events_for(
+            audit, {i: self._graph.elements[i].package_id for i in dict.fromkeys(element_ids)}
+        )
+        self.audit_log.append(events)
         for element_id in element_ids:
             self._graph.elements[element_id] = replace(
                 self._graph.elements[element_id], package_id=package_id
@@ -800,7 +838,8 @@ class InMemorySavedQueries:
     prove a listing survives a row `get` refuses — as the real table does.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.queries: dict[UUID, SavedQuery] = {}
         self.corrupt: set[UUID] = set()
 
@@ -819,21 +858,30 @@ class InMemorySavedQueries:
             raise InvalidQueryError(msg)
         return self.queries.get(query_id)
 
-    async def add(self, saved: SavedQuery) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: Sequence[AuditEvent]) -> SavedQuery:
         self._refuse_a_taken_name(saved)
         self.queries[saved.id] = saved
+        self.audit_log.append(audit)
         return saved
 
-    async def save(self, saved: SavedQuery) -> SavedQuery:
+    async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
         if saved.id not in self.queries:
             raise SavedQueryNotFoundError(str(saved.id))
         self._refuse_a_taken_name(saved)
+        events = events_for(audit, saved_query_view(self.queries[saved.id]))
         self.queries[saved.id] = saved
+        self.audit_log.append(events)
         return saved
 
-    async def delete(self, query_id: UUID) -> bool:
+    async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool:
+        stored = self.queries.get(query_id)
+        if stored is None:
+            return False
+        events = events_for(audit, saved_query_view(stored))
         self.corrupt.discard(query_id)
-        return self.queries.pop(query_id, None) is not None
+        del self.queries[query_id]
+        self.audit_log.append(events)
+        return True
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -1074,8 +1122,8 @@ def package_service(packages: InMemoryPackages) -> PackageService:
 
 
 @pytest.fixture
-def saved_queries() -> InMemorySavedQueries:
-    return InMemorySavedQueries()
+def saved_queries(audit_log: InMemoryAuditLog) -> InMemorySavedQueries:
+    return InMemorySavedQueries(audit_log)
 
 
 @pytest.fixture

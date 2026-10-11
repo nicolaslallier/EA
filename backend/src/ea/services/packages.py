@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.audit import AuditAction, package_view
 from ea.domain.errors import (
     CyclicPackageError,
     PackageNotEmptyError,
@@ -36,10 +37,14 @@ from ea.domain.packages import (
     descendants_of,
     path_of,
 )
+from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
-    from ea.domain.ports import PackageRepository
+    from collections.abc import Mapping
+
+    from ea.domain.audit import AuditEvent
+    from ea.domain.ports import Held, PackageRemoval, PackageRepository
 
 Clock = Callable[[], datetime]
 
@@ -48,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _held(held: Held) -> dict[str, object]:
+    return {"count": held.count, "ids": [str(i) for i in held.ids]}
 
 
 def _not_found(package_id: UUID) -> PackageNotFoundError:
@@ -60,6 +69,7 @@ class PackageService:
     def __init__(self, repository: PackageRepository, *, clock: Clock = _utc_now) -> None:
         self._repository = repository
         self._now = clock
+        self._trail = AuditTrail(clock)
 
     async def _tree(self) -> dict[UUID, Package]:
         return {package.id: package for package in await self._repository.list_all()}
@@ -102,7 +112,10 @@ class PackageService:
             name=name, description=description, parent_id=parent_id, now=self._now()
         )
         check_tree({**packages, package.id: package})
-        stored = await self._repository.add(package)
+        event = self._trail.event(
+            AuditAction.PACKAGE_CREATED, entity_id=package.id, after=package_view(package)
+        )
+        stored = await self._repository.add(package, audit=(event,))
         self._audit("package created: %r", stored, "package_created")
         return await self.get(stored.id)
 
@@ -127,7 +140,19 @@ class PackageService:
                 raise _not_found(parent_id)
             revised = revised.moved_to(parent_id, now=now)
         check_tree({**packages, package_id: revised})
-        stored = await self._repository.save(revised)
+
+        def events(before: Package) -> tuple[AuditEvent, ...]:
+            # `before` is the package as the repository read it under the tree's lock.
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_UPDATED,
+                    entity_id=package_id,
+                    before=package_view(before),
+                    after=package_view(revised),
+                ),
+            )
+
+        stored = await self._repository.save(revised, audit=events)
         self._audit("package updated: %r", stored, "package_updated")
         return await self.get(stored.id)
 
@@ -170,8 +195,29 @@ class PackageService:
                 if child.parent_id == package_id:
                     remaining[child.id] = child.moved_to(into, now=now)
             check_tree(remaining)
+
+        def removed(removal: PackageRemoval) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_DELETED,
+                    entity_id=package_id,
+                    before={
+                        **package_view(removal.package),
+                        "cascaded": {
+                            "moved_to": str(removal.into) if removal.into else "root",
+                            "sub_packages": _held(removal.sub_packages),
+                            "elements": _held(removal.elements),
+                            "diagrams": _held(removal.diagrams),
+                        },
+                    },
+                ),
+            )
+
         if not await self._repository.delete(
-            package_id, into=into, require_empty=isinstance(move_contents_to, Unset)
+            package_id,
+            into=into,
+            audit=removed,
+            require_empty=isinstance(move_contents_to, Unset),
         ):
             raise _not_found(package_id)
         logger.info(
@@ -195,7 +241,25 @@ class PackageService:
             raise ValueError(msg)
         if package_id is not None and await self._repository.get(package_id) is None:
             raise _not_found(package_id)
-        await self._repository.move_elements(wanted, package_id)
+
+        def moved(origins: Mapping[UUID, UUID | None]) -> tuple[AuditEvent, ...]:
+            where: dict[str, list[str]] = {}
+            for element_id, origin in origins.items():
+                where.setdefault(str(origin) if origin else "root", []).append(str(element_id))
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_ELEMENTS_MOVED,
+                    entity_id=package_id,
+                    before={"origins": {key: sorted(ids) for key, ids in sorted(where.items())}},
+                    after={
+                        "destination": str(package_id) if package_id else "root",
+                        "element_ids": sorted(str(i) for i in wanted),
+                        "count": len(wanted),
+                    },
+                ),
+            )
+
+        await self._repository.move_elements(wanted, package_id, audit=moved)
         logger.info(
             "%d element(s) filed",
             len(wanted),

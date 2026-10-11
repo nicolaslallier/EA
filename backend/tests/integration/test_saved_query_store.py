@@ -72,7 +72,7 @@ async def test_a_full_query_comes_back_equal(store: PostgresSavedQueryRepository
         limit=10,
     )
 
-    await store.add(saved)
+    await store.add(saved, audit=())
 
     assert await store.get(saved.id) == saved
 
@@ -80,21 +80,21 @@ async def test_a_full_query_comes_back_equal(store: PostgresSavedQueryRepository
 async def test_a_taken_name_is_refused_on_add_and_on_save(
     store: PostgresSavedQueryRepository,
 ) -> None:
-    await store.add(a_saved("A"))
-    other = await store.add(a_saved("B"))
+    await store.add(a_saved("A"), audit=())
+    other = await store.add(a_saved("B"), audit=())
 
     with pytest.raises(DuplicateSavedQueryError):
-        await store.add(a_saved("A"))
+        await store.add(a_saved("A"), audit=())
     with pytest.raises(DuplicateSavedQueryError):
-        await store.save(other.revise(now=NOW, name="A"))
+        await store.save(other.revise(now=NOW, name="A"), audit=())
 
 
 async def test_save_replaces_the_query_and_never_the_author(
     store: PostgresSavedQueryRepository,
 ) -> None:
-    saved = await store.add(a_saved())
+    saved = await store.add(a_saved(), audit=())
 
-    await store.save(saved.revise(now=NOW, query=ElementQuery(text="neuf")))
+    await store.save(saved.revise(now=NOW, query=ElementQuery(text="neuf")), audit=())
 
     reread = await store.get(saved.id)
     assert reread is not None
@@ -103,24 +103,24 @@ async def test_save_replaces_the_query_and_never_the_author(
 
 async def test_saving_what_is_gone_is_a_not_found(store: PostgresSavedQueryRepository) -> None:
     with pytest.raises(SavedQueryNotFoundError):
-        await store.save(a_saved())
+        await store.save(a_saved(), audit=())
 
 
 async def test_delete_says_whether_it_removed_something(
     store: PostgresSavedQueryRepository,
 ) -> None:
-    saved = await store.add(a_saved())
+    saved = await store.add(a_saved(), audit=())
 
-    assert await store.delete(saved.id) is True
-    assert await store.delete(saved.id) is False
+    assert await store.delete(saved.id, audit=()) is True
+    assert await store.delete(saved.id, audit=()) is False
     assert await store.get(saved.id) is None
 
 
 async def test_the_list_is_sorted_and_survives_a_row_it_cannot_read(
     engine_at_head: AsyncEngine, store: PostgresSavedQueryRepository
 ) -> None:
-    await store.add(a_saved("beta"))
-    await store.add(a_saved("Alpha"))
+    await store.add(a_saved("beta"), audit=())
+    await store.add(a_saved("Alpha"), audit=())
     broken = await corrupt(engine_at_head, '{"version": 2}')
 
     listed = await store.list_all()
@@ -146,7 +146,9 @@ async def test_two_creations_of_the_same_name_at_once_let_one_through(
 ) -> None:
     """The constraint, not a read before the insert, decides who wins."""
     results = await asyncio.gather(
-        store.add(a_saved("Course")), store.add(a_saved("Course")), return_exceptions=True
+        store.add(a_saved("Course"), audit=()),
+        store.add(a_saved("Course"), audit=()),
+        return_exceptions=True,
     )
 
     assert sum(isinstance(r, SavedQuery) for r in results) == 1
@@ -171,7 +173,7 @@ async def test_a_populated_base_goes_up_to_0010_and_back_down_to_0009(
 
         await asyncio.to_thread(command.upgrade, alembic_config, "0010")
         store = PostgresSavedQueryRepository(create_session_factory(postgres_engine))
-        await store.add(a_saved())
+        await store.add(a_saved(), audit=())
         await asyncio.to_thread(command.downgrade, alembic_config, "0009")
 
         async with postgres_engine.connect() as connection:

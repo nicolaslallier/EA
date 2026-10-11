@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.audit import AuditAction, document_view
+from ea.domain.audit import UNAUDITED_REINDEX, AuditAction, document_view
 from ea.domain.documents import Document, DocumentSummary, clean_filename, decode_markdown
 from ea.domain.errors import DocumentNotFoundError, SearchUnavailableError
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, EmbeddedChunk, Passage
@@ -256,7 +256,9 @@ class DocumentService:
             document = await self._repository.get(document_id)
             if document is None:  # pragma: no cover - deleted mid-walk, not a bug
                 continue
-            await self._repository.replace(document, await indexer.passages_of(document))
+            await self._repository.replace(
+                document, await indexer.passages_of(document), audit=UNAUDITED_REINDEX
+            )
             indexed += 1
         return indexed
 

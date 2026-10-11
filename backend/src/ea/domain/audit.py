@@ -21,19 +21,27 @@ from uuid import UUID
 
 from ea.domain.errors import InvalidCursorError
 from ea.domain.model import Element, Relationship
+from ea.domain.query import to_json
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `ports`, which imports this module.
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.documents import Document
+    from ea.domain.packages import Package
+    from ea.domain.saved_queries import SavedQuery
 
 MAX_AUDIT_PAGE: Final = 200
 DEFAULT_AUDIT_PAGE: Final = 50
+#: How many ids an event lists for one kind of thing it moved or took along; the
+#: count beside them is always exact, so a truncated list says it is truncated.
+AUDIT_LISTED_IDS: Final = 100
 
 
 class EntityKind(StrEnum):
     ELEMENT = "element"
     RELATIONSHIP = "relationship"
+    PACKAGE = "package"
+    SAVED_QUERY = "saved_query"
     DIAGRAM = "diagram"
     DOCUMENT = "document"
 
@@ -61,6 +69,13 @@ class AuditAction(StrEnum):
     DOCUMENT_ATTACHED = "document.attached"
     DOCUMENT_REVISED = "document.revised"
     DOCUMENT_DISCARDED = "document.discarded"
+    PACKAGE_CREATED = "package.created"
+    PACKAGE_UPDATED = "package.updated"
+    PACKAGE_DELETED = "package.deleted"
+    PACKAGE_ELEMENTS_MOVED = "package.elements_moved"
+    SAVED_QUERY_CREATED = "saved_query.created"
+    SAVED_QUERY_UPDATED = "saved_query.updated"
+    SAVED_QUERY_DELETED = "saved_query.deleted"
 
     @property
     def kind(self) -> EntityKind:
@@ -205,6 +220,53 @@ def document_view(document: Document) -> dict[str, Any]:
         "byte_size": len(raw),
         "sha256": hashlib.sha256(raw).hexdigest(),
     }
+
+
+def listed(ids: Sequence[UUID]) -> dict[str, Any]:
+    """`{"count": n, "ids": [...]}` — the first `AUDIT_LISTED_IDS`, and the exact total."""
+    return {"count": len(ids), "ids": [str(i) for i in ids[:AUDIT_LISTED_IDS]]}
+
+
+def package_view(package: Package) -> dict[str, Any]:
+    return {
+        "id": str(package.id),
+        "parent_id": str(package.parent_id) if package.parent_id else None,
+        "name": package.name,
+        "description": package.description,
+        "created_at": package.created_at.isoformat(),
+        "updated_at": package.updated_at.isoformat(),
+    }
+
+
+def saved_query_record_view(
+    *, query_id: UUID, name: str, description: str, query: Any, created_by: str
+) -> dict[str, Any]:
+    """From the plain columns, so a row whose JSON the code cannot read still has a view."""
+    return {
+        "id": str(query_id),
+        "name": name,
+        "description": description,
+        "query": query,
+        "created_by": created_by,
+    }
+
+
+def saved_query_view(saved: SavedQuery) -> dict[str, Any]:
+    return saved_query_record_view(
+        query_id=saved.id,
+        name=saved.name,
+        description=saved.description,
+        query=to_json(saved.query),
+        created_by=saved.created_by,
+    )
+
+
+#: The one write the model allows without an event, and it is named so that no
+#: call site can reach it by omission. Re-indexing rewrites the *derived*
+#: passages of a document whose text did not change (docs/adr/0019): it is not
+#: a change of the model, and a trail line per document per reindex would bury
+#: the changes that are.
+UNAUDITED_REINDEX: Final[tuple[AuditEvent, ...]] = ()
 
 
 # --- Reading the trail -----------------------------------------------------

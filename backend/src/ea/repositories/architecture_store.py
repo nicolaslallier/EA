@@ -422,7 +422,7 @@ class PostgresArchitectureRepository:
 
     # --- Elements ---------------------------------------------------------
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
         async with self._sessions.begin() as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
@@ -450,7 +450,7 @@ class PostgresArchitectureRepository:
         async with self._sessions() as session:
             return int((await session.execute(statement)).scalar_one())
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
+    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         async with self._sessions.begin() as session:
             # `FOR UPDATE`: the row the event calls "before" is the one this
             # write replaces, and a concurrent writer waits for our commit.
@@ -465,9 +465,7 @@ class PostgresArchitectureRepository:
             write_events(session, events_for(audit, before))
         return element
 
-    async def delete_element(
-        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
-    ) -> bool:
+    async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
         """Its relationships follow by the foreign keys.
 
         What they take is read here, under the element's lock: a link or a
@@ -487,7 +485,7 @@ class PostgresArchitectureRepository:
     # --- Relationships ----------------------------------------------------
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
     ) -> Relationship:
         async with self._sessions.begin() as session:
             session.add(RelationshipRecord(**relationship_row(relationship)))
@@ -534,7 +532,7 @@ class PostgresArchitectureRepository:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship]
     ) -> bool:
         async with self._sessions.begin() as session:
             row = await session.get(RelationshipRecord, relationship_id, with_for_update=True)

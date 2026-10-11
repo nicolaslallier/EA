@@ -111,7 +111,7 @@ class TestStoringPassages:
         await documents.add(document, passages((0, ("Runbook",), "avant")))
 
         revised = document.revise("# Runbook\n\naprès\n", now=FIXED_NOW)
-        await documents.replace(revised, passages((0, ("Runbook",), "après")))
+        await documents.replace(revised, passages((0, ("Runbook",), "après")), audit=())
 
         found = await documents.search(axis(0), model=MODEL, limit=50)
         assert [passage.text for passage in found] == ["après"]
@@ -194,7 +194,7 @@ class TestTheCascades:
         document = a_document()
         await documents.add(document, passages((0, ("A",), "texte")))
 
-        await documents.delete(document.id)
+        await documents.delete(document.id, audit=())
 
         assert await documents.search(axis(0), model=MODEL) == ()
 
@@ -206,7 +206,8 @@ class TestTheCascades:
         await documents.add(a_document(element, "a.md"), passages((0, ("A",), "texte")))
 
         await PostgresArchitectureRepository(create_session_factory(engine_at_head)).delete_element(
-            element
+            element,
+            audit=(),
         )
 
         assert await documents.search(axis(0), model=MODEL) == ()

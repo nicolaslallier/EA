@@ -144,3 +144,48 @@ class TestEventsFor:
 
         assert events_for(build, "the stored row") == ()
         assert asked == ["the stored row"]
+
+
+class TestThePackageAndSavedQueryVocabulary:
+    def test_their_actions_know_their_kind(self) -> None:
+        assert AuditAction.PACKAGE_ELEMENTS_MOVED.kind is EntityKind.PACKAGE
+        assert AuditAction.PACKAGE_DELETED.kind is EntityKind.PACKAGE
+        assert AuditAction.SAVED_QUERY_UPDATED.kind is EntityKind.SAVED_QUERY
+
+    def test_a_package_view_is_its_plain_columns(self) -> None:
+        from ea.domain.audit import package_view
+        from ea.domain.packages import Package
+
+        parent = uuid4()
+        package = Package.create(name="Budget", parent_id=parent, now=NOW, description="d")
+
+        assert package_view(package) == {
+            "id": str(package.id),
+            "parent_id": str(parent),
+            "name": "Budget",
+            "description": "d",
+            "created_at": NOW.isoformat(),
+            "updated_at": NOW.isoformat(),
+        }
+
+    def test_a_saved_query_view_keeps_the_stored_json_and_the_author(self) -> None:
+        from ea.domain.audit import saved_query_view
+        from ea.domain.query import ElementQuery, to_json
+        from ea.domain.saved_queries import SavedQuery
+
+        saved = SavedQuery.create(name="n", query=ElementQuery(), created_by="alice", now=NOW)
+
+        view = saved_query_view(saved)
+
+        assert view["query"] == to_json(ElementQuery())
+        assert view["created_by"] == "alice"
+
+    def test_a_listing_of_ids_is_bounded_and_says_how_many_there_were(self) -> None:
+        from ea.domain.audit import AUDIT_LISTED_IDS, listed
+
+        ids = [uuid4() for _ in range(AUDIT_LISTED_IDS + 5)]
+
+        shown = listed(ids)
+
+        assert shown["count"] == AUDIT_LISTED_IDS + 5
+        assert len(shown["ids"]) == AUDIT_LISTED_IDS

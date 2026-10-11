@@ -44,11 +44,14 @@ class World:
         at: datetime = NOW,
     ) -> Element:
         return await self.graph.add_element(
-            Element.create(element_type=element_type, name=name, now=at, properties=properties)
+            Element.create(element_type=element_type, name=name, now=at, properties=properties),
+            audit=(),
         )
 
     async def link(self, kind: R, source: Element, target: Element) -> None:
-        await self.graph.add_relationship(Relationship.between(kind, source, target, now=NOW))
+        await self.graph.add_relationship(
+            Relationship.between(kind, source, target, now=NOW), audit=()
+        )
 
     async def names(self, **query: Any) -> list[str]:
         criteria = ElementFilter.from_query(ElementQuery(**query))
@@ -204,14 +207,15 @@ class TestRelationTests:
 
 class TestCombinations:
     async def test_a_package_subtree_a_type_and_a_property_together(self, world: World) -> None:
-        finance = await world.packages.add(Package.create(name="Finance", now=NOW))
+        finance = await world.packages.add(Package.create(name="Finance", now=NOW), audit=())
         budget = await world.packages.add(
-            Package.create(name="Budget", parent_id=finance.id, now=NOW)
+            Package.create(name="Budget", parent_id=finance.id, now=NOW),
+            audit=(),
         )
         inside = await world.element("in", properties={"owner": "x"})
         also_inside = await world.element("also in", E.NODE, {"owner": "x"})
         outside = await world.element("out", properties={"owner": "x"})
-        await world.packages.move_elements([inside.id, also_inside.id], budget.id)
+        await world.packages.move_elements([inside.id, also_inside.id], budget.id, audit=())
         assert outside.package_id is None
 
         found = await world.names(

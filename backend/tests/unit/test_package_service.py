@@ -175,7 +175,7 @@ class TestDeleting:
     ) -> None:
         a = await package_service.create(name="A")
         diagram = Diagram.create(name="Vente", now=FIXED_NOW, package_id=a.package.id)
-        await diagrams.add(diagram)
+        await diagrams.add(diagram, audit=())
 
         with pytest.raises(PackageNotEmptyError):
             await package_service.delete(a.package.id)

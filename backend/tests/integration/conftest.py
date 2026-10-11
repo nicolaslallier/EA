@@ -166,7 +166,7 @@ class DocumentsOnStoredElements(PostgresDocumentRepository):
 
     async def add(self, document: Document, chunks: Sequence[EmbeddedChunk] = ()) -> Document:
         await ensure_elements(self._engine, document.element_id)
-        return await super().add(document, chunks)
+        return await super().add(document, chunks, audit=())
 
 
 def _empty_bucket(client: Minio, bucket: str) -> None:

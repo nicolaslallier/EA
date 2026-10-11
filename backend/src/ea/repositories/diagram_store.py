@@ -111,7 +111,7 @@ class PostgresDiagramRepository:
                 for row in rows
             )
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
         async with self._sessions.begin() as session:
             session.add(
@@ -131,7 +131,7 @@ class PostgresDiagramRepository:
             write_events(session, audit)
         return diagram
 
-    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         async with self._sessions.begin() as session:
             row = await session.get(DiagramRecord, diagram.id, with_for_update=True)
             if row is None:
@@ -150,7 +150,7 @@ class PostgresDiagramRepository:
             write_events(session, events_for(audit, before))
         return diagram
 
-    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool:
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool:
         """Its nodes follow by the foreign key."""
         async with self._sessions.begin() as session:
             row = await session.get(DiagramRecord, diagram_id, with_for_update=True)
@@ -167,7 +167,7 @@ class PostgresDiagramRepository:
         nodes: Sequence[DiagramNode],
         *,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]] = (),
+        audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
         async with self._sessions.begin() as session:
             # `FOR UPDATE` queues concurrent saves of one diagram (autosave fires

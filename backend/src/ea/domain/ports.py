@@ -6,10 +6,10 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Collection, Sequence
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
@@ -59,6 +59,25 @@ class ElementRemoval:
 
 
 @dataclass(frozen=True, slots=True)
+class Held:
+    """How many things a package holds, and the first few of them (`AUDIT_LISTED_IDS`)."""
+
+    count: int = 0
+    ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PackageRemoval:
+    """What deleting a package moves, read in the transaction that deletes it."""
+
+    package: Package
+    into: UUID | None
+    sub_packages: Held = Held()
+    elements: Held = Held()
+    diagrams: Held = Held()
+
+
+@dataclass(frozen=True, slots=True)
 class ElementFilter:
     """The ways the catalogue can be narrowed. All criteria are combined with AND.
 
@@ -104,7 +123,7 @@ class ArchitectureRepository(Protocol):
     have to declare `async def`.
     """
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent] = ()) -> Element:
+    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
         """Store a new element; `audit` is inserted in the same transaction."""
         ...
 
@@ -114,16 +133,14 @@ class ArchitectureRepository(Protocol):
 
     async def count_elements(self, criteria: ElementFilter) -> int: ...
 
-    async def save_element(self, element: Element, *, audit: AuditOf[Element] = ()) -> Element:
+    async def save_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         """Persist an already-existing element, overwriting its stored form.
 
         `audit` may be a function of the stored element, called in the transaction.
         """
         ...
 
-    async def delete_element(
-        self, element_id: UUID, *, audit: AuditOf[ElementRemoval] = ()
-    ) -> bool:
+    async def delete_element(self, element_id: UUID, *, audit: AuditOf[ElementRemoval]) -> bool:
         """Remove an element and every relationship attached to it.
 
         `audit` is written only if a row was deleted; `False` writes nothing.
@@ -131,7 +148,7 @@ class ArchitectureRepository(Protocol):
         ...
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent] = ()
+        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
     ) -> Relationship: ...
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None: ...
@@ -146,7 +163,7 @@ class ArchitectureRepository(Protocol):
     ) -> tuple[Relationship, ...]: ...
 
     async def delete_relationship(
-        self, relationship_id: UUID, *, audit: AuditOf[Relationship] = ()
+        self, relationship_id: UUID, *, audit: AuditOf[Relationship]
     ) -> bool: ...
 
     async def relations_of(
@@ -221,7 +238,7 @@ class DocumentRepository(Protocol):
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent] = (),
+        audit: Sequence[AuditEvent],
     ) -> Document:
         """Store a new document and its passages, or refuse a name already taken."""
         ...
@@ -237,12 +254,12 @@ class DocumentRepository(Protocol):
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: AuditOf[Document] = (),
+        audit: AuditOf[Document],
     ) -> Document:
         """Overwrite a stored document, and replace its passages with these."""
         ...
 
-    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool: ...
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool: ...
 
     async def all_document_ids(self) -> tuple[UUID, ...]:
         """Every stored document, for the one job that walks the whole corpus.
@@ -282,7 +299,7 @@ class DiagramRepository(Protocol):
         """
         ...
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent] = ()) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
         """Store a new diagram, or refuse a name already taken."""
         ...
 
@@ -290,11 +307,11 @@ class DiagramRepository(Protocol):
 
     async def nodes_of(self, diagram_id: UUID) -> tuple[DiagramNode, ...]: ...
 
-    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram] = ()) -> Diagram:
+    async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """Overwrite the name, description and update time of a stored diagram."""
         ...
 
-    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram] = ()) -> bool: ...
+    async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool: ...
 
     async def replace_layout(
         self,
@@ -302,7 +319,7 @@ class DiagramRepository(Protocol):
         nodes: Sequence[DiagramNode],
         *,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]] = (),
+        audit: AuditOf[tuple[DiagramNode, ...]],
     ) -> bool:
         """Replace every node of a diagram in one transaction; `False` if it is gone."""
         ...
@@ -491,16 +508,24 @@ class PackageRepository(Protocol):
 
     async def get(self, package_id: UUID) -> Package | None: ...
 
-    async def add(self, package: Package) -> Package:
+    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
         """Store a new package, or refuse a sibling name already taken."""
         ...
 
-    async def save(self, package: Package) -> Package:
-        """Overwrite name, description, parent and update time of a stored package."""
+    async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
+        """Overwrite name, description, parent and update time of a stored package.
+
+        `audit` may be a function of the stored package, called in the transaction.
+        """
         ...
 
     async def delete(
-        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+        self,
+        package_id: UUID,
+        *,
+        into: UUID | None,
+        audit: AuditOf[PackageRemoval],
+        require_empty: bool = False,
     ) -> bool:
         """Move the direct sub-packages, elements and diagrams to `into`, then delete.
 
@@ -515,7 +540,13 @@ class PackageRepository(Protocol):
         """
         ...
 
-    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+    async def move_elements(
+        self,
+        element_ids: Sequence[UUID],
+        package_id: UUID | None,
+        *,
+        audit: AuditOf[Mapping[UUID, UUID | None]],
+    ) -> None:
         """Put these elements in a package (`None`: the root), all or none.
 
         Raises `ElementNotFoundError` naming an absent id and
@@ -539,12 +570,17 @@ class SavedQueryRepository(Protocol):
         """One saved query; raises `InvalidQueryError` when its stored JSON cannot be read."""
         ...
 
-    async def add(self, saved: SavedQuery) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: Sequence[AuditEvent]) -> SavedQuery:
         """Store a new saved query, or refuse a name already taken."""
         ...
 
-    async def save(self, saved: SavedQuery) -> SavedQuery:
-        """Overwrite name, description, query and update time; never the author."""
+    async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
+        """Overwrite name, description, query and update time; never the author.
+
+        `audit` is a function of the stored row as a plain mapping
+        (`saved_query_record_view`), so a row whose JSON can no longer be read
+        is still described.
+        """
         ...
 
-    async def delete(self, query_id: UUID) -> bool: ...
+    async def delete(self, query_id: UUID, *, audit: AuditOf[Mapping[str, Any]]) -> bool: ...

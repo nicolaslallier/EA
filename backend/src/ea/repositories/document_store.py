@@ -101,7 +101,7 @@ class PostgresDocumentRepository:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent] = (),
+        audit: Sequence[AuditEvent],
     ) -> Document:
         """Store a new document and its passages, in one transaction.
 
@@ -185,7 +185,7 @@ class PostgresDocumentRepository:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: AuditOf[Document] = (),
+        audit: AuditOf[Document],
     ) -> Document:
         """Overwrite a stored document, and its passages, with a new revision.
 
@@ -211,7 +211,7 @@ class PostgresDocumentRepository:
             write_events(session, events_for(audit, before))
         return document
 
-    async def delete(self, document_id: UUID, *, audit: AuditOf[Document] = ()) -> bool:
+    async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
             row = await session.get(ElementDocument, document_id, with_for_update=True)

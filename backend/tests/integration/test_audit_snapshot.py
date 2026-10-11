@@ -69,9 +69,11 @@ async def test_the_audit_callable_receives_the_row_read_under_the_lock(
         Element.create(element_type=E.NODE, name="a", now=START),
         Element.create(element_type=E.NODE, name="b", now=START),
     )
-    await graph.add_element(left)
-    await graph.add_element(right)
-    link = await graph.add_relationship(Relationship.between(R.ASSOCIATION, left, right, now=START))
+    await graph.add_element(left, audit=())
+    await graph.add_element(right, audit=())
+    link = await graph.add_relationship(
+        Relationship.between(R.ASSOCIATION, left, right, now=START), audit=()
+    )
     seen: list[object] = []
 
     def on_save(before: Element) -> tuple[()]:
@@ -156,7 +158,7 @@ async def test_an_event_that_cannot_be_built_leaves_no_write(engine_at_head: Asy
     sessions = create_session_factory(engine_at_head)
     graph = PostgresArchitectureRepository(sessions)
     element = Element.create(element_type=E.NODE, name="a", now=START)
-    await graph.add_element(element)
+    await graph.add_element(element, audit=())
 
     def refuses(_: Element) -> tuple[()]:
         raise RuntimeError("no caller")

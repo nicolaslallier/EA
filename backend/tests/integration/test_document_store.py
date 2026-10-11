@@ -152,7 +152,7 @@ async def test_a_revision_replaces_the_content_and_keeps_the_row(
     stored = await documents.add(a_document())
     later = FIXED_NOW.replace(year=2027)
 
-    await documents.replace(stored.revise("# Runbook v2\n", now=later))
+    await documents.replace(stored.revise("# Runbook v2\n", now=later), audit=())
     read = await documents.get(stored.id)
 
     assert read is not None
@@ -166,6 +166,6 @@ async def test_deleting_a_document_reports_whether_there_was_one(
 ) -> None:
     stored = await documents.add(a_document())
 
-    assert await documents.delete(stored.id) is True
-    assert await documents.delete(stored.id) is False
+    assert await documents.delete(stored.id, audit=()) is True
+    assert await documents.delete(stored.id, audit=()) is False
     assert await documents.get(stored.id) is None

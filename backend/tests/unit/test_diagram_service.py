@@ -279,7 +279,8 @@ async def a_package(
     packages: InMemoryPackages, name: str, parent: Package | None = None
 ) -> Package:
     return await packages.add(
-        Package.create(name=name, parent_id=parent.id if parent else None, now=FIXED_NOW)
+        Package.create(name=name, parent_id=parent.id if parent else None, now=FIXED_NOW),
+        audit=(),
     )
 
 

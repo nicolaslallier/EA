@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
+from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     CyclicPackageError,
     DomainError,
@@ -29,13 +30,17 @@ from ea.domain.errors import (
     TooManyPackagesError,
 )
 from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
+from ea.domain.ports import Held, PackageRemoval
 from ea.repositories.architecture_store import constraint_of
+from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from ea.domain.audit import AuditEvent, AuditOf
 
 #: Key of the transaction-scoped advisory lock every write to the tree takes
 #: (docs/adr/0042). A constant, not a hash of something: one tree, one lock.
@@ -93,6 +98,16 @@ async def _count_by(session: AsyncSession, column: Any) -> dict[UUID, int]:
     return dict((await session.execute(statement)).tuples().all())
 
 
+async def _held_by(session: AsyncSession, column: Any, package_id: UUID) -> Held:
+    """How many rows name this package in `column`, and the first few ids."""
+    id_column = column.class_.id
+    total = await session.scalar(select(func.count()).where(column == package_id))
+    ids = await session.scalars(
+        select(id_column).where(column == package_id).order_by(id_column).limit(AUDIT_LISTED_IDS)
+    )
+    return Held(count=int(total or 0), ids=tuple(ids))
+
+
 class PostgresPackageRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
@@ -121,7 +136,7 @@ class PostgresPackageRepository:
             row = await session.get(PackageRecord, package_id)
             return _to_package(row) if row is not None else None
 
-    async def add(self, package: Package) -> Package:
+    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
             if len(tree) >= MAX_PACKAGES:
@@ -148,9 +163,10 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
+            write_events(session, audit)
         return package
 
-    async def save(self, package: Package) -> Package:
+    async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
             if package.id not in tree:
@@ -164,6 +180,7 @@ class PostgresPackageRepository:
             if row is None:  # pragma: no cover - the lock excludes a concurrent delete
                 msg = f"no package with id {package.id}"
                 raise PackageNotFoundError(msg)
+            before = tree[package.id]
             row.name = package.name
             row.description = package.description
             row.parent_id = package.parent_id
@@ -175,10 +192,17 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
+            # `before` comes from the tree read under the lock, not from the service.
+            write_events(session, events_for(audit, before))
         return package
 
     async def delete(
-        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+        self,
+        package_id: UUID,
+        *,
+        into: UUID | None,
+        audit: AuditOf[PackageRemoval],
+        require_empty: bool = False,
     ) -> bool:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
@@ -197,9 +221,19 @@ class PostgresPackageRepository:
                 if child.parent_id == package_id:
                     remaining[child.id] = replace(child, parent_id=into)
             check_tree(remaining)
-            row = await session.get(PackageRecord, package_id)
+            # `FOR UPDATE`: filing a row here takes a key-share lock on this package
+            # (its foreign key), so what is counted below is what the move carries.
+            row = await session.get(PackageRecord, package_id, with_for_update=True)
             if row is None:  # pragma: no cover - the lock excludes a concurrent delete
                 return False
+            # What the move below will carry, counted in this transaction.
+            removal = PackageRemoval(
+                package=tree[package_id],
+                into=into,
+                sub_packages=await _held_by(session, PackageRecord.parent_id, package_id),
+                elements=await _held_by(session, ElementRecord.package_id, package_id),
+                diagrams=await _held_by(session, DiagramRecord.package_id, package_id),
+            )
             if require_empty:
                 held = [
                     await session.scalar(select(func.count()).where(column == package_id))
@@ -232,15 +266,26 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
+            write_events(session, events_for(audit, removal))
         return bool(cast("CursorResult[Any]", deleted).rowcount)
 
-    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+    async def move_elements(
+        self,
+        element_ids: Sequence[UUID],
+        package_id: UUID | None,
+        *,
+        audit: AuditOf[Mapping[UUID, UUID | None]],
+    ) -> None:
         wanted = tuple(dict.fromkeys(element_ids))
         async with self._sessions.begin() as session:
-            found = set(
-                await session.scalars(select(ElementRecord.id).where(ElementRecord.id.in_(wanted)))
+            # `FOR UPDATE`: the origins the event names are the ones this move leaves.
+            rows = await session.execute(
+                select(ElementRecord.id, ElementRecord.package_id)
+                .where(ElementRecord.id.in_(wanted))
+                .with_for_update()
             )
-            missing = [str(element_id) for element_id in wanted if element_id not in found]
+            origins = dict(rows.tuples().all())
+            missing = [str(element_id) for element_id in wanted if element_id not in origins]
             if missing:
                 msg = f"no element with id {', '.join(missing)}"
                 raise ElementNotFoundError(msg)
@@ -256,3 +301,4 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
+            write_events(session, events_for(audit, origins))
