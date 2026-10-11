@@ -98,6 +98,19 @@ class TestAValidToken:
         assert caller.roles == frozenset({"ea-editor", "offline_access"})
         assert caller.can_write
 
+    async def test_the_approver_role_travels_and_is_not_implied_by_the_editor_one(self) -> None:
+        both = await verifier(Keycloak(jwk(KEY, "k1"))).verify(
+            token(realm_access={"roles": ["ea-editor", "ea-approver"]})
+        )
+        approver_alone = await verifier(Keycloak(jwk(KEY, "k1"))).verify(
+            token(realm_access={"roles": ["ea-approver"]})
+        )
+        editor = await verifier(Keycloak(jwk(KEY, "k1"))).verify(token())
+
+        assert both.can_write and both.can_approve
+        assert approver_alone.can_approve and not approver_alone.can_write
+        assert editor.can_write and not editor.can_approve
+
     async def test_without_realm_roles_is_a_reader(self) -> None:
         caller = await verifier(Keycloak(jwk(KEY, "k1"))).verify(token(realm_access=None))
 
