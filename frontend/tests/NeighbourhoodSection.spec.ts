@@ -151,4 +151,18 @@ describe('NeighbourhoodSection', () => {
 
     expect(await screen.findByText(/injoignable/i)).toBeInTheDocument()
   })
+
+  it('asks the traversal for the day named in the URL, and again when it changes', async () => {
+    const calls = stubApi(ROUTES)
+    const router = await open(`?element=${SUBJECT.id}&asof=2028-01-01`)
+    await screen.findByText(`Voisinage de « ${SUBJECT.name} »`)
+    const lastDay = () =>
+      calls.filter((c) => c.url.pathname.endsWith('/neighbourhood')).at(-1)?.url.searchParams.get('as_of')
+    expect(lastDay()).toBe('2028-01-01')
+
+    await router.replace({ query: { element: SUBJECT.id, asof: '2029-02-02' } })
+
+    await waitFor(() => expect(lastDay()).toBe('2029-02-02'))
+  })
+
 })

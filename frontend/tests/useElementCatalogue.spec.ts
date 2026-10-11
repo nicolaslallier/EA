@@ -173,4 +173,17 @@ describe('useElementCatalogue', () => {
     expect(query.get('root_only')).toBe('true')
     expect(query.has('package')).toBe(false)
   })
+
+  it('asks for the catalogue on the day the shell chose', async () => {
+    const calls = stubApi([{ path: '/elements', body: aPage([]) }])
+    const chosen: { day?: string } = {}
+    const catalogue = useElementCatalogue({ asOf: () => chosen.day })
+
+    await catalogue.load()
+    expect(calls.at(-1)?.url.searchParams.has('as_of')).toBe(false)
+
+    chosen.day = '2028-01-01'
+    await catalogue.load()
+    expect(calls.at(-1)?.url.searchParams.get('as_of')).toBe('2028-01-01')
+  })
 })

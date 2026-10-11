@@ -120,4 +120,16 @@ describe('useNeighbourhood', () => {
 
     expect(neighbourhood.error.value).toMatch(/injoignable/i)
   })
+
+  it('reads the graph on the day it is given, and on none by default', async () => {
+    const calls = stubApi([ROUTE])
+    const neighbourhood = useNeighbourhood()
+
+    await neighbourhood.explore(SUBJECT.id, { depth: 1 })
+    expect(calls.at(-1)?.url.searchParams.has('as_of')).toBe(false)
+
+    await neighbourhood.explore(SUBJECT.id, { depth: 1, asOf: '2028-01-01' })
+    expect(calls.at(-1)?.url.searchParams.get('as_of')).toBe('2028-01-01')
+  })
+
 })

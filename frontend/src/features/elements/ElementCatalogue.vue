@@ -33,12 +33,14 @@ import type {
   Layer,
 } from './useElementCatalogue'
 import { useElementCatalogue } from './useElementCatalogue'
+import { useAsOf } from '../../lib/asof'
 import { useElementDetail } from './useElementDetail'
 
 const route = useRoute()
 const router = useRouter()
 const { canWrite } = useMe()
-const catalogue = useElementCatalogue()
+const { asOf } = useAsOf()
+const catalogue = useElementCatalogue({ asOf: () => asOf.value })
 const metamodel = useMetamodel()
 const detail = useElementDetail()
 const packages = usePackages()
@@ -55,6 +57,9 @@ function applyUrlFilters(): void {
   catalogue.filters.package = packageParam.value
   catalogue.filters.includeSubpackages = withSubpackages.value
 }
+
+// Another day is another catalogue: ask again from the first page.
+watch(asOf, () => catalogue.search())
 
 watch([packageParam, withSubpackages], async () => {
   applyUrlFilters()

@@ -126,4 +126,16 @@ describe('useImpact', () => {
 
     expect(impact.error.value).toMatch(/injoignable/i)
   })
+
+  it('reads the impact on the day it is given, and on none by default', async () => {
+    const calls = stubApi([ROUTE])
+    const impact = useImpact(follows)
+
+    await impact.analyse(SUBJECT.id, { depth: 5 })
+    expect(calls.at(-1)?.url.searchParams.has('as_of')).toBe(false)
+
+    await impact.analyse(SUBJECT.id, { depth: 5, asOf: '2028-01-01' })
+    expect(calls.at(-1)?.url.searchParams.get('as_of')).toBe('2028-01-01')
+  })
+
 })

@@ -28,7 +28,7 @@ export type Filters = {
   includeSubpackages: boolean
 }
 
-export function useElementCatalogue() {
+export function useElementCatalogue(options: { asOf?: () => string | undefined } = {}) {
   const items = ref<ElementRead[]>([])
   const total = ref(0)
   const page = ref(0)
@@ -51,11 +51,14 @@ export function useElementCatalogue() {
   async function load(): Promise<void> {
     // The query is built before the request starts, so a filter changed while
     // it is in flight belongs to the next load and not, half-applied, to this.
+    const asOf = options.asOf?.()
     const query = {
       limit: PAGE_SIZE,
       offset: page.value * PAGE_SIZE,
       // An empty filter is left out rather than sent blank: `search=` would be
       // a filter matching nothing, not the absence of one.
+      // The day the shell reads the catalogue on (docs/adr/0060); none: no date filter.
+      ...(asOf ? { as_of: asOf } : {}),
       ...(filters.search ? { search: filters.search } : {}),
       ...(filters.elementType ? { element_type: [filters.elementType] } : {}),
       ...(filters.layer ? { layer: [filters.layer] } : {}),

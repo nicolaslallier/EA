@@ -37,6 +37,8 @@ export type Question = {
   depth: number
   /** One ArchiMate relationship type, or '' to follow them all. */
   relationshipType?: RelationshipType | ''
+  /** The day to read the graph on (YYYY-MM-DD); left out, no date filter. */
+  asOf?: string
 }
 
 export function useImpact(follows: FollowsArrow) {
@@ -82,6 +84,7 @@ export function useImpact(follows: FollowsArrow) {
                 ...(question.relationshipType
                   ? { relationship_type: [question.relationshipType] }
                   : {}),
+                ...(question.asOf ? { as_of: question.asOf } : {}),
               },
             },
             signal,
