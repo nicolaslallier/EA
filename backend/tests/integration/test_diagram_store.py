@@ -21,6 +21,7 @@ from ea.db.postgres import create_session_factory
 from ea.domain.diagram_objects import DiagramScene
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.errors import (
+    DiagramLimitError,
     DiagramNotFoundError,
     DiagramRevisionConflictError,
     DuplicateDiagramError,
@@ -224,3 +225,29 @@ class TestPackages:
         await packages.delete(finance.id, into=None, audit=())
 
         assert (await diagrams.get(diagram.id)).package_id is None  # type: ignore[union-attr]
+
+
+async def test_two_concurrent_diagrams_at_the_edge_cannot_both_get_in(
+    diagrams: DiagramsOnStoredElements, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ea.repositories.diagram_store.MAX_DIAGRAMS", 2)
+    await diagrams.add(a_diagram("first"), audit=())
+
+    outcomes = await asyncio.gather(
+        diagrams.add(a_diagram("a"), audit=()),
+        diagrams.add(a_diagram("b"), audit=()),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(o, DiagramLimitError) for o in outcomes) == 1
+    assert len(await diagrams.list_all()) == 2
+
+
+async def test_a_listing_reads_one_row_past_the_cap_and_no_more(
+    diagrams: DiagramsOnStoredElements, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("a", "b", "c"):
+        await diagrams.add(a_diagram(name), audit=())
+    monkeypatch.setattr("ea.repositories.diagram_store.MAX_DIAGRAMS", 1)
+
+    assert len(await diagrams.list_all()) == 2

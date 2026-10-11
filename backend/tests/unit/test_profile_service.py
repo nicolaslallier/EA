@@ -13,11 +13,12 @@ from ea.domain.errors import (
     DuplicateProfileError,
     ElementLockedError,
     NotAuthorisedError,
+    ProfileLimitError,
     StereotypeInUseError,
     StereotypeNotFoundError,
 )
 from ea.domain.ports import ElementFilter
-from ea.domain.profiles import IconKey, PropertyKind, StereotypeProperty
+from ea.domain.profiles import MAX_PROFILES, IconKey, PropertyKind, StereotypeProperty
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.profiles import ProfileService
@@ -290,3 +291,19 @@ class TestTheTrailAndTheReview:
         applied = await profile_service.apply_stereotype(element.id, stereotype.id)
 
         assert applied.revision == element.revision + 1
+
+
+@pytest.mark.asyncio
+class TestTheLibraryOfProfilesIsBounded:
+    async def test_a_profile_beyond_the_cap_is_refused_until_one_is_deleted(
+        self, profile_service: ProfileService
+    ) -> None:
+        for i in range(MAX_PROFILES):
+            await profile_service.create_profile(name=f"P{i}")
+
+        with pytest.raises(ProfileLimitError):
+            await profile_service.create_profile(name="one too many")
+
+        first = (await profile_service.list_profiles())[0]
+        await profile_service.delete_profile(first.id)
+        await profile_service.create_profile(name="room again")

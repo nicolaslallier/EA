@@ -27,9 +27,11 @@ from ea.domain.archimate import ElementType
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
+    DiagramLimitError,
     DiagramNotFoundError,
     DuplicateDiagramError,
     PackageNotFoundError,
+    ScopeTooLargeError,
     UnknownLayoutElementError,
 )
 from ea.domain.model import Element
@@ -411,3 +413,28 @@ class TestDiagramsInPackages:
     ) -> None:
         with pytest.raises(ValueError, match="both"):
             await diagram_service.list_diagrams(package_id=uuid4(), root_only=True)
+
+
+@pytest.mark.asyncio
+class TestTheNumberOfDiagramsIsBounded:
+    async def test_a_diagram_beyond_the_cap_is_refused_and_a_list_never_exceeds_it(
+        self, diagram_service: DiagramService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tests.conftest.MAX_DIAGRAMS", 3)
+        for i in range(3):
+            await diagram_service.create(name=f"D{i}")
+
+        with pytest.raises(DiagramLimitError):
+            await diagram_service.create(name="one too many")
+
+        assert len(await diagram_service.list_diagrams()) == 3
+
+    async def test_a_store_already_over_the_cap_is_refused_on_listing_not_cut_silently(
+        self, diagram_service: DiagramService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for i in range(4):
+            await diagram_service.create(name=f"D{i}")
+        monkeypatch.setattr("ea.services.diagrams.MAX_DIAGRAMS", 3)
+
+        with pytest.raises(ScopeTooLargeError):
+            await diagram_service.list_diagrams()

@@ -25,8 +25,9 @@ from ea.db.models.diagram import (
 from ea.db.unit_of_work import reading, work
 from ea.domain.audit import events_for
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, ObjectKind, Point
-from ea.domain.diagrams import Diagram, DiagramNode
+from ea.domain.diagrams import MAX_DIAGRAMS, Diagram, DiagramNode
 from ea.domain.errors import (
+    DiagramLimitError,
     DiagramLiveError,
     DiagramNotFoundError,
     DiagramNotLiveError,
@@ -47,6 +48,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from ea.domain.audit import AuditOf
+
+
+#: Serialises the count-then-insert of `add`: two writers cannot both see the last free place.
+_LIBRARY_LOCK = 0x45_41_00_07
 
 
 def _summaries() -> Select[DiagramRecord, int]:
@@ -110,7 +115,11 @@ class PostgresDiagramRepository:
     async def list_all(
         self, *, package_ids: Collection[UUID] | None = None, root_only: bool = False
     ) -> tuple[Diagram, ...]:
-        statement = _summaries().order_by(DiagramRecord.name, DiagramRecord.id)
+        # One past the cap, so the service can tell "exactly the cap" from "more": a list never
+        # loads an unbounded table, and never cuts silently.
+        statement = (
+            _summaries().order_by(DiagramRecord.name, DiagramRecord.id).limit(MAX_DIAGRAMS + 1)
+        )
         if root_only:
             statement = statement.where(DiagramRecord.package_id.is_(None))
         elif package_ids is not None:
@@ -139,6 +148,11 @@ class PostgresDiagramRepository:
     async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
         async with work(self._sessions) as session:
+            await session.execute(select(func.pg_advisory_xact_lock(_LIBRARY_LOCK)))
+            held = await session.scalar(select(func.count()).select_from(DiagramRecord))
+            if (held or 0) >= MAX_DIAGRAMS:
+                msg = f"the catalogue holds {MAX_DIAGRAMS} diagrams at most"
+                raise DiagramLimitError(msg)
             session.add(
                 DiagramRecord(
                     id=diagram.id,

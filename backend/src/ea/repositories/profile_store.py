@@ -32,12 +32,14 @@ from ea.domain.audit import events_for
 from ea.domain.errors import (
     DuplicateProfileError,
     ElementNotFoundError,
+    ProfileLimitError,
     ProfileNotFoundError,
     StereotypeInUseError,
     StereotypeNotFoundError,
 )
 from ea.domain.model import StereotypeRef
 from ea.domain.profiles import (
+    MAX_PROFILES,
     IconKey,
     Profile,
     PropertyKind,
@@ -57,6 +59,10 @@ if TYPE_CHECKING:
 
 _TAKEN: Final = {"uq_profiles_name", "uq_profile_stereotypes_profile_id_name"}
 _IN_USE: Final = "fk_element_stereotypes_stereotype_id_profile_stereotypes"
+
+
+#: Serialises the count-then-insert of `add_profile`.
+_LIBRARY_LOCK = 0x45_41_00_08
 
 
 def _refused(error: IntegrityError, what: str) -> Exception:
@@ -184,6 +190,12 @@ class PostgresProfileRepository:
     async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
         events = events_for(audit, profile)
         async with work(self._sessions) as session:
+            # Count and insert under one lock: two writers cannot both see the last free place.
+            await session.execute(select(func.pg_advisory_xact_lock(_LIBRARY_LOCK)))
+            held = await session.scalar(select(func.count()).select_from(ProfileRecord))
+            if (held or 0) >= MAX_PROFILES:
+                msg = f"the catalogue holds {MAX_PROFILES} profiles at most"
+                raise ProfileLimitError(msg)
             session.add(
                 ProfileRecord(
                     id=profile.id,

@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from ea.domain.diagram_objects import DiagramEdge, DiagramObject
 
 MAX_DIAGRAM_NAME_LENGTH: Final = 200
+#: How many diagrams exist, hence how many a list returns: it is read whole.
+MAX_DIAGRAMS: Final = 2000
 #: The size a box is drawn at until someone resizes it — the rings' own box.
 DEFAULT_BOX_WIDTH: Final = 132.0
 DEFAULT_BOX_HEIGHT: Final = 46.0

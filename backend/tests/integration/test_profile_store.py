@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType
-from ea.domain.errors import DuplicateProfileError, StereotypeInUseError
+from ea.domain.errors import DuplicateProfileError, ProfileLimitError, StereotypeInUseError
 from ea.domain.model import Element
 from ea.domain.profiles import IconKey, Profile, PropertyKind, Stereotype, StereotypeProperty
 from ea.repositories.architecture_store import PostgresArchitectureRepository
@@ -202,3 +203,19 @@ async def test_a_label_is_a_write_to_the_element_a_revision_and_the_guard(
 
     read = await graph.get_element(element.id)
     assert read is not None and read.revision == element.revision + 1
+
+
+async def test_two_concurrent_profiles_at_the_edge_cannot_both_get_in(
+    profiles: PostgresProfileRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ea.repositories.profile_store.MAX_PROFILES", 2)
+    await profiles.add_profile(a_profile("first"), audit=())
+
+    outcomes = await asyncio.gather(
+        profiles.add_profile(a_profile("a"), audit=()),
+        profiles.add_profile(a_profile("b"), audit=()),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(o, ProfileLimitError) for o in outcomes) == 1
+    assert len(await profiles.list_profiles()) == 2

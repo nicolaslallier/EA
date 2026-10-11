@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from ea.domain.audit import AuditAction, diagram_view, scene_views
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, check_scene
-from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
+from ea.domain.diagrams import MAX_DIAGRAMS, Diagram, DiagramDetail, DiagramNode, check_layout
 from ea.domain.errors import (
     DiagramHasAnnotationsError,
     DiagramLiveError,
@@ -29,6 +29,7 @@ from ea.domain.errors import (
     DiagramNotLiveError,
     GeneratedViewsUnavailableError,
     PackageNotFoundError,
+    ScopeTooLargeError,
     UnknownLayoutElementError,
 )
 from ea.domain.generated_views import (
@@ -96,12 +97,19 @@ class DiagramService:
             msg = "a diagram cannot be both at the root and in a package"
             raise ValueError(msg)
         if package_id is None:
-            return await self._repository.list_all(root_only=root_only)
+            return self._within_the_cap(await self._repository.list_all(root_only=root_only))
         wanted = {package_id}
         if include_subpackages and self._packages is not None:
             everything = {p.id: p for p in await self._packages.list_all()}
             wanted |= descendants_of(package_id, everything)
-        return await self._repository.list_all(package_ids=wanted)
+        return self._within_the_cap(await self._repository.list_all(package_ids=wanted))
+
+    @staticmethod
+    def _within_the_cap(listed: tuple[Diagram, ...]) -> tuple[Diagram, ...]:
+        if len(listed) > MAX_DIAGRAMS:
+            msg = f"more than {MAX_DIAGRAMS} diagrams: narrow the listing to a package"
+            raise ScopeTooLargeError(msg)
+        return listed
 
     async def _require_package(self, package_id: UUID | None) -> None:
         if package_id is None:
