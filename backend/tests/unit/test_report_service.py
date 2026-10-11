@@ -642,3 +642,100 @@ class TestDepositingWithoutABucket:
 
         with pytest.raises(FileStorageUnavailableError):
             await reports.deposit(request_for(diagram))
+
+
+class TestTheOutputIsBoundedBeforeItIsSerialised:
+    async def test_text_past_the_ceiling_is_refused_before_the_engine_runs(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        file_service: FileService,
+    ) -> None:
+        diagram = await diagram_service.create(name="Lourd")
+        elements = [
+            await service.create_element(
+                element_type=ElementType.APPLICATION_COMPONENT,
+                name=f"E{i}",
+                description="x" * 1_000_000,  # the domain has no bound; the write doors do
+            )
+            for i in range(10)
+        ]
+        await diagram_service.replace_layout(
+            diagram.id, [DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)]
+        )
+        ran: list[int] = []
+
+        def engine(model: ReportModel) -> bytes:
+            ran.append(1)
+            return b"%PDF"
+
+        reports = ReportService(
+            diagram_service, service, None, file_service, extra_renderers={"pdf": engine}
+        )
+
+        with pytest.raises(ReportTooLargeError, match="MiB of text"):
+            await reports.build(request_for(diagram, "pdf"))
+
+        assert ran == []
+
+    async def test_a_client_that_hangs_up_does_not_free_the_place_of_a_running_thread(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        file_service: FileService,
+    ) -> None:
+        diagram, _ = await a_diagram(service, diagram_service, "A")
+        entered, release = threading.Event(), threading.Event()
+
+        def blocking(model: ReportModel) -> bytes:
+            entered.set()
+            release.wait(5)
+            return b"%PDF-fake"
+
+        admission = report_admission()
+        reports = ReportService(
+            diagram_service,
+            service,
+            None,
+            file_service,
+            admission=admission,
+            extra_renderers={"pdf": blocking},
+        )
+        task = asyncio.create_task(reports.build(request_for(diagram, "pdf")))
+        await asyncio.to_thread(entered.wait, 5)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert admission.in_flight == 1  # the thread still runs: its place is still taken
+        release.set()
+        for _ in range(100):
+            if admission.in_flight == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert admission.in_flight == 0
+
+    async def test_a_thousand_and_one_boxes_never_reach_the_graph_read(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        reports: ReportService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        diagram, _ = await a_diagram(
+            service, diagram_service, *[f"B{i}" for i in range(MAX_REPORT_ELEMENTS * 2 + 1)]
+        )
+        read: list[int] = []
+        original = service.view_of
+
+        async def spying(ids: Sequence[UUID], **kwargs: object) -> GraphView:
+            read.append(len(ids))
+            return await original(ids, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(service, "view_of", spying)
+
+        with pytest.raises(ReportTooLargeError):
+            await reports.build(request_for(diagram))
+
+        assert read == []

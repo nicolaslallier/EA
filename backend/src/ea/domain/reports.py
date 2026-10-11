@@ -26,6 +26,9 @@ from ea.domain.model import Element, Relationship
 
 MAX_REPORT_ELEMENTS: Final = 500
 MAX_REPORT_RELATIONSHIPS: Final = 5000
+#: Bytes of text (names, descriptions, documents, drawings) a report may carry: the write doors
+#: cap a description at 2000 characters, the domain does not; a serialiser costs what it holds.
+MAX_REPORT_TEXT_BYTES: Final = 8 * 1024 * 1024
 MAX_REPORT_DIAGRAMS: Final = 20
 #: Boxes drawn in all, over every diagram of a package.
 MAX_REPORT_BOXES: Final = 1000
@@ -341,6 +344,28 @@ def build_model(
         subtitle=(f"Généré le {now:%Y-%m-%d %H:%M} UTC — modèle {template.id} v{template.version}"),
         blocks=tuple(blocks),
     )
+
+
+def scope_text_bytes(scope: ReportScope) -> int:
+    """What the names and descriptions of a scope weigh, counted before anything is built."""
+    return sum(len(e.name) + len(e.description) for e in scope.elements)
+
+
+def model_text_bytes(model: ReportModel) -> int:
+    """What a built model weighs: its text, its tables and its drawings."""
+    total = len(model.title) + len(model.subtitle)
+    for block in model.blocks:
+        match block:
+            case Heading() | Paragraph():
+                total += len(block.text)
+            case MarkdownBlock():
+                total += len(block.source)
+            case Table():
+                total += sum(len(h) for h in block.headers)
+                total += sum(len(cell) for row in block.rows for cell in row)
+            case Figure():
+                total += len(block.svg) + len(block.caption)
+    return total
 
 
 # --- File names -------------------------------------------------------------

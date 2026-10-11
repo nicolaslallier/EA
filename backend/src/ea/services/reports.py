@@ -48,6 +48,7 @@ from ea.domain.reports import (
     MAX_REPORT_DOCUMENT_BYTES,
     MAX_REPORT_ELEMENTS,
     MAX_REPORT_RELATIONSHIPS,
+    MAX_REPORT_TEXT_BYTES,
     REPORT_FORMATS,
     REPORT_TIMEOUT_SECONDS,
     RenderedReport,
@@ -60,8 +61,10 @@ from ea.domain.reports import (
     ReportTemplate,
     ScopedDocument,
     build_model,
+    model_text_bytes,
     report_filename,
     report_key,
+    scope_text_bytes,
     template_by_id,
 )
 from ea.services.analysis import off_the_loop
@@ -120,8 +123,23 @@ def _assemble(
     documents: Sequence[ScopedDocument],
     now: datetime,
 ) -> bytes:
-    """The CPU-bound part, in one function so one thread does all of it."""
-    return renderer(build_model(template, scope, documents, now=now))
+    """The CPU-bound part, in one function so one thread does all of it.
+
+    The built model is weighed before the serialiser runs: the engine's cost follows what the
+    model holds, so it is refused here and never started.
+    """
+    model = build_model(template, scope, documents, now=now)
+    if model_text_bytes(model) > MAX_REPORT_TEXT_BYTES:
+        raise _too_much_text()
+    return renderer(model)
+
+
+def _too_much_text() -> ReportTooLargeError:
+    msg = (
+        f"a report carries at most {MAX_REPORT_TEXT_BYTES // (1024 * 1024)} MiB of text "
+        "(about as many bytes of text as the scope holds); report on a smaller scope"
+    )
+    return ReportTooLargeError(msg)
 
 
 class ReportService:
@@ -239,6 +257,8 @@ class ReportService:
         started = self._monotonic()
         async with self._place(subject_sub) as lease:
             scope = await self._scope(request.subject)
+            if scope_text_bytes(scope) > MAX_REPORT_TEXT_BYTES:
+                raise _too_much_text()
             self._within_time(started)
             documents = await self._documents_of(scope) if template.needs_documents else ()
             self._within_time(started)
