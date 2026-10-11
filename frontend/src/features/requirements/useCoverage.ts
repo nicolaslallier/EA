@@ -16,6 +16,8 @@ const EMPTY: CoverageRead = {
   active: 0,
   designed: 0,
   verified: 0,
+  failing: 0,
+  unverified: 0,
   design_rate: null,
   verification_rate: null,
   by_status: {},

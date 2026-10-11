@@ -196,10 +196,11 @@ async def test_a_patch_with_nothing_left_to_say_keeps_the_work_of_its_shared_tra
 ) -> None:
     """Under lock the patch turns out to change nothing: the ends are not reviewed, and the
     other rows of the import (a shared transaction) are neither lost nor an error."""
-    from ea.db.unit_of_work import shared_transaction
-    from ea.domain.ports import EndsReview
-    from ea.domain.approval import reviewed_after_change
     from dataclasses import replace
+
+    from ea.db.unit_of_work import shared_transaction
+    from ea.domain.approval import reviewed_after_change
+    from ea.domain.ports import EndsReview
     from ea.repositories.architecture_store import PostgresArchitectureRepository
 
     world = World(engine_at_head)

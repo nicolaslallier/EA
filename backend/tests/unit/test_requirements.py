@@ -227,3 +227,105 @@ class TestEmptyAndOrder:
 
         assert coverage.total == 1
         assert coverage.traces[0].identifier == ""
+
+
+class TestOnlyAPassingTestVerifies:
+    @pytest.mark.parametrize(
+        ("result", "state", "gap"),
+        [
+            ("passed", "verified", Gap.NONE),
+            ("failed", "failing", Gap.VERIFICATION),
+            ("not_run", "unverified", Gap.VERIFICATION),
+            ("blocked", "unverified", Gap.VERIFICATION),
+            ("banana", "unverified", Gap.VERIFICATION),
+        ],
+    )
+    def test_each_result_is_judged_by_itself(self, result: str, state: str, gap: Gap) -> None:
+        requirement, design, test = a_requirement(), a_design(), a_test(result=result)
+
+        coverage = compute_coverage(
+            [requirement, design, test],
+            [realizes(design, requirement), realizes(test, requirement)],
+        )
+
+        (trace,) = coverage.traces
+        assert (trace.verification.value, trace.gap) == (state, gap)
+        assert [coverage.verified, coverage.failing, coverage.unverified] == [
+            int(state == "verified"),
+            int(state == "failing"),
+            int(state == "unverified"),
+        ]
+        assert coverage.verification_rate == (1.0 if state == "verified" else 0.0)
+
+    def test_one_red_test_among_green_ones_makes_it_failing(self) -> None:
+        requirement, design = a_requirement(), a_design()
+        green, red = a_test("T1", "passed"), a_test("T2", "failed")
+
+        coverage = compute_coverage(
+            [requirement, design, green, red],
+            [
+                realizes(design, requirement),
+                realizes(green, requirement),
+                realizes(red, requirement),
+            ],
+        )
+
+        assert coverage.failing == 1 and coverage.verified == 0
+
+    def test_the_three_counts_always_add_up_to_the_active_requirements(self) -> None:
+        coverage = compute_coverage(
+            [a_requirement("A"), a_requirement("B", req_status="rejected")], []
+        )
+
+        assert coverage.verified + coverage.failing + coverage.unverified == coverage.active == 1
+
+
+class TestJunctions:
+    def junction(self, name: str = "j") -> Element:
+        return an_element(E.JUNCTION, name)
+
+    def test_a_junction_alone_is_not_a_design(self) -> None:
+        requirement, gate = a_requirement(), self.junction()
+
+        coverage = compute_coverage([requirement, gate], [realizes(gate, requirement)])
+
+        (trace,) = coverage.traces
+        assert trace.designed_by == () and trace.gap is Gap.DESIGN
+
+    def test_the_design_behind_a_junction_is_the_design_and_the_junction_is_not(self) -> None:
+        requirement, gate, design = a_requirement(), self.junction(), a_design()
+
+        coverage = compute_coverage(
+            [requirement, gate, design], [realizes(gate, requirement), realizes(design, gate)]
+        )
+
+        (trace,) = coverage.traces
+        assert [e.name for e in trace.designed_by] == ["Billing"]
+
+    def test_a_chain_of_junctions_is_crossed(self) -> None:
+        requirement, one, two = a_requirement(), self.junction("j1"), self.junction("j2")
+        design, test = a_design(), a_test()
+
+        coverage = compute_coverage(
+            [requirement, one, two, design, test],
+            [
+                realizes(one, requirement),
+                realizes(two, one),
+                realizes(design, two),
+                realizes(test, two),
+            ],
+        )
+
+        (trace,) = coverage.traces
+        assert [e.name for e in trace.designed_by] == ["Billing"]
+        assert [e.name for e in trace.tested_by] == ["T1"]
+
+    def test_a_cycle_of_junctions_terminates_and_stays_a_gap(self) -> None:
+        requirement, one, two = a_requirement(), self.junction("j1"), self.junction("j2")
+
+        coverage = compute_coverage(
+            [requirement, one, two],
+            [realizes(one, requirement), realizes(two, one), realizes(one, two)],
+        )
+
+        assert gaps(coverage) == {"R1": Gap.DESIGN}

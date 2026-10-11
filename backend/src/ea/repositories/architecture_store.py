@@ -75,7 +75,7 @@ from ea.domain.ports import (
     RelationshipChange,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
-from ea.domain.requirements import REQUIREMENT_TYPES
+from ea.domain.requirements import MAX_JUNCTION_HOPS, REQUIREMENT_TYPES
 from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
@@ -1383,25 +1383,49 @@ class PostgresArchitectureRepository:
 
     async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
         kinds = [kind.value for kind in REQUIREMENT_TYPES]
-        links_statement = (
-            select(RelationshipRecord)
-            .where(
-                RelationshipRecord.relationship_type == RelationshipType.REALIZATION.value,
-                RelationshipRecord.target_type.in_(kinds),
-            )
-            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
-            .limit(link_limit)
-        )
+        junction = ElementType.JUNCTION.value
+        realizes = RelationshipRecord.relationship_type == RelationshipType.REALIZATION.value
         requirements_statement = (
             select(ElementRecord)
             .where(ElementRecord.element_type.in_(kinds))
             .order_by(ElementRecord.name, ElementRecord.id)
             .limit(requirement_limit)
         )
+
+        def links_into(targets: Any, room: int) -> Any:
+            return (
+                select(RelationshipRecord)
+                .where(realizes, targets)
+                .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+                .limit(room)
+            )
+
         async with reading(self._sessions) as session:
             links = tuple(
-                relationship_from_row(row) for row in await session.scalars(links_statement)
+                relationship_from_row(row)
+                for row in await session.scalars(
+                    links_into(RelationshipRecord.target_type.in_(kinds), link_limit)
+                )
             )
+            # A junction between a design and a requirement is crossed, not stopped at
+            # (docs/adr/0062): follow realizations into the junctions found, within the same
+            # link budget. A junction is followed once, so a loop of them ends.
+            followed: set[UUID] = set()
+            frontier = {link.source_id for link in links if link.source_type.value == junction}
+            for _ in range(MAX_JUNCTION_HOPS):
+                frontier -= followed
+                room = link_limit - len(links)
+                if not frontier or room <= 0:
+                    break
+                followed |= frontier
+                more = tuple(
+                    relationship_from_row(row)
+                    for row in await session.scalars(
+                        links_into(RelationshipRecord.target_id.in_(frontier), room)
+                    )
+                )
+                links = (*links, *more)
+                frontier = {link.source_id for link in more if link.source_type.value == junction}
             requirements = {
                 row.id: element_from_row(row)
                 for row in await session.scalars(requirements_statement)

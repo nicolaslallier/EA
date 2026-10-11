@@ -841,11 +841,19 @@ class InMemoryRepository:
     # --- Requirements (docs/adr/0064) ---
 
     async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
-        links = tuple(
-            link
-            for link in self.relationships.values()
-            if link.relationship_type is R.REALIZATION and link.target_type in REQUIREMENT_TYPES
-        )[:link_limit]
+        realizations = [
+            link for link in self.relationships.values() if link.relationship_type is R.REALIZATION
+        ]
+        links = [link for link in realizations if link.target_type in REQUIREMENT_TYPES]
+        frontier = {k.source_id for k in links if k.source_type is ElementType.JUNCTION}
+        followed: set[UUID] = set()
+        while frontier - followed:
+            now = frontier - followed
+            followed |= now
+            more = [link for link in realizations if link.target_id in now]
+            links += more
+            frontier = {k.source_id for k in more if k.source_type is ElementType.JUNCTION}
+        links = tuple(links[:link_limit])
         wanted = {link.source_id for link in links}
         requirements = [e for e in self.elements.values() if e.element_type in REQUIREMENT_TYPES][
             :requirement_limit

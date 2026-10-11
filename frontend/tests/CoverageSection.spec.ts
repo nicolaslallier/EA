@@ -46,9 +46,27 @@ describe('CoverageSection', () => {
 
     expect(await screen.findByText('Chiffrer les données')).toBeInTheDocument()
     expect(screen.getByText('Non réalisée')).toBeInTheDocument()
-    expect(screen.getByText('Non testée')).toBeInTheDocument()
+    expect(screen.getByText('Non vérifiée')).toBeInTheDocument()
     expect(screen.getByText('Coffre')).toBeInTheDocument()
     expect(screen.getByText('50 %')).toBeInTheDocument()
+  })
+
+  it('says so when a test is failing, and counts it apart', async () => {
+    stubApi([
+      {
+        path: '/requirements/coverage',
+        body: aCoverage([aTrace({ gap: 'verification', verification: 'failing' })], {
+          designed: 1,
+          failing: 1,
+          design_rate: 1,
+          verification_rate: 0,
+        }),
+      },
+    ])
+    await open()
+
+    expect(await screen.findByText('(Test en échec)')).toBeInTheDocument()
+    expect(screen.getByText('1 en échec, 0 sans test réussi')).toBeInTheDocument()
   })
 
   it('links a requirement to its detail in the catalogue', async () => {

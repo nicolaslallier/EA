@@ -10,7 +10,7 @@
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { GAP_LABELS, PRIORITY_LABELS, STATUS_LABELS, labelOf } from './labels'
+import { GAP_LABELS, PRIORITY_LABELS, STATUS_LABELS, VERIFICATION_LABELS, labelOf } from './labels'
 import { useCoverage } from './useCoverage'
 
 const route = useRoute()
@@ -89,8 +89,9 @@ const names = (items: { name: string }[]) => items.map((item) => item.name).join
         <dd class="rate">{{ percent(coverage.design_rate) }}</dd>
       </div>
       <div>
-        <dt>Vérifiées par un test</dt>
+        <dt>Vérifiées par un test réussi</dt>
         <dd>{{ coverage.verified }} sur {{ coverage.active }}</dd>
+        <dd>{{ coverage.failing }} en échec, {{ coverage.unverified }} sans test réussi</dd>
         <dd class="rate">{{ percent(coverage.verification_rate) }}</dd>
       </div>
     </dl>
@@ -121,7 +122,12 @@ const names = (items: { name: string }[]) => items.map((item) => item.name).join
           <td>{{ labelOf(PRIORITY_LABELS, trace.priority) }}</td>
           <td>{{ names(trace.designed_by) }}</td>
           <td>{{ names(trace.tested_by) }}</td>
-          <td>{{ labelOf(GAP_LABELS, trace.gap) }}</td>
+          <td>
+            {{ labelOf(GAP_LABELS, trace.gap) }}
+            <small v-if="trace.verification === 'failing'">
+              ({{ labelOf(VERIFICATION_LABELS, trace.verification) }})
+            </small>
+          </td>
         </tr>
       </tbody>
     </table>

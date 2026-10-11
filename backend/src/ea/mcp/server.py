@@ -1053,6 +1053,8 @@ def build_mcp_server(
         Call it before you claim a requirement is done, or to list the ones nobody realizes
         (`gap` = `design`) or nobody tests (`gap` = `verification`). Each requirement says what
         realizes it (`designed_by`) and what tests it (`tested_by`, with each test's result).
+        Only a test whose result is `passed` verifies (`verification`): a `failed` one makes
+        the requirement `failing`, and `not_run` or `blocked` leave it `unverified`.
         The rates leave out rejected requirements and are null when there is none. To change a
         status or a result, use `update_element` (`req_status`, `test_result`).
         """

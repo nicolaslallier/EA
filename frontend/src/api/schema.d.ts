@@ -1639,13 +1639,26 @@ export interface components {
             design_rate: number | null;
             /** Designed */
             designed: number;
+            /**
+             * Failing
+             * @description Active requirements with at least one failing test.
+             */
+            failing: number;
             /** Requirements */
             requirements: components["schemas"]["RequirementTraceRead"][];
             /** Total */
             total: number;
+            /**
+             * Unverified
+             * @description Active requirements with no passing test (none, not run).
+             */
+            unverified: number;
             /** Verification Rate */
             verification_rate: number | null;
-            /** Verified */
+            /**
+             * Verified
+             * @description Active requirements with a passing test and no failing one.
+             */
             verified: number;
         };
         /** DiagramCreate */
@@ -2893,6 +2906,8 @@ export interface components {
             status: string;
             /** Tested By */
             tested_by: components["schemas"]["TraceElementRead"][];
+            /** @description `verified` only if a test passed and none failed; `failing`; or `unverified`. */
+            verification: components["schemas"]["Verification"];
         };
         /**
          * RestorePlanRead
@@ -3246,6 +3261,12 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * Verification
+         * @description What the tests of a requirement say, as a whole.
+         * @enum {string}
+         */
+        Verification: "verified" | "failing" | "unverified";
     };
     responses: never;
     parameters: never;

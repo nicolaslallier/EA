@@ -112,3 +112,19 @@ class TestCoverageEndpoint:
         assert response.status_code == 422
         assert response.json()["error"] == "invalid_input"
         assert "banana" not in response.json()["detail"]  # the value is never echoed
+
+
+@pytest.mark.asyncio
+async def test_a_failing_test_does_not_verify(client: httpx.AsyncClient) -> None:
+    requirement = await make(client, "requirement", "R")
+    design = await make(client, "application_component", "D")
+    red = await make(client, "deliverable", "T", test_result="failed")
+    await realize(client, design, requirement)
+    await realize(client, red, requirement)
+
+    body = (await client.get("/requirements/coverage")).json()
+
+    assert (body["verified"], body["failing"], body["unverified"]) == (0, 1, 0)
+    assert body["verification_rate"] == 0.0
+    assert body["requirements"][0]["verification"] == "failing"
+    assert body["requirements"][0]["gap"] == "verification"

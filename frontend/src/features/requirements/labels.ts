@@ -20,8 +20,14 @@ export const PRIORITY_LABELS: Record<string, string> = {
 
 export const GAP_LABELS: Record<string, string> = {
   design: 'Non réalisée',
-  verification: 'Non testée',
+  verification: 'Non vérifiée',
   none: 'Aucun écart',
+}
+
+export const VERIFICATION_LABELS: Record<string, string> = {
+  verified: 'Test réussi',
+  failing: 'Test en échec',
+  unverified: 'Aucun test réussi',
 }
 
 /** The words for a key, or the key itself when a newer API sends one this table lacks. */

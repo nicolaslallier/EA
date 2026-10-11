@@ -14,6 +14,7 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.model import Element
+from ea.domain.requirements import compute_coverage
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.architecture import ArchitectureService
 
@@ -51,6 +52,28 @@ class TestTraceability:
 
         assert view.elements == ()
         assert view.relationships == ()
+
+
+class TestJunctions:
+    async def test_a_design_behind_a_junction_chain_is_read_and_a_loop_ends(
+        self, graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+    ) -> None:
+        requirement = await graph_service.create_element(element_type=E.REQUIREMENT, name="R")
+        one = await graph_service.create_element(element_type=E.JUNCTION, name="j1")
+        two = await graph_service.create_element(element_type=E.JUNCTION, name="j2")
+        design = await graph_service.create_element(element_type=E.APPLICATION_COMPONENT, name="D")
+        await realize(graph_service, one, requirement)
+        await realize(graph_service, two, one)
+        await realize(graph_service, one, two)  # a loop between the junctions
+        await realize(graph_service, design, two)
+
+        view = await graph_repository.traceability(requirement_limit=100, link_limit=100)
+
+        assert {e.name for e in view.elements} == {"R", "j1", "j2", "D"}
+        assert len(view.relationships) == 4
+
+        coverage = compute_coverage(view.elements, view.relationships)
+        assert [e.name for e in coverage.traces[0].designed_by] == ["D"]
 
 
 class TestTheBounds:

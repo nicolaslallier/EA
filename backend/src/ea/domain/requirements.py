@@ -37,6 +37,8 @@ TEST_TYPES: Final = (ElementType.DELIVERABLE, ElementType.ARTIFACT)
 #: (a 422), never cut: a rate over a page of the requirements would be wrong, silently.
 MAX_REQUIREMENTS: Final = 5000
 MAX_TRACE_LINKS: Final = 20000
+#: How many junctions deep a realization is followed from a requirement.
+MAX_JUNCTION_HOPS: Final = 10
 
 #: What a missing or unreadable value is counted as.
 UNSET: Final = "unset"
@@ -61,6 +63,14 @@ class VerificationResult(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
     BLOCKED = "blocked"
+
+
+class Verification(StrEnum):
+    """What the tests of a requirement say, as a whole."""
+
+    VERIFIED = "verified"  # at least one `passed`, and none `failed`
+    FAILING = "failing"  # at least one `failed`
+    UNVERIFIED = "unverified"  # no test, or only `not_run`, `blocked` or a value we do not know
 
 
 class Gap(StrEnum):
@@ -120,12 +130,22 @@ class RequirementTrace:
         return self.requirement.properties.get(IDENTIFIER_PROPERTY, "").strip()
 
     @property
+    def verification(self) -> Verification:
+        """Only a test that *passed* verifies: a red, unrun or blocked one does not."""
+        results = [t.properties.get(RESULT_PROPERTY, "").strip() for t in self.tested_by]
+        if VerificationResult.FAILED.value in results:
+            return Verification.FAILING
+        if VerificationResult.PASSED.value in results:
+            return Verification.VERIFIED
+        return Verification.UNVERIFIED
+
+    @property
     def gap(self) -> Gap:
         if self.status == Status.REJECTED.value:
             return Gap.NONE
         if not self.designed_by:
             return Gap.DESIGN
-        if not self.tested_by:
+        if self.verification is not Verification.VERIFIED:
             return Gap.VERIFICATION
         return Gap.NONE
 
@@ -153,9 +173,21 @@ class Coverage:
     def designed(self) -> int:
         return sum(1 for t in self.active_traces if t.designed_by)
 
+    def _count(self, state: Verification) -> int:
+        return sum(1 for t in self.active_traces if t.verification is state)
+
     @property
     def verified(self) -> int:
-        return sum(1 for t in self.active_traces if t.tested_by)
+        """Active requirements with a passing test and no failing one."""
+        return self._count(Verification.VERIFIED)
+
+    @property
+    def failing(self) -> int:
+        return self._count(Verification.FAILING)
+
+    @property
+    def unverified(self) -> int:
+        return self._count(Verification.UNVERIFIED)
 
     @property
     def design_rate(self) -> float | None:
@@ -213,7 +245,8 @@ def _reach(
             if source.id in seen:
                 continue
             seen.add(source.id)
-            if is_requirement(source):
+            if is_requirement(source) or source.element_type is ElementType.JUNCTION:
+                # A junction only wires links together (docs/adr/0062): cross it, never list it.
                 queue.append(source.id)
             elif is_test(source):
                 tested[source.id] = source

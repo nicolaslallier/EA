@@ -932,6 +932,11 @@
             "title": "Designed",
             "type": "integer"
           },
+          "failing": {
+            "description": "Active requirements with at least one failing test.",
+            "title": "Failing",
+            "type": "integer"
+          },
           "requirements": {
             "items": {
               "$ref": "#/components/schemas/RequirementTraceRead"
@@ -941,6 +946,11 @@
           },
           "total": {
             "title": "Total",
+            "type": "integer"
+          },
+          "unverified": {
+            "description": "Active requirements with no passing test (none, not run).",
+            "title": "Unverified",
             "type": "integer"
           },
           "verification_rate": {
@@ -955,6 +965,7 @@
             "title": "Verification Rate"
           },
           "verified": {
+            "description": "Active requirements with a passing test and no failing one.",
             "title": "Verified",
             "type": "integer"
           }
@@ -964,6 +975,8 @@
           "active",
           "designed",
           "verified",
+          "failing",
+          "unverified",
           "design_rate",
           "verification_rate",
           "by_status",
@@ -3597,6 +3610,10 @@
             },
             "title": "Tested By",
             "type": "array"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/Verification",
+            "description": "`verified` only if a test passed and none failed; `failing`; or `unverified`."
           }
         },
         "required": [
@@ -3607,6 +3624,7 @@
           "status",
           "priority",
           "gap",
+          "verification",
           "designed_by",
           "tested_by"
         ],
@@ -4388,6 +4406,16 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "Verification": {
+        "description": "What the tests of a requirement say, as a whole.",
+        "enum": [
+          "verified",
+          "failing",
+          "unverified"
+        ],
+        "title": "Verification",
+        "type": "string"
       }
     },
     "securitySchemes": {

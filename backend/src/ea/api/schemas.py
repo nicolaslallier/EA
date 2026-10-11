@@ -90,7 +90,7 @@ from ea.domain.query import (
     QueryOrder,
     RelationTest,
 )
-from ea.domain.requirements import RESULT_PROPERTY, Coverage, Gap, RequirementTrace
+from ea.domain.requirements import RESULT_PROPERTY, Coverage, Gap, RequirementTrace, Verification
 from ea.domain.saved_queries import (
     MAX_SAVED_QUERY_DESCRIPTION,
     MAX_SAVED_QUERY_NAME_LENGTH,
@@ -1975,6 +1975,9 @@ class RequirementTraceRead(BaseModel):
     status: str
     priority: str
     gap: Gap
+    verification: Verification = Field(
+        description="`verified` only if a test passed and none failed; `failing`; or `unverified`."
+    )
     designed_by: list[TraceElementRead]
     tested_by: list[TraceElementRead]
 
@@ -1988,6 +1991,7 @@ class RequirementTraceRead(BaseModel):
             status=trace.status,
             priority=trace.priority,
             gap=trace.gap,
+            verification=trace.verification,
             designed_by=[TraceElementRead.of(element) for element in trace.designed_by],
             tested_by=[TraceElementRead.of(element) for element in trace.tested_by],
         )
@@ -2004,7 +2008,9 @@ class CoverageRead(BaseModel):
     total: int
     active: int
     designed: int
-    verified: int
+    verified: int = Field(description="Active requirements with a passing test and no failing one.")
+    failing: int = Field(description="Active requirements with at least one failing test.")
+    unverified: int = Field(description="Active requirements with no passing test (none, not run).")
     design_rate: float | None
     verification_rate: float | None
     by_status: dict[str, int]
@@ -2018,6 +2024,8 @@ class CoverageRead(BaseModel):
             active=coverage.active,
             designed=coverage.designed,
             verified=coverage.verified,
+            failing=coverage.failing,
+            unverified=coverage.unverified,
             design_rate=coverage.design_rate,
             verification_rate=coverage.verification_rate,
             by_status=coverage.by_status,
