@@ -113,6 +113,12 @@ ELEMENTS_FILE: Final = "elements.csv"
 RELATIONS_FILE: Final = "relations.csv"
 PROPERTIES_FILE: Final = "properties.csv"
 CSV_FILES: Final = (ELEMENTS_FILE, RELATIONS_FILE, PROPERTIES_FILE)
+#: Records (lines of the table, blank ones included) one CSV file may hold.
+MAX_CSV_ROWS: Final = 100_000
+#: Characters of one record, quoted newlines included. It is below the `csv` module's own
+#: field limit (131072) and does not rely on it: that limit is a global state of the module,
+#: and the stricter one is applied here, before the reader is handed the text.
+MAX_CSV_RECORD_CHARS: Final = 100_000
 
 _RELATIONSHIP_SUFFIX: Final = "Relationship"
 

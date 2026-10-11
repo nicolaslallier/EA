@@ -199,3 +199,12 @@ async def test_a_user_property_called_like_a_synthetic_one_is_a_property() -> No
         ["r", "access_type", "x"],
         ["r", "directed", "true"],
     ]
+
+
+@pytest.mark.asyncio
+async def test_an_access_without_a_stated_type_is_written_as_the_unspecified_access() -> None:
+    link = ExchangeRelationship("r", RelationshipType.ACCESS, "a", "b")
+
+    files = await written([actor()], [link])
+
+    assert files["properties.csv"][1:] == [["r", "ea.access_type", "access"]]
