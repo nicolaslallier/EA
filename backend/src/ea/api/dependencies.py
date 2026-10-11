@@ -17,6 +17,7 @@ from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
@@ -180,6 +181,27 @@ def get_file_service(request: Request) -> FileService:
 
 
 Files = Annotated[FileService, Depends(get_file_service)]
+
+
+def exchange_service_of(app: FastAPI) -> ExchangeService:
+    """The exchange use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled without a relational store (a wiring
+    fault, so a 500), never an empty export a client would take for a model
+    with nothing in it.
+    """
+    service: ExchangeService | None = getattr(app.state, "exchange_service", None)
+    if service is None:
+        msg = "no exchange service on the application — is postgres_enabled on?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_exchange_service(request: Request) -> ExchangeService:
+    return exchange_service_of(request.app)
+
+
+Exchanges = Annotated[ExchangeService, Depends(get_exchange_service)]
 
 
 def session_factory_of(app: FastAPI) -> async_sessionmaker[AsyncSession]:

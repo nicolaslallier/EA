@@ -29,6 +29,7 @@ from ea.api.dependencies import (
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
+from ea.api.exchanges import router as exchanges_router
 from ea.api.files import router as files_router
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
@@ -49,6 +50,7 @@ from ea.domain.ports import (
     BaselineRepository,
     DiagramRepository,
     DocumentRepository,
+    ExchangeRepository,
     FileMetadataRepository,
     IpamRepository,
     ObjectStore,
@@ -65,6 +67,7 @@ from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
+from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
@@ -75,6 +78,7 @@ from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -172,6 +176,7 @@ def _lifespan(
     file_metadata: FileMetadataRepository | None = None,
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
+    exchanges: ExchangeRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -281,6 +286,10 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    app.state.exchange_service = ExchangeService(
+                        exchanges or PostgresExchangeRepository(app.state.db_sessions),
+                        app.state.architecture_service,
+                    )
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
             # with the relational store shut has neither.
@@ -500,6 +509,7 @@ def create_app(
     file_metadata: FileMetadataRepository | None = None,
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
+    exchanges: ExchangeRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
 ) -> FastAPI:
     """Assemble the application.
@@ -551,6 +561,7 @@ def create_app(
             file_metadata=file_metadata,
             audit=audit,
             baselines=baselines,
+            exchanges=exchanges,
         ),
     )
     app.state.settings = settings
@@ -570,6 +581,8 @@ def create_app(
             app.state.saved_query_service = SavedQueryService(
                 queries, packages, architecture_service
             )
+        if exchanges is not None:
+            app.state.exchange_service = ExchangeService(exchanges, architecture_service)
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
                 diagrams, architecture_service, packages=packages
@@ -610,6 +623,7 @@ def create_app(
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(baselines_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
