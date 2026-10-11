@@ -84,3 +84,27 @@ describe('serializeSvg', () => {
     expect(exportSize({ boxes: [], edges: [] })).toEqual({ width: 48, height: 48 })
   })
 })
+
+describe('serializeSvg — groups and notes', () => {
+  const object = { id: 'g', text: 'Domaine <Paiement>', fill: '#efeaf8', x: 0, y: 0, width: 300, height: 200 }
+
+  it('draws a group behind and a note in front, their text escaped', () => {
+    const svg = serializeSvg({
+      ...SCENE,
+      groups: [object],
+      notes: [{ ...object, id: 'n', text: 'ligne 1\nligne 2 & <b>', fill: '"><script>' }],
+    })
+
+    expect(svg.indexOf('Domaine &lt;Paiement&gt;')).toBeGreaterThan(0)
+    expect(svg.indexOf('Domaine')).toBeLessThan(svg.indexOf('Facturation'))
+    expect(svg.indexOf('ligne 1')).toBeGreaterThan(svg.indexOf('Facturation'))
+    expect(svg).toContain('ligne 2 &amp; &lt;b&gt;')
+    expect(svg).not.toContain('<script')
+  })
+
+  it('counts them in the size of the image', () => {
+    const size = exportSize({ ...SCENE, groups: [{ ...object, x: -100, width: 50 }] })
+
+    expect(size.width).toBe(300 + 132 - -100 + 48)
+  })
+})

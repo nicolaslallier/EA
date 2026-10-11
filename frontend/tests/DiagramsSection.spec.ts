@@ -190,6 +190,43 @@ describe('DiagramsSection — the editor', () => {
   })
 })
 
+describe('DiagramsSection — annotations', () => {
+  it('adds a note from the annotation palette and saves it', async () => {
+    const calls = stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}`)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Ajouter une note' }))
+
+    expect(await screen.findByLabelText('Texte de la note')).toBeInTheDocument()
+    await waitFor(
+      () => {
+        const put = calls.find((call) => call.method === 'PUT')
+        expect((put?.body as { objects: unknown[] }).objects).toHaveLength(1)
+      },
+      { timeout: 2000 },
+    )
+  })
+
+  it('offers to reload when a colleague saved first, and pastes my work back on request', async () => {
+    const calls = stubApi([
+      { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 409,
+        body: { error: 'diagram_revision_conflict', detail: 'the diagram is at revision 5, not 0' } },
+      LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL,
+    ])
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Ajouter une note' }))
+
+    const banner = (
+      await screen.findByText(/quelqu'un a enregistré/i, {}, { timeout: 2000 })
+    ).closest('p') as HTMLElement
+    await fireEvent.click(within(banner).getByRole('button', { name: 'Recharger sa version' }))
+    await waitFor(() => expect(calls.filter((call) => call.url.pathname === `/diagrams/${DIAGRAM_ID}`).length).toBeGreaterThan(1))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Recoller mes modifications' }))
+
+    expect(screen.queryByText(/quelqu'un a enregistré/i)).toBeNull()
+  })
+})
+
 describe('DiagramsSection — the toolbar', () => {
   it('undoes a removal from the toolbar and saves the restored layout', async () => {
     const calls = stubApi(ROUTES)
@@ -259,6 +296,16 @@ describe('DiagramsSection — a reader', () => {
     expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retirer du diagramme' })).toBeNull()
     expect(screen.queryByText('Enregistré automatiquement.')).toBeNull()
+  })
+
+  it('shows no annotation palette and no inspector controls', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await screen.findByRole('group', { name: /zone de dessin/i })
+
+    expect(screen.queryByRole('button', { name: 'Ajouter une note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ajouter un groupe' })).toBeNull()
   })
 
   it('hides the whole editing toolbar, and Ctrl+Z does nothing', async () => {

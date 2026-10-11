@@ -20,7 +20,10 @@ import PackageTree from '../packages/PackageTree.vue'
 import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
 import { useAsOf } from '../../lib/asof'
+import { verbOf } from '../relationships/labels'
+import AnnotationPalette from './AnnotationPalette.vue'
 import DiagramCanvas from './DiagramCanvas.vue'
+import ObjectInspector from './ObjectInspector.vue'
 import DiagramToolbar from './DiagramToolbar.vue'
 import { buildExportScene } from './exportScene'
 import { useSelection } from './useSelection'
@@ -39,6 +42,29 @@ const metamodel = useMetamodel()
 const detail = useElementDetail()
 const selection = useSelection()
 const exportError = ref('')
+const selectedObjectId = ref('')
+const selectedEdgeId = ref('')
+const selectedObject = computed(() => editor.objects.value.find((item) => item.id === selectedObjectId.value))
+const selectedEdge = computed(() => {
+  const link = editor.relationships.value.find((candidate) => candidate.id === selectedEdgeId.value)
+  if (!link) {
+    return undefined
+  }
+  return {
+    relationshipId: link.id,
+    label: verbOf(link.relationship_type, link.access_type),
+    bends: editor.edges.value.find((edge) => edge.relationship_id === link.id)?.waypoints.length ?? 0,
+  }
+})
+const childrenOfSelectedGroup = computed(() =>
+  editor.nodes.value
+    .filter((node) => node.parent_object_id === selectedObjectId.value)
+    .flatMap((node) => {
+      const element = editor.byId.value.get(node.element_id)
+      return element ? [{ id: element.id, name: element.name }] : []
+    }),
+)
+const anchorChoices = computed(() => editor.boxes.value.map((box) => ({ id: box.element.id, name: box.element.name })))
 const packages = usePackages()
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
@@ -139,6 +165,8 @@ watch(
   async ([id]) => {
     link.value = null
     selection.clear()
+    selectedObjectId.value = ''
+    selectedEdgeId.value = ''
     if (!id) {
       editor.close()
       await list.load()
@@ -264,9 +292,44 @@ function spread(axis: DistributeAxis): void {
   editor.distribute(selection.ids.value, axis)
 }
 
+function addAnnotation(kind: 'note' | 'group'): void {
+  const offset = editor.objects.value.length * 24
+  selectedObjectId.value = editor.addObject(kind, { x: 40 + offset, y: 40 + offset })
+  selectedEdgeId.value = ''
+}
+
+function selectObject(id: string): void {
+  selectedObjectId.value = id
+  selectedEdgeId.value = ''
+}
+
+function selectEdge(id: string): void {
+  selectedEdgeId.value = id
+  selectedObjectId.value = ''
+}
+
+function removeSelectedObject(): void {
+  editor.removeObject(selectedObjectId.value)
+  selectedObjectId.value = ''
+}
+
+function onLinkContent(sourceId: string, targetId: string): void {
+  onConnect(sourceId, targetId)
+}
+
+function reload(): void {
+  void editor.reloadAfterConflict()
+}
+
 async function exportAs(format: ExportFormat): Promise<void> {
   exportError.value = ''
-  const scene = buildExportScene(editor.boxes.value, editor.relationships.value, metamodel.labelOf)
+  const scene = buildExportScene(
+    editor.boxes.value,
+    editor.relationships.value,
+    metamodel.labelOf,
+    editor.edges.value,
+    editor.objects.value,
+  )
   const svg = serializeSvg(scene)
   const name = (editor.diagram.value?.name ?? 'diagramme').replace(/[^\p{L}\p{N}_-]+/gu, '-')
   try {
@@ -370,22 +433,36 @@ async function exportAs(format: ExportFormat): Promise<void> {
     <p v-if="editor.saveError.value" class="banner banner--error" role="alert">
       Disposition non enregistrée : {{ editor.saveError.value }}
     </p>
+    <p v-if="editor.conflict.value && !editor.reloaded.value" class="banner banner--error" role="alert">
+      Quelqu'un a enregistré ce diagramme avant toi : tes modifications n'ont pas été envoyées.
+      <button type="button" @click="reload">Recharger sa version</button>
+      <button type="button" class="secondary" @click="editor.discardMine()">
+        Abandonner mes modifications
+      </button>
+    </p>
+    <p v-if="editor.reloaded.value" class="banner" role="status">
+      Sa version est chargée.
+      <button type="button" @click="editor.pasteMine()">Recoller mes modifications</button>
+      <button type="button" class="secondary" @click="editor.discardMine()">Les abandonner</button>
+    </p>
 
     <div
       v-if="editor.diagram.value"
       class="editor diagram-editor"
       :class="{ 'editor--reading': !canWrite }"
     >
-      <ElementPalette
-        v-if="canWrite"
-        :items="palette.items.value"
-        :total="palette.total.value"
-        :placed="editor.placed.value"
-        :error="palette.error.value"
-        :type-label="metamodel.labelOf"
-        @search="(term) => palette.search(term)"
-        @add="onAdd"
-      />
+      <div v-if="canWrite" class="editor__left">
+        <ElementPalette
+          :items="palette.items.value"
+          :total="palette.total.value"
+          :placed="editor.placed.value"
+          :error="palette.error.value"
+          :type-label="metamodel.labelOf"
+          @search="(term) => palette.search(term)"
+          @add="onAdd"
+        />
+        <AnnotationPalette @add-note="addAnnotation('note')" @add-group="addAnnotation('group')" />
+      </div>
 
       <div class="editor__centre">
         <LinkPopover
@@ -417,6 +494,10 @@ async function exportAs(format: ExportFormat): Promise<void> {
           :readonly="!canWrite"
           :inactive-ids="editor.inactiveIds.value"
           :selection="selection.ids.value"
+          :objects="editor.objects.value"
+          :routed="editor.edges.value"
+          :selected-object-id="selectedObjectId"
+          :selected-edge-id="selectedEdgeId"
           @place="onPlace"
           @move="editor.move"
           @resize="editor.resize"
@@ -427,10 +508,29 @@ async function exportAs(format: ExportFormat): Promise<void> {
           @remove-many="removeSelected"
           @remove="removeBox"
           @connect="onConnect"
+          @select-object="selectObject"
+          @select-edge="selectEdge"
+          @move-object="editor.moveObject"
+          @resize-object="editor.resizeObject"
+          @remove-object="editor.removeObject"
+          @bend-add="editor.addWaypoint"
+          @bend-move="editor.moveWaypoint"
+          @bend-remove="editor.removeWaypoint"
         />
       </div>
 
       <aside class="editor__detail">
+        <ObjectInspector
+          :item="selectedObject"
+          :edge="selectedEdge"
+          :anchors="anchorChoices"
+          :children="childrenOfSelectedGroup"
+          :can-write="canWrite"
+          @update="(patch) => editor.updateObject(selectedObjectId, patch)"
+          @remove="removeSelectedObject"
+          @straighten="editor.straighten(selectedEdgeId)"
+          @link="onLinkContent"
+        />
         <p v-if="!selectedId" class="hint">
           Sélectionne un élément pour voir son détail. Tire la poignée d'un élément sélectionné
           jusqu'à un autre pour les relier.
@@ -498,6 +598,12 @@ header h2 {
   grid-template-columns: minmax(0, 1fr) 16rem;
 }
 .editor__centre,
+.editor__left {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  align-content: start;
+}
 .editor__detail {
   display: grid;
   gap: 0.6rem;

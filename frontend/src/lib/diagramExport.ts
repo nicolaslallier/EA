@@ -20,7 +20,21 @@ export type ExportBox = {
   height: number
 }
 export type ExportEdge = { id: string; points: Point[]; label: string }
-export type ExportScene = { boxes: ExportBox[]; edges: ExportEdge[] }
+export type ExportObject = {
+  id: string
+  text: string
+  fill: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+export type ExportScene = {
+  boxes: ExportBox[]
+  edges: ExportEdge[]
+  groups?: ExportObject[]
+  notes?: ExportObject[]
+}
 export type ExportTheme = { background: string; ink: string; stroke: string; font: string }
 export type ExportFormat = 'svg' | 'png' | 'png2'
 
@@ -53,12 +67,15 @@ export function safeColour(value: string, fallback: string): string {
 const num = (value: number) => (Number.isFinite(value) ? String(Math.round(value * 100) / 100) : '0')
 
 function bounds(scene: ExportScene): { x: number; y: number; width: number; height: number } {
+  const objects = [...(scene.groups ?? []), ...(scene.notes ?? [])]
   const xs = [
     ...scene.boxes.flatMap((box) => [box.x, box.x + box.width]),
+    ...objects.flatMap((o) => [o.x, o.x + o.width]),
     ...scene.edges.flatMap((edge) => edge.points.map((point) => point.x)),
   ]
   const ys = [
     ...scene.boxes.flatMap((box) => [box.y, box.y + box.height]),
+    ...objects.flatMap((o) => [o.y, o.y + o.height]),
     ...scene.edges.flatMap((edge) => edge.points.map((point) => point.y)),
   ]
   if (xs.length === 0) {
@@ -88,6 +105,12 @@ export function serializeSvg(scene: ExportScene, theme: ExportTheme = LIGHT_THEM
     `<rect x="${num(origin.x)}" y="${num(origin.y)}" width="${num(size.width)}" height="${num(size.height)}" fill="${safeColour(theme.background, '#ffffff')}"/>`,
     `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${stroke}"/></marker></defs>`,
   ]
+  for (const group of scene.groups ?? []) {
+    out.push(
+      `<rect x="${num(group.x)}" y="${num(group.y)}" width="${num(group.width)}" height="${num(group.height)}" rx="8" fill="${safeColour(group.fill, '#efeaf8')}" fill-opacity="0.55" stroke="${stroke}" stroke-dasharray="6 4"/>`,
+      `<text x="${num(group.x + 10)}" y="${num(group.y + 18)}" font-weight="600" fill="${ink}">${escapeXml(shortenToWidth(group.text, group.width - 20))}</text>`,
+    )
+  }
   for (const edge of scene.edges) {
     if (edge.points.length < 2) {
       continue
@@ -107,6 +130,20 @@ export function serializeSvg(scene: ExportScene, theme: ExportTheme = LIGHT_THEM
       `<text x="${num(centre)}" y="${num(box.y + box.height / 2 - 2)}" text-anchor="middle" font-weight="600" fill="${ink}">${escapeXml(shortenToWidth(box.name, box.width))}</text>`,
       `<text x="${num(centre)}" y="${num(box.y + box.height / 2 + 13)}" text-anchor="middle" font-size="10" fill="${ink}">${escapeXml(shortenToWidth(box.type, box.width))}</text>`,
     )
+  }
+  for (const note of scene.notes ?? []) {
+    out.push(
+      `<rect x="${num(note.x)}" y="${num(note.y)}" width="${num(note.width)}" height="${num(note.height)}" rx="3" fill="${safeColour(note.fill, '#fff4b0')}" stroke="${stroke}"/>`,
+    )
+    const rows = Math.max(1, Math.floor((note.height - 12) / 14))
+    note.text
+      .split('\n')
+      .slice(0, rows)
+      .forEach((line, index) => {
+        out.push(
+          `<text x="${num(note.x + 8)}" y="${num(note.y + 18 + index * 14)}" fill="${ink}">${escapeXml(shortenToWidth(line, note.width - 16))}</text>`,
+        )
+      })
   }
   out.push('</svg>')
   return out.join('\n')
