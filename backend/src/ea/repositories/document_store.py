@@ -61,19 +61,32 @@ def _rows_affected(result: object) -> int:
 
 
 async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing: bool) -> None:
-    """Lock the element a document hangs from, and refuse a change to the document of a frozen one.
+    """Lock the element a document hangs from, in the document's own transaction, before writing.
 
-    `FOR SHARE`: documents of one element do not wait for each other, but a
-    review transition (which updates the row) does wait for them, and they for
-    it — so the state read here is the state at commit. Taken *before* the
-    document's own row, the order a deleted element's cascade also follows.
-    A missing element is left to the foreign key.
+    A change to a document is a change to its element (docs/adr/0046): the
+    element's row is locked here — `FOR NO KEY UPDATE`, which a review
+    transition's `UPDATE` waits for and waits on — its state is read under that
+    lock, a frozen element refuses, and the element's `revision` moves, so an
+    approval read before this write is stale after it. No document is written
+    without passing through here: `add`, `replace` and `delete` all call it, and
+    `tests/unit/test_review_guard.py` fails on a writer that does not.
+
+    A write that changes no text (a reindex rewrites passages) only takes
+    `FOR SHARE`: it waits for a transition in flight, and changes nothing. The
+    element is locked before the document row, the order a deleted element's
+    cascade follows too. A missing element is left to the foreign key.
     """
     row = await session.get(
-        ElementRecord, element_id, with_for_update={"read": True}, populate_existing=True
+        ElementRecord,
+        element_id,
+        with_for_update={"key_share": True} if changing else {"read": True},
+        populate_existing=True,
     )
-    if row is not None and changing:
-        check_untouched(element_from_row(row))
+    if row is None or not changing:
+        return
+    check_untouched(element_from_row(row))
+    row.revision += 1
+    await session.flush()
 
 
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:

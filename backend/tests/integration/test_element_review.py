@@ -455,3 +455,127 @@ async def test_deleting_a_package_does_not_re_file_what_is_approved_or_locked(
     await put_in_state(engine_at_head, element.id, "draft")
     await world.packages.delete(package.package.id, move_contents_to=None)
     assert (await world.graph.get_element(element.id)).package_id is None
+
+
+# --- The same race, door by door: the approval lands while the write is in flight ---
+
+
+async def approve_without_committing(session: object, element_id: UUID) -> None:
+    await session.execute(  # type: ignore[attr-defined]
+        text(
+            "UPDATE elements SET approval_state = 'approved', approved_by_sub = 'approver-1', "
+            "approved_at = now() WHERE id = :id"
+        ),
+        {"id": element_id},
+    )
+
+
+async def test_an_approval_landing_during_a_document_write_refuses_it_or_comes_first(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:  # the approval is in flight, not committed
+        await approve_without_committing(session, element_id)
+        writer = asyncio.create_task(
+            documents.attach_text(element_id, filename="late.md", content="# Late")
+        )
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError, match="approved"):
+        await writer
+
+    assert await documents.list_for_element(element_id) == ()  # never a document after approval
+
+
+async def test_a_document_written_after_the_approver_read_makes_the_approval_stale(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)
+    read = (await world.graph.get_element(element_id)).revision
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:
+        # A document write in flight: it holds the element and has moved its revision.
+        await session.execute(
+            text("UPDATE elements SET revision = revision + 1 WHERE id = :id"), {"id": element_id}
+        )
+        with acting_as(an_approver()):
+            approval = asyncio.create_task(
+                world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=read)
+            )
+            await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ApprovalStaleError):
+        await approval
+
+    # and the real write does move the revision
+    before = (await world.graph.get_element(element_id)).revision
+    await documents.attach_text(element_id, filename="d.md", content="# D")
+    assert (await world.graph.get_element(element_id)).revision == before + 1
+
+
+async def test_an_approval_landing_during_a_filing_refuses_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    element_id = await in_review(world)
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:
+        await approve_without_committing(session, element_id)
+        mover = asyncio.create_task(world.packages.move_elements([element_id], package.package.id))
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError):
+        await mover
+
+    assert (await world.graph.get_element(element_id)).package_id is None
+
+
+async def test_an_approval_landing_during_a_package_deletion_refuses_the_re_filing(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    element_id = await in_review(world)
+    await world.packages.move_elements([element_id], package.package.id)
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:
+        await approve_without_committing(session, element_id)
+        deleter = asyncio.create_task(
+            world.packages.delete(package.package.id, move_contents_to=None)
+        )
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError):
+        await deleter
+
+    assert (await world.graph.get_element(element_id)).package_id == package.package.id
+
+
+async def test_an_approval_landing_during_an_address_change_refuses_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """IPAM writes through `update_element`: the same lock, the same refusal."""
+    from ea.repositories.architecture_store import PostgresArchitectureRepository
+    from ea.services.ipam import IpamService
+
+    world = World(engine_at_head)
+    repository = PostgresArchitectureRepository(create_session_factory(engine_at_head))
+    ipam = IpamService(world.graph, repository)
+    await ipam.declare_network(name="DMZ", cidr="10.0.1.0/24")
+    element_id = await in_review(world)
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:
+        await approve_without_committing(session, element_id)
+        assigner = asyncio.create_task(ipam.assign_address(element_id, "10.0.1.12"))
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError):
+        await assigner
+
+    assert "ip_address" not in (await world.graph.get_element(element_id)).properties

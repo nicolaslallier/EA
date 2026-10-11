@@ -253,12 +253,20 @@ class PostgresPackageRepository:
                 if not require_empty:
                     # Re-filing an element is a change to it: an approved or locked one
                     # stays where it is, so the deletion is refused rather than moving it.
+                    # Every element of the package is locked first, unfiltered: a row that
+                    # does not match a `WHERE` is skipped by `FOR UPDATE`, not waited for,
+                    # so a lock filtered on "frozen" would miss an approval in flight. The
+                    # query after it is a new statement and sees what that approval wrote.
+                    await session.execute(
+                        select(ElementRecord.id)
+                        .where(ElementRecord.package_id == package_id)
+                        .with_for_update()
+                    )
                     sample = await session.scalars(
                         select(ElementRecord)
                         .where(ElementRecord.package_id == package_id, frozen_clause())
                         .order_by(ElementRecord.name, ElementRecord.id)
                         .limit(_FROZEN_SAMPLE + 1)
-                        .with_for_update()
                     )
                     frozen = [element_from_row(found) for found in sample]
                     check_all_untouched(frozen[:_FROZEN_SAMPLE], more=len(frozen) > _FROZEN_SAMPLE)
