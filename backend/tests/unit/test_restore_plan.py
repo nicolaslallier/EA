@@ -383,3 +383,21 @@ class TestTheDigestOfAPlan:
 
         digests = {plan_digest(p) for p in (base, other_content, one_more, documents)}
         assert len(digests) == 4
+
+    def test_a_box_moved_since_the_plan_was_read_changes_it_and_so_do_the_cascaded_ids(
+        self,
+    ) -> None:
+        from ea.domain.baselines import Cascade
+
+        element, view = node("a"), uuid4()
+        here = BoxSnapshot(view, element.id, 1, 2, 132, 46)
+        base = replace(
+            plan(ModelSnapshot((), ()), ModelSnapshot((), ())),
+            boxes_overwritten=(here,),
+            cascades=(Cascade(element.id, relationship_count=1, relationships=((uuid4(), "x"),)),),
+        )
+
+        moved = replace(base, boxes_overwritten=(replace(here, x=9),))
+        other_ids = replace(base, cascades=(replace(base.cascades[0], document_ids=(uuid4(),)),))
+
+        assert len({plan_digest(base), plan_digest(moved), plan_digest(other_ids)}) == 3

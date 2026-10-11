@@ -415,6 +415,21 @@ def plan_digest(plan: RestorePlan) -> str:
         "links_delete": [link(r) for r in plan.relationships_to_delete],
         "cascaded": plan.cascaded_relationships,
         "boxes": [box(b) for b in plan.boxes_to_restore],
+        # The positions about to be overwritten: a box moved since the plan was read.
+        "boxes_overwritten": sorted(box(b) for b in plan.boxes_overwritten),
+        # What each deletion takes along, as the journal will list it.
+        "cascades": sorted(
+            [
+                str(c.element_id),
+                c.relationship_count,
+                sorted([str(i), kind] for i, kind in c.relationships),
+                c.document_count,
+                sorted(str(i) for i in c.document_ids),
+                c.box_count,
+                sorted(str(i) for i in c.diagram_ids),
+            ]
+            for c in plan.cascades
+        ),
         "documents_lost": plan.documents_lost,
         "boxes_lost": plan.boxes_lost,
         "warnings": list(plan.warnings),
