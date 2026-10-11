@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI, Request
 
 from ea.api.body_limit import BODY_ENVELOPE_MARGIN, LimitingRequestBodies
+from ea.core.config import Settings
 
 pytestmark = pytest.mark.asyncio
 SEEN: list[int] = []
@@ -17,6 +18,7 @@ LIMIT = 1000 + BODY_ENVELOPE_MARGIN
 
 def make_app(limit: int = LIMIT) -> FastAPI:
     app = FastAPI()
+    app.state.settings = Settings(debug=True, auth_enabled=False)  # the local developer calls
 
     @app.post("/exchanges/imports")
     async def imports(request: Request) -> dict[str, int]:

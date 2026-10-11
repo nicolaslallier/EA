@@ -1,4 +1,4 @@
-"""A ceiling on one endpoint's request body, enforced as the bytes arrive.
+"""The door of an upload endpoint: who, then what role, then how big, and only then the body.
 
 Starlette parses a multipart body *before* the route runs, so a handler that reads
 `limit + 1` bytes of an `UploadFile` has already let the whole upload be received and
@@ -6,6 +6,14 @@ spooled. This middleware counts the bytes of the ASGI `receive` stream itself an
 `413` the moment the ceiling is crossed. It trusts no `Content-Length`: a chunked body has
 none, and a lying one costs nothing; an honest one that is already too large is refused
 before a byte is read.
+
+FastAPI parses a multipart body *before* it resolves any dependency, so `Authenticated` on
+the router comes too late for an upload: an anonymous caller would have 20 MB buffered
+(and spooled to disk) per request before being told 401. So the door is here, in this
+order, none of it reading a byte of the body: the bearer token is verified by the app's own
+verifier (`auth.caller_of`, not a second implementation), the caller must be an editor (the
+service asks again, as defence in depth), the declared length must fit, and only then does
+the application get a stream, counted as it arrives.
 
 Pure ASGI, like the other middlewares here, so a stream is never buffered. It is added
 *inside* `AnsweringUnexpectedFailures`: the disconnect it hands the application on
@@ -18,10 +26,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from fastapi.security.utils import get_authorization_scheme_param
+
+from ea.api.auth import caller_of
 from ea.api.errors import domain_error_response
-from ea.domain.errors import ExchangeFileTooLargeError
+from ea.domain.auth import EDITOR_ROLE
+from ea.domain.errors import DomainError, ExchangeFileTooLargeError, NotAuthorisedError
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 #: The multipart envelope around a file: boundaries, headers, form fields.
@@ -38,6 +51,17 @@ class LimitingRequestBodies:
         ceiling = self._limit - BODY_ENVELOPE_MARGIN
         return ExchangeFileTooLargeError(f"an exchange file is at most {ceiling} bytes")
 
+    @staticmethod
+    async def _admit(app: FastAPI, authorization: bytes | None) -> None:
+        """Verify the bearer token and require the editor role; raise the typed refusal."""
+        scheme, token = get_authorization_scheme_param(
+            authorization.decode("latin-1") if authorization else None
+        )
+        caller = await caller_of(app, token if scheme.lower() == "bearer" and token else None)
+        if not caller.can_write:
+            msg = f"changing the catalogue needs the {EDITOR_ROLE} role"
+            raise NotAuthorisedError(msg)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # `endswith`, not `==`: behind the NGINX prefix, `path` may carry `/api`.
         if (
@@ -47,7 +71,13 @@ class LimitingRequestBodies:
         ):
             await self._app(scope, receive, send)
             return
-        declared = dict(scope["headers"]).get(b"content-length", b"0")
+        headers = dict(scope["headers"])
+        try:
+            await self._admit(scope["app"], headers.get(b"authorization"))
+        except DomainError as refusal:  # 401, or 403: answered without touching the body
+            await domain_error_response(refusal)(scope, receive, send)
+            return
+        declared = headers.get(b"content-length", b"0")
         if declared.isdigit() and int(declared) > self._limit:
             await domain_error_response(self._too_large())(scope, receive, send)
             return

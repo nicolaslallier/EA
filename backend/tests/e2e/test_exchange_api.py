@@ -379,3 +379,128 @@ async def test_the_parts_the_form_accepts_are_the_ones_the_contract_declares(
     name = body["$ref"].rsplit("/", 1)[1]
 
     assert set(schema["components"]["schemas"][name]["properties"]) == IMPORT_FIELDS
+
+
+class TestAuthenticationPrecedesTheBody:
+    """FastAPI parses a multipart body before it resolves any dependency: so the order
+    authentication, then role, then size, then reading is the middleware's, and is proved here
+    by counting what the application pulled from the wire."""
+
+    MEGABYTE = 1024 * 1024
+
+    @pytest.fixture
+    def app(self, service: ArchitectureService, exchange_store: InMemoryExchange):  # type: ignore[no-untyped-def]
+        return create_app(
+            Settings(debug=True, auth_enabled=True),
+            architecture_service=service,
+            exchanges=exchange_store,  # type: ignore[arg-type]
+            verifier=StaticVerifier({"reader": a_reader(), "editor": an_editor()}),
+        )
+
+    @pytest.fixture(autouse=True)
+    def parser_calls(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        from starlette.formparsers import MultiPartParser
+
+        calls: list[int] = []
+        original = MultiPartParser.parse
+
+        async def counting(self: MultiPartParser) -> object:
+            calls.append(1)
+            return await original(self)
+
+        monkeypatch.setattr(MultiPartParser, "parse", counting)
+        return calls
+
+    async def big_post(
+        self,
+        app: object,
+        token: str | None,
+        megabytes: int = 19,
+        declare_length: bool = False,
+    ) -> tuple[httpx.Response, int]:
+        pulled = 0
+
+        async def body() -> AsyncIterator[bytes]:
+            nonlocal pulled
+            yield b'--x\r\nContent-Disposition: form-data; name="file"; filename="a.xml"\r\n\r\n'
+            for _ in range(megabytes):
+                pulled += 1
+                yield b" " * self.MEGABYTE
+            yield b"\r\n--x--\r\n"
+
+        headers = {"content-type": "multipart/form-data; boundary=x"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if declare_length:
+            headers["content-length"] = str((megabytes + 1) * self.MEGABYTE)
+        transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/exchanges/imports", content=body(), headers=headers)
+        return response, pulled
+
+    @pytest.mark.parametrize("token", [None, "not-a-token"])
+    async def test_an_anonymous_caller_gets_a_401_and_the_body_is_not_read(
+        self, app: object, parser_calls: list[int], token: str | None
+    ) -> None:
+        response, pulled = await self.big_post(app, token)
+
+        assert response.status_code == 401
+        assert response.headers["www-authenticate"] == "Bearer"
+        assert response.headers["x-request-id"]
+        assert pulled <= 1 and parser_calls == []  # no multipart parser, no spooled file
+
+    async def test_a_reader_gets_a_403_and_the_body_is_not_read(
+        self, app: object, parser_calls: list[int]
+    ) -> None:
+        response, pulled = await self.big_post(app, "reader")
+
+        assert response.status_code == 403
+        assert pulled <= 1 and parser_calls == []
+
+    async def test_authentication_comes_before_size(self, app: object) -> None:
+        response, _ = await self.big_post(app, None, megabytes=25, declare_length=True)
+
+        assert response.status_code == 401  # not 413: an anonymous caller learns nothing of limits
+
+    async def test_the_role_comes_before_size(self, app: object) -> None:
+        response, _ = await self.big_post(app, "reader", megabytes=25, declare_length=True)
+
+        assert response.status_code == 403
+
+    async def test_an_editor_over_the_ceiling_is_cut_at_the_ceiling(
+        self, app: object, parser_calls: list[int]
+    ) -> None:
+        response, pulled = await self.big_post(app, "editor", megabytes=40)
+
+        assert response.status_code == 413
+        assert pulled < 40  # stopped where the ceiling was crossed, not at the end
+
+    async def test_many_anonymous_big_requests_at_once_read_nothing(
+        self, app: object, parser_calls: list[int]
+    ) -> None:
+        import asyncio
+
+        results = await asyncio.gather(*(self.big_post(app, None) for _ in range(5)))
+
+        assert {response.status_code for response, _ in results} == {401}
+        assert sum(pulled for _, pulled in results) <= 5
+        assert parser_calls == []
+
+    async def test_an_editor_is_let_through_to_the_route(self, app: object) -> None:
+        transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/exchanges/imports",
+                headers={"Authorization": "Bearer editor"},
+                **upload(exchange_xml()),
+            )
+
+        assert response.status_code == 200
+
+    async def test_with_authentication_off_the_local_developer_passes(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        async with await app_client(service, exchange_store) as client:
+            response = await client.post("/exchanges/imports", **upload(exchange_xml()))
+
+        assert response.status_code == 200

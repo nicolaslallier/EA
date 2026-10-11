@@ -147,6 +147,14 @@ crée aucun doublon, et le rapport du rejeu (`created: 0`, `reused: n`) dit que 
   `chunked` est compté au fil de l'eau. `EA_EXCHANGE_MAX_BYTES` (1 Kio à 100 Mo, 20 Mo par défaut) est lu une fois
   par `Settings` ; le middleware n'est posé que sur cette route et est le plus intérieur de la pile, de sorte que
   son 413 porte les en-têtes CORS et `X-Request-Id`.
+- **L'authentification précède toute lecture du corps** (règle pour toute route de téléversement, import
+  d'exchange XML et CSV compris). FastAPI analyse un corps multipart *avant* de résoudre les dépendances : le
+  `Authenticated` du routeur arriverait après 20 Mo tamponnés (et écrits dans un fichier temporaire) pour un appelant
+  anonyme. L'ordre est donc garanti par `LimitingRequestBodies.__call__` (`api/body_limit.py`) : jeton vérifié par
+  `api/auth.py:caller_of` (le même vérificateur que la dépendance, pas une copie) → 401, rôle `ea-editor` → 403, taille
+  annoncée → 413, puis lecture comptée. Le service redemande `require_editor` en première instruction. Constaté en
+  passant, non corrigé ici : `POST /files` a le défaut (`UploadFile` avant `Authenticated` : 401 reçu après lecture
+  du corps entier).
 - **Un seul fichier est analysé à la fois** par processus, avec une file d'attente d'un (un troisième reçoit 409
   `import_in_progress`) : un fichier de 20 Mo coûte quelques centaines de Mo pendant l'analyse. Le lecteur est
   un flux borné en mémoire (nœuds par objet, attributs par nœud, jetons sans fin) ; l'analyse dans son thread
