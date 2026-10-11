@@ -10,6 +10,8 @@ import { debounce } from '../../lib/debounce'
 import type { ElementRead } from './useDiagram'
 import type { DiagramTemplateRead, InstantiateRequest } from './useTemplates'
 
+type Binding = InstantiateRequest['bindings'][number]
+
 const props = defineProps<{
   template: DiagramTemplateRead
   search: (term: string, elementType: string) => Promise<ElementRead[]>
@@ -63,7 +65,7 @@ function pick(key: string, element: ElementRead): void {
 }
 
 function submit(): void {
-  const bindings = props.template.body.slots.flatMap((slot) => {
+  const bindings = props.template.body.slots.flatMap((slot): Binding[] => {
     const choice = choices[slot.key]
     if (choice.create && choice.name.trim()) {
       return [{ slot_key: slot.key, element_id: null, create: { name: choice.name.trim() } }]
