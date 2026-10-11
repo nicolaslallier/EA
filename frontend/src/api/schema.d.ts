@@ -1155,6 +1155,29 @@ export interface paths {
         patch: operations["update_relationship_relationships__relationship_id__patch"];
         trace?: never;
     };
+    "/requirements/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Coverage
+         * @description Which requirements are realized by a design and tested, and which are not.
+         *
+         *     `status` and `priority` narrow the requirements listed and counted. The
+         *     rates leave out rejected requirements and are `null` when none is left.
+         */
+        get: operations["read_coverage_requirements_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/roadmap": {
         parameters: {
             query?: never;
@@ -1592,6 +1615,38 @@ export interface components {
             rejected: number;
             /** Reused */
             reused: number;
+        };
+        /**
+         * CoverageRead
+         * @description The coverage of the requirements asked about.
+         *
+         *     The rates are over the *active* requirements (a rejected one needs neither
+         *     a design nor a test) and are `null` when there is none: a rate over nothing
+         *     is not 100 %.
+         */
+        CoverageRead: {
+            /** Active */
+            active: number;
+            /** By Priority */
+            by_priority: {
+                [key: string]: number;
+            };
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** Design Rate */
+            design_rate: number | null;
+            /** Designed */
+            designed: number;
+            /** Requirements */
+            requirements: components["schemas"]["RequirementTraceRead"][];
+            /** Total */
+            total: number;
+            /** Verification Rate */
+            verification_rate: number | null;
+            /** Verified */
+            verified: number;
         };
         /** DiagramCreate */
         DiagramCreate: {
@@ -2168,6 +2223,12 @@ export interface components {
             rule: components["schemas"]["RuleCode"];
             severity: components["schemas"]["Severity"];
         };
+        /**
+         * Gap
+         * @description What is missing around a requirement, if anything.
+         * @enum {string}
+         */
+        Gap: "design" | "verification" | "none";
         /**
          * GapCreate
          * @description Draw the gap between two plateaus.
@@ -2806,6 +2867,34 @@ export interface components {
             } | null;
         };
         /**
+         * RequirementTraceRead
+         * @description One requirement, what realizes it, what tests it, and what is missing.
+         */
+        RequirementTraceRead: {
+            /** Designed By */
+            designed_by: components["schemas"]["TraceElementRead"][];
+            element_type: components["schemas"]["ElementType"];
+            gap: components["schemas"]["Gap"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Identifier
+             * @description The readable identifier, empty when none is recorded.
+             */
+            identifier: string;
+            /** Name */
+            name: string;
+            /** Priority */
+            priority: string;
+            /** Status */
+            status: string;
+            /** Tested By */
+            tested_by: components["schemas"]["TraceElementRead"][];
+        };
+        /**
          * RestorePlanRead
          * @description What a restoration would do. Every figure is an exact count; the lists name
          *     only the first few of each kind (`PLAN_LISTED_ITEMS`).
@@ -3119,6 +3208,25 @@ export interface components {
             version: number;
             /** Vrf */
             vrf: string;
+        };
+        /**
+         * TraceElementRead
+         * @description An element on the other end of a realization of a requirement.
+         */
+        TraceElementRead: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Result
+             * @description For a test, the result it records (`passed`, `failed`…); absent otherwise.
+             */
+            result: string | null;
         };
         /**
          * Transition
@@ -7636,6 +7744,56 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_coverage_requirements_coverage_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                priority?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
