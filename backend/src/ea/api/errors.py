@@ -165,7 +165,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     FileTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "file_too_large"),
     FileNotTextError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "not_text"),
     FileStorageUnavailableError: (status.HTTP_503_SERVICE_UNAVAILABLE, "storage_unavailable"),
-    # --- Exchanges (docs/adr/0048) ---
+    # --- Exchanges (docs/adr/0050) ---
     InvalidExchangeFileError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_exchange_file"),
     # 413 literally: the bucket's `FileTooLargeError` above is a 422 and a different class.
     ExchangeFileTooLargeError: (413, "file_too_large"),

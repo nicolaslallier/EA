@@ -1,4 +1,4 @@
-"""The import of an exchange file, row by row (docs/adr/0048, docs/adr/0050).
+"""The import of an exchange file, row by row (docs/adr/0050, docs/adr/0052).
 
 Two rules shape everything here.
 
@@ -464,7 +464,7 @@ class ImportRun:
         """The existing elements this import will write to or link, to lock them in id order.
 
         Locking them before the first write means an ordinary write meets them in the same
-        order as the import (docs/adr/0050, the interlock limit). An element reached only
+        order as the import (docs/adr/0052, the interlock limit). An element reached only
         by a file row refused at write time is locked for nothing: harmless.
         """
         reuse = self._options.on_conflict is ConflictPolicy.REUSE

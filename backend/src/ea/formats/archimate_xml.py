@@ -12,7 +12,7 @@ Reading is the other direction and the dangerous one: the file is hostile input.
 It is parsed by `defusedxml` alone, as a stream (`iterparse`), never as a whole
 tree: every bound — bytes (the caller's), items, nesting, properties per object —
 is enforced while reading, and what has been handled is dropped from memory, so a
-20 MB file of empty tags costs a counter and not a tree (docs/adr/0048, 0049).
+20 MB file of empty tags costs a counter and not a tree (docs/adr/0050, 0051).
 A refusal never repeats the file: a line number at most.
 """
 

@@ -2,7 +2,7 @@
 
 Measured against a real uvicorn on the loopback, because the answer is not in our code:
 it is in what the ASGI server does to the task of a request whose peer has gone. The answer
-is written in docs/adr/0048 and the proxy settings it drives (an import outlasts NGINX's
+is written in docs/adr/0050 and the proxy settings it drives (an import outlasts NGINX's
 `proxy_read_timeout`, so clients are told to replay): if this test changes, so must the ADR.
 """
 

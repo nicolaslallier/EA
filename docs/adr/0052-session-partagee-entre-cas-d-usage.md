@@ -13,15 +13,15 @@ Statut : Proposition
 ## Contexte
 
 Chaque méthode d'écriture d'un dépôt ouvre **sa** transaction, prend ses verrous de ligne (`lock_elements`, dans
-l'ordre des ids, ADR 0046), reçoit `audit=` (l'événement est écrit dans la même transaction, ADR 0044), applique
+l'ordre des ids, ADR 0048), reçoit `audit=` (l'événement est écrit dans la même transaction, ADR 0046), applique
 `guard_element_write` et enveloppe ses erreurs 40001/40P01 en `WriteConflictError` (`repositories/conflicts.py`).
 Ce durcissement est fait pour **un** cas d'usage = **une** transaction.
 
-L'import d'un fichier d'échange (lot 2 du sous-projet 3, ADR 0048) veut l'inverse : exécuter *plusieurs* cas
+L'import d'un fichier d'échange (lot 2 du sous-projet 3, ADR 0050) veut l'inverse : exécuter *plusieurs* cas
 d'usage de `ArchitectureService` (`create_element`, `connect`…) pour que chaque règle ArchiMate, IPAM, d'audit et
 d'approbation s'applique sans être recopiée ; défaire **une** ligne refusée sans perdre les autres ; et pouvoir
 tout annuler (`dry_run`) en laissant le modèle **et** le journal d'audit intacts. Le sous-projet « historique et
-versions » (ADR 0044) avait laissé cette interface à ce sous-projet : l'événement d'audit suit déjà la session que
+versions » (ADR 0046) avait laissé cette interface à ce sous-projet : l'événement d'audit suit déjà la session que
 le dépôt utilise, il suffit donc que cette session puisse être celle de l'import.
 
 ## Décision
@@ -204,8 +204,8 @@ de 2 à 3 minutes d'import dans une seule transaction, pendant lesquelles les ve
 ## Références
 
 - ADR liés : [0015](0015-socle-postgresql-sqlalchemy-alembic.md), [0033](0033-postgresql-seul-pour-le-graphe.md),
-  [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md),
-  [0048](0048-echanges-formats-collision-et-rejet-par-ligne.md)
+  [0046](0046-journal-d-audit-append-only.md), [0048](0048-approbation-et-verrouillage-des-elements.md),
+  [0050](0050-echanges-formats-collision-et-rejet-par-ligne.md)
 - Code concerné : `backend/src/ea/db/unit_of_work.py`, `backend/src/ea/repositories/conflicts.py`
 - Tests : `backend/tests/unit/test_unit_of_work.py`, `backend/tests/unit/test_one_way_to_open_a_unit.py`,
   `backend/tests/integration/test_unit_of_work.py`

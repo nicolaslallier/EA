@@ -1,4 +1,4 @@
-"""PostgreSQL side of the import and export of exchange files (docs/adr/0048).
+"""PostgreSQL side of the import and export of exchange files (docs/adr/0050).
 
 The export reads one `REPEATABLE READ`, read-only snapshot, page after page. It
 writes nothing — no audit, no lock — and loads whole rows only through the

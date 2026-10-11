@@ -1,4 +1,4 @@
-"""An export holds no database connection while a client reads it (docs/adr/0048).
+"""An export holds no database connection while a client reads it (docs/adr/0050).
 
 The file is rendered into a temporary file while the snapshot is open; the snapshot is given
 back; only then does the first byte go out, from the file. So a slow reader costs a descriptor

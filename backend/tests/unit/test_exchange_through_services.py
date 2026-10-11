@@ -1,4 +1,4 @@
-"""An import writes through the services, never through a repository (docs/adr/0048, 0050).
+"""An import writes through the services, never through a repository (docs/adr/0050, 0052).
 
 Packages and views are written by `PackageService` and `DiagramService`, in the import's
 shared transaction, so that the audit trail, the caller's role, the tree's lock and the rules

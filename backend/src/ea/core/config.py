@@ -110,28 +110,28 @@ class Settings(BaseSettings):
     # 60 s `proxy_read_timeout`: with 5+5 pooled connections, ten writes queued
     # behind a long import's locks would otherwise freeze every read and `/health`
     # and end in a 504 for a write that goes through later. 0 turns it off.
-    # Only the API's engine asks for it (`create_api_engine`) — docs/adr/0050.
+    # Only the API's engine asks for it (`create_api_engine`) — docs/adr/0052.
     db_lock_timeout_ms: int = Field(default=10_000, ge=0)
 
-    # --- Exchange files (docs/adr/0048) ------------------------------------
+    # --- Exchange files (docs/adr/0050) ------------------------------------
     # The largest exchange file an import accepts, cut while it is received. A setting
     # because a deployment sits behind a proxy with its own ceiling; read once, at boot.
     # The upper bound is the point at which a file is read in a thread for minutes and
     # holds hundreds of megabytes: past it, split the file.
     exchange_max_bytes: int = Field(default=MAX_EXCHANGE_BYTES, ge=1024, le=100 * 1024 * 1024)
     # How long an import's client may stay silent between two pieces of its body, and how
-    # long the whole body may take to arrive (docs/adr/0048). A place is held while the body
+    # long the whole body may take to arrive (docs/adr/0050). A place is held while the body
     # is read: without these, two slow connections hold every place. They run only during the
     # reception, not during the analysis, and add to the proxy's `client_body_timeout`.
     # Packages one import may create: each costs a reading of the tree under the locks of the
-    # import and of the tree (docs/adr/0052). Those that already exist do not count.
+    # import and of the tree (docs/adr/0054). Those that already exist do not count.
     exchange_max_new_folders: int = Field(default=MAX_NEW_FOLDERS, ge=0, le=MAX_PACKAGES)
-    # Downloads in a process, and how long a client has to take one (docs/adr/0048): neither
+    # Downloads in a process, and how long a client has to take one (docs/adr/0050): neither
     # holds a database connection, only a file and a place.
     exchange_max_exports: int = Field(default=MAX_EXPORTS_IN_FLIGHT, ge=1, le=64)
     exchange_send_timeout_s: float = Field(default=EXPORT_SEND_TIMEOUT_SECONDS, ge=0.01, le=3600.0)
     # One caller's own places (the `sub` of the verified token), and when a place that was never
-    # given back is taken back (docs/adr/0048).
+    # given back is taken back (docs/adr/0050).
     exchange_imports_per_caller: int = Field(
         default=MAX_IMPORTS_PER_CALLER, ge=1, le=MAX_IMPORTS_IN_FLIGHT
     )

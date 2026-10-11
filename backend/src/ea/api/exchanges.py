@@ -1,4 +1,4 @@
-"""Import and export of the model as exchange files — see docs/adr/0048.
+"""Import and export of the model as exchange files — see docs/adr/0050.
 
 The export is a download streamed from one database snapshot; the file name
 is made by the service from fixed words and the date, never from anything the

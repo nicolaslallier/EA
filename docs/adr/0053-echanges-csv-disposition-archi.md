@@ -12,7 +12,7 @@ Statut : Proposition
 
 ## Contexte
 
-L'ADR 0048 a posé l'échange du modèle en XML Exchange ; Archi sait aussi échanger trois CSV (`elements.csv`,
+L'ADR 0050 a posé l'échange du modèle en XML Exchange ; Archi sait aussi échanger trois CSV (`elements.csv`,
 `relations.csv`, `properties.csv`), format que les tableurs ouvrent. Tout ce qui garde le XML (porte d'entrée
 dans l'ordre jeton, rôle, taille, lecture ; plafond d'octets ; porte d'analyse ; registre d'identifiants ; moteur
 d'import par lots ; rapport borné) doit valoir pour le CSV sans qu'aucun de ces garde-fous soit recopié. Un CSV
@@ -66,7 +66,7 @@ a en plus deux dangers que le XML n'a pas : un tableur exécute comme une formul
   chemin `../` ou d'un lien symbolique n'existe pas. Chaque format n'accepte que ses parties (`file` pour le
   XML, les trois et `safe_cells` pour le CSV), les parties inconnues ou répétées sont refusées. Le plafond
   d'octets vaut pour la somme des fichiers (la route lit chaque partie dans ce qui reste du plafond). La porte
-  d'analyse, le sémaphore, la place prise avant lecture (0048), `dry_run=true` par défaut et le rôle éditeur
+  d'analyse, le sémaphore, la place prise avant lecture (0050), `dry_run=true` par défaut et le rôle éditeur
   sont ceux du XML.
 - **Empreinte.** Un seul fichier : le `sha256` du fichier ; plusieurs : chaque fichier à sa place, de sorte que
   les mêmes octets envoyés comme `relations` ou comme `properties` ne se confondent pas.
@@ -96,5 +96,5 @@ a en plus deux dangers que le XML n'a pas : un tableur exécute comme une formul
 
 ## Références
 
-- ADR liés : [0048](0048-echanges-formats-collision-et-rejet-par-ligne.md), [0049](0049-defusedxml-et-validation-xsd.md), [0050](0050-session-partagee-entre-cas-d-usage.md)
+- ADR liés : [0050](0050-echanges-formats-collision-et-rejet-par-ligne.md), [0051](0051-defusedxml-et-validation-xsd.md), [0052](0052-session-partagee-entre-cas-d-usage.md)
 - Code concerné : `backend/src/ea/formats/csv_files.py`, `backend/src/ea/domain/exchange.py`, `backend/src/ea/services/exchanges.py`, `backend/src/ea/api/exchanges.py`

@@ -1,4 +1,4 @@
-"""The shared transaction, against fake sessions — no database needed (docs/adr/0050)."""
+"""The shared transaction, against fake sessions — no database needed (docs/adr/0052)."""
 
 from __future__ import annotations
 

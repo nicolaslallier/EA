@@ -1,4 +1,4 @@
-"""Structural checks on an export that always run, whatever the XSD (docs/adr/0049).
+"""Structural checks on an export that always run, whatever the XSD (docs/adr/0051).
 
 They do not replace validation against the Open Group schema, which is not in
 this repository: they pin what the schema would also demand and that a reader

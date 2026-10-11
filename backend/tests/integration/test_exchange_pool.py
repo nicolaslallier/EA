@@ -1,4 +1,4 @@
-"""Slow downloads leave the connection pool alone (docs/adr/0048).
+"""Slow downloads leave the connection pool alone (docs/adr/0050).
 
 A pool of two connections, and three downloads whose clients never read a byte: if an export held
 its snapshot while it was sent, the third would wait for a connection that never comes back, and

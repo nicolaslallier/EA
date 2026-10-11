@@ -1,4 +1,4 @@
-"""A bound that is declared is a bound that is applied (docs/adr/0048).
+"""A bound that is declared is a bound that is applied (docs/adr/0050).
 
 A ceiling nobody reads is worse than none: it documents a protection that is not
 there. Every `MAX_*` / `*_LIMIT` / page-size / time-budget constant of the exchange

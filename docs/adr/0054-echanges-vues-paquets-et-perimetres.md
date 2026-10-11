@@ -12,7 +12,7 @@ Statut : Proposition
 
 ## Contexte
 
-Les lots 1 à 3 (ADR 0048, 0050, 0051) échangent les éléments et les relations. Un catalogue porte aussi des
+Les lots 1 à 3 (ADR 0050, 0052, 0053) échangent les éléments et les relations. Un catalogue porte aussi des
 diagrammes enregistrés (des *vues* : quels éléments sont dessinés, où) et un arbre de paquets (la classification du
 sous-projet 1). Le format Exchange sait dire les deux (`views`, `organizations`). Un export doit aussi pouvoir
 se limiter à un paquet ou au résultat d'une requête enregistrée, sans fuir un seul élément hors de ce périmètre.
@@ -20,7 +20,7 @@ se limiter à un paquet ou au résultat d'une requête enregistrée, sans fuir u
 ## Décision
 
 **Écriture par les services, jamais par un dépôt.** Les paquets et les vues d'un fichier sont écrits par
-`PackageService` et `DiagramService`, dans la transaction partagée de l'import (ADR 0050) : rôle éditeur, journal
+`PackageService` et `DiagramService`, dans la transaction partagée de l'import (ADR 0052) : rôle éditeur, journal
 d'audit, règles de l'arbre (`check_tree`, `MAX_PACKAGES`) s'appliquent comme pour une personne. Un test lit le
 source (`test_exchange_through_services.py`) et échoue si les modules d'échange importent `ea.repositories`
 ou `ea.db`, ou atteignent le `_repository` d'un autre objet.
@@ -120,5 +120,5 @@ est lancé une fois, `LIMIT 1`). Le corps rend l'instantané à la fin, si le cl
 
 ## Références
 
-- ADR liés : [0042](0042-les-paquets-classement-en-liste-d-adjacence.md), [0048](0048-echanges-formats-collision-et-rejet-par-ligne.md), [0050](0050-session-partagee-entre-cas-d-usage.md), [0051](0051-echanges-csv-disposition-archi.md)
+- ADR liés : [0042](0042-les-paquets-classement-en-liste-d-adjacence.md), [0050](0050-echanges-formats-collision-et-rejet-par-ligne.md), [0052](0052-session-partagee-entre-cas-d-usage.md), [0053](0053-echanges-csv-disposition-archi.md)
 - Code concerné : `backend/src/ea/services/exchange_import.py`, `backend/src/ea/domain/exchange.py` (`plan_folders`, `validate_box`), `backend/src/ea/repositories/exchange_store.py`

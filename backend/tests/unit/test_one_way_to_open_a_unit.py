@@ -1,4 +1,4 @@
-"""A repository gets its session from `ea.db.unit_of_work`, and from nowhere else (docs/adr/0050).
+"""A repository gets its session from `ea.db.unit_of_work`, and from nowhere else (docs/adr/0052).
 
 Like `test_audit_coverage.py`, this reads the source. A store that opened
 `self._sessions.begin()` itself would, in the middle of an import, write

@@ -1,4 +1,4 @@
-"""An import is admitted before a byte of its body is read (docs/adr/0048).
+"""An import is admitted before a byte of its body is read (docs/adr/0050).
 
 FastAPI parses a multipart body before it resolves anything, so the places for imports in
 flight are taken by the ASGI door (`api/body_limit.py`), after the token and the role and

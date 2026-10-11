@@ -765,7 +765,7 @@ class ExportSnapshot(Protocol):
 
     Pages rather than the whole graph so an export never holds the model in
     memory; one snapshot rather than one read per page so a write landing
-    between two pages cannot tear the file (docs/adr/0048).
+    between two pages cannot tear the file (docs/adr/0050).
     """
 
     async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]: ...
@@ -801,7 +801,7 @@ class ExchangeRepository(Protocol):
         """The one transaction every write of an import joins, held by one import at a time.
 
         Rolled back unless `commit` is still true on a normal exit. A second import
-        is refused at once (`ImportInProgressError`), never queued (docs/adr/0050).
+        is refused at once (`ImportInProgressError`), never queued (docs/adr/0052).
         """
         ...
 
@@ -838,6 +838,6 @@ class ExchangeRepository(Protocol):
         """Take the row locks of these existing elements, in id order, without writing.
 
         Done before the first write so that an import and an ordinary write meet the
-        elements in the same order (docs/adr/0050, the interlock limit).
+        elements in the same order (docs/adr/0052, the interlock limit).
         """
         ...

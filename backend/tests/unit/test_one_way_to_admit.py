@@ -1,4 +1,4 @@
-"""A place among the imports and exports is taken by `lease()` and by nothing else (docs/adr/0048).
+"""A place among the imports and exports is taken by `lease()` and by nothing else (docs/adr/0050).
 
 Like `test_one_way_to_open_a_unit.py`, this reads the source. A place taken and given back by two
 calls made by hand is a place that one path forgets to give back; the context manager gives it

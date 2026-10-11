@@ -12,7 +12,7 @@ Statut : Proposition
 
 ## Contexte
 
-L'échange du modèle (ADR 0048 à 0052) existe en HTTP. Un agent doit pouvoir lire un fichier d'échange ou le proposer à
+L'échange du modèle (ADR 0050 à 0054) existe en HTTP. Un agent doit pouvoir lire un fichier d'échange ou le proposer à
 l'import sans passer par l'écran « Échanges », avec les mêmes règles et sans qu'aucune soit récrite dans l'adaptateur
 (`mcp/` est un frère de `api/`, pas un client de `api/`).
 
@@ -32,7 +32,7 @@ l'import sans passer par l'écran « Échanges », avec les mêmes règles et sa
   trop gros pour la réponse n'est pas construit en entier pour le savoir). Au-delà, une erreur d'outil claire renvoie
   vers l'écran Échanges. XML en texte seulement ; CSV en trois arguments texte. Les vues ne sont ni exportées ni importées
   par MCP (`with_views=false` forcé).
-- **Mêmes places que HTTP.** `/mcp` ne traverse pas la porte ASGI où HTTP prend sa place (ADR 0048) ; le service la prend
+- **Mêmes places que HTTP.** `/mcp` ne traverse pas la porte ASGI où HTTP prend sa place (ADR 0050) ; le service la prend
   pour tout appelant qui arrive sans place, dans la **même** admission et avec la même clé, le `sub` du jeton vérifié : un
   appelant qui a un import HTTP en vol ne peut pas en lancer un second par MCP, et le bail est rendu à la fin de
   l'analyse, y compris sur exception et annulation. `require_editor` passe en premier, même en simulation : un lecteur voit
@@ -50,5 +50,5 @@ l'import sans passer par l'écran « Échanges », avec les mêmes règles et sa
 
 ## Références
 
-- ADR liés : [0014](0014-serveur-mcp-pour-les-agents.md), [0048](0048-echanges-formats-collision-et-rejet-par-ligne.md), [0051](0051-echanges-csv-disposition-archi.md), [0052](0052-echanges-vues-paquets-et-perimetres.md)
+- ADR liés : [0014](0014-serveur-mcp-pour-les-agents.md), [0050](0050-echanges-formats-collision-et-rejet-par-ligne.md), [0053](0053-echanges-csv-disposition-archi.md), [0054](0054-echanges-vues-paquets-et-perimetres.md)
 - Code concerné : `backend/src/ea/mcp/server.py`, `backend/src/ea/mcp/errors.py`

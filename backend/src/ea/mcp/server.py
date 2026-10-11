@@ -1441,7 +1441,7 @@ def build_mcp_server(
         await get_queries().delete(query_id)
         return f"saved query {query_id} was deleted"
 
-    # --- Exchange files (docs/adr/0048 to 0052) -------------------------------
+    # --- Exchange files (docs/adr/0050 to 0054) -------------------------------
 
     @server.tool(annotations=READS)
     @speaking_plainly

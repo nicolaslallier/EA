@@ -1,4 +1,4 @@
-"""The shared transaction against a real PostgreSQL (docs/adr/0050).
+"""The shared transaction against a real PostgreSQL (docs/adr/0052).
 
 Rollback and commit, one SAVEPOINT per row, the dry run that leaves nothing
 behind, one import at a time, the audit trail that follows the transaction, and

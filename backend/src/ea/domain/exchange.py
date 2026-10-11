@@ -2,7 +2,7 @@
 
 Pure: no XML, no CSV, no SQL. The ArchiMate rules stay in `domain/archimate/`
 and are applied by `ArchitectureService`; this module only translates names
-and carries values between a file and the service (docs/adr/0048).
+and carries values between a file and the service (docs/adr/0050).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class ExportRequest:
     format: ExchangeFormat = ExchangeFormat.ARCHIMATE_XML
     scope: ExportScope = field(default_factory=ExportScope)
     with_views: bool = True
-    #: CSV only: prefix with `'` a cell a spreadsheet would run as a formula (docs/adr/0051).
+    #: CSV only: prefix with `'` a cell a spreadsheet would run as a formula (docs/adr/0053).
     safe_cells: bool = True
 
 
@@ -710,7 +710,7 @@ class ImportOptions:
     dry_run: bool = True
     on_conflict: ConflictPolicy = ConflictPolicy.REUSE
     strict: bool = False
-    #: CSV only: give back a cell the export had prefixed with `'` (docs/adr/0051).
+    #: CSV only: give back a cell the export had prefixed with `'` (docs/adr/0053).
     safe_cells: bool = True
     #: XML only: recreate the views of the file (their boxes; never a link).
     with_views: bool = True

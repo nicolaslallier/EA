@@ -1,7 +1,7 @@
 """The export, validated against the Open Group's XSD when the operator provides it.
 
 The schema is not in this repository: its licence has not been read, so it is
-neither downloaded nor versioned (docs/adr/0049). To run this test, point
+neither downloaded nor versioned (docs/adr/0051). To run this test, point
 `EA_EXCHANGE_XSD` at a local `archimate3_Model.xsd` (its sibling `xml.xsd`,
 `archimate3_View.xsd`, `archimate3_Diagram.xsd` beside it), obtained from
 https://www.opengroup.org/xsd/archimate/ . Without it the test is skipped with

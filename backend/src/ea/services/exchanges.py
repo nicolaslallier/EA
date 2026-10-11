@@ -1,4 +1,4 @@
-"""Use cases of the import and export of exchange files (docs/adr/0048).
+"""Use cases of the import and export of exchange files (docs/adr/0050).
 
 Export reads one consistent snapshot, page after page, and streams. It writes
 nothing, so it has neither an audit event nor a review guard: a reader may run it.
@@ -153,7 +153,7 @@ class ExchangeService:
         self._max_new_folders = max_new_folders
         self._max_export_bytes = max_export_bytes
         # Exports prepared or being sent, apart from the imports: a download holds no
-        # connection, but it holds a file and a place (docs/adr/0048).
+        # connection, but it holds a file and a place (docs/adr/0050).
         self._exports = Admission(
             max_exports,
             per_caller=exports_per_caller,

@@ -1,4 +1,4 @@
-"""The MCP tool takes its place among the imports like the HTTP door does (docs/adr/0048).
+"""The MCP tool takes its place among the imports like the HTTP door does (docs/adr/0050).
 
 `/mcp` does not cross `api/body_limit.py`, where HTTP takes its place; the service takes it for
 every caller that arrives without one. Same admission, same key (the `sub` of the verified

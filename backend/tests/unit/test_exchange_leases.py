@@ -1,4 +1,4 @@
-"""A place is a lease in a set, not a count that can drift (docs/adr/0048).
+"""A place is a lease in a set, not a count that can drift (docs/adr/0050).
 
 A counter incremented on one path and decremented on another is wrong the day one path forgets,
 and a counter stuck at its maximum refuses everybody for good. Here every figure is computed from

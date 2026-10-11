@@ -7,7 +7,7 @@ dependencies = [
     "alembic>=1.20.0",
     "asyncpg>=0.32.0",
     # Parses untrusted exchange files without DTDs, entities or external
-    # references — docs/adr/0049.
+    # references — docs/adr/0051.
     "defusedxml>=0.7.1",
     "fastapi>=0.142.4",
     # The embedding service is reached over HTTP, and it is the only outbound
@@ -36,7 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "bandit[toml]>=1.9.4",
-    # XSD validation of the export, in tests only — docs/adr/0049.
+    # XSD validation of the export, in tests only — docs/adr/0051.
     "lxml>=5.3",
     "mypy>=2.4.0",
     "pip-audit>=2.9",

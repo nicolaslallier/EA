@@ -25,7 +25,7 @@ current_channel: ContextVar[AuditChannel] = ContextVar(
 )
 
 #: False while a file is being imported: its element names are the file's content, and a
-#: log line per row must not repeat them (docs/adr/0048). The audit trail keeps them.
+#: log line per row must not repeat them (docs/adr/0050). The audit trail keeps them.
 names_in_logs: ContextVar[bool] = ContextVar("ea_names_in_logs", default=True)
 
 

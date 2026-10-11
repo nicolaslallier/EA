@@ -1,4 +1,4 @@
-"""A name that came from a person never reaches a log line unwrapped (docs/adr/0048).
+"""A name that came from a person never reaches a log line unwrapped (docs/adr/0050).
 
 While a file is imported, `logged(name)` shows `<imported>` instead of the name: the file is
 untrusted (a 5 MB name, a forged `[ERROR]` line, someone's secret), and the audit trail keeps

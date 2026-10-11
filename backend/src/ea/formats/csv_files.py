@@ -1,4 +1,4 @@
-"""Archi-style CSV (docs/adr/0051): `elements.csv`, `relations.csv` and `properties.csv`.
+"""Archi-style CSV (docs/adr/0053): `elements.csv`, `relations.csv` and `properties.csv`.
 
 RFC 4180: UTF-8, comma, every cell quoted, CRLF. A cell that a spreadsheet would run as
 a formula is prefixed with `'` on the way out and given back on the way in.

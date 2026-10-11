@@ -296,7 +296,7 @@ class TooManyRefusedRowsError(DomainError):
 
     Nothing was written. A file where that many rows are refused is nearly always
     the wrong file, and each refusal costs a replay of the rows before it in its
-    batch (docs/adr/0050).
+    batch (docs/adr/0052).
     """
 
 

@@ -239,7 +239,7 @@ The backend's OpenAPI schema is the single source of truth. **Never hand-write a
 ## Exchange files: a door that is held, not trusted
 
 `GET /exchanges/export` and `POST /exchanges/imports` (and the MCP tools `export_model` / `import_model`) exchange the
-model as ArchiMate Exchange XML or as Archi-style CSV; the decisions are `docs/adr/0048` to `0053`. What a change here
+model as ArchiMate Exchange XML or as Archi-style CSV; the decisions are `docs/adr/0050` to `0055`. What a change here
 must keep: an import is `dry_run=true` unless said otherwise and goes through the services (never a repository:
 `test_exchange_through_services.py`); its place among the imports in flight is a **lease** taken before the body is read
 (`services/exchange_admission.py`, one global ceiling and one per `sub`, shared by HTTP and MCP, expiring by itself);
@@ -674,7 +674,7 @@ lock, and a 40001/40P01 condemns the whole import (nothing is written). A call t
 sets its own isolation level passes `alone=True`. The API's engine
 (`create_api_engine`) gives up a row-lock wait after `EA_DB_LOCK_TIMEOUT_MS`
 (10 s; SQLSTATE 55P03 is a 409 `write_conflict`); scripts and migrations wait.
-See `docs/adr/0050`.
+See `docs/adr/0052`.
 
 ## Who is calling is decided once, in `services/`
 

@@ -24,7 +24,7 @@ sont posées ici pour que les lots suivants convergent, et seront confirmées ou
 écrites.
 
 Depuis la rédaction du plan, deux sous-projets ont changé le sol : le journal d'audit obligatoire sur toute
-écriture (ADR 0044) et l'approbation et le verrouillage des éléments (ADR 0046).
+écriture (ADR 0046) et l'approbation et le verrouillage des éléments (ADR 0048).
 
 ## Décision
 
@@ -106,13 +106,13 @@ avec `strict` ; plafond de 20 Mo coupé pendant la réception.
 | Un curseur à clé composée plutôt que `OFFSET` | linéaire | SQL plus lourd, même cohérence | écarté tant que le catalogue reste petit |
 | Construire un arbre XML (`ElementTree`) | échappement fourni | tient le modèle en mémoire | écarté |
 | Retirer les caractères interdits sans rien dire | simple | corruption invisible d'un nom | écarté |
-| Exporter l'état d'approbation en propriétés `ea.*` | aller-retour de la revue | une approbation importée sans lecteur n'a aucun sens (ADR 0046 : on approuve ce qu'on a lu) | écarté |
+| Exporter l'état d'approbation en propriétés `ea.*` | aller-retour de la revue | une approbation importée sans lecteur n'a aucun sens (ADR 0048 : on approuve ce qu'on a lu) | écarté |
 | Historique des échanges dans MinIO | trace | bucket qui grossit sans lecteur | écarté |
 
 ## Conséquences
 
 - La conformité de l'export au XSD de l'Open Group n'a **pas** été vérifiée : le schéma n'est pas dans le dépôt
-  (ADR 0049). Elle est vérifiée par des contrôles structurels écrits à la main, qui s'exécutent toujours, et par un
+  (ADR 0051). Elle est vérifiée par des contrôles structurels écrits à la main, qui s'exécutent toujours, et par un
   test XSD qui se saute sans `EA_EXCHANGE_XSD`.
 - La compatibilité réelle avec Sparx EA et Archi n'est pas testée : à vérifier à la main une fois, résultat à
   consigner ici.
@@ -243,5 +243,5 @@ importe.**
 
 ## Références
 
-- ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md), [0049](0049-defusedxml-et-validation-xsd.md)
+- ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0046](0046-journal-d-audit-append-only.md), [0048](0048-approbation-et-verrouillage-des-elements.md), [0051](0051-defusedxml-et-validation-xsd.md)
 - Code concerné : `backend/src/ea/domain/exchange.py`, `backend/src/ea/formats/archimate_xml.py`, `backend/src/ea/services/exchanges.py`, `backend/src/ea/repositories/exchange_store.py`, `backend/src/ea/api/exchanges.py`

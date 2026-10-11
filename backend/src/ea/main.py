@@ -634,7 +634,7 @@ def create_app(
     # unhandled failure then passes back out through CORS and the request id,
     # like every other answer. Starlette's own `Exception` handler sits outside
     # both and stays only as a last resort — see `api/errors.py`.
-    # The ceiling on an import's body is innermost of all (docs/adr/0048): its 413 is then an
+    # The ceiling on an import's body is innermost of all (docs/adr/0050): its 413 is then an
     # ordinary answer to CORS and the request id, and the disconnect it hands the route on
     # overflow never reaches the net below as an unexpected failure.
     app.add_middleware(

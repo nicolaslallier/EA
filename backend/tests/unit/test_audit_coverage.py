@@ -110,7 +110,7 @@ def _direct_writer(node: ast.AST) -> bool:
             if function.attr == "delete" and "session" in ast.unparse(function.value):
                 return True
         if isinstance(function, ast.Name) and function.id in WRITING_STATEMENTS | {"work"}:
-            return True  # `work(self._sessions)` is the one way to open a write (adr/0050)
+            return True  # `work(self._sessions)` is the one way to open a write (adr/0052)
     return False
 
 

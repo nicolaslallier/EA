@@ -36,7 +36,7 @@ def replayable[**Params, R](
             if not is_serialization_failure(error):
                 raise
             # Inside an import there is nothing to replay *here*: the transaction is
-            # aborted, the whole import is what runs again (docs/adr/0050).
+            # aborted, the whole import is what runs again (docs/adr/0052).
             condemn_unit()
             logger.warning(
                 "write conflict, to be replayed",

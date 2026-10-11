@@ -77,7 +77,7 @@ def create_api_engine(settings: Settings) -> AsyncEngine:
     """The engine of the API: `create_engine` plus a bounded wait for row locks.
 
     Not the engine of a migration or of `ea.reindex`, which may legitimately wait
-    for a lock as long as it takes (docs/adr/0050).
+    for a lock as long as it takes (docs/adr/0052).
     """
     return create_engine(settings, lock_timeout_ms=settings.db_lock_timeout_ms)
 

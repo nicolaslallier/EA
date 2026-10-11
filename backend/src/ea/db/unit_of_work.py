@@ -1,4 +1,4 @@
-"""One transaction shared by several use cases (docs/adr/0050).
+"""One transaction shared by several use cases (docs/adr/0052).
 
 Every repository opens a unit of work per call — right for a use case that
 writes once, wrong for an import that creates hundreds of elements and links
@@ -135,7 +135,7 @@ async def _nested(session: AsyncSession) -> AsyncIterator[None]:
     `ROLLBACK TO SAVEPOINT` undoes the writes but leaves the savepoint alive, as an empty
     sub-transaction one level deeper. The next write then gives an id to every level above
     it, so each refusal would add one tracked sub-transaction until PostgreSQL's cache of 64
-    overflows (measured: docs/adr/0050). Releasing the empty level right away costs nothing.
+    overflows (measured: docs/adr/0052). Releasing the empty level right away costs nothing.
     """
     transaction = await session.begin_nested()
     await session.connection()  # SQLAlchemy emits the SAVEPOINT on first use of the connection

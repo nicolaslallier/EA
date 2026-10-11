@@ -36,7 +36,7 @@ téléchargé ni versionné dans ce dépôt, et aucun fichier tiers (modèle d'e
   noms, sections et leur ordre, `xsi:type` et `xml:lang` présents, identifiants uniques et valides, références de
   relations et de propriétés résolues, aucune colonne interne dans les propriétés. Ils n'équivalent pas au XSD.
 - L'écriture du XML ne dépend d'aucune bibliothèque : des chaînes échappées, parce qu'un export est diffusé en
-  flux et que le modèle n'est jamais tenu en mémoire (ADR 0048).
+  flux et que le modèle n'est jamais tenu en mémoire (ADR 0050).
 
 ## Alternatives envisagées et écartées
 
@@ -62,5 +62,5 @@ téléchargé ni versionné dans ce dépôt, et aucun fichier tiers (modèle d'e
 
 ## Références
 
-- ADR liés : [0048](0048-echanges-formats-collision-et-rejet-par-ligne.md)
+- ADR liés : [0050](0050-echanges-formats-collision-et-rejet-par-ligne.md)
 - Code concerné : `backend/pyproject.toml`, `backend/tests/unit/test_exchange_xsd.py`, `backend/tests/unit/test_exchange_structure.py`
