@@ -169,6 +169,18 @@ class TestTheRoadmap:
         assert items["Runbook"]["dated"] is False
         assert [(e["relationship_type"]) for e in body["edges"]] == ["realization"]
 
+    async def test_a_default_window_that_loses_dated_items_says_so(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await create(client, "work_package", "Old", valid_from="1999-01-01")
+        await create(client, "work_package", "Recent", valid_from="2027-01-01")
+
+        body = (await client.get("/roadmap")).json()
+
+        assert body["window_truncated"] is True
+        assert (body["data_from"], body["data_to"]) == ("1999-01-01", "2027-01-01")
+        assert [i["name"] for i in body["items"]] == ["Old"]
+
     async def test_a_window_is_read_from_and_to(self, client: httpx.AsyncClient) -> None:
         await create(client, "work_package", "Early", valid_until="2025-12-31")
         await create(client, "work_package", "Inside", valid_from="2026-03-01")

@@ -234,6 +234,11 @@ class Roadmap:
     edges: tuple[RoadmapEdge, ...]
     window_from: date | None
     window_to: date | None
+    #: The bounds of the dated data, whatever window was drawn.
+    data_from: date | None = None
+    data_to: date | None = None
+    #: The default window was cut to 20 years and left dated items out: say so, never silently.
+    window_truncated: bool = False
 
 
 def check_window(start: date | None, end: date | None) -> None:
@@ -317,4 +322,13 @@ def build_roadmap(
             key=lambda e: (str(e.source_id), str(e.target_id), e.relationship_type.value),
         )
     )
-    return Roadmap(items, edges, low, high)
+    days = [d for span in spans.values() for d in (span.start, span.end) if d is not None]
+    data_from, data_to = (min(days), max(days)) if days else (None, None)
+    truncated = (
+        low is not None
+        and high is not None
+        and data_from is not None
+        and data_to is not None
+        and ((start is None and data_from < low) or (end is None and data_to > high))
+    )
+    return Roadmap(items, edges, low, high, data_from, data_to, truncated)

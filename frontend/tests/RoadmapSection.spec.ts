@@ -39,6 +39,27 @@ describe('RoadmapSection', () => {
     expect(screen.getByRole('heading', { name: /comparer deux plateaux/i })).toBeInTheDocument()
   })
 
+  it('warns when the default window left dated items out, with the real bounds', async () => {
+    await open({
+      ...DATED,
+      window_truncated: true,
+      data_from: '1999-01-01',
+      data_to: '2027-01-01',
+    })
+
+    const warning = await screen.findByRole('status')
+    expect(warning).toHaveTextContent('20 ans')
+    expect(warning).toHaveTextContent('1999-01-01')
+    expect(warning).toHaveTextContent('2027-01-01')
+  })
+
+  it('says nothing when the window lost nothing', async () => {
+    await open(DATED)
+    await screen.findByRole('button', { name: /Phase 1/ })
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
   it('says so when nothing carries a date', async () => {
     await open({
       items: [aRoadmapItem({ name: 'Runbook', element_type: 'deliverable' })],

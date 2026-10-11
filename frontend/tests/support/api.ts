@@ -184,6 +184,9 @@ export function aRoadmap(overrides: Partial<RoadmapRead> = {}): RoadmapRead {
     edges: [],
     window_from: null,
     window_to: null,
+    window_truncated: false,
+    data_from: null,
+    data_to: null,
     ...overrides,
   }
 }
