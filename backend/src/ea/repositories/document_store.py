@@ -60,52 +60,44 @@ def _rows_affected(result: object) -> int:
     return cast("CursorResult[Any]", result).rowcount
 
 
-async def _hold_the_element(session: AsyncSession, element_id: UUID, *, changing: bool) -> None:
+async def _hold_the_element(session: AsyncSession, element_id: UUID) -> ElementRecord | None:
     """Lock the element a document hangs from, in the document's own transaction, before writing.
 
     A change to a document is a change to its element (docs/adr/0046): the
     element's row is locked here — `FOR NO KEY UPDATE`, which a review
-    transition's `UPDATE` waits for and waits on — its state is read under that
-    lock and put to the one guard every way into an element asks
-    (`guard_element_write`), and the caller then `touch`es the element in this
-    same transaction: a new revision, so an approval read before this write is
-    stale after it, and the author, so they cannot approve what they changed.
-    No document is written without passing through here: `add`, `replace` and
-    `delete` all call it, and `tests/unit/test_review_guard.py` fails on a writer
-    that does not.
-
-    A write that changes no text (a reindex rewrites passages) only takes
-    `FOR SHARE`: it waits for a transition in flight, and changes nothing. The
-    element is locked before the document row, the order a deleted element's
-    cascade follows too. A missing element is left to the foreign key.
+    transition's `UPDATE` waits for and waits on. The caller then reads the
+    document's row, *knows whether the write changes anything*, and if it does
+    puts the locked element to the one guard every way into an element asks
+    (`_guard_the_element`), and `touch`es it in this same transaction: a new
+    revision, so an approval read before this write is stale after it, and the
+    author, so they cannot approve what they changed. The element is locked
+    before the document row, the order a deleted element's cascade follows too.
+    A missing element is left to the foreign key.
     """
-    row = await session.get(
-        ElementRecord,
-        element_id,
-        with_for_update={"key_share": True} if changing else {"read": True},
-        populate_existing=True,
+    return await session.get(
+        ElementRecord, element_id, with_for_update={"key_share": True}, populate_existing=True
     )
-    if row is not None and changing:
-        guard_element_write(element_from_row(row), WriteKind.DOCUMENT)
+
+
+def _guard_the_element(element: ElementRecord | None) -> None:
+    """`guard_element_write` for a document write. No document is written without it:
+    `tests/unit/test_review_guard.py` fails on a writer that does not call it."""
+    if element is not None:
+        guard_element_write(element_from_row(element), WriteKind.DOCUMENT)
 
 
 async def _lock_document(
-    session: AsyncSession, document_id: UUID, *, new_content: str | None = None
-) -> ElementDocument | None:
-    """The document row, locked after its element's (see `_hold_the_element`), or `None`.
-
-    `new_content` is the text a replacement brings: if it is the stored text the
-    write changes nothing and the element is only read-locked. A deletion passes none.
-    """
-    known = await session.get(ElementDocument, document_id)
+    session: AsyncSession, document_id: UUID
+) -> tuple[ElementDocument, ElementRecord | None] | None:
+    """The document row, locked after its element's, with that element; `None` if it is gone."""
+    known = await session.get(ElementDocument, document_id)  # only to learn the element
     if known is None:
         return None
-    await _hold_the_element(
-        session, known.element_id, changing=new_content is None or known.content != new_content
-    )
-    return await session.get(
+    element = await _hold_the_element(session, known.element_id)
+    row = await session.get(
         ElementDocument, document_id, with_for_update=True, populate_existing=True
     )
+    return None if row is None else (row, element)
 
 
 def _chunk_rows(document: Document, chunks: Sequence[EmbeddedChunk]) -> list[DocumentChunk]:
@@ -174,7 +166,7 @@ class PostgresDocumentRepository:
         )
         events = events_for(audit, document)
         async with self._sessions.begin() as session:
-            await _hold_the_element(session, document.element_id, changing=True)
+            _guard_the_element(await _hold_the_element(session, document.element_id))
             session.add(row)
             # Flushed before the passages are added, and not left to the unit of
             # work to order: the two mappers are related by a foreign key and by
@@ -249,15 +241,19 @@ class PostgresDocumentRepository:
         revision from ever being searchable under its previous text.
         """
         async with self._sessions.begin() as session:
-            row = await _lock_document(session, document.id, new_content=document.content)
-            if row is None:
+            locked = await _lock_document(session, document.id)
+            if locked is None:
                 # Only reachable if the document was deleted between the
                 # service reading it and this write — a race, not a bug.
                 msg = f"no document with id {document.id}"
                 raise DocumentNotFoundError(msg)
+            row, element = locked
             before = _to_document(row)
             events = events_for(audit, before)
+            # Judged on the row we hold locked, not on a read taken before the lock.
             changing = row.content != document.content
+            if changing:
+                _guard_the_element(element)
             row.content = document.content
             row.updated_at = document.updated_at
             await session.execute(
@@ -272,9 +268,11 @@ class PostgresDocumentRepository:
     async def delete(self, document_id: UUID, *, audit: AuditOf[Document]) -> bool:
         """Delete a document. Its passages go with it, by the foreign key."""
         async with self._sessions.begin() as session:
-            row = await _lock_document(session, document_id)
-            if row is None:
+            locked = await _lock_document(session, document_id)
+            if locked is None:
                 return False
+            row, element = locked
+            _guard_the_element(element)
             events = events_for(audit, _to_document(row))
             await session.execute(delete(ElementDocument).where(ElementDocument.id == document_id))
             write_events(session, events)

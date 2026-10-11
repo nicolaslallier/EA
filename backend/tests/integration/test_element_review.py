@@ -893,3 +893,137 @@ async def test_revising_a_document_is_a_change_to_its_element_but_a_reindex_is_n
         stored, (), audit=UNAUDITED_REINDEX
     )  # same text: passages only
     assert await authored(engine_at_head, element_id) == ("reviser", before[1] + 1)
+
+
+async def test_a_replacement_judged_unchanged_before_the_lock_is_judged_again_after_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """The text read without a lock equals the new one; by the time the lock is ours it does not."""
+    from ea.repositories.document_store import PostgresDocumentRepository
+
+    world = World(engine_at_head)
+    documents = documents_of(world, engine_at_head)
+    element_id = await in_review(world)
+    document = await documents.attach_text(element_id, filename="a.md", content="# A")
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:  # another writer: new text, and the approval
+        await session.execute(
+            text("UPDATE element_documents SET content = '# B' WHERE id = :id"), {"id": document.id}
+        )
+        await approve_without_committing(session, element_id)
+        replacing = asyncio.create_task(
+            PostgresDocumentRepository(sessions).replace(document, (), audit=())  # "# A" again
+        )
+        await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ElementLockedError):
+        await replacing
+
+    assert (await documents.get(document.id)).content == "# B"
+
+
+# --- The author is the real actor, whichever door touched the element --------
+
+
+def baselines_of(engine: AsyncEngine):  # type: ignore[no-untyped-def]
+    from ea.repositories.baseline_store import PostgresBaselineRepository
+    from ea.services.baselines import BaselineService
+
+    return BaselineService(
+        PostgresBaselineRepository(create_session_factory(engine)), clock=lambda: START
+    )
+
+
+async def restore_as(baselines, baseline_id: UUID, who) -> None:  # type: ignore[no-untyped-def]
+    with acting_as(who):
+        plan = await baselines.restore(baseline_id)
+        await baselines.restore(baseline_id, dry_run=False, expected_digest=plan.digest)
+
+
+async def test_whoever_restores_a_baseline_becomes_the_last_author_of_what_it_touches(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    baselines = baselines_of(engine_at_head)
+    u, v = an_approver(), an_approver(subject="approver-v", username="v")
+    element_id = await in_review(world)
+    before_edit = await baselines.create(name="before")
+    with acting_as(u):  # U edits E
+        await world.graph.update_element(element_id, description="edited by U")
+
+    await restore_as(baselines, before_edit.id, v)  # V's restoration reverts that edit
+
+    assert (await authored(engine_at_head, element_id))[0] == "approver-v"
+    with acting_as(u):  # no longer U's: U may approve
+        fresh = (await world.graph.get_element(element_id)).revision
+        approved = await world.graph.transition_element(
+            element_id, Tr.APPROVE, expected_revision=fresh
+        )
+    assert approved.approval_state.value == "approved"
+
+
+async def test_who_restores_what_they_edited_themselves_cannot_approve_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    baselines = baselines_of(engine_at_head)
+    u = an_approver()
+    element_id = await in_review(world)
+    before_edit = await baselines.create(name="before")
+    with acting_as(u):
+        await world.graph.update_element(element_id, description="edited by U")
+
+    await restore_as(baselines, before_edit.id, u)  # U restores: U is the last author
+
+    assert (await authored(engine_at_head, element_id))[0] == "approver-1"
+    with acting_as(u):
+        fresh = (await world.graph.get_element(element_id)).revision
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=fresh)
+
+
+async def test_a_link_restored_to_an_untouched_element_still_makes_the_restorer_its_author(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    baselines = baselines_of(engine_at_head)
+    left = await world.graph.create_element(element_type=E.NODE, name="l")
+    right = await world.graph.create_element(element_type=E.NODE, name="r")
+    with_link_ids = await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=left.id, target_id=right.id
+    )
+    kept = await baselines.create(name="with")
+    await world.graph.disconnect(with_link_ids.id)
+
+    await restore_as(baselines, kept.id, an_editor(subject="restorer", username="restorer"))
+
+    assert (await authored(engine_at_head, left.id))[0] == "restorer"
+    assert (await authored(engine_at_head, right.id))[0] == "restorer"
+
+
+async def test_who_deletes_a_neighbour_becomes_the_last_author_of_the_element_it_was_linked_to(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    u = an_approver()
+    element_id = await in_review(world)
+    neighbour = await world.graph.create_element(element_type=E.NODE, name="x")
+    await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=element_id, target_id=neighbour.id
+    )
+    with acting_as(u):
+        await world.graph.update_element(element_id, description="edited by U")
+        await world.graph.delete_element(neighbour.id)
+
+    assert (await authored(engine_at_head, element_id))[0] == "approver-1"
+    with acting_as(u):
+        fresh = (await world.graph.get_element(element_id)).revision
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=fresh)
+    with acting_as(an_editor(subject="w", username="w")):  # and someone else deleting counts too
+        other = await world.graph.create_element(element_type=E.NODE, name="y")
+        await world.graph.connect(
+            relationship_type=R.ASSOCIATION, source_id=element_id, target_id=other.id
+        )
+        await world.graph.delete_element(other.id)
+    assert (await authored(engine_at_head, element_id))[0] == "w"
