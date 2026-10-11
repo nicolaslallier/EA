@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // L'état d'approbation d'un élément, et les seuls boutons que l'API offre à cet
-// appelant (`allowed_transitions`). Le SPA masque ; l'API décide (docs/adr/0046).
+// appelant (`allowed_transitions`). Le SPA masque ; l'API décide (docs/adr/0048).
 import { computed, nextTick, ref } from 'vue'
 
 import { ApiError, messageOf } from '../../lib/api'

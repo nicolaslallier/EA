@@ -1,4 +1,4 @@
-"""A deadlock or a serialization failure is a replayable 409, never a 500 (docs/adr/0046)."""
+"""A deadlock or a serialization failure is a replayable 409, never a 500 (docs/adr/0048)."""
 
 from __future__ import annotations
 

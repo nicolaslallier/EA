@@ -1,4 +1,4 @@
-"""Capturing the model into a baseline, and reading it back (docs/adr/0045)."""
+"""Capturing the model into a baseline, and reading it back (docs/adr/0047)."""
 
 from __future__ import annotations
 

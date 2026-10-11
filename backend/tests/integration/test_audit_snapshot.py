@@ -1,4 +1,4 @@
-"""An event describes the row that was really replaced (docs/adr/0044).
+"""An event describes the row that was really replaced (docs/adr/0046).
 
 The service builds the event, but the *before* it holds is read by the
 repository inside the transaction of the write, under the row's lock: two

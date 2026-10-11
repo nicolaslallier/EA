@@ -1,4 +1,4 @@
-"""Baselines over HTTP: capture, compare, restore (docs/adr/0045).
+"""Baselines over HTTP: capture, compare, restore (docs/adr/0047).
 
 Reads need a caller; capturing, deleting and restoring need an editor — which
 `BaselineService` decides, not this module. A restoration is a dry run unless

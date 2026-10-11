@@ -1,4 +1,4 @@
-"""Two writers of one element never undo each other (docs/adr/0044).
+"""Two writers of one element never undo each other (docs/adr/0046).
 
 The service hands the repository a *patch*; the repository applies it to the
 row it has locked, so a writer changes only what it means to and its event

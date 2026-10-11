@@ -1,4 +1,4 @@
-"""Who may move an element through review, and what review forbids (docs/adr/0046)."""
+"""Who may move an element through review, and what review forbids (docs/adr/0048)."""
 
 from __future__ import annotations
 

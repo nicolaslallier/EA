@@ -5,7 +5,7 @@ statut: Proposition
 affects: backend/src/ea/domain/audit.py, backend/src/ea/services/audit.py, backend/src/ea/services/architecture.py, backend/src/ea/services/documents.py, backend/src/ea/services/diagrams.py, backend/src/ea/services/packages.py, backend/src/ea/services/saved_queries.py, backend/src/ea/repositories/audit_store.py, backend/src/ea/api/audit.py, backend/src/ea/mcp/server.py, backend/migrations/versions/0011_audit_events.py, frontend/src/features/history
 ---
 
-# 44. Journal d'audit append-only écrit par les services dans la transaction de l'écriture
+# 46. Journal d'audit append-only écrit par les services dans la transaction de l'écriture
 
 Date : 2026-10-10
 Statut : Proposition

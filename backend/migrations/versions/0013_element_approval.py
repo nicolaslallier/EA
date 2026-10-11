@@ -9,7 +9,7 @@ approbation nomme), hors de `properties` : ni l'unicité (type, nom)
 ni les index IPAM ne sont touchés, et un `PATCH` qui remplace `properties` ne
 peut pas effacer l'état. Les éléments existants deviennent des brouillons non
 verrouillés (les valeurs par défaut du serveur : aucune ligne n'est réécrite
-par du code) — aucune approbation rétroactive n'est inventée (docs/adr/0046).
+par du code) — aucune approbation rétroactive n'est inventée (docs/adr/0048).
 """
 
 from __future__ import annotations

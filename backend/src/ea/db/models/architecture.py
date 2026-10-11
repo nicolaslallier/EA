@@ -41,7 +41,7 @@ class ElementRecord(Base):
     __table_args__ = (
         # Two applications called "Billing" are a modelling mistake, not a fact.
         UniqueConstraint("element_type", "name"),
-        # Static DDL text. The review state (docs/adr/0046): three values, and a
+        # Static DDL text. The review state (docs/adr/0048): three values, and a
         # lock only on an approved element.
         CheckConstraint(
             "approval_state IN ('draft', 'in_review', 'approved')", name="approval_state_known"

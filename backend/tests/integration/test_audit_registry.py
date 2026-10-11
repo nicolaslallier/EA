@@ -1,4 +1,4 @@
-"""Packages and saved queries: the event is in the database iff the write is (docs/adr/0044).
+"""Packages and saved queries: the event is in the database iff the write is (docs/adr/0046).
 
 Against a real PostgreSQL, under the tree's advisory lock for the packages.
 """

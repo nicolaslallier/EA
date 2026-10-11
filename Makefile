@@ -517,7 +517,7 @@ files-reconcile: | $(VENV_STAMP) ## Rapproche le catalogue des fichiers du conte
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
 	cd $(BACKEND) && uv run python -m ea.files_reconcile
 
-# La baseline d'avant la mise en service (docs/adr/0045) : la migration du
+# La baseline d'avant la mise en service (docs/adr/0047) : la migration du
 # journal donne un premier événement à chaque ligne existante mais ne capture
 # rien. Un opérateur prend l'instantané ici, avant que quiconque n'écrive. Elle
 # ÉCRIT dans la base PARTAGÉE (trois tables baseline_*, un événement d'audit

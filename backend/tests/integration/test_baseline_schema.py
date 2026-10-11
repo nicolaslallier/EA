@@ -1,4 +1,4 @@
-"""The baseline tables as the server holds them (docs/adr/0045)."""
+"""The baseline tables as the server holds them (docs/adr/0047)."""
 
 from __future__ import annotations
 

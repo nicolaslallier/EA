@@ -3,7 +3,7 @@
 PostgreSQL aborts one of two transactions that wait for each other (40P01) or that
 cannot be serialised (40001), and asks the client to run it again. The writers that
 lock several rows are wrapped here, so every one of them answers a typed 409
-(`WriteConflictError`) instead of an unexplained 500 (docs/adr/0046).
+(`WriteConflictError`) instead of an unexplained 500 (docs/adr/0048).
 """
 
 from __future__ import annotations

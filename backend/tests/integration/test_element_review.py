@@ -1,4 +1,4 @@
-"""Review and locking against a real PostgreSQL: decided on the locked row (docs/adr/0046)."""
+"""Review and locking against a real PostgreSQL: decided on the locked row (docs/adr/0048)."""
 
 from __future__ import annotations
 
@@ -195,7 +195,7 @@ async def test_a_concurrent_lock_and_link_never_leave_a_link_on_a_locked_element
     assert (await world.graph.relations_of(one.id)).relationships == ()
 
 
-# --- Transitions: decided on the row read under the lock (docs/adr/0046) ----
+# --- Transitions: decided on the row read under the lock (docs/adr/0048) ----
 
 from ea.domain.approval import Transition as Tr  # noqa: E402
 from ea.domain.errors import (  # noqa: E402
@@ -581,7 +581,7 @@ async def test_an_approval_landing_during_an_address_change_refuses_it(
     assert "ip_address" not in (await world.graph.get_element(element_id)).properties
 
 
-# --- Every door records who changed the element, and moves its revision (docs/adr/0046) ---
+# --- Every door records who changed the element, and moves its revision (docs/adr/0048) ---
 
 
 async def authored(engine: AsyncEngine, element_id: UUID) -> tuple[Any, ...]:

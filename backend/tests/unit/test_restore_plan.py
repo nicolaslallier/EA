@@ -405,7 +405,7 @@ class TestTheDigestOfAPlan:
 
 
 class TestReview:
-    """What a restoration does to the review state of the elements it writes (docs/adr/0046)."""
+    """What a restoration does to the review state of the elements it writes (docs/adr/0048)."""
 
     def test_an_updated_element_keeps_the_review_state_it_has_now(self) -> None:
         original = node("billing")

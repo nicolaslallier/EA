@@ -4,7 +4,7 @@
     # or `make baseline-capture CONFIRM=yes` from the repo root
 
 The backfill of revision 0011 gives the history a first line, but it makes no
-baseline (docs/adr/0045): the operator takes one before the service goes live, so
+baseline (docs/adr/0047): the operator takes one before the service goes live, so
 there is something to compare against and to go back to. It is a script and
 not an endpoint because it is an operator's job with no request behind it; it
 acts as SYSTEM, which the audit trail then shows.

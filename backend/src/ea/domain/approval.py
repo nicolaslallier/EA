@@ -1,4 +1,4 @@
-"""Review and locking of an element — see docs/adr/0046.
+"""Review and locking of an element — see docs/adr/0048.
 
 Pure: the table of transitions, who may take each, and what each state forbids
 are decided here. `ArchitectureService` applies them inside the transaction that
@@ -171,7 +171,7 @@ def apply_transition(
 
 
 class WriteKind(StrEnum):
-    """The ways to write to an element, or to what hangs from it (docs/adr/0046)."""
+    """The ways to write to an element, or to what hangs from it (docs/adr/0048)."""
 
     CONTENT = "content"  # its fields and properties; deleting it
     LINK = "link"  # a relationship added to or removed from it

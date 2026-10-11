@@ -1,4 +1,4 @@
-"""The pieces of the graph store that need no database (docs/adr/0046)."""
+"""The pieces of the graph store that need no database (docs/adr/0048)."""
 
 from __future__ import annotations
 

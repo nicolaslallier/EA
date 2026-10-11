@@ -1,19 +1,19 @@
 ---
 titre: Baselines en copie normalisée du graphe, restauration en une transaction SERIALIZABLE
 date: 2026-10-11
-statut: Proposition (partiellement remplacée par 0047)
+statut: Proposition (partiellement remplacée par 0049)
 affects: backend/src/ea/domain/baselines.py, backend/src/ea/services/baselines.py, backend/src/ea/repositories/baseline_store.py, backend/src/ea/db/models/baseline.py, backend/src/ea/api/baselines.py, backend/src/ea/api/schemas.py, backend/src/ea/mcp/server.py, backend/migrations/versions/0012_baselines.py, frontend/src/features/baselines
 ---
 
-# 45. Baselines en copie normalisée du graphe, restauration en une transaction SERIALIZABLE
+# 47. Baselines en copie normalisée du graphe, restauration en une transaction SERIALIZABLE
 
 Date : 2026-10-11
-Statut : Proposition (partiellement remplacée par 0047, sur `protected_ids`)
+Statut : Proposition (partiellement remplacée par 0049, sur `protected_ids`)
 
 ## Contexte
 
 Il faut pouvoir figer le modèle avant un changement risqué, comparer deux états
-et revenir en arrière. Le journal d'audit (`docs/adr/0044`) répond à « qui a
+et revenir en arrière. Le journal d'audit (`docs/adr/0046`) répond à « qui a
 changé quoi » mais pas à « rends-moi le modèle tel qu'il était » : il n'a pas
 d'historique avant sa propre création, et une purge d'opérateur le tronquerait.
 Volume visé : des centaines à quelques milliers d'éléments. Le déploiement n'a
@@ -123,5 +123,5 @@ Limites connues, dites sans détour :
 
 ## Références
 
-- ADR liés : [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0042](0042-les-paquets-classement-en-liste-d-adjacence.md), [0044](0044-journal-d-audit-append-only.md)
+- ADR liés : [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0042](0042-les-paquets-classement-en-liste-d-adjacence.md), [0046](0046-journal-d-audit-append-only.md)
 - Code : `backend/src/ea/domain/baselines.py`, `backend/src/ea/repositories/baseline_store.py`, `backend/src/ea/services/baselines.py`, `backend/src/ea/api/baselines.py`, `frontend/src/features/baselines/`

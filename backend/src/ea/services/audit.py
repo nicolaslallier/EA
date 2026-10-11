@@ -1,4 +1,4 @@
-"""Building audit events, and reading the trail — see docs/adr/0044.
+"""Building audit events, and reading the trail — see docs/adr/0046.
 
 `AuditTrail` is the one place an `AuditEvent` is made: the actor comes from the
 verified caller and never from a parameter, the moment from the service's

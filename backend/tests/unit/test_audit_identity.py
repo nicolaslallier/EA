@@ -1,4 +1,4 @@
-"""Who an event is attributed to is decided by the server, never by the caller (docs/adr/0044).
+"""Who an event is attributed to is decided by the server, never by the caller (docs/adr/0046).
 
 The actor, the door, the request and the moment of an event come from the
 verified `Caller`, the adapter that received the call, the logging context and

@@ -1,4 +1,4 @@
-"""What the catalogue remembers about a change — see docs/adr/0044.
+"""What the catalogue remembers about a change — see docs/adr/0046.
 
 Pure: no framework, no driver. An `AuditEvent` is one *use case*, not one SQL
 row: deleting an element is one event whose `before` lists what the foreign

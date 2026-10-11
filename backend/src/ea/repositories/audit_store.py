@@ -1,4 +1,4 @@
-"""The PostgreSQL side of the audit trail — see docs/adr/0044.
+"""The PostgreSQL side of the audit trail — see docs/adr/0046.
 
 Two things live here and they are deliberately not one class. `write_events` is
 a function over a session that *another* repository already holds open: an

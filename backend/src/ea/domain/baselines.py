@@ -1,4 +1,4 @@
-"""A baseline: a frozen copy of the model, comparable and restorable — docs/adr/0045.
+"""A baseline: a frozen copy of the model, comparable and restorable — docs/adr/0047.
 
 Pure. A snapshot holds *values* (the elements, the relationships, the boxes of
 diagrams), so a diff is the comparison of two sets and needs no database. What
@@ -546,7 +546,7 @@ def plan_restore(
     metamodel no longer allows is a warning and is skipped.
 
     **A protected element is touched by nothing.** `protected_ids` (the approved
-    and locked elements, docs/adr/0046) blocks the plan whenever the restoration
+    and locked elements, docs/adr/0048) blocks the plan whenever the restoration
     would: change its fields
     or its package; delete it (and so its documents, boxes and links); delete,
     replace or cascade away a link it holds; or write an element that would take
@@ -576,7 +576,7 @@ def plan_restore(
         )
         if changes:
             now_held = cur_el[identifier]
-            # A baseline does not copy the review state (docs/adr/0046): what is
+            # A baseline does not copy the review state (docs/adr/0048): what is
             # written keeps the state the element has now — and is never left
             # approved, for a content it was not approved on.
             restored = reviewed_after_change(

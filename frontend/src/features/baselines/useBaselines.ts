@@ -1,4 +1,4 @@
-// Baselines (docs/adr/0045): the list, the capture, the diff, the restoration.
+// Baselines (docs/adr/0047): the list, the capture, the diff, the restoration.
 //
 // The list and the diff are two independent questions, so they do not cancel
 // each other (`useLatestRequest`, one instance each). A write — a capture, a

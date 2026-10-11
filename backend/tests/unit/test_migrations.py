@@ -304,7 +304,7 @@ def test_revision_0011_follows_0010() -> None:
 
 
 def test_the_audit_table_names_its_entity_without_a_foreign_key() -> None:
-    """An event must outlive what it describes (docs/adr/0044)."""
+    """An event must outlive what it describes (docs/adr/0046)."""
     table = Base.metadata.tables["audit_events"]
 
     assert not table.foreign_keys
@@ -327,7 +327,7 @@ def test_revision_0012_follows_0011() -> None:
 
 
 def test_a_baseline_references_nothing_but_its_own_header() -> None:
-    """A copy that outlives its elements, packages and diagrams (docs/adr/0045)."""
+    """A copy that outlives its elements, packages and diagrams (docs/adr/0047)."""
     for name in ("baseline_elements", "baseline_relationships", "baseline_boxes"):
         (foreign_key,) = Base.metadata.tables[name].foreign_keys
         assert foreign_key.column.table.name == "baselines"
@@ -343,7 +343,7 @@ def test_revision_0013_follows_0012() -> None:
 
 
 def test_the_review_state_sits_beside_the_properties_and_is_constrained() -> None:
-    """Review is not in `properties`: no `PATCH` erases it, no index is touched (docs/adr/0046)."""
+    """Review is not in `properties`: no `PATCH` erases it, no index is touched (docs/adr/0048)."""
     table = Base.metadata.tables["elements"]
 
     assert {c.name for c in table.constraints if c.name} >= {

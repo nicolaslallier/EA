@@ -1,4 +1,4 @@
-"""What the audit trail is made of, without a database (docs/adr/0044)."""
+"""What the audit trail is made of, without a database (docs/adr/0046)."""
 
 from __future__ import annotations
 

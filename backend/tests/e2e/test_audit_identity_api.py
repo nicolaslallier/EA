@@ -1,4 +1,4 @@
-"""Over HTTP too, the trail names the verified caller and the HTTP door (docs/adr/0044)."""
+"""Over HTTP too, the trail names the verified caller and the HTTP door (docs/adr/0046)."""
 
 from __future__ import annotations
 

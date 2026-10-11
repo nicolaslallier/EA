@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Qui a changé quoi, et quand (docs/adr/0044).
+// Qui a changé quoi, et quand (docs/adr/0046).
 //
 // Les filtres et la page sont dans l'URL (`?kind=`, `?entity=`, `?actor=`,
 // `?action=`, `?since=`, `?cursor=`) : une question qu'on partage et qu'on

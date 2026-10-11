@@ -109,7 +109,7 @@ def an_editor(**overrides: object) -> Caller:
 
 
 def an_approver(**overrides: object) -> Caller:
-    """An approver who is also an editor: the roles accumulate (docs/adr/0046)."""
+    """An approver who is also an editor: the roles accumulate (docs/adr/0048)."""
     return an_editor(
         **{
             "subject": "approver-1",
@@ -670,7 +670,7 @@ class InMemoryDocuments:
         self.chunks: dict[UUID, tuple[EmbeddedChunk, ...]] = {}
 
     def _refuse_a_frozen_element(self, element_id: UUID) -> None:
-        """Stand in for the repository reading the element under its lock (docs/adr/0046)."""
+        """Stand in for the repository reading the element under its lock (docs/adr/0048)."""
         element = self.graph.elements.get(element_id) if self.graph is not None else None
         if element is not None:
             guard_element_write(element, WriteKind.DOCUMENT)

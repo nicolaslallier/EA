@@ -70,7 +70,7 @@ ElementGuard = Callable[[Element], None]
 
 @dataclass(frozen=True, slots=True)
 class EndsReview:
-    """What a link change does to the elements at its two ends (docs/adr/0046).
+    """What a link change does to the elements at its two ends (docs/adr/0048).
 
     `change` is applied to each end read under its row lock — it raises to refuse
     and returns the element as it must be stored — and `audit` says what the
@@ -417,7 +417,7 @@ class DiagramRepository(Protocol):
 class AuditRepository(Protocol):
     """Reads the audit trail. Writing is not here: an event is inserted by the
     repository that makes the write it describes, in the same transaction
-    (docs/adr/0044)."""
+    (docs/adr/0046)."""
 
     async def page(self, criteria: AuditFilter) -> AuditPage:
         """Newest first (`at`, then `id`), at most `criteria.limit` events and a cursor."""
@@ -425,7 +425,7 @@ class AuditRepository(Protocol):
 
 
 class BaselineRepository(Protocol):
-    """Persistence for baselines — docs/adr/0045.
+    """Persistence for baselines — docs/adr/0047.
 
     Every write names its audit, with no default, like the stores of the model
     (`tests/unit/test_audit_coverage.py`). The reads that feed a decision —

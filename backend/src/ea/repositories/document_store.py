@@ -64,7 +64,7 @@ def _rows_affected(result: object) -> int:
 async def _hold_the_element(session: AsyncSession, element_id: UUID) -> ElementRecord | None:
     """Lock the element a document hangs from, in the document's own transaction, before writing.
 
-    A change to a document is a change to its element (docs/adr/0046): the
+    A change to a document is a change to its element (docs/adr/0048): the
     element's row is locked here — `FOR NO KEY UPDATE`, which a review
     transition's `UPDATE` waits for and waits on. The caller then reads the
     document's row, *knows whether the write changes anything*, and if it does

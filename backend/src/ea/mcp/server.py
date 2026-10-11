@@ -12,7 +12,7 @@ markdown attached to its elements (docs/adr/0017), the IP addressing
 (docs/adr/0020), the files kept in a bucket beside it (docs/adr/0036), the tree
 of packages that files elements and diagrams (docs/adr/0042), and the saved
 queries that keep a structured search under a name (docs/adr/0043), the audit
-trail (docs/adr/0044) and the baselines (docs/adr/0045). They
+trail (docs/adr/0046) and the baselines (docs/adr/0047). They
 are kept apart here exactly as they are in `api/`, since the rules that bind
 them — an element must exist before a file hangs off it — belong to the
 service and an adapter holding a repository instead would be free to skip
@@ -1431,7 +1431,7 @@ def build_mcp_server(
         """
         return RelationshipMatrixRead.for_source(source)
 
-    # --- The audit trail (docs/adr/0044) ----------------------------------
+    # --- The audit trail (docs/adr/0046) ----------------------------------
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -1486,7 +1486,7 @@ def build_mcp_server(
         )
         return AuditPageRead.of(page)
 
-    # --- Baselines (docs/adr/0045) -----------------------------------------
+    # --- Baselines (docs/adr/0047) -----------------------------------------
 
     @server.tool(annotations=READS)
     @speaking_plainly

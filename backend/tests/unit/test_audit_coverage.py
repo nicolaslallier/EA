@@ -1,4 +1,4 @@
-"""No write to the model can slip past the audit trail by omission (docs/adr/0044).
+"""No write to the model can slip past the audit trail by omission (docs/adr/0046).
 
 Like `test_service_guards.py`, this reads the source. The analysers below take
 source *text*, so the last tests can show them failing on a made-up unaudited
