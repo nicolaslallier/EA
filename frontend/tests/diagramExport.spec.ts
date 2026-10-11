@@ -31,6 +31,25 @@ describe('escapeXml', () => {
   })
 })
 
+describe('escapeXml — characters XML 1.0 cannot carry', () => {
+  it('drops control characters, the two non-characters and lone surrogates', () => {
+    expect(escapeXml('a\u0001b\u0008c\u000bd\u001fe\ufffef\uffffg')).toBe('abcdefg')
+    expect(escapeXml('x\ud800y\udc00z')).toBe('xyz')
+  })
+
+  it('keeps tab, newline, carriage return and well-formed pairs', () => {
+    expect(escapeXml('a\tb\nc\rd')).toBe('a\tb\nc\rd')
+    expect(escapeXml('\u{1F600}é')).toBe('\u{1F600}é')
+  })
+
+  it('serialises a name with such characters into a parseable SVG', () => {
+    const svg = serializeSvg({ ...SCENE, boxes: [{ ...BOX, name: 'bad\u0001\u0008name' }] })
+
+    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
+    expect(parsed.getElementsByTagName('parsererror')).toHaveLength(0)
+  })
+})
+
 describe('safeColour', () => {
   it('keeps #rrggbb and replaces anything else, injection included', () => {
     expect(safeColour('#AaBb09', '#000000')).toBe('#AaBb09')

@@ -52,8 +52,14 @@ export const EXPORT_MARGIN = 24
 
 const HEX_COLOUR = /^#[0-9a-fA-F]{6}$/
 
+// What XML 1.0 cannot carry, even escaped: C0 controls other than tab, newline and carriage
+// return, the two non-characters U+FFFE and U+FFFF, and a surrogate with no partner. A name
+// or a note typed (or imported) with one would make the SVG unparseable, and the PNG with it.
+const FORBIDDEN_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+
 export function escapeXml(text: string): string {
   return text
+    .replace(FORBIDDEN_XML, '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
