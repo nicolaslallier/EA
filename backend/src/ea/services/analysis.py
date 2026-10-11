@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -24,6 +24,7 @@ from ea.domain.analytics import Aggregate, Dimension, Metric, summarise, validat
 from ea.domain.errors import (
     AnalysisBusyError,
     ElementNotFoundError,
+    InvalidAnalysisError,
     MatrixAxisTooLargeError,
     ScopeTooLargeError,
 )
@@ -54,6 +55,10 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+#: The element ids of a package (sub-packages included) or of a saved query. It is the one
+#: seam with the packages and the saved queries: the service knows neither (docs/adr/0056).
+ScopeResolver = Callable[[UUID | None, UUID | None], Awaitable[tuple[UUID, ...]]]
 
 #: How many analyses may read the whole model at once, and how many one caller may hold.
 #: A run reads up to `MAX_QUALITY_ELEMENTS` rows and their links, so it is admitted, not queued.
@@ -96,11 +101,13 @@ class AnalysisService:
         *,
         params: QualityParams | None = None,
         admission: Admission | None = None,
+        scope_ids: ScopeResolver | None = None,
     ) -> None:
         self._architecture = architecture
         self._repository = repository
         self._params = params or QualityParams()
         self._admission = admission
+        self._scope_ids = scope_ids
 
     # --- The relationship matrix -------------------------------------------
 
@@ -137,6 +144,8 @@ class AnalysisService:
         code: RuleCode | None = None,
         limit: int = 100,
         cursor: int = 0,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
     ) -> QualityPage:
         """Run every rule over the catalogue and return one page of findings.
 
@@ -146,11 +155,13 @@ class AnalysisService:
         """
         caller = require_caller()
         async with self._place(caller.subject) as lease:
-            return await self._check(lease, severity, code, limit, cursor)
+            scope = await self._scope(package_id, query_id)
+            return await self._check(lease, scope, severity, code, limit, cursor)
 
     async def _check(
         self,
         lease: Lease | None,
+        scope: tuple[UUID, ...] | None,
         severity: Severity | None,
         code: RuleCode | None,
         limit: int,
@@ -158,7 +169,10 @@ class AnalysisService:
     ) -> QualityPage:
         started = perf_counter()
         ceiling = self._params.max_elements
-        elements = await self._architecture.list_elements(ElementFilter(limit=ceiling + 1))
+        if scope is None:
+            elements = await self._architecture.list_elements(ElementFilter(limit=ceiling + 1))
+        else:
+            elements = await self._repository.elements_by_ids(scope[: ceiling + 1])
         if len(elements) > ceiling:
             msg = f"the catalogue holds more than {ceiling} elements; a run takes at most {ceiling}"
             raise ScopeTooLargeError(msg)
@@ -181,11 +195,19 @@ class AnalysisService:
     # --- Aggregates and heat maps -------------------------------------------
 
     async def aggregate(
-        self, by: Dimension, metric: Metric, property_key: str | None = None
+        self,
+        by: Dimension,
+        metric: Metric,
+        property_key: str | None = None,
+        *,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
     ) -> Aggregate:
         """Elements grouped by one dimension, with a metric and a colour level per bucket."""
         caller = require_caller()
-        return await self._summary(caller.subject, (by,), metric, property_key)
+        return await self._summary(
+            caller.subject, (by,), metric, property_key, package_id, query_id
+        )
 
     async def heatmap(
         self,
@@ -193,10 +215,15 @@ class AnalysisService:
         cols: Dimension,
         metric: Metric,
         property_key: str | None = None,
+        *,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
     ) -> Aggregate:
         """The same, grouped by two dimensions — the cells of a heat map."""
         caller = require_caller()
-        return await self._summary(caller.subject, (rows, cols), metric, property_key)
+        return await self._summary(
+            caller.subject, (rows, cols), metric, property_key, package_id, query_id
+        )
 
     async def _summary(
         self,
@@ -204,18 +231,40 @@ class AnalysisService:
         dimensions: Sequence[Dimension],
         metric: Metric,
         property_key: str | None,
+        package_id: UUID | None,
+        query_id: UUID | None,
     ) -> Aggregate:
         key = validate_question(metric, property_key)
         async with self._place(subject) as lease:
-            groups = await self._repository.grouped(dimensions, key)
+            scope = await self._scope(package_id, query_id)
+            groups = await self._repository.grouped(dimensions, key, scope=scope)
             # Folding up to RAW_GROUP_CEILING groups is CPU: off the loop, place held to its end.
             return await _off_the_loop(lease, summarise, groups, dimensions, metric, key)
+
+    async def _scope(
+        self, package_id: UUID | None, query_id: UUID | None
+    ) -> tuple[UUID, ...] | None:
+        """The element ids of a package or a saved query; `None` means the whole catalogue."""
+        if package_id is None and query_id is None:
+            return None
+        if package_id is not None and query_id is not None:
+            msg = "a scope is a package or a saved query, not both"
+            raise InvalidAnalysisError(msg)
+        if self._scope_ids is None:
+            msg = "this deployment has no packages or saved queries to scope by"
+            raise InvalidAnalysisError(msg)
+        return await self._scope_ids(package_id, query_id)
 
     def _place(self, key: str) -> AbstractAsyncContextManager[Lease | None]:
         """A place among the analyses reading the whole model, or no limit where none is set."""
         return self._admission.lease(key) if self._admission is not None else nullcontext(None)
 
     async def _axis(self, selection: AxisSelection) -> MatrixAxis:
+        scope = await self._scope(selection.package_id, selection.query_id)
+        if scope is not None:
+            # Cut at the first 50 by name, `total` says how many the scope held.
+            found = await self._repository.elements_by_ids(scope)
+            return MatrixAxis.of(found, total=len(found))
         if selection.element_ids:
             ids = tuple(dict.fromkeys(selection.element_ids))
             if len(ids) > MAX_MATRIX_AXIS:

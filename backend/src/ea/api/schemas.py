@@ -1497,6 +1497,12 @@ class AxisSelect(_Input):
     element_types: list[ElementType] = Field(default_factory=list)
     layers: list[Layer] = Field(default_factory=list)
     search: Search | None = None
+    package_id: UUID | None = Field(
+        default=None, description="A package, sub-packages included. Not with `query_id`."
+    )
+    query_id: UUID | None = Field(
+        default=None, description="A saved query, evaluated now. Not with `package_id`."
+    )
 
     def selection(self) -> AxisSelection:
         return AxisSelection(
@@ -1504,6 +1510,8 @@ class AxisSelect(_Input):
             element_types=tuple(self.element_types),
             layers=tuple(self.layers),
             search=self.search,
+            package_id=self.package_id,
+            query_id=self.query_id,
         )
 
 

@@ -1297,6 +1297,16 @@ export interface components {
             element_types?: components["schemas"]["ElementType"][];
             /** Layers */
             layers?: components["schemas"]["Layer"][];
+            /**
+             * Package Id
+             * @description A package, sub-packages included. Not with `query_id`.
+             */
+            package_id?: string | null;
+            /**
+             * Query Id
+             * @description A saved query, evaluated now. Not with `package_id`.
+             */
+            query_id?: string | null;
             /** Search */
             search?: string | null;
         };
@@ -2884,6 +2894,8 @@ export interface operations {
                 by: string;
                 metric?: components["schemas"]["Metric"];
                 property?: string | null;
+                package_id?: string | null;
+                query_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -2936,6 +2948,8 @@ export interface operations {
                 cols: string;
                 metric?: components["schemas"]["Metric"];
                 property?: string | null;
+                package_id?: string | null;
+                query_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -6532,6 +6546,8 @@ export interface operations {
                 code?: components["schemas"]["RuleCode"] | null;
                 limit?: number;
                 cursor?: number;
+                package_id?: string | null;
+                query_id?: string | null;
             };
             header?: never;
             path?: never;

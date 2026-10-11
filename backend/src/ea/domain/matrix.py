@@ -59,6 +59,9 @@ class AxisSelection:
     element_types: tuple[ElementType, ...] = ()
     layers: tuple[Layer, ...] = ()
     search: str | None = None
+    #: A package (sub-packages included) or a saved query; at most one, and never with the rest.
+    package_id: UUID | None = None
+    query_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

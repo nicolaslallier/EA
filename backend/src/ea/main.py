@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from dataclasses import replace
 from typing import Final
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +57,7 @@ from ea.domain.ports import (
     BaselineRepository,
     DiagramRepository,
     DocumentRepository,
+    ElementFilter,
     ExchangeRepository,
     FileMetadataRepository,
     IpamRepository,
@@ -62,7 +65,7 @@ from ea.domain.ports import (
     PackageRepository,
     SavedQueryRepository,
 )
-from ea.domain.quality import QualityParams
+from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
@@ -79,7 +82,7 @@ from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
-from ea.services.analysis import AnalysisService, analysis_admission
+from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -136,6 +139,29 @@ async def _reachable(name: str, probe: Callable[[], Awaitable[None]], degraded: 
         degraded.append(name)
         return False
     return True
+
+
+def build_scope_resolver(app: FastAPI) -> ScopeResolver:
+    """What a package or a saved query stands for, as element ids (docs/adr/0056).
+
+    At most one more element than a run takes: a scope past the ceiling is refused by the
+    service that has the ceiling, not truncated here. The page a query's author chose is
+    not its scope, so `limit` and `offset` are replaced.
+    """
+
+    async def resolve(package_id: UUID | None, query_id: UUID | None) -> tuple[UUID, ...]:
+        if query_id is not None:
+            criteria = ElementFilter.from_query(
+                (await saved_query_service_of(app).get(query_id)).query
+            )
+        else:
+            criteria = ElementFilter(package_id=package_id, include_subpackages=True)
+        found = await architecture_service_of(app).list_elements(
+            replace(criteria, limit=MAX_QUALITY_ELEMENTS + 1, offset=0)
+        )
+        return tuple(element.id for element in found)
+
+    return resolve
 
 
 def build_quality_params(settings: Settings) -> QualityParams:
@@ -305,6 +331,7 @@ def _lifespan(
                         repository,
                         params=app.state.quality_params,
                         admission=app.state.analysis_admission,
+                        scope_ids=build_scope_resolver(app),
                     )
                     exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
@@ -627,6 +654,7 @@ def create_app(
                 analysis,
                 params=app.state.quality_params,
                 admission=app.state.analysis_admission,
+                scope_ids=build_scope_resolver(app),
             )
         if packages is not None:
             app.state.package_service = PackageService(packages)

@@ -346,6 +346,8 @@ def _raw_key(dimension: Dimension) -> Any:
             return ElementRecord.element_type
         case DimensionKind.LAYER:
             return ElementRecord.layer
+        case DimensionKind.PACKAGE:
+            return func.coalesce(sql_cast(ElementRecord.package_id, Text), "")
         case DimensionKind.PROPERTY:
             return func.coalesce(_text_of(dimension.key or ""), "")
 

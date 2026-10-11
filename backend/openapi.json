@@ -443,6 +443,32 @@
             "title": "Layers",
             "type": "array"
           },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A package, sub-packages included. Not with `query_id`.",
+            "title": "Package Id"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A saved query, evaluated now. Not with `package_id`.",
+            "title": "Query Id"
+          },
           "search": {
             "anyOf": [
               {
@@ -3805,7 +3831,7 @@
             "name": "by",
             "required": true,
             "schema": {
-              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
               "title": "By",
               "type": "string"
             }
@@ -3837,6 +3863,40 @@
                 }
               ],
               "title": "Property"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
             }
           }
         ],
@@ -3903,7 +3963,7 @@
             "name": "rows",
             "required": true,
             "schema": {
-              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
               "title": "Rows",
               "type": "string"
             }
@@ -3913,7 +3973,7 @@
             "name": "cols",
             "required": true,
             "schema": {
-              "pattern": "^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
+              "pattern": "^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$",
               "title": "Cols",
               "type": "string"
             }
@@ -3945,6 +4005,40 @@
                 }
               ],
               "title": "Property"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
             }
           }
         ],
@@ -9285,6 +9379,40 @@
               "minimum": 0,
               "title": "Cursor",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query Id"
             }
           }
         ],

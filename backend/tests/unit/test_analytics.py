@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from uuid import uuid4
+
 import pytest
 
 from ea.domain.analytics import (
@@ -283,3 +286,27 @@ def test_grouping_is_independent_of_the_order_of_the_elements() -> None:
     backward = summarise(group_elements(list(reversed(elements)), dims), dims, Metric.COUNT)
 
     assert forward == backward
+
+
+class TestThePackageDimension:
+    def test_it_parses_and_prints_back(self) -> None:
+        assert str(Dimension.parse("package")) == "package"
+
+    def test_elements_are_grouped_by_package_id_and_the_unfiled_go_last(self) -> None:
+        one, other = uuid4(), uuid4()
+        elements = [
+            replace(node("a"), package_id=one),
+            replace(node("b"), package_id=one),
+            replace(node("c"), package_id=other),
+            node("d"),
+        ]
+        dims = (Dimension.parse("package"),)
+
+        result = summarise(group_elements(elements, dims), dims, Metric.COUNT)
+
+        assert {b.keys[0]: b.count for b in result.buckets} == {
+            str(one): 2,
+            str(other): 1,
+            UNSET_KEY: 1,
+        }
+        assert result.buckets[-1].keys == (UNSET_KEY,)

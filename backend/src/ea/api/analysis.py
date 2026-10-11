@@ -84,6 +84,8 @@ async def read_quality(
     code: Annotated[RuleCode | None, Query()] = None,
     limit: FindingsQuery = 100,
     cursor: CursorQuery = 0,
+    package_id: Annotated[UUID | None, Query()] = None,
+    query_id: Annotated[UUID | None, Query()] = None,
 ) -> QualityReportRead:
     """Run the quality rules over the catalogue and page through the findings.
 
@@ -91,7 +93,14 @@ async def read_quality(
     run; `severity` and `code` narrow the findings only.
     """
     return QualityReportRead.of(
-        await service.check(severity=severity, code=code, limit=limit, cursor=cursor)
+        await service.check(
+            severity=severity,
+            code=code,
+            limit=limit,
+            cursor=cursor,
+            package_id=package_id,
+            query_id=query_id,
+        )
     )
 
 
@@ -110,6 +119,8 @@ async def read_aggregate(
     by: Annotated[DimensionParam, Query()],
     metric: Annotated[Metric, Query()] = Metric.COUNT,
     property_key: PropertyQuery = None,
+    package_id: Annotated[UUID | None, Query()] = None,
+    query_id: Annotated[UUID | None, Query()] = None,
 ) -> AggregateRead:
     """Elements grouped by one dimension, each bucket with a count, a metric and a level.
 
@@ -119,7 +130,11 @@ async def read_aggregate(
     server's colour decision.
     """
     dimension = Dimension.parse(by)
-    return AggregateRead.of(await service.aggregate(dimension, metric, property_key))
+    return AggregateRead.of(
+        await service.aggregate(
+            dimension, metric, property_key, package_id=package_id, query_id=query_id
+        )
+    )
 
 
 @router.get("/analytics/heatmap", response_model=HeatmapRead, responses=INVALID)
@@ -129,9 +144,16 @@ async def read_heatmap(
     cols: Annotated[DimensionParam, Query()],
     metric: Annotated[Metric, Query()] = Metric.COUNT,
     property_key: PropertyQuery = None,
+    package_id: Annotated[UUID | None, Query()] = None,
+    query_id: Annotated[UUID | None, Query()] = None,
 ) -> HeatmapRead:
     """The same, grouped by two dimensions: a grid of cells with a level each."""
     result = await service.heatmap(
-        Dimension.parse(rows), Dimension.parse(cols), metric, property_key
+        Dimension.parse(rows),
+        Dimension.parse(cols),
+        metric,
+        property_key,
+        package_id=package_id,
+        query_id=query_id,
     )
     return HeatmapRead.of(result)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -343,3 +344,26 @@ class TestTheAggregates:
             assert (
                 await anonymous.get("/analytics/aggregate", params={"by": "layer"})
             ).status_code == 401
+
+
+@pytest.mark.asyncio
+class TestScopedByPackageOrQuery:
+    async def test_a_scope_names_a_package_or_a_query_never_both(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        both = {"package_id": str(UUID(int=1)), "query_id": str(UUID(int=2))}
+
+        quality = await client.get("/quality", params=both)
+        aggregate = await client.get("/analytics/aggregate", params={"by": "layer", **both})
+        matrix = await client.post("/matrix", json={"rows": both, "cols": {}})
+
+        assert [r.status_code for r in (quality, aggregate, matrix)] == [422, 422, 422]
+        assert quality.json()["error"] == "invalid_analysis"
+
+    async def test_a_package_scope_reaches_the_catalogue(self, client: httpx.AsyncClient) -> None:
+        await an_element(client, "node", "srv")
+
+        response = await client.get("/quality", params={"package_id": str(UUID(int=1))})
+
+        # The double does not file elements: the proof is that the door is open, not the filter.
+        assert response.status_code == 200

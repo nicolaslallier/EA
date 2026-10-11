@@ -1666,6 +1666,8 @@ def build_mcp_server(
         code: RuleCode | None = None,
         limit: FindingsLimit = 100,
         cursor: Cursor = 0,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
     ) -> QualityReportRead:
         """Check the model for problems: orphans, probable duplicates, naming, gaps.
 
@@ -1677,10 +1679,18 @@ def build_mcp_server(
         `missing_property`, `no_description`, `inconsistent_relationship`,
         `unreadable_property`) narrow
         only the findings listed, and `next_cursor` pages through them. It reads
-        and stores nothing: every call recomputes.
+        and stores nothing: every call recomputes. `package_id` or `query_id` (never
+        both) restricts the run to a package or to a saved query.
         """
         return QualityReportRead.of(
-            await get_analysis().check(severity=severity, code=code, limit=limit, cursor=cursor)
+            await get_analysis().check(
+                severity=severity,
+                code=code,
+                limit=limit,
+                cursor=cursor,
+                package_id=package_id,
+                query_id=query_id,
+            )
         )
 
     @server.tool(annotations=READS)
@@ -1689,6 +1699,8 @@ def build_mcp_server(
         by: DimensionParam,
         metric: Metric = Metric.COUNT,
         property_key: PropertyKey | None = None,
+        package_id: UUID | None = None,
+        query_id: UUID | None = None,
     ) -> AggregateRead:
         """Count or total the catalogue by a dimension: how many, how much, how risky.
 
@@ -1697,10 +1709,14 @@ def build_mcp_server(
         `sum` / `avg` / `min` / `max` of the numeric property `property_key`
         (for instance `cost`). A value that is not a readable number — "1 200 €"
         — is not ignored in silence: it is counted in `unreadable`. Each bucket
-        carries a `level` from 0 to 4 for how high it ranks. This reads only.
+        carries a `level` from 0 to 4 for how high it ranks. `package_id` or `query_id`
+        (never both) narrows it to a package, sub-packages included, or to a saved
+        query. This reads only.
         """
         return AggregateRead.of(
-            await get_analysis().aggregate(Dimension.parse(by), metric, property_key)
+            await get_analysis().aggregate(
+                Dimension.parse(by), metric, property_key, package_id=package_id, query_id=query_id
+            )
         )
 
     # --- The audit trail (docs/adr/0046) ----------------------------------

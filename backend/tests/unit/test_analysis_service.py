@@ -404,3 +404,74 @@ class TestTheAggregatesAreAdmitted:
                 await guarded.heatmap(
                     Dimension.parse("layer"), Dimension.parse("element_type"), Metric.COUNT
                 )
+
+
+@pytest.mark.asyncio
+class TestScopedByPackageOrQuery:
+    async def test_a_package_axis_is_the_ids_the_resolver_names(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        inside = await service.create_element(element_type=E.NODE, name="inside")
+        await service.create_element(element_type=E.NODE, name="outside")
+        package = uuid4()
+
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return (inside.id,) if package_id == package else ()
+
+        scoped = AnalysisService(service, repository, scope_ids=resolver)
+
+        matrix = await scoped.matrix(AxisSelection(package_id=package), AxisSelection())
+
+        assert [e.name for e in matrix.rows.elements] == ["inside"]
+        assert len(matrix.cols.elements) == 2
+
+    async def test_a_scope_over_the_ceiling_is_cut_not_refused(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        ids = [
+            (await service.create_element(element_type=E.NODE, name=f"n{i:03}")).id
+            for i in range(MAX_MATRIX_AXIS + 2)
+        ]
+
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return tuple(ids)
+
+        matrix = await AnalysisService(service, repository, scope_ids=resolver).matrix(
+            AxisSelection(query_id=uuid4()), AxisSelection()
+        )
+
+        assert matrix.rows.truncated and matrix.rows.total == MAX_MATRIX_AXIS + 2
+
+    async def test_the_quality_run_and_the_aggregate_are_narrowed_to_the_scope(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        inside = await service.create_element(element_type=E.NODE, name="inside")
+        await service.create_element(element_type=E.NODE, name="outside")
+
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return (inside.id,)
+
+        scoped = AnalysisService(service, repository, scope_ids=resolver)
+
+        page = await scoped.check(code=RuleCode.ORPHAN, package_id=uuid4())
+        counted = await scoped.aggregate(Dimension.parse("layer"), Metric.COUNT, query_id=uuid4())
+
+        assert [f.element_id for f in page.findings] == [inside.id]
+        assert counted.total == 1
+
+    async def test_a_scope_asked_without_a_resolver_is_a_refused_question(
+        self, analysis: AnalysisService
+    ) -> None:
+        with pytest.raises(InvalidAnalysisError):
+            await analysis.check(package_id=uuid4())
+
+    async def test_both_a_package_and_a_query_is_a_refused_question(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        async def resolver(package_id, query_id):  # type: ignore[no-untyped-def]
+            return ()
+
+        scoped = AnalysisService(service, repository, scope_ids=resolver)
+
+        with pytest.raises(InvalidAnalysisError):
+            await scoped.check(package_id=uuid4(), query_id=uuid4())

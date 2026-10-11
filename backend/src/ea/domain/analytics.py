@@ -33,7 +33,7 @@ UNSET_KEY: Final = "__unset__"
 #: The bucket of an element whose value is outside the property's enumeration.
 INVALID_KEY: Final = "__invalid__"
 LEVELS: Final = 5
-DIMENSION_PATTERN: Final = r"^(element_type|layer|property:[A-Za-z][A-Za-z0-9_]{0,62})$"
+DIMENSION_PATTERN: Final = r"^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$"
 
 _BLANKS: Final = " \u00a0\u202f"
 _NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?")
@@ -104,6 +104,7 @@ class Metric(StrEnum):
 class DimensionKind(StrEnum):
     ELEMENT_TYPE = "element_type"
     LAYER = "layer"
+    PACKAGE = "package"
     PROPERTY = "property"
 
 
@@ -117,7 +118,7 @@ class Dimension:
     @classmethod
     def parse(cls, text: str) -> Dimension:
         if not re.fullmatch(DIMENSION_PATTERN, text):
-            msg = f"{text!r} is not a dimension: element_type, layer or property:<key>"
+            msg = f"{text!r} is not a dimension: element_type, layer, package or property:<key>"
             raise InvalidAnalysisError(msg)
         if text.startswith("property:"):
             return cls(DimensionKind.PROPERTY, text.split(":", 1)[1])
@@ -191,6 +192,8 @@ def _raw_of(dimension: Dimension, element: Element) -> str:
             return element.element_type.value
         case DimensionKind.LAYER:
             return element.layer
+        case DimensionKind.PACKAGE:
+            return str(element.package_id or "")
         case DimensionKind.PROPERTY:
             return element.properties.get(dimension.key or "", "")
 
@@ -240,7 +243,7 @@ def _ordered(dimension: Dimension) -> Reading | None:
 
 def classify(dimension: Dimension, raw: str) -> str:
     """The bucket a raw value belongs to: itself, its declared spelling, or a sentinel."""
-    if dimension.kind is not DimensionKind.PROPERTY:
+    if dimension.kind not in (DimensionKind.PROPERTY, DimensionKind.PACKAGE):
         return raw
     text = raw.strip()
     if not text:
