@@ -94,10 +94,10 @@ PostgreSQL et un seul rôle propriétaire `ea` (`docs/adr/0029`, `0033`).
 
 Limites, dites sans détour :
 
-- **L'immuabilité n'est qu'un garde-fou.** Un trigger lève pour tout rôle qui
-  n'est ni propriétaire de la table ni superutilisateur ; le propriétaire peut
-  `DROP TRIGGER` ou `ALTER TABLE … DISABLE TRIGGER`, et
-  `session_replication_role = replica` les contourne. Comme le seul rôle du
+- **L'immuabilité n'est qu'un garde-fou.** Le trigger se déclenche pour tout
+  rôle, propriétaire compris, mais le propriétaire peut le `DROP` ou le
+  `DISABLE`, et un superutilisateur le contourne par
+  `session_replication_role = replica`. Comme le seul rôle du
   déploiement est propriétaire (`ea`), la garantie réelle aujourd'hui est
   « aucune modification par erreur ou par bogue applicatif », pas « aucune
   falsification par quelqu'un qui tient le rôle ». Elle ne devient plus forte
