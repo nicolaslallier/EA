@@ -9,7 +9,7 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,7 +47,26 @@ from ea.domain.ipam import (
     SubnetDetail,
 )
 from ea.domain.model import Element, Relationship
+from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.query import (
+    MAX_PROPERTY_TESTS,
+    MAX_PROPERTY_VALUE,
+    MAX_RELATION_TESTS,
+    QUERY_VERSION,
+    Direction,
+    ElementQuery,
+    PropertyOp,
+    PropertyTest,
+    QueryOrder,
+    RelationTest,
+)
+from ea.domain.saved_queries import (
+    MAX_SAVED_QUERY_DESCRIPTION,
+    MAX_SAVED_QUERY_NAME_LENGTH,
+    SavedQuery,
+    SavedQuerySummary,
+)
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
 
@@ -148,6 +167,7 @@ class ElementRead(BaseModel):
     description: str
     documentation: str
     properties: dict[str, str]
+    package_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -162,6 +182,7 @@ class ElementRead(BaseModel):
             description=element.description,
             documentation=element.documentation,
             properties=dict(element.properties),
+            package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
         )
@@ -709,13 +730,19 @@ BoxSize = Annotated[float, Field(ge=MIN_BOX_SIZE, le=MAX_BOX_SIZE, allow_inf_nan
 class DiagramCreate(_Input):
     name: Name
     description: Description = ""
+    package_id: UUID | None = None
 
 
 class DiagramUpdate(_Input):
-    """A partial update. An omitted field keeps its stored value."""
+    """A partial update. An omitted field keeps its stored value.
+
+    `package_id` is three-valued like a package's `parent_id`: absent keeps the
+    package, `null` puts the diagram at the root.
+    """
 
     name: Name | None = None
     description: Description | None = None
+    package_id: UUID | None = None
 
 
 class DiagramNode(_Input):
@@ -752,6 +779,7 @@ class DiagramSummaryRead(BaseModel):
     name: str
     description: str
     node_count: int
+    package_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -762,6 +790,7 @@ class DiagramSummaryRead(BaseModel):
             name=diagram.name,
             description=diagram.description,
             node_count=diagram.node_count,
+            package_id=diagram.package_id,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
         )
@@ -775,6 +804,7 @@ class DiagramRead(BaseModel):
     description: str
     created_at: datetime
     updated_at: datetime
+    package_id: UUID | None
     nodes: list[DiagramNode]
     elements: list[ElementRead]
     relationships: list[RelationshipRead] = Field(
@@ -790,7 +820,266 @@ class DiagramRead(BaseModel):
             description=diagram.description,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
+            package_id=diagram.package_id,
             nodes=[DiagramNode.of(node) for node in detail.nodes],
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
+        )
+
+
+# --- Packages: the classification tree ---------------------------------------
+# A package files elements and diagrams; it is not an ArchiMate element and
+# has no relationship. The bounds come from `domain/packages.py`, which the
+# services need too; they are re-declared as Pydantic types here, once, for
+# both adapters.
+
+PackageName = Annotated[
+    str, Field(min_length=1, max_length=MAX_PACKAGE_NAME_LENGTH, pattern=r"^[^/]+$")
+]
+#: What an agent or a query string says where a body would say `null`.
+ROOT_PACKAGE: Final = "root"
+PackageTarget = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=36,
+        description="The id of a package, or `root` for the top of the tree.",
+    ),
+]
+
+
+def package_target(value: str) -> UUID | None:
+    """`root` is the top of the tree (`None`); anything else must be a package id.
+
+    One parser for both adapters: `DELETE /packages/{id}?move_contents_to=` and
+    the MCP tools cannot express "the root" as `null`, so they say `root`.
+    """
+    if value == ROOT_PACKAGE:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        msg = f"expected a package id or {ROOT_PACKAGE!r}, got {value!r}"
+        raise ValueError(msg) from None
+
+
+class PackageCreate(_Input):
+    name: PackageName
+    description: Description = ""
+    parent_id: UUID | None = None
+
+
+class PackageUpdate(_Input):
+    """A partial update.
+
+    `parent_id` is three-valued: absent keeps the parent, `null` puts the
+    package at the root, an id moves it there — which is why the route reads
+    `model_fields_set` rather than the value.
+    """
+
+    name: PackageName | None = None
+    description: Description | None = None
+    parent_id: UUID | None = None
+
+
+class PackageRead(BaseModel):
+    id: UUID
+    parent_id: UUID | None
+    name: str
+    description: str
+    path: str = Field(description="Names from the root down, e.g. `Finance / Budget`.")
+    element_count: int = Field(description="Elements filed directly in this package.")
+    diagram_count: int = Field(description="Diagrams filed directly in this package.")
+    child_count: int = Field(description="Packages directly below this one.")
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, summary: PackageSummary) -> PackageRead:
+        package = summary.package
+        return cls(
+            id=package.id,
+            parent_id=package.parent_id,
+            name=package.name,
+            description=package.description,
+            path=summary.path,
+            element_count=summary.counts.elements,
+            diagram_count=summary.counts.diagrams,
+            child_count=summary.counts.children,
+            created_at=package.created_at,
+            updated_at=package.updated_at,
+        )
+
+
+class MoveElements(_Input):
+    """File up to `MAX_MOVE_BATCH` elements in a package, or at the root."""
+
+    element_ids: Annotated[list[UUID], Field(min_length=1, max_length=MAX_MOVE_BATCH)]
+    package_id: UUID | None = Field(description="The package, or `null` for the root.")
+
+
+# --- Structured search ------------------------------------------------------
+# `ElementQuerySchema` is the strict translation of `domain.query.ElementQuery`,
+# and its dump is the form a saved query is stored in. Every field is required
+# and none has a default, on purpose: it is both a request body and (in a saved
+# query) a response, and a default would split the component into an input and
+# an output type in the OpenAPI document and rename what the SPA imports — the
+# reason `DiagramNode` is built the same way. The SPA and the MCP tools always
+# build the whole object.
+
+PropertyKey = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=63,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]{0,62}$",
+        description="The name of a user-defined attribute: letters, digits, underscores.",
+    ),
+]
+PropertyValue = Annotated[str, Field(max_length=MAX_PROPERTY_VALUE)]
+
+
+class PropertyTestSchema(_Input):
+    """One test on a user-defined attribute.
+
+    `value` is required by `eq` and `contains`, refused by the others.
+    """
+
+    key: PropertyKey
+    op: PropertyOp
+    value: PropertyValue | None
+
+    def to_domain(self) -> PropertyTest:
+        return PropertyTest(key=self.key, op=self.op, value=self.value)
+
+
+class RelationTestSchema(_Input):
+    """Whether an element has (or has no) relationship of one type, optionally to one type."""
+
+    relationship_type: RelationshipType
+    direction: Direction
+    present: bool = Field(description="`false` finds the elements that have no such link.")
+    other_type: ElementType | None = Field(description="The type at the far end, if it matters.")
+
+    def to_domain(self) -> RelationTest:
+        return RelationTest(
+            relationship_type=self.relationship_type,
+            direction=self.direction,
+            present=self.present,
+            other_type=self.other_type,
+        )
+
+
+class ElementQuerySchema(_Input):
+    """A structured search of the catalogue; every criterion is combined with AND."""
+
+    version: Literal[1]
+    element_types: Annotated[list[ElementType], Field(max_length=len(ElementType))]
+    layers: Annotated[list[Layer], Field(max_length=len(Layer))]
+    text: Search | None
+    package_id: UUID | None
+    include_subpackages: bool
+    root_only: bool
+    properties: Annotated[list[PropertyTestSchema], Field(max_length=MAX_PROPERTY_TESTS)]
+    relations: Annotated[list[RelationTestSchema], Field(max_length=MAX_RELATION_TESTS)]
+    order: QueryOrder
+    limit: Limit
+    offset: Offset
+
+    def to_domain(self) -> ElementQuery:
+        """The validated domain object — where `root_only` + `package_id` is refused."""
+        return ElementQuery(
+            element_types=tuple(self.element_types),
+            layers=tuple(self.layers),
+            text=self.text,
+            package_id=self.package_id,
+            include_subpackages=self.include_subpackages,
+            root_only=self.root_only,
+            properties=tuple(test.to_domain() for test in self.properties),
+            relations=tuple(test.to_domain() for test in self.relations),
+            order=self.order,
+            limit=self.limit,
+            offset=self.offset,
+        )
+
+    @classmethod
+    def of(cls, query: ElementQuery) -> ElementQuerySchema:
+        return cls(
+            version=QUERY_VERSION,
+            element_types=list(query.element_types),
+            layers=list(query.layers),
+            text=query.text,
+            package_id=query.package_id,
+            include_subpackages=query.include_subpackages,
+            root_only=query.root_only,
+            properties=[
+                PropertyTestSchema(key=test.key, op=test.op, value=test.value)
+                for test in query.properties
+            ],
+            relations=[
+                RelationTestSchema(
+                    relationship_type=test.relationship_type,
+                    direction=test.direction,
+                    present=test.present,
+                    other_type=test.other_type,
+                )
+                for test in query.relations
+            ],
+            order=query.order,
+            limit=query.limit,
+            offset=query.offset,
+        )
+
+
+# --- Saved queries -------------------------------------------------------------
+# Shared by every reader; `created_by` is read from the caller, so the body has
+# no such field (and `extra="forbid"` turns an attempt to send one into a 422).
+# The bounds are the domain's, imported rather than restated, like the packages'.
+
+SavedQueryName = Annotated[str, Field(min_length=1, max_length=MAX_SAVED_QUERY_NAME_LENGTH)]
+SavedQueryDescription = Annotated[str, Field(max_length=MAX_SAVED_QUERY_DESCRIPTION)]
+
+
+class SavedQueryCreate(_Input):
+    name: SavedQueryName
+    description: SavedQueryDescription = ""
+    query: ElementQuerySchema
+
+
+class SavedQueryUpdate(_Input):
+    """A partial update. An omitted field keeps its stored value."""
+
+    name: SavedQueryName | None = None
+    description: SavedQueryDescription | None = None
+    query: ElementQuerySchema | None = None
+
+
+class SavedQuerySummaryRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, summary: SavedQuerySummary) -> SavedQuerySummaryRead:
+        return cls(
+            id=summary.id,
+            name=summary.name,
+            description=summary.description,
+            created_by=summary.created_by,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
+class SavedQueryRead(SavedQuerySummaryRead):
+    query: ElementQuerySchema
+
+    @classmethod
+    def read(cls, saved: SavedQuery) -> SavedQueryRead:
+        return cls(
+            **SavedQuerySummaryRead.of(saved.summary).model_dump(),
+            query=ElementQuerySchema.of(saved.query),
         )

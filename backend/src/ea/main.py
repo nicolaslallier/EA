@@ -19,6 +19,8 @@ from ea.api.dependencies import (
     document_service_of,
     file_service_of,
     ipam_service_of,
+    package_service_of,
+    saved_query_service_of,
 )
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
@@ -29,6 +31,8 @@ from ea.api.ipam import router as ipam_router
 from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
+from ea.api.packages import router as packages_router
+from ea.api.queries import router as queries_router
 from ea.api.schemas import ErrorResponse
 from ea.core.config import Settings, get_settings
 from ea.core.logging import configure_logging
@@ -42,6 +46,8 @@ from ea.domain.ports import (
     FileMetadataRepository,
     IpamRepository,
     ObjectStore,
+    PackageRepository,
+    SavedQueryRepository,
 )
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
@@ -54,12 +60,16 @@ from ea.repositories.embeddings import HttpEmbedder
 from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
+from ea.repositories.package_store import PostgresPackageRepository
+from ea.repositories.saved_query_store import PostgresSavedQueryRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +157,8 @@ def _lifespan(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     diagrams: DiagramRepository | None = None,
+    packages: PackageRepository | None = None,
+    queries: SavedQueryRepository | None = None,
     file_metadata: FileMetadataRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
@@ -212,6 +224,8 @@ def _lifespan(
                 )
             document_store = documents
             diagram_store = diagrams
+            package_store = packages
+            query_store = queries
             metadata_store = file_metadata
             if settings.postgres_enabled:
                 engine = create_engine(settings)
@@ -222,6 +236,10 @@ def _lifespan(
                     document_store = PostgresDocumentRepository(app.state.db_sessions)
                 if diagram_store is None:
                     diagram_store = PostgresDiagramRepository(app.state.db_sessions)
+                if package_store is None:
+                    package_store = PostgresPackageRepository(app.state.db_sessions)
+                if query_store is None:
+                    query_store = PostgresSavedQueryRepository(app.state.db_sessions)
                 if metadata_store is None:
                     metadata_store = PostgresFileMetadataRepository(app.state.db_sessions)
                 logger.info(
@@ -265,9 +283,15 @@ def _lifespan(
                 app.state.document_service = DocumentService(
                     document_store, architecture_service_of(app), indexer=index
                 )
+            if package_store is not None:
+                app.state.package_service = PackageService(package_store)
+            if query_store is not None:
+                app.state.saved_query_service = SavedQueryService(
+                    query_store, package_store, architecture_service_of(app)
+                )
             if diagram_store is not None:
                 app.state.diagram_service = DiagramService(
-                    diagram_store, architecture_service_of(app)
+                    diagram_store, architecture_service_of(app), packages=package_store
                 )
             # Files live in MinIO, beside every other store (docs/adr/0036). The
             # service is attached either way, so a deployment without it answers
@@ -404,6 +428,8 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: document_service_of(app),
         lambda: ipam_service_of(app),
         lambda: file_service_of(app),
+        lambda: package_service_of(app),
+        lambda: saved_query_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -442,6 +468,8 @@ def create_app(
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
     diagrams: DiagramRepository | None = None,
+    packages: PackageRepository | None = None,
+    queries: SavedQueryRepository | None = None,
     files: ObjectStore | None = None,
     file_metadata: FileMetadataRepository | None = None,
     verifier: AccessTokenVerifier | None = None,
@@ -460,7 +488,8 @@ def create_app(
     answers without a model being loaded anywhere; given none, the lifespan
     builds and probes the real client when `embeddings_enabled` says so.
 
-    `diagrams` does the same for the saved diagrams (docs/adr/0031).
+    `diagrams` does the same for the saved diagrams (docs/adr/0031), and
+    `packages` for the classification tree and `queries` for the saved queries.
     `files` does the same for the bucket (docs/adr/0036), and `file_metadata`
     for the catalogue kept beside it (docs/adr/0039).
     `verifier` does the same for authentication: given one — `StaticVerifier`
@@ -488,6 +517,8 @@ def create_app(
             documents=documents,
             indexer=indexer,
             diagrams=diagrams,
+            packages=packages,
+            queries=queries,
             file_metadata=file_metadata,
         ),
     )
@@ -502,8 +533,16 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if packages is not None:
+            app.state.package_service = PackageService(packages)
+        if queries is not None:
+            app.state.saved_query_service = SavedQueryService(
+                queries, packages, architecture_service
+            )
         if diagrams is not None:
-            app.state.diagram_service = DiagramService(diagrams, architecture_service)
+            app.state.diagram_service = DiagramService(
+                diagrams, architecture_service, packages=packages
+            )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
 
@@ -532,6 +571,8 @@ def create_app(
     app.include_router(architecture_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(me_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

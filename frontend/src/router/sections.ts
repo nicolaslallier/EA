@@ -91,6 +91,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/impact/ImpactSection.vue'),
   },
   {
+    path: '/recherche',
+    name: 'search',
+    label: 'Recherche',
+    summary: 'Chercher par type, paquet, attributs et relations ; garder les requêtes utiles.',
+    group: 'analysis',
+    view: () => import('../features/search/SearchSection.vue'),
+  },
+  {
     path: '/fichiers',
     name: 'files',
     label: 'Fichiers',

@@ -27,12 +27,14 @@ from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
     DiagramNotFoundError,
     DuplicateDiagramError,
+    PackageNotFoundError,
     UnknownLayoutElementError,
 )
 from ea.domain.model import Element
+from ea.domain.packages import Package
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
-from tests.conftest import FIXED_NOW, InMemoryDiagrams
+from tests.conftest import FIXED_NOW, InMemoryDiagrams, InMemoryPackages
 
 
 async def an_element(service: ArchitectureService, name: str = "Facturation") -> Element:
@@ -271,3 +273,69 @@ class TestTheBounds:
     def test_a_name_is_at_most_two_hundred_characters(self) -> None:
         with pytest.raises(ValidationError):
             DiagramCreate.model_validate({"name": "x" * 201})
+
+
+async def a_package(
+    packages: InMemoryPackages, name: str, parent: Package | None = None
+) -> Package:
+    return await packages.add(
+        Package.create(name=name, parent_id=parent.id if parent else None, now=FIXED_NOW)
+    )
+
+
+@pytest.mark.asyncio
+class TestDiagramsInPackages:
+    async def test_a_diagram_is_created_in_a_package(
+        self, diagram_service: DiagramService, packages: InMemoryPackages
+    ) -> None:
+        finance = await a_package(packages, "Finance")
+
+        diagram = await diagram_service.create(name="Vente", package_id=finance.id)
+
+        assert diagram.package_id == finance.id
+
+    async def test_a_package_that_does_not_exist_is_a_not_found(
+        self, diagram_service: DiagramService
+    ) -> None:
+        with pytest.raises(PackageNotFoundError):
+            await diagram_service.create(name="Vente", package_id=uuid4())
+
+    async def test_updating_leaves_the_package_unless_it_is_given(
+        self, diagram_service: DiagramService, packages: InMemoryPackages
+    ) -> None:
+        finance = await a_package(packages, "Finance")
+        diagram = await diagram_service.create(name="Vente", package_id=finance.id)
+
+        renamed = await diagram_service.update(diagram.id, name="Ventes")
+        assert renamed.package_id == finance.id
+
+        at_the_root = await diagram_service.update(diagram.id, package_id=None)
+        assert at_the_root.package_id is None
+
+        moved_again = await diagram_service.update(diagram.id, package_id=finance.id)
+        assert moved_again.package_id == finance.id
+
+    async def test_listing_by_package_takes_the_subpackages_unless_told_otherwise(
+        self, diagram_service: DiagramService, packages: InMemoryPackages
+    ) -> None:
+        finance = await a_package(packages, "Finance")
+        budget = await a_package(packages, "Budget", finance)
+        await diagram_service.create(name="Racine")
+        await diagram_service.create(name="Compta", package_id=finance.id)
+        await diagram_service.create(name="Prévisions", package_id=budget.id)
+
+        with_children = await diagram_service.list_diagrams(package_id=finance.id)
+        alone = await diagram_service.list_diagrams(
+            package_id=finance.id, include_subpackages=False
+        )
+        unfiled = await diagram_service.list_diagrams(root_only=True)
+
+        assert [d.name for d in with_children] == ["Compta", "Prévisions"]
+        assert [d.name for d in alone] == ["Compta"]
+        assert [d.name for d in unfiled] == ["Racine"]
+
+    async def test_asking_for_the_root_and_a_package_at_once_is_refused(
+        self, diagram_service: DiagramService
+    ) -> None:
+        with pytest.raises(ValueError, match="both"):
+            await diagram_service.list_diagrams(package_id=uuid4(), root_only=True)

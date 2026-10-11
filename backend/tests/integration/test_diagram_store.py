@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.postgres import create_session_factory
 from ea.domain.diagrams import Diagram, DiagramNode
-from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError
+from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError, PackageNotFoundError
+from ea.domain.packages import Package
 from ea.repositories.diagram_store import PostgresDiagramRepository
+from ea.repositories.package_store import PostgresPackageRepository
 from tests.integration.conftest import ensure_elements
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -162,3 +164,39 @@ async def test_deleting_a_diagram_takes_its_nodes_by_the_foreign_key(
     async with engine_at_head.connect() as connection:
         left = await connection.scalar(select(func.count()).select_from(DiagramNodeRecord))
     assert left == 0
+
+
+class TestPackages:
+    async def test_a_diagram_keeps_its_package_and_is_filtered_by_it(
+        self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
+    ) -> None:
+        packages = PostgresPackageRepository(create_session_factory(engine_at_head))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        filed = await diagrams.add(
+            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id)
+        )
+        await diagrams.add(Diagram.create(name="Racine", now=FIXED_NOW))
+
+        assert (await diagrams.get(filed.id)).package_id == finance.id  # type: ignore[union-attr]
+        assert [d.name for d in await diagrams.list_all(package_ids={finance.id})] == ["Compta"]
+        assert [d.name for d in await diagrams.list_all(root_only=True)] == ["Racine"]
+        assert (await packages.counts())[finance.id].diagrams == 1
+
+    async def test_an_unknown_package_is_a_not_found_not_a_taken_name(
+        self, diagrams: PostgresDiagramRepository
+    ) -> None:
+        with pytest.raises(PackageNotFoundError):
+            await diagrams.add(Diagram.create(name="Vente", now=FIXED_NOW, package_id=uuid4()))
+
+    async def test_deleting_a_package_moves_its_diagrams_up(
+        self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
+    ) -> None:
+        packages = PostgresPackageRepository(create_session_factory(engine_at_head))
+        finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW))
+        diagram = await diagrams.add(
+            Diagram.create(name="Compta", now=FIXED_NOW, package_id=finance.id)
+        )
+
+        await packages.delete(finance.id, into=None)
+
+        assert (await diagrams.get(diagram.id)).package_id is None  # type: ignore[union-attr]

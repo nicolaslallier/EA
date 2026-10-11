@@ -37,6 +37,15 @@ describe('the application router', () => {
     expect(app.currentRoute.value.name).toBe('diagrams')
   })
 
+  it('routes the search under /recherche, in the analysis group', async () => {
+    const app = router()
+
+    await app.push('/recherche')
+
+    expect(app.currentRoute.value.name).toBe('search')
+    expect(SECTIONS.find((section) => section.name === 'search')?.group).toBe('analysis')
+  })
+
   it('falls back to a not-found screen instead of a blank one', async () => {
     const app = router()
 

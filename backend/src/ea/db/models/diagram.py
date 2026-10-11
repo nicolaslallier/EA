@@ -31,6 +31,9 @@ class DiagramRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     name: Mapped[str] = mapped_column(String(MAX_DIAGRAM_NAME_LENGTH), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    package_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("packages.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

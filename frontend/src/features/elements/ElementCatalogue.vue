@@ -18,6 +18,10 @@ import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
 import DocumentPanel from '../documents/DocumentPanel.vue'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
+import PackageManager from '../packages/PackageManager.vue'
+import PackageTree from '../packages/PackageTree.vue'
+import { ALL, ELEMENT_DRAG_TYPE, ROOT } from '../packages/packageTree'
+import { usePackages } from '../packages/usePackages'
 import RelationshipPanel from '../relationships/RelationshipPanel.vue'
 import ElementDetail from './ElementDetail.vue'
 import ElementForm from './ElementForm.vue'
@@ -31,6 +35,36 @@ const { canWrite } = useMe()
 const catalogue = useElementCatalogue()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
+const packages = usePackages()
+
+/** `?package=` — `''` all, `'root'` the unfiled, else a package id (known or not). */
+const packageParam = computed(() =>
+  typeof route.query.package === 'string' ? route.query.package : ALL,
+)
+const withSubpackages = computed(() => route.query.subpackages !== '0')
+/** The package named by the URL, if the tree still holds it. */
+const selectedPackage = computed(() => packages.byId.value.get(packageParam.value) ?? null)
+
+function applyUrlFilters(): void {
+  catalogue.filters.package = packageParam.value
+  catalogue.filters.includeSubpackages = withSubpackages.value
+}
+
+watch([packageParam, withSubpackages], async () => {
+  applyUrlFilters()
+  await catalogue.search()
+})
+
+/** A node of the tree was chosen: a new question, so a history entry. */
+async function selectPackage(value: string): Promise<void> {
+  const { package: _previous, ...rest } = route.query
+  await router.push({ query: value === ALL ? rest : { ...rest, package: value } })
+}
+
+async function setSubpackages(include: boolean): Promise<void> {
+  const { subpackages: _previous, ...rest } = route.query
+  await router.replace({ query: include ? rest : { ...rest, subpackages: '0' } })
+}
 
 /** The element the URL asks to detail, if it asks for one. */
 const detailedId = computed(() =>
@@ -62,7 +96,50 @@ const failure = ref('')
 const busy = ref(false)
 
 onMounted(async () => {
-  await Promise.all([metamodel.load(), catalogue.load()])
+  applyUrlFilters()
+  await Promise.all([metamodel.load(), packages.load(), catalogue.load()])
+})
+
+/** Filing an element changes nothing about it, only where it sits: reload both counts and rows. */
+async function file(elementIds: string[], target: string): Promise<void> {
+  failure.value = ''
+  try {
+    await packages.moveElements(elementIds, target === ROOT ? null : target)
+    // The detail on screen shows the package it had: read it again.
+    await Promise.all([catalogue.load(), detailedId.value ? detail.open(detailedId.value) : undefined])
+  } catch (caught) {
+    failure.value = messageOf(caught)
+  }
+}
+
+/** The row being filed by keyboard, and where to. */
+const filing = ref<ElementRead | null>(null)
+const filingTarget = ref(ROOT)
+
+async function confirmFiling(): Promise<void> {
+  const element = filing.value
+  if (element) {
+    await file([element.id], filingTarget.value)
+    filing.value = null
+  }
+}
+
+function openFiling(element: ElementRead): void {
+  closeEverything()
+  filing.value = element
+  filingTarget.value = element.package_id ?? ROOT
+}
+
+function onDragStart(event: DragEvent, element: ElementRead): void {
+  event.dataTransfer?.setData(ELEMENT_DRAG_TYPE, element.id)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+const packagePath = computed(() => {
+  const id = detail.element.value?.package_id
+  return id ? (packages.byId.value.get(id)?.path ?? '') : ''
 })
 
 /**
@@ -91,6 +168,7 @@ function closeEverything(): void {
   editing.value = null
   relating.value = null
   documenting.value = null
+  filing.value = null
 }
 
 async function openCreate(): Promise<void> {
@@ -132,8 +210,15 @@ async function onSubmit(payload: ElementCreate | ElementUpdate): Promise<void> {
     if (editing.value) {
       await catalogue.update(editing.value.id, payload)
     } else {
-      await catalogue.create(payload as ElementCreate)
+      const created = await catalogue.create(payload as ElementCreate)
+      // The API files nothing on creation: an element made while a package is
+      // browsed would land at the root and vanish from the filtered list.
+      if (selectedPackage.value) {
+        await file([created.id], selectedPackage.value.id)
+      }
     }
+    // The tree counts what each package holds: a write on an element moves them.
+    await packages.load()
     // Closing only here keeps what the user typed on screen when the API
     // refuses the element — a duplicate name, say.
     closeForm()
@@ -152,6 +237,7 @@ async function confirmDelete(): Promise<void> {
   busy.value = true
   try {
     await catalogue.remove(element.id)
+    await packages.load()
     confirming.value = null
   } catch (caught) {
     failure.value = messageOf(caught)
@@ -172,182 +258,259 @@ function day(iso: string): string {
 </script>
 
 <template>
-  <section class="catalogue">
-    <header class="catalogue__header">
-      <h2>Éléments d'architecture</h2>
-      <button v-if="canWrite" type="button" @click="openCreate">Nouvel élément</button>
-    </header>
+  <div class="browser">
+    <aside class="browser__tree" aria-label="Rangement">
+      <PackageManager :store="packages" :selected="packageParam" @select="selectPackage" />
+      <PackageTree
+        :packages="packages.packages.value"
+        :selected="packageParam"
+        :can-drop="canWrite"
+        @select="selectPackage"
+        @drop="(elementId, target) => file([elementId], target)"
+      />
+      <label v-if="selectedPackage" class="subpackages">
+        <input
+          type="checkbox"
+          :checked="withSubpackages"
+          @change="setSubpackages(($event.target as HTMLInputElement).checked)"
+        />
+        Inclure les sous-paquets
+      </label>
+    </aside>
 
-    <form class="filters" role="search" aria-label="Filtrer le catalogue"
-          @submit.prevent="catalogue.search()">
-      <div class="field">
-        <label for="filter-search">Rechercher</label>
-        <input id="filter-search" v-model="catalogue.filters.search" type="search"
-               placeholder="Un fragment de nom" />
-      </div>
-      <div class="field">
-        <label for="filter-type">Type</label>
-        <select id="filter-type" v-model="catalogue.filters.elementType"
-                @change="catalogue.search()">
-          <option value="">Tous les types</option>
-          <optgroup v-for="group in metamodel.byLayer.value" :key="group.layer"
-                    :label="LAYER_LABELS[group.layer]">
-            <option v-for="type in group.types" :key="type.value" :value="type.value">
-              {{ type.label }}
+    <section class="catalogue">
+      <header class="catalogue__header">
+        <h2>Éléments d'architecture</h2>
+        <button v-if="canWrite" type="button" @click="openCreate">Nouvel élément</button>
+      </header>
+
+      <form class="filters" role="search" aria-label="Filtrer le catalogue"
+            @submit.prevent="catalogue.search()">
+        <div class="field">
+          <label for="filter-search">Rechercher</label>
+          <input id="filter-search" v-model="catalogue.filters.search" type="search"
+                 placeholder="Un fragment de nom" />
+        </div>
+        <div class="field">
+          <label for="filter-type">Type</label>
+          <select id="filter-type" v-model="catalogue.filters.elementType"
+                  @change="catalogue.search()">
+            <option value="">Tous les types</option>
+            <optgroup v-for="group in metamodel.byLayer.value" :key="group.layer"
+                      :label="LAYER_LABELS[group.layer]">
+              <option v-for="type in group.types" :key="type.value" :value="type.value">
+                {{ type.label }}
+              </option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="field">
+          <label for="filter-layer">Couche</label>
+          <select id="filter-layer" v-model="catalogue.filters.layer" @change="catalogue.search()">
+            <option value="">Toutes les couches</option>
+            <option v-for="layer in metamodel.layers.value" :key="layer" :value="layer">
+              {{ LAYER_LABELS[layer] }}
             </option>
-          </optgroup>
-        </select>
-      </div>
-      <div class="field">
-        <label for="filter-layer">Couche</label>
-        <select id="filter-layer" v-model="catalogue.filters.layer" @change="catalogue.search()">
-          <option value="">Toutes les couches</option>
-          <option v-for="layer in metamodel.layers.value" :key="layer" :value="layer">
-            {{ LAYER_LABELS[layer] }}
+          </select>
+        </div>
+        <button type="submit">Filtrer</button>
+      </form>
+
+      <p v-if="catalogue.status.value === 'error'" class="banner banner--error" role="alert">
+        {{ catalogue.error.value }}
+      </p>
+
+      <ElementForm
+        v-if="creating || editing"
+        :key="editing?.id ?? 'new'"
+        :layer-groups="metamodel.byLayer.value"
+        :element="editing"
+        :failure="failure"
+        :busy="busy"
+        @submit="onSubmit"
+        @cancel="closeForm"
+      />
+
+      <p v-if="detail.status.value === 'error'" class="banner banner--error" role="alert">
+        {{ detail.error.value }}
+      </p>
+
+      <p v-if="detail.status.value === 'loading'" class="hint">Chargement de l'élément…</p>
+
+      <ElementDetail
+        v-if="detail.element.value"
+        :key="detail.element.value.id"
+        :element="detail.element.value"
+        :type-label="metamodel.labelOf(detail.element.value.element_type)"
+        :package-path="packagePath"
+        @close="closeDetail"
+      />
+
+      <RelationshipPanel
+        v-if="relating"
+        :key="relating.id"
+        :element="relating"
+        @close="relating = null"
+      />
+
+      <DocumentPanel
+        v-if="documenting"
+        :key="documenting.id"
+        :element="documenting"
+        @close="documenting = null"
+      />
+
+      <p v-if="failure && !creating && !editing" class="banner banner--error" role="alert">
+        {{ failure }}
+      </p>
+
+      <form
+        v-if="filing"
+        class="banner banner--confirm"
+        :aria-label="`Déplacer ${filing.name}`"
+        @submit.prevent="confirmFiling"
+      >
+        <label for="filing-target">Déplacer vers</label>
+        <select id="filing-target" v-model="filingTarget">
+          <option :value="ROOT">Racine (sans paquet)</option>
+          <option v-for="entry in packages.packages.value" :key="entry.id" :value="entry.id">
+            {{ entry.path }}
           </option>
         </select>
-      </div>
-      <button type="submit">Filtrer</button>
-    </form>
+        <button type="submit">Ranger</button>
+        <button type="button" class="secondary" @click="filing = null">Renoncer</button>
+      </form>
 
-    <p v-if="catalogue.status.value === 'error'" class="banner banner--error" role="alert">
-      {{ catalogue.error.value }}
-    </p>
+      <p v-if="confirming" class="banner banner--confirm" role="alert">
+        Supprimer « {{ confirming.name }} » et toutes ses relations ?
+        <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
+        <button type="button" class="secondary" @click="confirming = null">Renoncer</button>
+      </p>
 
-    <ElementForm
-      v-if="creating || editing"
-      :key="editing?.id ?? 'new'"
-      :layer-groups="metamodel.byLayer.value"
-      :element="editing"
-      :failure="failure"
-      :busy="busy"
-      @submit="onSubmit"
-      @cancel="closeForm"
-    />
+      <p v-if="catalogue.status.value === 'loading'" class="hint">Chargement du catalogue…</p>
 
-    <p v-if="detail.status.value === 'error'" class="banner banner--error" role="alert">
-      {{ detail.error.value }}
-    </p>
+      <p v-else-if="catalogue.items.value.length === 0 && catalogue.status.value === 'ready'"
+         class="hint">
+        Aucun élément pour l'instant. Commence par « Nouvel élément ».
+      </p>
 
-    <p v-if="detail.status.value === 'loading'" class="hint">Chargement de l'élément…</p>
+      <table v-else-if="catalogue.items.value.length > 0">
+        <caption class="sr-only">Catalogue des éléments d'architecture</caption>
+        <thead>
+          <tr>
+            <th scope="col">Nom</th>
+            <th scope="col">Type</th>
+            <th scope="col">Couche</th>
+            <th scope="col">Modifié</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="element in catalogue.items.value"
+            :key="element.id"
+            :draggable="canWrite"
+            @dragstart="onDragStart($event, element)"
+          >
+            <td>
+              <button type="button" class="link" @click="openDetail(element)">
+                {{ element.name }}
+              </button>
+            </td>
+            <td>{{ metamodel.labelOf(element.element_type) }}</td>
+            <td>{{ LAYER_LABELS[element.layer] }}</td>
+            <td>{{ day(element.updated_at) }}</td>
+            <td class="row-actions">
+              <button
+                v-if="canWrite"
+                type="button"
+                :aria-label="`Modifier ${element.name}`"
+                @click="openEdit(element)"
+              >
+                Modifier
+              </button>
+              <button
+                v-if="canWrite"
+                type="button"
+                :aria-label="`Déplacer ${element.name}`"
+                @click="openFiling(element)"
+              >
+                Déplacer vers…
+              </button>
+              <button
+                type="button"
+                :aria-label="`Relations de ${element.name}`"
+                @click="openRelations(element)"
+              >
+                Relations
+              </button>
+              <button
+                type="button"
+                :aria-label="`Documents de ${element.name}`"
+                @click="openDocuments(element)"
+              >
+                Documents
+              </button>
+              <button
+                v-if="canWrite"
+                type="button"
+                class="secondary"
+                :aria-label="`Supprimer ${element.name}`"
+                @click="confirming = element"
+              >
+                Supprimer
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-    <ElementDetail
-      v-if="detail.element.value"
-      :key="detail.element.value.id"
-      :element="detail.element.value"
-      :type-label="metamodel.labelOf(detail.element.value.element_type)"
-      @close="closeDetail"
-    />
-
-    <RelationshipPanel
-      v-if="relating"
-      :key="relating.id"
-      :element="relating"
-      @close="relating = null"
-    />
-
-    <DocumentPanel
-      v-if="documenting"
-      :key="documenting.id"
-      :element="documenting"
-      @close="documenting = null"
-    />
-
-    <p v-if="confirming" class="banner banner--confirm" role="alert">
-      Supprimer « {{ confirming.name }} » et toutes ses relations ?
-      <button type="button" :disabled="busy" @click="confirmDelete">Confirmer</button>
-      <button type="button" class="secondary" @click="confirming = null">Renoncer</button>
-    </p>
-
-    <p v-if="catalogue.status.value === 'loading'" class="hint">Chargement du catalogue…</p>
-
-    <p v-else-if="catalogue.items.value.length === 0 && catalogue.status.value === 'ready'"
-       class="hint">
-      Aucun élément pour l'instant. Commence par « Nouvel élément ».
-    </p>
-
-    <table v-else-if="catalogue.items.value.length > 0">
-      <caption class="sr-only">Catalogue des éléments d'architecture</caption>
-      <thead>
-        <tr>
-          <th scope="col">Nom</th>
-          <th scope="col">Type</th>
-          <th scope="col">Couche</th>
-          <th scope="col">Modifié</th>
-          <th scope="col">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="element in catalogue.items.value" :key="element.id">
-          <td>
-            <button type="button" class="link" @click="openDetail(element)">
-              {{ element.name }}
-            </button>
-          </td>
-          <td>{{ metamodel.labelOf(element.element_type) }}</td>
-          <td>{{ LAYER_LABELS[element.layer] }}</td>
-          <td>{{ day(element.updated_at) }}</td>
-          <td class="row-actions">
-            <button
-              v-if="canWrite"
-              type="button"
-              :aria-label="`Modifier ${element.name}`"
-              @click="openEdit(element)"
-            >
-              Modifier
-            </button>
-            <button
-              type="button"
-              :aria-label="`Relations de ${element.name}`"
-              @click="openRelations(element)"
-            >
-              Relations
-            </button>
-            <button
-              type="button"
-              :aria-label="`Documents de ${element.name}`"
-              @click="openDocuments(element)"
-            >
-              Documents
-            </button>
-            <button
-              v-if="canWrite"
-              type="button"
-              class="secondary"
-              :aria-label="`Supprimer ${element.name}`"
-              @click="confirming = element"
-            >
-              Supprimer
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-
-    <nav v-if="catalogue.total.value > 0" class="pagination" aria-label="Pagination du catalogue">
-      <button
-        type="button"
-        :disabled="!catalogue.hasPreviousPage.value"
-        @click="goToPage(catalogue.page.value - 1)"
-      >
-        Page précédente
-      </button>
-      <span>
-        Page {{ catalogue.page.value + 1 }} sur {{ catalogue.pageCount.value }}
-        — {{ catalogue.total.value }} éléments
-      </span>
-      <button
-        type="button"
-        :disabled="!catalogue.hasNextPage.value"
-        @click="goToPage(catalogue.page.value + 1)"
-      >
-        Page suivante
-      </button>
-    </nav>
-  </section>
+      <nav v-if="catalogue.total.value > 0" class="pagination" aria-label="Pagination du catalogue">
+        <button
+          type="button"
+          :disabled="!catalogue.hasPreviousPage.value"
+          @click="goToPage(catalogue.page.value - 1)"
+        >
+          Page précédente
+        </button>
+        <span>
+          Page {{ catalogue.page.value + 1 }} sur {{ catalogue.pageCount.value }}
+          — {{ catalogue.total.value }} éléments
+        </span>
+        <button
+          type="button"
+          :disabled="!catalogue.hasNextPage.value"
+          @click="goToPage(catalogue.page.value + 1)"
+        >
+          Page suivante
+        </button>
+      </nav>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+.browser {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: 1.2rem;
+  align-items: start;
+}
+.browser__tree {
+  display: grid;
+  gap: 0.8rem;
+}
+.subpackages {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+@media (max-width: 48rem) {
+  .browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .catalogue {
   display: grid;
   gap: 1rem;

@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List Diagrams
-         * @description Every saved diagram, sorted by name.
+         * @description Every saved diagram, sorted by name — or only those filed in a package.
          */
         get: operations["list_diagrams_diagrams_get"];
         put?: never;
@@ -113,7 +113,8 @@ export interface paths {
         };
         /**
          * List Elements
-         * @description Browse the catalogue, narrowed by type, by layer or by a name fragment.
+         * @description Browse the catalogue, narrowed by type, by layer, by a name fragment
+         *     or filed in a package (subpackages included unless told otherwise).
          */
         get: operations["list_elements_elements_get"];
         put?: never;
@@ -122,6 +123,49 @@ export interface paths {
          * @description Add an element to the catalogue.
          */
         post: operations["create_element_elements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Elements
+         * @description File up to 100 elements in a package, or at the root; all or none.
+         */
+        post: operations["move_elements_elements_move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search Elements
+         * @description Types, layers, name fragment, package, attributes and links present or absent.
+         *
+         *     Every criterion is combined with AND. `total` counts everything the query
+         *     matches, not the page. Reading needs no more than a login — it is a read.
+         */
+        post: operations["search_elements_elements_search_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -589,6 +633,122 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Packages
+         * @description The whole tree, flat: each package names its parent, so the client builds the tree.
+         */
+        get: operations["list_packages_packages_get"];
+        put?: never;
+        /** Create Package */
+        post: operations["create_package_packages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/packages/{package_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Package */
+        get: operations["read_package_packages__package_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Package
+         * @description Delete a package — never what it holds.
+         *
+         *     A package that still holds anything is a 409 `package_not_empty`; pass
+         *     `move_contents_to` (a package id, or `root`) to move its direct contents
+         *     there in the same transaction.
+         */
+        delete: operations["delete_package_packages__package_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Package
+         * @description Rename, describe or move. `parent_id: null` puts the package at the root; omit it to keep.
+         */
+        patch: operations["update_package_packages__package_id__patch"];
+        trace?: never;
+    };
+    "/queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Saved Queries
+         * @description The shared, named filters. The queries themselves are not read for a list.
+         */
+        get: operations["list_saved_queries_queries_get"];
+        put?: never;
+        /**
+         * Create Saved Query
+         * @description Keep a filter under a name, for the whole team. The author is the caller.
+         */
+        post: operations["create_saved_query_queries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/queries/{query_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Saved Query */
+        get: operations["read_saved_query_queries__query_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Saved Query
+         * @description Delete the query — not the elements it finds.
+         */
+        delete: operations["delete_saved_query_queries__query_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Saved Query */
+        patch: operations["update_saved_query_queries__query_id__patch"];
+        trace?: never;
+    };
+    "/queries/{query_id}/elements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Saved Query
+         * @description Run a saved query, paged. 422 `unknown_package` if its package has since been deleted.
+         */
+        get: operations["run_saved_query_queries__query_id__elements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/relationships": {
         parameters: {
             query?: never;
@@ -774,6 +934,8 @@ export interface components {
             description?: string;
             /** Name */
             name: string;
+            /** Package Id */
+            package_id?: string | null;
         };
         /**
          * DiagramLayout
@@ -825,6 +987,8 @@ export interface components {
             name: string;
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Package Id */
+            package_id: string | null;
             /**
              * Relationships
              * @description Only the relationships whose two ends are both on the diagram.
@@ -854,6 +1018,8 @@ export interface components {
             name: string;
             /** Node Count */
             node_count: number;
+            /** Package Id */
+            package_id: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -863,13 +1029,23 @@ export interface components {
         /**
          * DiagramUpdate
          * @description A partial update. An omitted field keeps its stored value.
+         *
+         *     `package_id` is three-valued like a package's `parent_id`: absent keeps the
+         *     package, `null` puts the diagram at the root.
          */
         DiagramUpdate: {
             /** Description */
             description?: string | null;
             /** Name */
             name?: string | null;
+            /** Package Id */
+            package_id?: string | null;
         };
+        /**
+         * Direction
+         * @enum {string}
+         */
+        Direction: "out" | "in" | "any";
         /**
          * DocumentRead
          * @description One attached markdown file, content included — the whole document.
@@ -990,6 +1166,38 @@ export interface components {
             total: number;
         };
         /**
+         * ElementQuerySchema
+         * @description A structured search of the catalogue; every criterion is combined with AND.
+         */
+        ElementQuerySchema: {
+            /** Element Types */
+            element_types: components["schemas"]["ElementType"][];
+            /** Include Subpackages */
+            include_subpackages: boolean;
+            /** Layers */
+            layers: components["schemas"]["Layer"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            order: components["schemas"]["QueryOrder"];
+            /** Package Id */
+            package_id: string | null;
+            /** Properties */
+            properties: components["schemas"]["PropertyTestSchema"][];
+            /** Relations */
+            relations: components["schemas"]["RelationTestSchema"][];
+            /** Root Only */
+            root_only: boolean;
+            /** Text */
+            text: string | null;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+        };
+        /**
          * ElementRead
          * @description An element as the API exposes it, layer and aspect resolved for the caller.
          */
@@ -1013,6 +1221,8 @@ export interface components {
             layer: components["schemas"]["Layer"];
             /** Name */
             name: string;
+            /** Package Id */
+            package_id: string | null;
             /** Properties */
             properties: {
                 [key: string]: string;
@@ -1253,6 +1463,117 @@ export interface components {
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
         };
         /**
+         * MoveElements
+         * @description File up to `MAX_MOVE_BATCH` elements in a package, or at the root.
+         */
+        MoveElements: {
+            /** Element Ids */
+            element_ids: string[];
+            /**
+             * Package Id
+             * @description The package, or `null` for the root.
+             */
+            package_id: string | null;
+        };
+        /** PackageCreate */
+        PackageCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /** PackageRead */
+        PackageRead: {
+            /**
+             * Child Count
+             * @description Packages directly below this one.
+             */
+            child_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Diagram Count
+             * @description Diagrams filed directly in this package.
+             */
+            diagram_count: number;
+            /**
+             * Element Count
+             * @description Elements filed directly in this package.
+             */
+            element_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Parent Id */
+            parent_id: string | null;
+            /**
+             * Path
+             * @description Names from the root down, e.g. `Finance / Budget`.
+             */
+            path: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * PackageUpdate
+         * @description A partial update.
+         *
+         *     `parent_id` is three-valued: absent keeps the parent, `null` puts the
+         *     package at the root, an id moves it there — which is why the route reads
+         *     `model_fields_set` rather than the value.
+         */
+        PackageUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /**
+         * PropertyOp
+         * @enum {string}
+         */
+        PropertyOp: "eq" | "contains" | "exists" | "absent";
+        /**
+         * PropertyTestSchema
+         * @description One test on a user-defined attribute.
+         *
+         *     `value` is required by `eq` and `contains`, refused by the others.
+         */
+        PropertyTestSchema: {
+            /**
+             * Key
+             * @description The name of a user-defined attribute: letters, digits, underscores.
+             */
+            key: string;
+            op: components["schemas"]["PropertyOp"];
+            /** Value */
+            value: string | null;
+        };
+        /**
+         * QueryOrder
+         * @enum {string}
+         */
+        QueryOrder: "name" | "created_at" | "updated_at";
+        /**
          * ReconcileRead
          * @description What one pass of the file catch-up changed — see docs/adr/0039.
          */
@@ -1267,6 +1588,21 @@ export interface components {
              * @description Files the catalogue had never heard of.
              */
             recorded: number;
+        };
+        /**
+         * RelationTestSchema
+         * @description Whether an element has (or has no) relationship of one type, optionally to one type.
+         */
+        RelationTestSchema: {
+            direction: components["schemas"]["Direction"];
+            /** @description The type at the far end, if it matters. */
+            other_type: components["schemas"]["ElementType"] | null;
+            /**
+             * Present
+             * @description `false` finds the elements that have no such link.
+             */
+            present: boolean;
+            relationship_type: components["schemas"]["RelationshipType"];
         };
         /**
          * RelationshipCategory
@@ -1399,6 +1735,77 @@ export interface components {
             strength: number;
             value: components["schemas"]["RelationshipType"];
         };
+        /** SavedQueryCreate */
+        SavedQueryCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+            query: components["schemas"]["ElementQuerySchema"];
+        };
+        /** SavedQueryRead */
+        SavedQueryRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            query: components["schemas"]["ElementQuerySchema"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** SavedQuerySummaryRead */
+        SavedQuerySummaryRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * SavedQueryUpdate
+         * @description A partial update. An omitted field keeps its stored value.
+         */
+        SavedQueryUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            query?: components["schemas"]["ElementQuerySchema"] | null;
+        };
         /**
          * SubnetCreate
          * @description A new subnet: a `communication_network` element carrying a prefix.
@@ -1510,7 +1917,11 @@ export type $defs = Record<string, never>;
 export interface operations {
     list_diagrams_diagrams_get: {
         parameters: {
-            query?: never;
+            query?: {
+                package?: string | null;
+                include_subpackages?: boolean;
+                root_only?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1542,6 +1953,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1579,6 +1999,15 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2042,6 +2471,9 @@ export interface operations {
                 element_type?: components["schemas"]["ElementType"][] | null;
                 layer?: components["schemas"]["Layer"][] | null;
                 search?: string | null;
+                package?: string | null;
+                include_subpackages?: boolean;
+                root_only?: boolean;
                 limit?: number;
                 offset?: number;
             };
@@ -2145,6 +2577,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_elements_elements_move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveElements"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_elements_elements_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElementQuerySchema"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -3815,6 +4365,680 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_packages_packages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_package_packages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_package_packages__package_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_package_packages__package_id__delete: {
+        parameters: {
+            query?: {
+                move_contents_to?: string | null;
+            };
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_package_packages__package_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PackageUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_saved_queries_queries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedQuerySummaryRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_saved_query_queries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedQueryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedQueryRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_saved_query_queries__query_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedQueryRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_saved_query_queries__query_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_saved_query_queries__query_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedQueryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedQueryRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    run_saved_query_queries__query_id__elements_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

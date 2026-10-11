@@ -35,14 +35,14 @@ def _clean_name(name: str) -> str:
 
 #: A user-defined attribute is a key of the element's `properties` map, so its
 #: name has to be a plain identifier — see `db/models/architecture.py`.
-_PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
+PROPERTY_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}\Z")
 
 
 def _freeze(properties: Mapping[str, str] | None) -> Mapping[str, str]:
     if not properties:
         return _EMPTY_PROPERTIES
     for key in properties:
-        if not _PROPERTY_KEY.match(key):
+        if not PROPERTY_KEY.match(key):
             msg = (
                 f"property name {key!r} is not a plain identifier "
                 "(letters, digits and underscores, starting with a letter)"
@@ -63,6 +63,9 @@ class Element:
     description: str = ""
     documentation: str = ""
     properties: Mapping[str, str] = field(default=_EMPTY_PROPERTIES)
+    #: The package that files this element; `None` is "at the root". Not one of
+    #: the element's facts: `update_element` keeps it, only a move changes it.
+    package_id: UUID | None = None
 
     @classmethod
     def create(

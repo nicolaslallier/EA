@@ -4,9 +4,10 @@ import { computed, ref } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 
 import ElementCatalogue from '../src/features/elements/ElementCatalogue.vue'
+import { ELEMENT_DRAG_TYPE } from '../src/features/packages/packageTree'
 import { useMe } from '../src/lib/me'
 import { createAppRouter } from '../src/router'
-import { METAMODEL, aGraph, aPage, anElement, stubApi, type Route } from './support/api'
+import { METAMODEL, aGraph, aPackage, aPage, anElement, stubApi, type Route } from './support/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -14,8 +15,11 @@ afterEach(() => {
 
 const PALETTE: Route = { path: '/metamodel', body: METAMODEL }
 
+// Last, so that the routes of a test win: a catalogue with no package at all.
+const NO_PACKAGES: Route = { path: '/packages', body: [] }
+
 async function renderCatalogue(routes: Route[], query = '') {
-  const calls = stubApi([PALETTE, ...routes])
+  const calls = stubApi([PALETTE, ...routes, NO_PACKAGES])
   const router = createAppRouter(createMemoryHistory())
   await router.push(`/elements${query}`)
   await router.isReady()
@@ -334,5 +338,257 @@ describe('ElementCatalogue', () => {
     expect(row.queryByRole('button', { name: /^supprimer/i })).toBeNull()
     expect(screen.getByRole('button', { name: /^filtrer$/i })).toBeInTheDocument()
     expect(row.getByRole('button', { name: 'Facturation' })).toBeInTheDocument()
+  })
+})
+
+const FINANCE = aPackage({ id: 'f', name: 'Finance', path: 'Finance' })
+
+describe('ElementCatalogue — the package tree', () => {
+  it('reads ?package= and ?subpackages=0 into the query', async () => {
+    const { calls } = await renderCatalogue(
+      [{ path: '/elements', body: aPage([anElement()]) }, { path: '/packages', body: [FINANCE] }],
+      '?package=f&subpackages=0',
+    )
+    await screen.findByText('Facturation')
+
+    const query = calls.find((call) => call.url.pathname === '/elements')?.url.searchParams
+    expect(query?.get('package')).toBe('f')
+    expect(query?.get('include_subpackages')).toBe('false')
+  })
+
+  it('asks for the unfiled elements when the URL says root', async () => {
+    const { calls } = await renderCatalogue(
+      [{ path: '/elements', body: aPage([]) }],
+      '?package=root',
+    )
+
+    await waitFor(() =>
+      expect(
+        calls.find((call) => call.url.pathname === '/elements')?.url.searchParams.get('root_only'),
+      ).toBe('true'),
+    )
+  })
+
+  it('selecting a node pushes it into the URL and refetches', async () => {
+    const { calls, router } = await renderCatalogue([
+      { path: '/elements', body: aPage([anElement()]) },
+      { path: '/packages', body: [FINANCE] },
+    ])
+    await screen.findByText('Facturation')
+
+    await fireEvent.click(await screen.findByRole('treeitem', { name: /Finance/ }))
+
+    await waitFor(() => expect(router.currentRoute.value.query.package).toBe('f'))
+    await waitFor(() =>
+      expect(
+        calls
+          .filter((call) => call.url.pathname === '/elements')
+          .at(-1)
+          ?.url.searchParams.get('package'),
+      ).toBe('f'),
+    )
+  })
+
+  it('turns the subpackages off with the checkbox, by replacing the history entry', async () => {
+    const { router } = await renderCatalogue(
+      [{ path: '/elements', body: aPage([]) }, { path: '/packages', body: [FINANCE] }],
+      '?package=f',
+    )
+
+    await fireEvent.click(await screen.findByRole('checkbox', { name: /sous-paquets/i }))
+
+    await waitFor(() => expect(router.currentRoute.value.query.subpackages).toBe('0'))
+  })
+
+  it('files a dragged row into the package it is dropped on, then reloads', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/packages', body: [FINANCE] },
+      { method: 'POST', path: '/elements/move', status: 204 },
+    ])
+    await screen.findByText('Facturation')
+
+    await fireEvent.drop(await screen.findByRole('treeitem', { name: /Finance/ }), {
+      dataTransfer: { getData: () => element.id, types: [ELEMENT_DRAG_TYPE] },
+    })
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.url.pathname === '/elements/move')?.body).toEqual({
+        element_ids: [element.id],
+        package_id: 'f',
+      }),
+    )
+  })
+
+  it('files a row by keyboard with "Déplacer vers…", the root included', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/packages', body: [FINANCE] },
+      { method: 'POST', path: '/elements/move', status: 204 },
+    ])
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /déplacer facturation/i }))
+    await fireEvent.update(await screen.findByLabelText(/déplacer vers/i), 'root')
+    await fireEvent.click(screen.getByRole('button', { name: /^ranger$/i }))
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.url.pathname === '/elements/move')?.body).toEqual({
+        element_ids: [element.id],
+        package_id: null,
+      }),
+    )
+  })
+
+  it('shows a refused move and leaves the list alone', async () => {
+    const element = anElement({ name: 'Facturation' })
+    await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/packages', body: [FINANCE] },
+      {
+        method: 'POST',
+        path: '/elements/move',
+        status: 404,
+        body: { error: 'not_found', detail: 'no package with id f' },
+      },
+    ])
+    await screen.findByText('Facturation')
+
+    await fireEvent.drop(await screen.findByRole('treeitem', { name: /Finance/ }), {
+      dataTransfer: { getData: () => element.id, types: [ELEMENT_DRAG_TYPE] },
+    })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('no package with id f')
+    expect(screen.getByText('Facturation')).toBeInTheDocument()
+  })
+
+  it('shows an empty list, not an error, for a package that no longer exists', async () => {
+    await renderCatalogue(
+      [{ path: '/elements', body: aPage([]) }, { path: '/packages', body: [FINANCE] }],
+      '?package=disparu',
+    )
+
+    expect(await screen.findByText(/aucun élément/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryAllByRole('treeitem', { selected: true })).toHaveLength(0)
+  })
+
+  it('gives a reader the tree to read, but nothing to move or to drag', async () => {
+    const reader = {
+      me: ref({ username: 'reader', can_write: false }),
+      canWrite: computed(() => false),
+      error: ref(null),
+      load: vi.fn(() => Promise.resolve()),
+    }
+    // Once for the screen, once for `PackageManager`, which asks for itself.
+    vi.mocked(useMe).mockReturnValueOnce(reader).mockReturnValueOnce(reader)
+    await renderCatalogue([
+      { path: '/elements', body: aPage([anElement({ name: 'Facturation' })]) },
+      { path: '/packages', body: [FINANCE] },
+    ])
+
+    const row = await screen.findByRole('row', { name: /Facturation/ })
+    expect(await screen.findByRole('treeitem', { name: /Finance/ })).toBeInTheDocument()
+    expect(row).not.toHaveAttribute('draggable', 'true')
+    expect(screen.queryByRole('button', { name: /déplacer/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /nouveau paquet/i })).toBeNull()
+  })
+})
+
+describe('ElementCatalogue — what a write leaves behind', () => {
+  const created = anElement({ id: '22222222-2222-4222-8222-222222222222', name: 'Grand livre' })
+
+  async function fillAndSubmit() {
+    await fireEvent.click(await screen.findByRole('button', { name: /nouvel élément/i }))
+    await fireEvent.update(screen.getByLabelText(/nom/i), 'Grand livre')
+    await fireEvent.submit(screen.getByRole('form'))
+  }
+
+  it('files a new element in the package being browsed, so it stays in the list', async () => {
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([]) },
+        { path: '/packages', body: [FINANCE] },
+        { method: 'POST', path: '/elements', status: 201, body: created },
+        { method: 'POST', path: '/elements/move', status: 204 },
+      ],
+      '?package=f',
+    )
+
+    await fillAndSubmit()
+
+    await waitFor(() =>
+      expect(calls.find((call) => call.url.pathname === '/elements/move')?.body).toEqual({
+        element_ids: [created.id],
+        package_id: 'f',
+      }),
+    )
+    // The list is read again after the filing, not before.
+    await waitFor(() => {
+      const order = calls.map((call) => `${call.method} ${call.url.pathname}`)
+      expect(order.lastIndexOf('GET /elements')).toBeGreaterThan(order.indexOf('POST /elements/move'))
+    })
+  })
+
+  it('leaves a new element at the root when no real package is selected', async () => {
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([]) },
+        { method: 'POST', path: '/elements', status: 201, body: created },
+      ],
+      '?package=root',
+    )
+
+    await fillAndSubmit()
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true))
+    await waitFor(() => expect(screen.queryByRole('form')).not.toBeInTheDocument())
+    expect(calls.some((call) => call.url.pathname === '/elements/move')).toBe(false)
+  })
+
+  it('reloads the counts of the tree after creating and after deleting', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/packages', body: [FINANCE] },
+      { method: 'POST', path: '/elements', status: 201, body: created },
+      { method: 'DELETE', path: `/elements/${element.id}`, status: 204 },
+    ])
+    await screen.findByText('Facturation')
+    const treeReads = () => calls.filter((call) => call.url.pathname === '/packages').length
+    const before = treeReads()
+
+    await fillAndSubmit()
+    await waitFor(() => expect(treeReads()).toBe(before + 1))
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /supprimer facturation/i }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirmer' }))
+    await waitFor(() => expect(treeReads()).toBe(before + 2))
+  })
+
+  it('reloads the open detail after the element is filed, so its package is the new one', async () => {
+    const element = anElement({ name: 'Facturation' })
+    const { calls } = await renderCatalogue(
+      [
+        { path: '/elements', body: aPage([element]) },
+        { path: `/elements/${element.id}`, body: element },
+        { path: '/packages', body: [FINANCE] },
+        { method: 'POST', path: '/elements/move', status: 204 },
+      ],
+      `?element=${element.id}`,
+    )
+    await screen.findByRole('region', { name: /détail de l'élément/i })
+    const detailReads = () =>
+      calls.filter((call) => call.url.pathname === `/elements/${element.id}`).length
+    const before = detailReads()
+
+    await fireEvent.drop(await screen.findByRole('treeitem', { name: /Finance/ }), {
+      dataTransfer: { getData: () => element.id, types: [ELEMENT_DRAG_TYPE] },
+    })
+
+    await waitFor(() => expect(detailReads()).toBe(before + 1))
   })
 })

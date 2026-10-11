@@ -381,3 +381,41 @@ class TestRelationshipListing:
         response = await client.get(f"/elements/{uuid4()}/relationships")
 
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestPackagesOnElements:
+    async def test_an_element_reports_its_package_and_is_at_the_root_when_new(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        created = await create(client, "node", "db-01")
+
+        assert created["package_id"] is None
+        assert (await client.get(f"/elements/{created['id']}")).json()["package_id"] is None
+
+    async def test_the_listing_keeps_working_without_any_package_parameter(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        await create(client, "node", "db-01")
+
+        page = (await client.get("/elements")).json()
+
+        assert page["total"] == 1
+        assert page["items"][0]["package_id"] is None
+
+    async def test_the_package_parameters_are_accepted(self, client: httpx.AsyncClient) -> None:
+        response = await client.get(
+            "/elements",
+            params={"package": str(uuid4()), "include_subpackages": "false"},
+        )
+
+        assert response.status_code == 200
+
+    async def test_the_root_and_a_package_at_once_is_a_422_not_an_empty_page(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.get(
+            "/elements", params={"package": str(uuid4()), "root_only": "true"}
+        )
+
+        assert (response.status_code, response.json()["error"]) == (422, "invalid_input")

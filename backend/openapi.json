@@ -235,6 +235,18 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
           }
         },
         "required": [
@@ -341,6 +353,18 @@
             "title": "Nodes",
             "type": "array"
           },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
           "relationships": {
             "description": "Only the relationships whose two ends are both on the diagram.",
             "items": {
@@ -361,6 +385,7 @@
           "description",
           "created_at",
           "updated_at",
+          "package_id",
           "nodes",
           "elements",
           "relationships"
@@ -392,6 +417,18 @@
             "title": "Node Count",
             "type": "integer"
           },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -403,6 +440,7 @@
           "name",
           "description",
           "node_count",
+          "package_id",
           "created_at",
           "updated_at"
         ],
@@ -411,7 +449,7 @@
       },
       "DiagramUpdate": {
         "additionalProperties": false,
-        "description": "A partial update. An omitted field keeps its stored value.",
+        "description": "A partial update. An omitted field keeps its stored value.\n\n`package_id` is three-valued like a package's `parent_id`: absent keeps the\npackage, `null` puts the diagram at the root.",
         "properties": {
           "description": {
             "anyOf": [
@@ -437,10 +475,31 @@
               }
             ],
             "title": "Name"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
           }
         },
         "title": "DiagramUpdate",
         "type": "object"
+      },
+      "Direction": {
+        "enum": [
+          "out",
+          "in",
+          "any"
+        ],
+        "title": "Direction",
+        "type": "string"
       },
       "DocumentRead": {
         "description": "One attached markdown file, content included \u2014 the whole document.\n\nNot a subclass of the summary above: it would inherit an `of` that builds\nit from a `DocumentSummary`, which has no content to give it.",
@@ -609,6 +668,111 @@
         "title": "ElementPage",
         "type": "object"
       },
+      "ElementQuerySchema": {
+        "additionalProperties": false,
+        "description": "A structured search of the catalogue; every criterion is combined with AND.",
+        "properties": {
+          "element_types": {
+            "items": {
+              "$ref": "#/components/schemas/ElementType"
+            },
+            "maxItems": 61,
+            "title": "Element Types",
+            "type": "array"
+          },
+          "include_subpackages": {
+            "title": "Include Subpackages",
+            "type": "boolean"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/Layer"
+            },
+            "maxItems": 8,
+            "title": "Layers",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "order": {
+            "$ref": "#/components/schemas/QueryOrder"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyTestSchema"
+            },
+            "maxItems": 10,
+            "title": "Properties",
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/RelationTestSchema"
+            },
+            "maxItems": 5,
+            "title": "Relations",
+            "type": "array"
+          },
+          "root_only": {
+            "title": "Root Only",
+            "type": "boolean"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "element_types",
+          "layers",
+          "text",
+          "package_id",
+          "include_subpackages",
+          "root_only",
+          "properties",
+          "relations",
+          "order",
+          "limit",
+          "offset"
+        ],
+        "title": "ElementQuerySchema",
+        "type": "object"
+      },
       "ElementRead": {
         "description": "An element as the API exposes it, layer and aspect resolved for the caller.",
         "properties": {
@@ -643,6 +807,18 @@
             "title": "Name",
             "type": "string"
           },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
           "properties": {
             "additionalProperties": {
               "type": "string"
@@ -665,6 +841,7 @@
           "description",
           "documentation",
           "properties",
+          "package_id",
           "created_at",
           "updated_at"
         ],
@@ -1151,6 +1328,250 @@
         "title": "MetamodelRead",
         "type": "object"
       },
+      "MoveElements": {
+        "additionalProperties": false,
+        "description": "File up to `MAX_MOVE_BATCH` elements in a package, or at the root.",
+        "properties": {
+          "element_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Element Ids",
+            "type": "array"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The package, or `null` for the root.",
+            "title": "Package Id"
+          }
+        },
+        "required": [
+          "element_ids",
+          "package_id"
+        ],
+        "title": "MoveElements",
+        "type": "object"
+      },
+      "PackageCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^/]+$",
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PackageCreate",
+        "type": "object"
+      },
+      "PackageRead": {
+        "properties": {
+          "child_count": {
+            "description": "Packages directly below this one.",
+            "title": "Child Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "diagram_count": {
+            "description": "Diagrams filed directly in this package.",
+            "title": "Diagram Count",
+            "type": "integer"
+          },
+          "element_count": {
+            "description": "Elements filed directly in this package.",
+            "title": "Element Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "path": {
+            "description": "Names from the root down, e.g. `Finance / Budget`.",
+            "title": "Path",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "parent_id",
+          "name",
+          "description",
+          "path",
+          "element_count",
+          "diagram_count",
+          "child_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PackageRead",
+        "type": "object"
+      },
+      "PackageUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update.\n\n`parent_id` is three-valued: absent keeps the parent, `null` puts the\npackage at the root, an id moves it there \u2014 which is why the route reads\n`model_fields_set` rather than the value.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^/]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "title": "PackageUpdate",
+        "type": "object"
+      },
+      "PropertyOp": {
+        "enum": [
+          "eq",
+          "contains",
+          "exists",
+          "absent"
+        ],
+        "title": "PropertyOp",
+        "type": "string"
+      },
+      "PropertyTestSchema": {
+        "additionalProperties": false,
+        "description": "One test on a user-defined attribute.\n\n`value` is required by `eq` and `contains`, refused by the others.",
+        "properties": {
+          "key": {
+            "description": "The name of a user-defined attribute: letters, digits, underscores.",
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/PropertyOp"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "op",
+          "value"
+        ],
+        "title": "PropertyTestSchema",
+        "type": "object"
+      },
+      "QueryOrder": {
+        "enum": [
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "QueryOrder",
+        "type": "string"
+      },
       "ReconcileRead": {
         "description": "What one pass of the file catch-up changed \u2014 see docs/adr/0039.",
         "properties": {
@@ -1170,6 +1591,42 @@
           "forgotten"
         ],
         "title": "ReconcileRead",
+        "type": "object"
+      },
+      "RelationTestSchema": {
+        "additionalProperties": false,
+        "description": "Whether an element has (or has no) relationship of one type, optionally to one type.",
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "other_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ElementType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The type at the far end, if it matters."
+          },
+          "present": {
+            "description": "`false` finds the elements that have no such link.",
+            "title": "Present",
+            "type": "boolean"
+          },
+          "relationship_type": {
+            "$ref": "#/components/schemas/RelationshipType"
+          }
+        },
+        "required": [
+          "relationship_type",
+          "direction",
+          "present",
+          "other_type"
+        ],
+        "title": "RelationTestSchema",
         "type": "object"
       },
       "RelationshipCategory": {
@@ -1402,6 +1859,161 @@
         "title": "RelationshipTypeRead",
         "type": "object"
       },
+      "SavedQueryCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ElementQuerySchema"
+          }
+        },
+        "required": [
+          "name",
+          "query"
+        ],
+        "title": "SavedQueryCreate",
+        "type": "object"
+      },
+      "SavedQueryRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ElementQuerySchema"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "query"
+        ],
+        "title": "SavedQueryRead",
+        "type": "object"
+      },
+      "SavedQuerySummaryRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SavedQuerySummaryRead",
+        "type": "object"
+      },
+      "SavedQueryUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update. An omitted field keeps its stored value.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ElementQuerySchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "SavedQueryUpdate",
+        "type": "object"
+      },
       "SubnetCreate": {
         "additionalProperties": false,
         "description": "A new subnet: a `communication_network` element carrying a prefix.",
@@ -1606,8 +2218,47 @@
   "paths": {
     "/diagrams": {
       "get": {
-        "description": "Every saved diagram, sorted by name.",
+        "description": "Every saved diagram, sorted by name \u2014 or only those filed in a package.",
         "operationId": "list_diagrams_diagrams_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "package",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_subpackages",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Subpackages",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "root_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Root Only",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1642,6 +2293,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -1697,6 +2358,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "409": {
             "content": {
@@ -2304,7 +2975,7 @@
     },
     "/elements": {
       "get": {
-        "description": "Browse the catalogue, narrowed by type, by layer or by a name fragment.",
+        "description": "Browse the catalogue, narrowed by type, by layer, by a name fragment\nor filed in a package (subpackages included unless told otherwise).",
         "operationId": "list_elements_elements_get",
         "parameters": [
           {
@@ -2360,6 +3031,43 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "package",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_subpackages",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Subpackages",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "root_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Root Only",
+              "type": "boolean"
             }
           },
           {
@@ -2511,6 +3219,154 @@
         "summary": "Create Element",
         "tags": [
           "architecture"
+        ]
+      }
+    },
+    "/elements/move": {
+      "post": {
+        "description": "File up to 100 elements in a package, or at the root; all or none.",
+        "operationId": "move_elements_elements_move_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveElements"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Move Elements",
+        "tags": [
+          "packages",
+          "packages"
+        ]
+      }
+    },
+    "/elements/search": {
+      "post": {
+        "description": "Types, layers, name fragment, package, attributes and links present or absent.\n\nEvery criterion is combined with AND. `total` counts everything the query\nmatches, not the page. Reading needs no more than a login \u2014 it is a read.",
+        "operationId": "search_elements_elements_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ElementQuerySchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Elements",
+        "tags": [
+          "search"
         ]
       }
     },
@@ -4863,6 +5719,917 @@
         "summary": "Read Permitted Relationships",
         "tags": [
           "metamodel"
+        ]
+      }
+    },
+    "/packages": {
+      "get": {
+        "description": "The whole tree, flat: each package names its parent, so the client builds the tree.",
+        "operationId": "list_packages_packages_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PackageRead"
+                  },
+                  "title": "Response List Packages Packages Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Packages",
+        "tags": [
+          "packages"
+        ]
+      },
+      "post": {
+        "operationId": "create_package_packages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Package",
+        "tags": [
+          "packages"
+        ]
+      }
+    },
+    "/packages/{package_id}": {
+      "delete": {
+        "description": "Delete a package \u2014 never what it holds.\n\nA package that still holds anything is a 409 `package_not_empty`; pass\n`move_contents_to` (a package id, or `root`) to move its direct contents\nthere in the same transaction.",
+        "operationId": "delete_package_packages__package_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "move_contents_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "The id of a package, or `root` for the top of the tree.",
+                  "maxLength": 36,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Move Contents To"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Package",
+        "tags": [
+          "packages"
+        ]
+      },
+      "get": {
+        "operationId": "read_package_packages__package_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Package",
+        "tags": [
+          "packages"
+        ]
+      },
+      "patch": {
+        "description": "Rename, describe or move. `parent_id: null` puts the package at the root; omit it to keep.",
+        "operationId": "update_package_packages__package_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackageUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Package",
+        "tags": [
+          "packages"
+        ]
+      }
+    },
+    "/queries": {
+      "get": {
+        "description": "The shared, named filters. The queries themselves are not read for a list.",
+        "operationId": "list_saved_queries_queries_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SavedQuerySummaryRead"
+                  },
+                  "title": "Response List Saved Queries Queries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Saved Queries",
+        "tags": [
+          "search"
+        ]
+      },
+      "post": {
+        "description": "Keep a filter under a name, for the whole team. The author is the caller.",
+        "operationId": "create_saved_query_queries_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedQueryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQueryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Saved Query",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/queries/{query_id}": {
+      "delete": {
+        "description": "Delete the query \u2014 not the elements it finds.",
+        "operationId": "delete_saved_query_queries__query_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Saved Query",
+        "tags": [
+          "search"
+        ]
+      },
+      "get": {
+        "operationId": "read_saved_query_queries__query_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQueryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Saved Query",
+        "tags": [
+          "search"
+        ]
+      },
+      "patch": {
+        "operationId": "update_saved_query_queries__query_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedQueryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQueryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Saved Query",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/queries/{query_id}/elements": {
+      "get": {
+        "description": "Run a saved query, paged. 422 `unknown_package` if its package has since been deleted.",
+        "operationId": "run_saved_query_queries__query_id__elements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Query Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Saved Query",
+        "tags": [
+          "search"
         ]
       }
     },

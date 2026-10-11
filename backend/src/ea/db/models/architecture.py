@@ -68,6 +68,9 @@ class ElementRecord(Base):
     properties: Mapped[dict[str, str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    package_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("packages.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -147,4 +147,30 @@ describe('useElementCatalogue', () => {
     expect(calls[1].url.searchParams.get('offset')).toBe('25')
     expect(catalogue.hasNextPage.value).toBe(false)
   })
+
+  it('asks for one package, subpackages included unless told otherwise', async () => {
+    const calls = stubApi([{ path: '/elements', body: aPage([]) }])
+    const catalogue = useElementCatalogue()
+
+    catalogue.filters.package = 'f'
+    await catalogue.load()
+    catalogue.filters.includeSubpackages = false
+    await catalogue.load()
+
+    expect(calls[0].url.searchParams.get('package')).toBe('f')
+    expect(calls[0].url.searchParams.has('include_subpackages')).toBe(false)
+    expect(calls[1].url.searchParams.get('include_subpackages')).toBe('false')
+  })
+
+  it('asks for the unfiled elements with root_only, and no package', async () => {
+    const calls = stubApi([{ path: '/elements', body: aPage([]) }])
+    const catalogue = useElementCatalogue()
+
+    catalogue.filters.package = 'root'
+    await catalogue.load()
+
+    const query = calls[0].url.searchParams
+    expect(query.get('root_only')).toBe('true')
+    expect(query.has('package')).toBe(false)
+  })
 })

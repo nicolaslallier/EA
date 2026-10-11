@@ -19,13 +19,18 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
-from ea.domain.errors import DiagramNotFoundError, UnknownLayoutElementError
+from ea.domain.errors import (
+    DiagramNotFoundError,
+    PackageNotFoundError,
+    UnknownLayoutElementError,
+)
+from ea.domain.packages import UNSET, Unset, descendants_of
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from ea.domain.ports import DiagramRepository
+    from ea.domain.ports import DiagramRepository, PackageRepository
     from ea.services.architecture import ArchitectureService
 
 Clock = Callable[[], datetime]
@@ -49,20 +54,49 @@ class DiagramService:
         repository: DiagramRepository,
         architecture: ArchitectureService,
         *,
+        packages: PackageRepository | None = None,
         clock: Clock = _utc_now,
     ) -> None:
         self._repository = repository
         self._architecture = architecture
+        self._packages = packages
         self._now = clock
 
-    async def list_diagrams(self) -> tuple[Diagram, ...]:
+    async def list_diagrams(
+        self,
+        *,
+        package_id: UUID | None = None,
+        include_subpackages: bool = True,
+        root_only: bool = False,
+    ) -> tuple[Diagram, ...]:
         require_caller()
-        return await self._repository.list_all()
+        if root_only and package_id is not None:
+            msg = "a diagram cannot be both at the root and in a package"
+            raise ValueError(msg)
+        if package_id is None:
+            return await self._repository.list_all(root_only=root_only)
+        wanted = {package_id}
+        if include_subpackages and self._packages is not None:
+            everything = {p.id: p for p in await self._packages.list_all()}
+            wanted |= descendants_of(package_id, everything)
+        return await self._repository.list_all(package_ids=wanted)
 
-    async def create(self, *, name: str, description: str = "") -> Diagram:
+    async def _require_package(self, package_id: UUID | None) -> None:
+        if package_id is None:
+            return
+        if self._packages is None or await self._packages.get(package_id) is None:
+            msg = f"no package with id {package_id}"
+            raise PackageNotFoundError(msg)
+
+    async def create(
+        self, *, name: str, description: str = "", package_id: UUID | None = None
+    ) -> Diagram:
         require_editor()
+        await self._require_package(package_id)
         stored = await self._repository.add(
-            Diagram.create(name=name, description=description, now=self._now())
+            Diagram.create(
+                name=name, description=description, now=self._now(), package_id=package_id
+            )
         )
         self._audit("diagram created: %r", stored, "diagram_created")
         return stored
@@ -88,12 +122,21 @@ class DiagramService:
         )
 
     async def update(
-        self, diagram_id: UUID, *, name: str | None = None, description: str | None = None
+        self,
+        diagram_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        package_id: UUID | Unset | None = UNSET,
     ) -> Diagram:
         require_editor()
         current = await self.get(diagram_id)
+        if not isinstance(package_id, Unset):
+            await self._require_package(package_id)
         stored = await self._repository.save(
-            current.revise(name=name, description=description, now=self._now())
+            current.revise(
+                name=name, description=description, package_id=package_id, now=self._now()
+            )
         )
         self._audit("diagram updated: %r", stored, "diagram_updated")
         return stored

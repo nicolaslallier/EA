@@ -6,7 +6,7 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
@@ -17,6 +17,9 @@ from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
+from ea.domain.packages import Package, PackageCounts
+from ea.domain.query import ElementQuery, PropertyTest, QueryOrder, RelationTest
+from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
@@ -42,13 +45,40 @@ class GraphView:
 
 @dataclass(frozen=True, slots=True)
 class ElementFilter:
-    """The ways the catalogue can be narrowed. All criteria are combined with AND."""
+    """The ways the catalogue can be narrowed. All criteria are combined with AND.
+
+    What a repository compiles. `ElementQuery` is the validated form every
+    adapter builds; this narrow struct is what it becomes, and the one place
+    the SQL reads it is `architecture_store._matching`.
+    """
 
     element_types: tuple[ElementType, ...] = ()
     layers: tuple[Layer, ...] = ()
     search: str | None = None
+    package_id: UUID | None = None
+    include_subpackages: bool = True
+    root_only: bool = False
+    properties: tuple[PropertyTest, ...] = ()
+    relations: tuple[RelationTest, ...] = ()
+    order: QueryOrder = QueryOrder.NAME
     limit: int = 50
     offset: int = 0
+
+    @classmethod
+    def from_query(cls, query: ElementQuery) -> ElementFilter:
+        return cls(
+            element_types=query.element_types,
+            layers=query.layers,
+            search=query.text,
+            package_id=query.package_id,
+            include_subpackages=query.include_subpackages,
+            root_only=query.root_only,
+            properties=query.properties,
+            relations=query.relations,
+            order=query.order,
+            limit=query.limit,
+            offset=query.offset,
+        )
 
 
 class ArchitectureRepository(Protocol):
@@ -201,8 +231,14 @@ class DocumentRepository(Protocol):
 class DiagramRepository(Protocol):
     """Persistence for saved diagrams — see docs/adr/0031."""
 
-    async def list_all(self) -> tuple[Diagram, ...]:
-        """Every diagram, sorted by name, each with its node count."""
+    async def list_all(
+        self, *, package_ids: Collection[UUID] | None = None, root_only: bool = False
+    ) -> tuple[Diagram, ...]:
+        """Every diagram, sorted by name, each with its node count.
+
+        `package_ids` keeps only the diagrams filed in one of those packages
+        (the service resolves a subtree to ids); `root_only` only the unfiled.
+        """
         ...
 
     async def add(self, diagram: Diagram) -> Diagram:
@@ -384,3 +420,75 @@ class ObjectStore(Protocol):
         ...
 
     async def delete(self, key: str) -> None: ...
+
+
+class PackageRepository(Protocol):
+    """Persistence for the classification tree."""
+
+    async def list_all(self) -> tuple[Package, ...]:
+        """Every package, sorted by lower-cased name."""
+        ...
+
+    async def counts(self) -> dict[UUID, PackageCounts]:
+        """What each package holds directly. A package holding nothing may be absent."""
+        ...
+
+    async def get(self, package_id: UUID) -> Package | None: ...
+
+    async def add(self, package: Package) -> Package:
+        """Store a new package, or refuse a sibling name already taken."""
+        ...
+
+    async def save(self, package: Package) -> Package:
+        """Overwrite name, description, parent and update time of a stored package."""
+        ...
+
+    async def delete(
+        self, package_id: UUID, *, into: UUID | None, require_empty: bool = False
+    ) -> bool:
+        """Move the direct sub-packages, elements and diagrams to `into`, then delete.
+
+        `into=None` is the root. One transaction: a sibling name taken at the
+        destination refuses everything and moves nothing. `False` if the
+        package is gone.
+
+        `require_empty` is the caller saying it asked for no move: nothing is
+        moved, and a package that holds anything *at that moment* (counted in
+        the same transaction) raises `PackageNotEmptyError`. `into=None` alone
+        cannot say it — it means "the root".
+        """
+        ...
+
+    async def move_elements(self, element_ids: Sequence[UUID], package_id: UUID | None) -> None:
+        """Put these elements in a package (`None`: the root), all or none.
+
+        Raises `ElementNotFoundError` naming an absent id and
+        `PackageNotFoundError` for an absent package; nothing is moved then.
+        """
+        ...
+
+
+class SavedQueryRepository(Protocol):
+    """Persistence for the named, shared filters of the catalogue."""
+
+    async def list_all(self) -> tuple[SavedQuerySummary, ...]:
+        """Every saved query, sorted by lower-cased name, without reading a stored query.
+
+        A list that parsed every query would be unreadable the day one of them
+        is not: one stale row must not hide the others.
+        """
+        ...
+
+    async def get(self, query_id: UUID) -> SavedQuery | None:
+        """One saved query; raises `InvalidQueryError` when its stored JSON cannot be read."""
+        ...
+
+    async def add(self, saved: SavedQuery) -> SavedQuery:
+        """Store a new saved query, or refuse a name already taken."""
+        ...
+
+    async def save(self, saved: SavedQuery) -> SavedQuery:
+        """Overwrite name, description, query and update time; never the author."""
+        ...
+
+    async def delete(self, query_id: UUID) -> bool: ...

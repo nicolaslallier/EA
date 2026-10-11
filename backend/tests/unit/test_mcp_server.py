@@ -21,19 +21,27 @@ from mcp.server.mcpserver.exceptions import ToolError
 from ea.api.schemas import (
     AddressAssign,
     ElementCreate,
+    ElementQuerySchema,
     ElementUpdate,
     FileDetailsWrite,
+    MoveElements,
+    PackageCreate,
+    PackageUpdate,
     RelationshipCreate,
+    SavedQueryCreate,
     SubnetCreate,
 )
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import build_mcp_server
+from ea.mcp.server import INSTRUCTIONS
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 from tests.conftest import InMemoryObjectStore, a_reader
 
 
@@ -43,10 +51,17 @@ def server(
     document_service: DocumentService,
     ipam: IpamService,
     file_service: FileService,
+    package_service: PackageService,
+    saved_query_service: SavedQueryService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
-        lambda: service, lambda: document_service, lambda: ipam, lambda: file_service
+        lambda: service,
+        lambda: document_service,
+        lambda: ipam,
+        lambda: file_service,
+        lambda: package_service,
+        lambda: saved_query_service,
     )
 
 
@@ -56,6 +71,8 @@ def server_without_an_index(
     document_service_without_an_index: DocumentService,
     ipam: IpamService,
     file_service: FileService,
+    package_service: PackageService,
+    saved_query_service: SavedQueryService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -63,6 +80,8 @@ def server_without_an_index(
         lambda: document_service_without_an_index,
         lambda: ipam,
         lambda: file_service,
+        lambda: package_service,
+        lambda: saved_query_service,
     )
 
 
@@ -120,6 +139,16 @@ class TestTheToolset:
             "set_file_details",
             "upload_file",
             "delete_file",
+            "list_packages",
+            "create_package",
+            "update_package",
+            "delete_package",
+            "move_elements",
+            "search_elements",
+            "list_saved_queries",
+            "save_query",
+            "run_saved_query",
+            "delete_saved_query",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -140,6 +169,43 @@ class TestTheToolset:
         for name in ("delete_element", "disconnect_elements", "discard_document"):
             assert annotations[name].read_only_hint is False, name
             assert annotations[name].destructive_hint is True, name
+
+    async def test_the_two_new_deletions_are_flagged_destructive_and_filing_is_not(
+        self, server: MCPServer[Any]
+    ) -> None:
+        annotations = {
+            tool.name: tool.annotations
+            for tool in await server.list_tools()
+            if tool.annotations is not None
+        }
+
+        for name in ("delete_package", "delete_saved_query"):
+            assert annotations[name].destructive_hint is True, name
+        for name in ("move_elements", "update_package", "create_package", "save_query"):
+            assert annotations[name].read_only_hint is False, name
+            assert annotations[name].destructive_hint is False, name
+        for name in ("list_packages", "search_elements", "list_saved_queries", "run_saved_query"):
+            assert annotations[name].read_only_hint is True, name
+
+    async def test_the_instructions_teach_packages_and_the_structured_search(self) -> None:
+        for phrase in (
+            "list_packages",
+            "move_elements",
+            "root",
+            "search_elements",
+            "list_saved_queries",
+            "run_saved_query",
+            "save_query",
+        ):
+            assert phrase in INSTRUCTIONS, phrase
+
+    async def test_the_filing_tools_tell_the_model_they_delete_no_element(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+
+        assert "never" in (tools["delete_package"].description or "").lower()
+        assert "no fact" in (tools["move_elements"].description or "").lower()
 
     async def test_every_tool_carries_a_description_for_the_model(
         self, server: MCPServer[Any]
@@ -988,6 +1054,336 @@ class TestTheRecordBesideAFile:
 
 
 @pytest.mark.asyncio
+class TestThePackageTools:
+    """Packages are folders: a tool files things, and never deletes what it files."""
+
+    async def test_the_tree_comes_back_flat_with_paths_and_direct_counts(
+        self, server: MCPServer[Any]
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        await call(server, "create_package", name="Budget", parent_id=finance["id"])
+        element = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[element["id"]], package_id=finance["id"])
+
+        listed = (await call(server, "list_packages"))["result"]
+
+        assert [(p["path"], p["element_count"], p["child_count"]) for p in listed] == [
+            ("Finance", 1, 1),
+            ("Finance / Budget", 0, 0),
+        ]
+
+    async def test_a_taken_sibling_name_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
+        await call(server, "create_package", name="Finance")
+
+        with pytest.raises(ToolError, match="already named"):
+            await call(server, "create_package", name="FINANCE")
+
+    async def test_a_name_with_a_slash_is_refused_by_the_schema(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "create_package", name="a/b")
+
+    async def test_the_parent_is_kept_when_omitted_and_the_word_root_is_the_top(
+        self, server: MCPServer[Any]
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        budget = await call(server, "create_package", name="Budget", parent_id=finance["id"])
+
+        kept = await call(server, "update_package", package_id=budget["id"], description="x")
+        at_the_top = await call(server, "update_package", package_id=budget["id"], parent_id="root")
+        back = await call(
+            server, "update_package", package_id=budget["id"], parent_id=finance["id"]
+        )
+
+        assert kept["parent_id"] == finance["id"]
+        assert at_the_top["parent_id"] is None
+        assert back["parent_id"] == finance["id"]
+
+    async def test_a_parent_that_is_neither_an_id_nor_root_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+
+        with pytest.raises(ToolError, match="root"):
+            await call(server, "update_package", package_id=package["id"], parent_id="ici")
+
+    async def test_a_package_cannot_be_moved_below_itself(self, server: MCPServer[Any]) -> None:
+        a = await call(server, "create_package", name="A")
+        b = await call(server, "create_package", name="B", parent_id=a["id"])
+
+        with pytest.raises(ToolError, match="inside itself"):
+            await call(server, "update_package", package_id=a["id"], parent_id=b["id"])
+
+    async def test_a_package_that_holds_something_is_not_deleted_until_told_where_it_goes(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+        element = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[element["id"]], package_id=package["id"])
+
+        with pytest.raises(ToolError, match="move_contents_to"):
+            await call(server, "delete_package", package_id=package["id"])
+
+        await call(server, "delete_package", package_id=package["id"], move_contents_to="root")
+        assert (await call(server, "get_element", element_id=element["id"]))["package_id"] is None
+        assert (await call(server, "list_packages"))["result"] == []
+
+    async def test_files_up_to_the_batch_at_once_and_back_to_the_root(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+        one, two = await an_element(server, "node", "one"), await an_element(server, "node", "two")
+
+        await call(
+            server, "move_elements", element_ids=[one["id"], two["id"]], package_id=package["id"]
+        )
+        assert (await call(server, "list_packages"))["result"][0]["element_count"] == 2
+
+        await call(server, "move_elements", element_ids=[one["id"]], package_id="root")
+        assert (await call(server, "list_packages"))["result"][0]["element_count"] == 1
+
+    async def test_an_absent_element_moves_nothing(self, server: MCPServer[Any]) -> None:
+        package = await call(server, "create_package", name="A")
+        kept = await an_element(server, "node", "db-01")
+
+        with pytest.raises(ToolError, match="no element"):
+            await call(
+                server,
+                "move_elements",
+                element_ids=[kept["id"], str(uuid4())],
+                package_id=package["id"],
+            )
+
+        assert (await call(server, "get_element", element_id=kept["id"]))["package_id"] is None
+
+    async def test_more_than_the_batch_or_none_is_refused_by_the_schema(
+        self, server: MCPServer[Any]
+    ) -> None:
+        for ids in ([str(uuid4()) for _ in range(101)], []):
+            with pytest.raises(ToolError):
+                await call(server, "move_elements", element_ids=ids, package_id="root")
+
+    async def test_a_reader_may_read_the_tree_and_nothing_more(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="A")
+
+        with acting_as(a_reader()):
+            assert len((await call(server, "list_packages"))["result"]) == 1
+            for name, arguments in (
+                ("create_package", {"name": "B"}),
+                ("update_package", {"package_id": package["id"], "name": "C"}),
+                ("delete_package", {"package_id": package["id"]}),
+                ("move_elements", {"element_ids": [str(uuid4())], "package_id": "root"}),
+            ):
+                with pytest.raises(ToolError):
+                    await call(server, name, **arguments)
+
+    async def test_the_catalogue_listing_takes_a_package(
+        self, server: MCPServer[Any], service: ArchitectureService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen = []
+        real = service.list_elements
+
+        async def spy(criteria):  # type: ignore[no-untyped-def]
+            seen.append(criteria)
+            return await real(criteria)
+
+        monkeypatch.setattr(service, "list_elements", spy)
+        package = await call(server, "create_package", name="A")
+
+        await call(server, "list_elements", package_id=package["id"], include_subpackages=False)
+
+        assert str(seen[0].package_id) == package["id"]
+        assert seen[0].include_subpackages is False
+
+    async def test_listing_without_a_package_still_works_as_before(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+
+        page = await call(server, "list_elements")
+
+        assert (page["total"], page["limit"], page["offset"]) == (1, 50, 0)
+
+
+@pytest.mark.asyncio
+class TestTheSearchTools:
+    """What an agent sends reaches the repository as one `ElementFilter` — and nothing else does."""
+
+    @pytest.fixture
+    def seen(self, service: ArchitectureService, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        criteria: list[Any] = []
+        real = service.list_elements
+
+        async def spy(found):  # type: ignore[no-untyped-def]
+            criteria.append(found)
+            return await real(found)
+
+        monkeypatch.setattr(service, "list_elements", spy)
+        return criteria
+
+    async def test_every_criterion_reaches_the_filter(
+        self, server: MCPServer[Any], seen: list[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+
+        page = await call(
+            server,
+            "search_elements",
+            element_types=["application_component"],
+            layers=["application"],
+            text=" fact ",
+            package_id=package["id"],
+            include_subpackages=False,
+            properties=[
+                {"key": "owner", "op": "eq", "value": "finance"},
+                {"key": "cidr", "op": "exists"},
+            ],
+            relations=[
+                {
+                    "relationship_type": "serving",
+                    "direction": "out",
+                    "other_type": "business_process",
+                },
+                {"relationship_type": "association", "present": False},
+            ],
+            order="updated_at",
+            limit=10,
+            offset=20,
+        )
+
+        criteria = seen[0]
+        assert [t.value for t in criteria.element_types] == ["application_component"]
+        assert criteria.search == "fact"
+        assert str(criteria.package_id) == package["id"]
+        assert criteria.include_subpackages is False
+        assert [(p.key, p.op.value, p.value) for p in criteria.properties] == [
+            ("owner", "eq", "finance"),
+            ("cidr", "exists", None),
+        ]
+        assert [
+            (r.relationship_type.value, r.direction.value, r.present) for r in criteria.relations
+        ] == [
+            ("serving", "out", True),
+            ("association", "any", False),
+        ]
+        assert (criteria.order.value, criteria.limit, criteria.offset) == ("updated_at", 10, 20)
+        assert (page["limit"], page["offset"]) == (10, 20)
+
+    async def test_no_argument_at_all_is_the_whole_catalogue_paged(
+        self, server: MCPServer[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+
+        page = await call(server, "search_elements")
+
+        assert (page["total"], page["limit"], page["offset"]) == (1, 50, 0)
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            {"properties": [{"key": "owner", "op": "eq"}]},
+            {"properties": [{"key": "owner", "op": "exists", "value": "x"}]},
+            {"properties": [{"key": "a-b", "op": "exists"}]},
+            {"properties": [{"key": "owner", "op": "gt", "value": "1"}]},
+            {"properties": [{"key": "owner", "op": "contains", "value": "a\x00b"}]},
+            {"root_only": True, "package_id": "11111111-1111-4111-8111-111111111111"},
+            {"element_types": ["microservice"]},
+            {"limit": 0},
+        ],
+    )
+    async def test_a_filter_the_server_would_refuse_is_refused_with_a_message(
+        self, server: MCPServer[Any], arguments: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ToolError):
+            await call(server, "search_elements", **arguments)
+
+    async def test_a_contradictory_filter_says_why(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError) as refused:
+            await call(
+                server,
+                "search_elements",
+                root_only=True,
+                package_id="11111111-1111-4111-8111-111111111111",
+            )
+
+        assert "package" in str(refused.value).lower()
+
+    async def test_a_filter_is_kept_under_a_name_and_run_again(
+        self, server: MCPServer[Any], seen: list[Any]
+    ) -> None:
+        await an_element(server, "node", "db-01")
+        saved = await call(
+            server,
+            "save_query",
+            name="Les noeuds",
+            description="Tous",
+            element_types=["node"],
+            properties=[{"key": "owner", "op": "absent"}],
+        )
+
+        assert saved["created_by"] == "editor"
+        assert saved["query"]["element_types"] == ["node"]
+        listed = (await call(server, "list_saved_queries"))["result"]
+        assert [(q["name"], "query" in q) for q in listed] == [("Les noeuds", False)]
+
+        page = await call(server, "run_saved_query", query_id=saved["id"], limit=10)
+
+        assert (page["total"], page["limit"]) == (1, 10)
+        assert [t.value for t in seen[-1].element_types] == ["node"]
+
+    async def test_a_name_already_taken_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
+        await call(server, "save_query", name="A")
+
+        with pytest.raises(ToolError, match="already named"):
+            await call(server, "save_query", name="A")
+
+    async def test_a_query_naming_a_vanished_package_says_so_and_stays(
+        self, server: MCPServer[Any]
+    ) -> None:
+        package = await call(server, "create_package", name="Finance")
+        saved = await call(server, "save_query", name="Compta", package_id=package["id"])
+        await call(server, "delete_package", package_id=package["id"], move_contents_to="root")
+
+        with pytest.raises(ToolError, match="no longer exists"):
+            await call(server, "run_saved_query", query_id=saved["id"])
+
+        assert len((await call(server, "list_saved_queries"))["result"]) == 1
+
+    async def test_deleting_a_query_leaves_the_elements_it_found(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "node", "db-01")
+        saved = await call(server, "save_query", name="Tous")
+
+        await call(server, "delete_saved_query", query_id=saved["id"])
+
+        assert (await call(server, "list_saved_queries"))["result"] == []
+        assert (await call(server, "get_element", element_id=element["id"]))["name"] == "db-01"
+
+    async def test_an_unknown_query_is_a_message(self, server: MCPServer[Any]) -> None:
+        for name in ("run_saved_query", "delete_saved_query"):
+            with pytest.raises(ToolError, match="no saved query"):
+                await call(server, name, query_id=str(uuid4()))
+
+    async def test_a_reader_searches_lists_and_runs_but_does_not_write(
+        self, server: MCPServer[Any]
+    ) -> None:
+        saved = await call(server, "save_query", name="A")
+
+        with acting_as(a_reader()):
+            await call(server, "search_elements")
+            assert len((await call(server, "list_saved_queries"))["result"]) == 1
+            await call(server, "run_saved_query", query_id=saved["id"])
+            with pytest.raises(ToolError):
+                await call(server, "save_query", name="B")
+            with pytest.raises(ToolError):
+                await call(server, "delete_saved_query", query_id=saved["id"])
+
+
+@pytest.mark.asyncio
 class TestTheSameBoundsAsTheHttpAdapter:
     """A tool argument and its HTTP twin must refuse exactly the same values.
 
@@ -1021,6 +1417,21 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("upload_file", "title", FileDetailsWrite, "title"),
             ("upload_file", "description", FileDetailsWrite, "description"),
             ("upload_file", "tags", FileDetailsWrite, "tags"),
+            ("create_package", "name", PackageCreate, "name"),
+            ("create_package", "description", PackageCreate, "description"),
+            ("update_package", "name", PackageUpdate, "name"),
+            ("update_package", "description", PackageUpdate, "description"),
+            ("move_elements", "element_ids", MoveElements, "element_ids"),
+            ("save_query", "name", SavedQueryCreate, "name"),
+            ("save_query", "description", SavedQueryCreate, "description"),
+            ("search_elements", "text", ElementQuerySchema, "text"),
+            ("search_elements", "limit", ElementQuerySchema, "limit"),
+            ("search_elements", "offset", ElementQuerySchema, "offset"),
+            ("search_elements", "properties", ElementQuerySchema, "properties"),
+            ("search_elements", "relations", ElementQuerySchema, "relations"),
+            ("save_query", "text", ElementQuerySchema, "text"),
+            ("save_query", "properties", ElementQuerySchema, "properties"),
+            ("save_query", "relations", ElementQuerySchema, "relations"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
@@ -1052,6 +1463,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("list_files", "prefix", "/files", "prefix"),
             ("read_file", "key", "/files/content", "key"),
             ("describe_file", "key", "/files/metadata", "key"),
+            ("run_saved_query", "limit", "/queries/{query_id}/elements", "limit"),
+            ("run_saved_query", "offset", "/queries/{query_id}/elements", "offset"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -1070,3 +1483,19 @@ class TestTheSameBoundsAsTheHttpAdapter:
 
         assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
         assert sent_to_the_agent == served_over_http
+
+    async def test_the_package_target_is_the_same_type_over_http_and_mcp(
+        self, server: MCPServer[Any], service: ArchitectureService
+    ) -> None:
+        openapi = create_app(Settings(debug=True), architecture_service=service).openapi()
+        operation = openapi["paths"]["/packages/{package_id}"]["delete"]
+        over_http = next(
+            p["schema"] for p in operation["parameters"] if p["name"] == "move_contents_to"
+        )
+        tools = {listed.name: listed for listed in await server.list_tools()}
+        sent = tools["delete_package"].input_schema["properties"]["move_contents_to"]
+
+        assert bounds_of(sent), "move_contents_to carries no bound at all"
+        assert bounds_of(sent) == bounds_of(over_http)
+        filing = tools["move_elements"].input_schema["properties"]["package_id"]
+        assert bounds_of(filing) == bounds_of(over_http)

@@ -7,15 +7,17 @@ here decides anything: a tool binds its arguments, calls a service, and renders
 the answer with the very models the REST API renders, so an agent and the SPA
 are told the same thing about the same element.
 
-Four services, because the catalogue spans four concerns: the graph, the
+Six services, because the catalogue spans six concerns: the graph, the
 markdown attached to its elements (docs/adr/0017), the IP addressing
-(docs/adr/0020), and the files kept in a bucket beside it (docs/adr/0036). They
+(docs/adr/0020), the files kept in a bucket beside it (docs/adr/0036), the tree
+of packages that files elements and diagrams (docs/adr/0042), and the saved
+queries that keep a structured search under a name (docs/adr/0043). They
 are kept apart here exactly as they are in `api/`, since the rules that bind
 them — an element must exist before a file hangs off it — belong to the
 service and an adapter holding a repository instead would be free to skip
 them.
 
-All four are fetched through callables rather than held, because the
+All six are fetched through callables rather than held, because the
 application builds them during its lifespan and this module is assembled
 before that: see `main.create_app`.
 """
@@ -32,7 +34,7 @@ from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ea.api.schemas import (
     Address,
@@ -44,6 +46,7 @@ from ea.api.schemas import (
     DocumentRead,
     DocumentSummaryRead,
     ElementPage,
+    ElementQuerySchema,
     ElementRead,
     FileDescription,
     FileKey,
@@ -58,13 +61,23 @@ from ea.api.schemas import (
     MetamodelRead,
     Name,
     Offset,
+    PackageName,
+    PackageRead,
+    PackageTarget,
     PassageRead,
+    PropertyKey,
+    PropertyTestSchema,
+    PropertyValue,
     RelationshipMatrixRead,
     RelationshipRead,
+    RelationTestSchema,
     Reserved,
+    SavedQueryRead,
+    SavedQuerySummaryRead,
     Search,
     SubnetDetailRead,
     SubnetRead,
+    package_target,
 )
 from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import Vrf as VrfBounds
@@ -82,13 +95,23 @@ from ea.domain.archimate import (
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
+from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
+from ea.domain.query import (
+    MAX_PROPERTY_TESTS,
+    MAX_RELATION_TESTS,
+    Direction,
+    PropertyOp,
+    QueryOrder,
+)
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
+from ea.services.packages import PackageService
+from ea.services.saved_queries import SavedQueryService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
 #: it is a path and not a port — see `docs/adr/0014`.
@@ -149,6 +172,25 @@ somebody declared, so `declare_ip_subnet` comes first.
 `locate_ip_address` is the question this is all for: it says which element
 answers on an address **and what that element is wired to**, in one call.
 
+Elements and diagrams are filed in *packages*, a tree of folders that carries
+no meaning in the model: filing an element changes nothing about it but where
+it sits. `list_packages` shows the tree with what each package holds;
+`create_package`, `update_package` and `delete_package` shape it — a package is
+deleted only when empty, or with `move_contents_to`, never with its contents —
+and `move_elements` files up to 100 elements at once. Packages are named by
+id; `update_package` (`parent_id`), `delete_package` (`move_contents_to`) and
+`move_elements` (`package_id`) also take the word `root` for the top of the
+tree. `create_package` leaves `parent_id` out for the top, and
+`search_elements` takes `root_only` for the elements filed nowhere.
+
+To find elements, prefer `search_elements` to paging through `list_elements`:
+it combines types, layers, a name fragment, a package (with or without its
+sub-packages), tests on attributes (`eq`, `contains`, `exists`, `absent`) and on
+links present or absent — "the application components of Finance with an owner
+and no serving link" is one call. `list_saved_queries` shows the filters the
+team already named; reuse one with `run_saved_query` rather than rebuilding it,
+and `save_query` keeps a good filter for the others.
+
 The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
 bucket organised in folders. `list_files` browses a folder, `read_file` reads a
 text file, `upload_file` stores one (base64 for anything that is not text, at
@@ -173,6 +215,8 @@ ServiceProvider = Callable[[], ArchitectureService]
 DocumentProvider = Callable[[], DocumentService]
 IpamProvider = Callable[[], IpamService]
 FileProvider = Callable[[], FileService]
+PackageProvider = Callable[[], PackageService]
+QueryProvider = Callable[[], SavedQueryService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -275,6 +319,141 @@ FileContent = Annotated[
     ),
 ]
 
+PackageId = Annotated[
+    UUID, Field(description="The id of a package, as `list_packages` reports it.")
+]
+PackageParent = Annotated[
+    PackageTarget | None,
+    Field(
+        description=(
+            "A package id to put it under, or `root` to put it at the top of the tree. "
+            "Leave it out to keep where it is."
+        )
+    ),
+]
+MoveContentsTo = Annotated[
+    PackageTarget | None,
+    Field(
+        description=(
+            "Where the package's direct contents (sub-packages, elements, diagrams) go "
+            "first: a package id, or `root`. Required when the package is not empty."
+        )
+    ),
+]
+FilingTarget = Annotated[
+    PackageTarget,
+    Field(
+        description=(
+            "The package to file them in: its id, or `root` to take them out of any package."
+        )
+    ),
+]
+ElementIds = Annotated[
+    list[UUID],
+    Field(
+        min_length=1,
+        max_length=MAX_MOVE_BATCH,
+        description="The ids of the elements to file, at most 100.",
+    ),
+]
+
+
+class PropertyArgument(BaseModel):
+    """One test on a user-defined attribute, in the words an agent writes it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: PropertyKey
+    op: PropertyOp = Field(
+        description="`eq` equals, `contains` has the fragment (case ignored), `exists`, `absent`."
+    )
+    value: PropertyValue | None = Field(
+        default=None, description="Required by `eq` and `contains`; leave out for the others."
+    )
+
+
+class RelationArgument(BaseModel):
+    """Whether an element has — or has no — relationship of one type."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relationship_type: RelationshipType
+    direction: Direction = Field(
+        default=Direction.ANY, description="`out` leaves the element, `in` arrives at it."
+    )
+    present: bool = Field(
+        default=True, description="`false` finds the elements that have NO such relationship."
+    )
+    other_type: ElementType | None = Field(
+        default=None, description="The type of the element at the other end, if it matters."
+    )
+
+
+PropertyTests = Annotated[
+    list[PropertyArgument] | None,
+    Field(
+        max_length=MAX_PROPERTY_TESTS,
+        description="Tests on attributes, combined with AND. At most 10.",
+    ),
+]
+RelationTests = Annotated[
+    list[RelationArgument] | None,
+    Field(
+        max_length=MAX_RELATION_TESTS,
+        description="Tests on links present or absent, combined with AND. At most 5.",
+    ),
+]
+QueryId = Annotated[
+    UUID, Field(description="The id of a saved query, as `list_saved_queries` gives it.")
+]
+
+
+def _query_schema(
+    *,
+    element_types: list[ElementType] | None,
+    layers: list[Layer] | None,
+    text: str | None,
+    package_id: UUID | None,
+    include_subpackages: bool,
+    root_only: bool,
+    properties: list[PropertyArgument] | None,
+    relations: list[RelationArgument] | None,
+    order: QueryOrder,
+    limit: int,
+    offset: int,
+) -> ElementQuerySchema:
+    """The HTTP adapter's own schema, built from an agent's friendlier arguments.
+
+    Going through it — and then `to_domain()` — means a filter is judged by
+    the very same bounds and rules whichever door it came in by.
+    """
+    return ElementQuerySchema(
+        version=1,
+        element_types=list(element_types or ()),
+        layers=list(layers or ()),
+        text=text,
+        package_id=package_id,
+        include_subpackages=include_subpackages,
+        root_only=root_only,
+        properties=[
+            PropertyTestSchema(key=test.key, op=test.op, value=test.value)
+            for test in properties or ()
+        ],
+        relations=[
+            RelationTestSchema(
+                relationship_type=test.relationship_type,
+                direction=test.direction,
+                present=test.present,
+                other_type=test.other_type,
+            )
+            for test in relations or ()
+        ],
+        order=order,
+        limit=limit,
+        offset=offset,
+    )
+
+
 # --- What a tool does to the graph, said in the protocol's own terms --------
 # A client shows these to the person behind the agent, who decides from them
 # whether to confirm a call. Getting one wrong is how a delete gets waved
@@ -296,12 +475,14 @@ def build_mcp_server(
     get_documents: DocumentProvider,
     get_ipam: IpamProvider,
     get_files: FileProvider,
+    get_packages: PackageProvider,
+    get_queries: QueryProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the architecture, document, IPAM and file services.
+    """Assemble the tool set over the six services of the module docstring.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -311,8 +492,8 @@ def build_mcp_server(
     an app assembled without a relational store or without a graph fails when
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
-    shorter tool list than the one this module documents. `get_files` is
-    required for the same reason.
+    shorter tool list than the one this module documents. `get_files`,
+    `get_packages` and `get_queries` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -365,18 +546,26 @@ def build_mcp_server(
         element_types: list[ElementType] | None = None,
         layers: list[Layer] | None = None,
         search: Search | None = None,
+        package_id: Annotated[
+            UUID | None,
+            Field(description="Only the elements filed in this package (see `list_packages`)."),
+        ] = None,
+        include_subpackages: bool = True,
         limit: Limit = 50,
         offset: Offset = 0,
     ) -> ElementPage:
-        """Browse the catalogue, narrowed by type, by layer or by a name fragment.
+        """Browse the catalogue, narrowed by type, layer, name fragment or package.
 
-        All three criteria are combined with AND. `total` counts everything the
+        All the criteria are combined with AND. `total` counts everything the
         criteria match, not the page, so a follow-up call can page through it.
+        For attribute or relation tests use `search_elements`.
         """
         criteria = ElementFilter(
             element_types=tuple(element_types or ()),
             layers=tuple(layers or ()),
             search=search,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
             limit=limit,
             offset=offset,
         )
@@ -911,6 +1100,217 @@ def build_mcp_server(
         """
         await get_files().delete(key)
         return f"file {key} was deleted"
+
+    # --- Packages ---------------------------------------------------------
+    # A package is a folder, not an ArchiMate element: filing changes nothing
+    # about what an element says, and no tool here deletes one.
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_packages() -> list[PackageRead]:
+        """Show the tree of packages, flat, with what each one holds.
+
+        Packages file elements and diagrams the way folders do. They are not
+        ArchiMate elements and carry no relationship. Each entry names its
+        parent, gives its full `path` (`Finance / Budget`) and counts what it
+        holds *directly*. Call this before filing something or before searching
+        inside a domain.
+        """
+        return [PackageRead.of(summary) for summary in await get_packages().list_packages()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_package(
+        name: PackageName,
+        description: Description = "",
+        parent_id: Annotated[
+            UUID | None, Field(description="The package to create it in; leave out for the top.")
+        ] = None,
+    ) -> PackageRead:
+        """Create a package (a classification folder); this is not an ArchiMate element.
+
+        Names are unique among siblings, ignoring case, and cannot contain `/`.
+        The tree is at most 12 levels deep.
+        """
+        return PackageRead.of(
+            await get_packages().create(name=name, description=description, parent_id=parent_id)
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def update_package(
+        package_id: PackageId,
+        name: PackageName | None = None,
+        description: Description | None = None,
+        parent_id: PackageParent = None,
+    ) -> PackageRead:
+        """Rename or describe a package, or move it (and everything below it).
+
+        An omitted field is kept. `parent_id` is a package id, or `root` for the
+        top of the tree; a package cannot be moved under itself or below itself.
+        """
+        parent = UNSET if parent_id is None else package_target(parent_id)
+        return PackageRead.of(
+            await get_packages().update(
+                package_id, name=name, description=description, parent_id=parent
+            )
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def delete_package(package_id: PackageId, move_contents_to: MoveContentsTo = None) -> str:
+        """Delete a package — never what it holds.
+
+        An empty package is deleted. One that still holds sub-packages,
+        elements or diagrams is refused unless you pass `move_contents_to` (a
+        package id, or `root`): the direct contents move there first, in one
+        step. Elements and diagrams are never deleted by this tool. Confirm
+        with the person you are working for before calling it.
+        """
+        target = UNSET if move_contents_to is None else package_target(move_contents_to)
+        await get_packages().delete(package_id, move_contents_to=target)
+        return f"package {package_id} was deleted"
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def move_elements(element_ids: ElementIds, package_id: FilingTarget) -> str:
+        """File up to 100 elements in a package, or take them out of any package.
+
+        Filing changes no fact of the graph: an element's name, links and
+        attributes are untouched. All or none move — an unknown element or
+        package refuses the whole call. `package_id` is a package id, or `root`.
+        """
+        moved = await get_packages().move_elements(element_ids, package_target(package_id))
+        return f"{moved} element(s) filed in {package_id}"
+
+    # --- Structured search and saved queries ------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def search_elements(
+        element_types: list[ElementType] | None = None,
+        layers: list[Layer] | None = None,
+        text: Search | None = None,
+        package_id: Annotated[
+            UUID | None, Field(description="Only the elements filed in this package.")
+        ] = None,
+        include_subpackages: bool = True,
+        root_only: Annotated[
+            bool, Field(description="Only the elements filed in no package at all.")
+        ] = False,
+        properties: PropertyTests = None,
+        relations: RelationTests = None,
+        order: QueryOrder = QueryOrder.NAME,
+        limit: Limit = 50,
+        offset: Offset = 0,
+    ) -> ElementPage:
+        """Structured search of the catalogue: prefer it to paging through `list_elements`.
+
+        Combine, with AND: element types, layers, a name fragment, a package
+        (with or without its sub-packages, or `root_only` for the unfiled),
+        tests on attributes (`eq`, `contains`, `exists`, `absent`) and tests on
+        links present or absent, optionally to an element of a given type —
+        "the application components of Finance that have an owner and serve
+        nothing" is one call. `total` counts everything the filter matches.
+        A filter no element can satisfy answers an empty page, not an error.
+        """
+        query = _query_schema(
+            element_types=element_types,
+            layers=layers,
+            text=text,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
+            root_only=root_only,
+            properties=properties,
+            relations=relations,
+            order=order,
+            limit=limit,
+            offset=offset,
+        ).to_domain()
+        criteria = ElementFilter.from_query(query)
+        service = get_service()
+        return ElementPage(
+            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            total=await service.count_elements(criteria),
+            limit=query.limit,
+            offset=query.offset,
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_saved_queries() -> list[SavedQuerySummaryRead]:
+        """The named filters the team already keeps: reuse one rather than rebuild it.
+
+        A summary names the query and who wrote it; `run_saved_query` runs it.
+        """
+        return [SavedQuerySummaryRead.of(summary) for summary in await get_queries().list_queries()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def save_query(
+        name: Name,
+        description: Description = "",
+        element_types: list[ElementType] | None = None,
+        layers: list[Layer] | None = None,
+        text: Search | None = None,
+        package_id: Annotated[
+            UUID | None, Field(description="Only the elements filed in this package.")
+        ] = None,
+        include_subpackages: bool = True,
+        root_only: Annotated[
+            bool, Field(description="Only the elements filed in no package at all.")
+        ] = False,
+        properties: PropertyTests = None,
+        relations: RelationTests = None,
+        order: QueryOrder = QueryOrder.NAME,
+    ) -> SavedQueryRead:
+        """Keep a filter under a name, for the whole team.
+
+        The filter arguments are those of `search_elements`. The name must be
+        free. Anyone can run the query afterwards; any editor can change it.
+        A query names its package by id: if the package is deleted later the
+        query stays, and running it says which package is gone.
+        """
+        query = _query_schema(
+            element_types=element_types,
+            layers=layers,
+            text=text,
+            package_id=package_id,
+            include_subpackages=include_subpackages,
+            root_only=root_only,
+            properties=properties,
+            relations=relations,
+            order=order,
+            limit=50,
+            offset=0,
+        ).to_domain()
+        return SavedQueryRead.read(
+            await get_queries().create(name=name, description=description, query=query)
+        )
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def run_saved_query(
+        query_id: QueryId, limit: Limit = 50, offset: Offset = 0
+    ) -> ElementPage:
+        """Run a saved query, one page at a time."""
+        result = await get_queries().run(query_id, limit=limit, offset=offset)
+        return ElementPage(
+            items=[ElementRead.of(element) for element in result.elements],
+            total=result.total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @server.tool(annotations=REMOVES)
+    @speaking_plainly
+    async def delete_saved_query(query_id: QueryId) -> str:
+        """Delete a saved query for everyone. The elements it finds are not touched.
+
+        Confirm with the person you are working for before calling it.
+        """
+        await get_queries().delete(query_id)
+        return f"saved query {query_id} was deleted"
 
     # --- Metamodel --------------------------------------------------------
 

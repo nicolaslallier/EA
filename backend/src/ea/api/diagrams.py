@@ -7,9 +7,10 @@ no diagram-specific way to change the graph.
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from ea.api.dependencies import Diagrams
 from ea.api.schemas import (
@@ -20,6 +21,7 @@ from ea.api.schemas import (
     DiagramUpdate,
     ErrorResponse,
 )
+from ea.domain.packages import UNSET
 
 router = APIRouter(tags=["diagrams"])
 
@@ -37,20 +39,30 @@ LAYOUT_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
 
 
 @router.get("/diagrams", response_model=list[DiagramSummaryRead])
-async def list_diagrams(diagrams: Diagrams) -> list[DiagramSummaryRead]:
-    """Every saved diagram, sorted by name."""
-    return [DiagramSummaryRead.of(diagram) for diagram in await diagrams.list_diagrams()]
+async def list_diagrams(
+    diagrams: Diagrams,
+    package: Annotated[UUID | None, Query()] = None,
+    include_subpackages: Annotated[bool, Query()] = True,
+    root_only: Annotated[bool, Query()] = False,
+) -> list[DiagramSummaryRead]:
+    """Every saved diagram, sorted by name — or only those filed in a package."""
+    listed = await diagrams.list_diagrams(
+        package_id=package, include_subpackages=include_subpackages, root_only=root_only
+    )
+    return [DiagramSummaryRead.of(diagram) for diagram in listed]
 
 
 @router.post(
     "/diagrams",
     response_model=DiagramSummaryRead,
     status_code=status.HTTP_201_CREATED,
-    responses=CONFLICT,
+    responses=REJECTED,
 )
 async def create_diagram(body: DiagramCreate, diagrams: Diagrams) -> DiagramSummaryRead:
     """A new, empty diagram. Its name must not be taken."""
-    created = await diagrams.create(name=body.name, description=body.description)
+    created = await diagrams.create(
+        name=body.name, description=body.description, package_id=body.package_id
+    )
     return DiagramSummaryRead.of(created)
 
 
@@ -64,7 +76,10 @@ async def read_diagram(diagram_id: UUID, diagrams: Diagrams) -> DiagramRead:
 async def update_diagram(
     diagram_id: UUID, body: DiagramUpdate, diagrams: Diagrams
 ) -> DiagramSummaryRead:
-    updated = await diagrams.update(diagram_id, name=body.name, description=body.description)
+    package = body.package_id if "package_id" in body.model_fields_set else UNSET
+    updated = await diagrams.update(
+        diagram_id, name=body.name, description=body.description, package_id=package
+    )
     return DiagramSummaryRead.of(updated)
 
 

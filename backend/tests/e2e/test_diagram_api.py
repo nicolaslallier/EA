@@ -17,19 +17,20 @@ import pytest_asyncio
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryDiagrams
+from tests.conftest import InMemoryDiagrams, InMemoryPackages
 
 pytestmark = pytest.mark.asyncio
 
 
 @pytest_asyncio.fixture
 async def client(
-    service: ArchitectureService, diagrams: InMemoryDiagrams
+    service: ArchitectureService, diagrams: InMemoryDiagrams, packages: InMemoryPackages
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         diagrams=diagrams,  # type: ignore[arg-type]
+        packages=packages,  # type: ignore[arg-type]
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -66,7 +67,15 @@ class TestCreatingAndListing:
         assert body["name"] == "Vente"
         assert body["description"] == ""
         assert body["node_count"] == 0
-        assert set(body) == {"id", "name", "description", "node_count", "created_at", "updated_at"}
+        assert set(body) == {
+            "id",
+            "name",
+            "description",
+            "node_count",
+            "package_id",
+            "created_at",
+            "updated_at",
+        }
 
     async def test_a_duplicate_name_is_a_409(self, client: httpx.AsyncClient) -> None:
         await a_diagram(client)
@@ -228,3 +237,56 @@ async def test_without_a_diagram_store_the_endpoints_fail_as_a_wiring_fault(
         response = await client.get("/diagrams")
 
     assert response.status_code == 500
+
+
+class TestPackages:
+    async def test_a_diagram_is_created_in_a_package_and_listed_by_it(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        package = (await client.post("/packages", json={"name": "Finance"})).json()
+        filed = await client.post("/diagrams", json={"name": "Compta", "package_id": package["id"]})
+        await a_diagram(client, "Racine")
+
+        assert filed.json()["package_id"] == package["id"]
+        by_package = (await client.get("/diagrams", params={"package": package["id"]})).json()
+        unfiled = (await client.get("/diagrams", params={"root_only": "true"})).json()
+        assert [d["name"] for d in by_package] == ["Compta"]
+        assert [d["name"] for d in unfiled] == ["Racine"]
+
+    async def test_an_unknown_package_is_a_404(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/diagrams", json={"name": "Compta", "package_id": str(uuid4())}
+        )
+
+        assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
+    async def test_patch_distinguishes_an_absent_package_from_null(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        package = (await client.post("/packages", json={"name": "Finance"})).json()
+        diagram = (
+            await client.post("/diagrams", json={"name": "Compta", "package_id": package["id"]})
+        ).json()
+
+        renamed = await client.patch(f"/diagrams/{diagram['id']}", json={"name": "Compta 2"})
+        at_root = await client.patch(f"/diagrams/{diagram['id']}", json={"package_id": None})
+
+        assert renamed.json()["package_id"] == package["id"]
+        assert at_root.json()["package_id"] is None
+
+    async def test_an_opened_diagram_names_its_package(self, client: httpx.AsyncClient) -> None:
+        package = (await client.post("/packages", json={"name": "Finance"})).json()
+        diagram = (
+            await client.post("/diagrams", json={"name": "Compta", "package_id": package["id"]})
+        ).json()
+
+        assert (await client.get(f"/diagrams/{diagram['id']}")).json()["package_id"] == package[
+            "id"
+        ]
+
+    async def test_the_root_and_a_package_at_once_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.get(
+            "/diagrams", params={"package": str(uuid4()), "root_only": "true"}
+        )
+
+        assert response.status_code == 422

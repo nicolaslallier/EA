@@ -1,9 +1,11 @@
 import { vi } from 'vitest'
 
 import type { components } from '../../src/api/schema'
+import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type PackageRead = components['schemas']['PackageRead']
 type DocumentSummaryRead = components['schemas']['DocumentSummaryRead']
 type DocumentRead = components['schemas']['DocumentRead']
 type SubnetRead = components['schemas']['SubnetRead']
@@ -13,6 +15,8 @@ type AddressLocationRead = components['schemas']['AddressLocationRead']
 type FileRead = components['schemas']['FileRead']
 type FileMetadataRead = components['schemas']['FileMetadataRead']
 type FileListingRead = components['schemas']['FileListingRead']
+type SavedQueryRead = components['schemas']['SavedQueryRead']
+type SavedQuerySummaryRead = components['schemas']['SavedQuerySummaryRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -146,8 +150,26 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     description: '',
     documentation: '',
     properties: {},
+    package_id: null,
     created_at: '2026-09-07T12:00:00Z',
     updated_at: '2026-09-07T12:00:00Z',
+    ...overrides,
+  }
+}
+
+/** A package as `GET /packages` returns it — no children, no elements, at the root. */
+export function aPackage(overrides: Partial<PackageRead> = {}): PackageRead {
+  return {
+    id: 'aaaaaaaa-0000-4000-8000-00000000f001',
+    parent_id: null,
+    name: 'Finance',
+    description: '',
+    path: 'Finance',
+    element_count: 0,
+    diagram_count: 0,
+    child_count: 0,
+    created_at: '2026-10-10T12:00:00Z',
+    updated_at: '2026-10-10T12:00:00Z',
     ...overrides,
   }
 }
@@ -335,4 +357,23 @@ export function aStoredFile(overrides: Partial<FileRead> = {}): FileRead {
 /** One folder of the bucket, as `GET /files` returns it. */
 export function aListing(overrides: Partial<FileListingRead> = {}): FileListingRead {
   return { prefix: '', folders: [], files: [], truncated: false, ...overrides }
+}
+/** A saved query as `GET /queries` lists it — no filter in it. */
+export function aSavedQuerySummary(
+  overrides: Partial<SavedQuerySummaryRead> = {},
+): SavedQuerySummaryRead {
+  return {
+    id: 'qqqqqqqq-1111-4111-8111-111111111111',
+    name: 'Les noeuds',
+    description: '',
+    created_by: 'nicolas',
+    created_at: '2026-10-10T12:00:00Z',
+    updated_at: '2026-10-10T12:00:00Z',
+    ...overrides,
+  }
+}
+
+/** The same query opened — with its filter. */
+export function aSavedQuery(overrides: Partial<SavedQueryRead> = {}): SavedQueryRead {
+  return { ...aSavedQuerySummary(), query: emptyQuery(), ...overrides }
 }
