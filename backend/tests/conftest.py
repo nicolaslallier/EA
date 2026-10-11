@@ -69,7 +69,13 @@ from ea.domain.errors import (
     TooManyRefusedRowsError,
     WriteConflictError,
 )
-from ea.domain.exchange import SOURCE_ID, ExportScope, identifier_of
+from ea.domain.exchange import (
+    SOURCE_ID,
+    ExportedBox,
+    ExportedView,
+    ExportScope,
+    identifier_of,
+)
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
@@ -1280,8 +1286,11 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 class _MemorySnapshot:
     """The pages the PostgreSQL snapshot would give, sorted the way its SQL sorts."""
 
-    def __init__(self, repository: InMemoryRepository) -> None:
+    def __init__(
+        self, repository: InMemoryRepository, diagrams: InMemoryDiagrams | None = None
+    ) -> None:
         self._repository = repository
+        self._diagrams = diagrams
 
     @staticmethod
     def _identifier(item: Element | Relationship) -> str:
@@ -1313,6 +1322,25 @@ class _MemorySnapshot:
         ordered = sorted(self._repository.relationships.values(), key=key)
         return tuple(ordered[offset : offset + limit])
 
+    async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
+        if self._diagrams is None:
+            return ()
+        diagrams = self._diagrams
+        elements = self._repository.elements
+        ordered = sorted(diagrams.diagrams.values(), key=lambda d: (d.name, str(d.id)))
+
+        def boxes(diagram_id: UUID) -> tuple[ExportedBox, ...]:
+            placed = sorted(
+                diagrams.nodes.get(diagram_id, ()),
+                key=lambda n: (self._identifier(elements[n.element_id]), str(n.element_id)),
+            )
+            return tuple(ExportedBox(n.element_id, n.x, n.y, n.width, n.height) for n in placed)
+
+        return tuple(
+            ExportedView(d.id, d.name, d.description, boxes(d.id))
+            for d in ordered[offset : offset + limit]
+        )
+
 
 class InMemoryExchange:
     """The `ExchangeRepository` over the in-memory graph.
@@ -1331,8 +1359,15 @@ class InMemoryExchange:
         TooManyRefusedRowsError,
     )
 
-    def __init__(self, repository: InMemoryRepository) -> None:
+    def __init__(
+        self,
+        repository: InMemoryRepository,
+        diagrams: InMemoryDiagrams | None = None,
+        packages: InMemoryPackages | None = None,
+    ) -> None:
         self.repository = repository
+        self.diagrams = diagrams
+        self.packages = packages
         self.lock_held = False
         self.batch_size = BATCH_SIZE
         #: Rows handed to `apply`, replays included, and the replays alone.
@@ -1342,21 +1377,31 @@ class InMemoryExchange:
 
     @asynccontextmanager
     async def snapshot(self, scope: ExportScope) -> AsyncIterator[_MemorySnapshot]:
-        yield _MemorySnapshot(self.repository)
+        yield _MemorySnapshot(self.repository, self.diagrams)
 
-    def _copy(self) -> tuple[dict[UUID, Element], dict[UUID, Relationship], list[AuditEvent]]:
-        return (
-            dict(self.repository.elements),
-            dict(self.repository.relationships),
-            list(self.repository.audit_log.events),
-        )
+    def _copy(self) -> dict[str, Any]:
+        """Everything an import may write: the graph, the audit log, the views, the packages."""
+        saved: dict[str, Any] = {
+            "elements": dict(self.repository.elements),
+            "relationships": dict(self.repository.relationships),
+            "events": list(self.repository.audit_log.events),
+        }
+        if self.diagrams is not None:
+            saved["diagrams"] = dict(self.diagrams.diagrams)
+            saved["nodes"] = dict(self.diagrams.nodes)
+        if self.packages is not None:
+            saved["packages"] = dict(self.packages.packages)
+        return saved
 
-    def _restore(
-        self, saved: tuple[dict[UUID, Element], dict[UUID, Relationship], list[AuditEvent]]
-    ) -> None:
-        self.repository.elements = dict(saved[0])
-        self.repository.relationships = dict(saved[1])
-        self.repository.audit_log.events = list(saved[2])
+    def _restore(self, saved: dict[str, Any]) -> None:
+        self.repository.elements = dict(saved["elements"])
+        self.repository.relationships = dict(saved["relationships"])
+        self.repository.audit_log.events = list(saved["events"])
+        if self.diagrams is not None:
+            self.diagrams.diagrams = dict(saved["diagrams"])
+            self.diagrams.nodes = dict(saved["nodes"])
+        if self.packages is not None:
+            self.packages.packages = dict(saved["packages"])
 
     @asynccontextmanager
     async def transaction(self, *, commit: bool) -> AsyncIterator[Transaction]:
@@ -1375,7 +1420,11 @@ class InMemoryExchange:
             self._restore(before)
 
     async def apply_rows[Row](
-        self, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+        self,
+        rows: Sequence[Row],
+        apply: Callable[[Row], Awaitable[None]],
+        *,
+        max_refused: int = MAX_REFUSED_ROWS,
     ) -> list[RowRefusal]:
         refused: list[RowRefusal] = []
         start = 0
@@ -1392,8 +1441,8 @@ class InMemoryExchange:
             except DomainError as error:
                 self._restore(saved)  # ROLLBACK TO SAVEPOINT
                 refused.append(RowRefusal(position, error))
-                if len(refused) > MAX_REFUSED_ROWS:
-                    msg = f"more than {MAX_REFUSED_ROWS} rows were refused"
+                if len(refused) > max_refused:
+                    msg = f"more than {max_refused} rows were refused"
                     raise TooManyRefusedRowsError(msg) from error
                 # The replay, without a savepoint. Like the real `apply_rows`, a row refused the
                 # second time condemns the import. Database errors (IntegrityError, DataError)
@@ -1688,8 +1737,10 @@ def saved_query_service(
 
 
 @pytest.fixture
-def exchange_store(repository: InMemoryRepository) -> InMemoryExchange:
-    return InMemoryExchange(repository)
+def exchange_store(
+    repository: InMemoryRepository, diagrams: InMemoryDiagrams, packages: InMemoryPackages
+) -> InMemoryExchange:
+    return InMemoryExchange(repository, diagrams, packages)
 
 
 @pytest.fixture

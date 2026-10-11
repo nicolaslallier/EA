@@ -17,9 +17,10 @@ from sqlalchemy import ColumnElement, Text, cast, func, select
 from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
+from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
 from ea.db.unit_of_work import apply_rows, in_unit, reading, shared_transaction
 from ea.domain.archimate import RelationshipType
-from ea.domain.exchange import SOURCE_ID
+from ea.domain.exchange import SOURCE_ID, ExportedBox, ExportedView
 from ea.repositories.architecture_store import (
     element_from_row,
     lock_elements,
@@ -82,6 +83,37 @@ class _Snapshot:
             .limit(limit)
         )
         return tuple(relationship_from_row(row) for row in await self._session.scalars(statement))
+
+    async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
+        diagrams = (
+            await self._session.execute(
+                select(DiagramRecord.id, DiagramRecord.name, DiagramRecord.description)
+                .order_by(DiagramRecord.name, DiagramRecord.id)
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+        if not diagrams:
+            return ()
+        boxes = await self._session.execute(
+            select(
+                DiagramNodeRecord.diagram_id,
+                DiagramNodeRecord.element_id,
+                DiagramNodeRecord.x,
+                DiagramNodeRecord.y,
+                DiagramNodeRecord.width,
+                DiagramNodeRecord.height,
+            )
+            .join(ElementRecord, ElementRecord.id == DiagramNodeRecord.element_id)
+            .where(DiagramNodeRecord.diagram_id.in_([d.id for d in diagrams]))
+            .order_by(DiagramNodeRecord.diagram_id, _identifier(ElementRecord), ElementRecord.id)
+        )
+        by_diagram: dict[UUID, list[ExportedBox]] = {d.id: [] for d in diagrams}
+        for diagram_id, element_id, x, y, width, height in boxes:
+            by_diagram[diagram_id].append(ExportedBox(element_id, x, y, width, height))
+        return tuple(
+            ExportedView(d.id, d.name, d.description, tuple(by_diagram[d.id])) for d in diagrams
+        )
 
 
 class PostgresExchangeRepository:

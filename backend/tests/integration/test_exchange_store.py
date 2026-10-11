@@ -150,3 +150,39 @@ async def test_locked_elements_make_another_writer_wait_and_the_order_is_by_id(
                     )
                 await other.rollback()
                 await other.begin()
+
+
+async def test_views_come_ordered_by_name_with_their_boxes_in_identifier_order(
+    exchange: PostgresExchangeRepository,
+    graph_service: ArchitectureService,
+    engine_at_head: AsyncEngine,
+) -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
+
+    first = await graph_service.create_element(
+        element_type=E.NODE, name="b", properties={SOURCE_ID: "z-last"}
+    )
+    second = await graph_service.create_element(
+        element_type=E.NODE, name="a", properties={SOURCE_ID: "a-first"}
+    )
+    diagram_id, now = uuid4(), datetime.now(UTC)
+    async with async_sessionmaker(engine_at_head).begin() as session:
+        session.add(
+            DiagramRecord(id=diagram_id, name="V", description="d", created_at=now, updated_at=now)
+        )
+        await session.flush()
+        session.add_all(
+            DiagramNodeRecord(diagram_id=diagram_id, element_id=e.id, x=1, y=2, width=3, height=4)
+            for e in (first, second)
+        )
+
+    async with exchange.snapshot(ExportScope()) as snapshot:
+        (view,) = await snapshot.views_page(0, 10)
+
+    assert (view.name, view.description) == ("V", "d")
+    assert [box.element_id for box in view.boxes] == [second.id, first.id]

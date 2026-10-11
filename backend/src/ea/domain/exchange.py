@@ -34,6 +34,9 @@ NAMESPACE: Final = "http://www.opengroup.org/xsd/archimate/3.0/"
 #: element or relationship may take either, or the file would hold one `xs:ID` twice.
 MODEL_IDENTIFIER: Final = "id-ea-model"
 PROPERTY_DEFINITION_PREFIX: Final = "propid-"
+#: The prefix of the identifier a view is given (`view-<name>`): no element or relationship
+#: may take a `source_id` starting so, or a view could share its `xs:ID`.
+VIEW_IDENTIFIER_PREFIX: Final = "view-"
 
 SOURCE_ID: Final = "source_id"
 DESCRIPTION_KEY: Final = "ea.description"
@@ -192,13 +195,22 @@ class IdentifierRegistry:
         self._taken.add(generated)
         return generated
 
+    def claim(self, preferred: str) -> str:
+        """An identifier for something that is not an element or a link (a view): `preferred`,
+        or `preferred-2`, `-3`... when taken. Always unique in the file."""
+        identifier, number = preferred, 2
+        while identifier in self._taken:
+            identifier, number = f"{preferred}-{number}", number + 1
+        self._taken.add(identifier)
+        return identifier
+
     def _usable(self, source_id: str, generated: str) -> bool:
         if source_id == generated:
             return generated not in self._taken
         return (
             _NCNAME.match(source_id) is not None
             and _GENERATED.match(source_id) is None
-            and not source_id.startswith(PROPERTY_DEFINITION_PREFIX)
+            and not source_id.startswith((PROPERTY_DEFINITION_PREFIX, VIEW_IDENTIFIER_PREFIX))
             and source_id not in self._taken
         )
 
@@ -296,6 +308,25 @@ class ExchangeView:
     connections_ignored: int = 0
     shapes_ignored: int = 0
     path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExportedBox:
+    element_id: UUID
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True, slots=True)
+class ExportedView:
+    """A saved diagram as the export reads it: its boxes name elements by their database id."""
+
+    id: UUID
+    name: str
+    description: str
+    boxes: tuple[ExportedBox, ...]
 
 
 # --- What reading a file yields ----------------------------------------------

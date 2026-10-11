@@ -28,10 +28,12 @@ from ea.domain.exchange import (
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
     Category,
+    ExchangeBox,
     ExchangeElement,
     ExchangeFormat,
     ExchangeModel,
     ExchangeRelationship,
+    ExchangeView,
     ExportRequest,
     IdentifierRegistry,
     ImportContent,
@@ -42,6 +44,7 @@ from ea.domain.exchange import (
     Severity,
     exchange_element_of,
     exchange_relationship_of,
+    xml_identifier,
 )
 from ea.formats.archimate_xml import buffered, parse_model, render_model
 from ea.formats.csv_files import parse_csv, render_csv
@@ -253,6 +256,7 @@ class ExchangeService:
                 streams.elements(),
                 streams.relationships(),
                 on_dropped=lambda identifier, count: dropped.__setitem__(identifier, count),
+                views=streams.views(request.with_views),
             )
             async for chunk in buffered(parts):
                 yield chunk
@@ -300,7 +304,8 @@ class _Streams:
         self._deadline = monotonic() + EXPORT_TIMEOUT_SECONDS
         self.registry = IdentifierRegistry()
         self.identifiers: dict[UUID, str] = {}
-        self.counts = {"elements": 0, "relationships": 0}
+        self.counts = {"elements": 0, "relationships": 0, "views": 0}
+        self.skipped_views = 0
 
     def _within_budget(self) -> None:
         if self._monotonic() > self._deadline:
@@ -332,6 +337,29 @@ class _Streams:
                         target=self.identifiers[link.target_id],
                         registry=self.registry,
                     )
+            offset += len(page)
+
+    async def views(self, with_views: bool) -> AsyncIterator[ExchangeView]:
+        if not with_views:
+            return
+        offset = 0
+        while page := await self._snapshot.views_page(offset, EXPORT_PAGE_SIZE):
+            self._within_budget()
+            for view in page:
+                # A view whose boxes are not all in the export would be a different picture.
+                if any(box.element_id not in self.identifiers for box in view.boxes):
+                    self.skipped_views += 1
+                    continue
+                self.counts["views"] += 1
+                yield ExchangeView(
+                    identifier=self.registry.claim(xml_identifier(f"view-{view.name}")),
+                    name=view.name,
+                    description=view.description,
+                    boxes=tuple(
+                        ExchangeBox(self.identifiers[b.element_id], b.x, b.y, b.width, b.height)
+                        for b in view.boxes
+                    ),
+                )
             offset += len(page)
 
 

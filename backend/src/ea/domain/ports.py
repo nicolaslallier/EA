@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
-    from ea.domain.exchange import ExportScope
+    from ea.domain.exchange import ExportedView, ExportScope
 
 
 @dataclass(slots=True)
@@ -766,6 +766,10 @@ class ExportSnapshot(Protocol):
     async def elements_page(self, offset: int, limit: int) -> tuple[Element, ...]: ...
 
     async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]: ...
+
+    async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
+        """Saved diagrams with their boxes, by name; boxes by exported identifier."""
+        ...
 
 
 class ExchangeRepository(Protocol):

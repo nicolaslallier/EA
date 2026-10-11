@@ -12,6 +12,7 @@ from defusedxml import ElementTree as DefusedET
 
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
     ExchangeFileTooLargeError,
     InvalidExchangeFileError,
@@ -32,6 +33,7 @@ from ea.domain.exchange import (
 from ea.domain.ports import ElementFilter
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
 from tests.conftest import FIXED_NOW, a_reader
 
@@ -422,3 +424,84 @@ class TestCsvImport:
             )
 
         assert "LEAK" not in str(raised.value)
+
+
+class TestViewsInTheExport:
+    async def test_a_saved_diagram_is_written_with_its_boxes(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        exchange_service: ExchangeService,
+    ) -> None:
+        a = await service.create_element(
+            element_type=E.NODE, name="srv", properties={SOURCE_ID: "n-1"}
+        )
+        diagram = await diagram_service.create(name="Overview", description="Main")
+        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 10, 20, 100, 50)])
+
+        root = DefusedET.fromstring(await exported(exchange_service))
+
+        view = root.find("x:views/x:diagrams/x:view", NS)
+        assert view is not None and view.get("identifier") == "view-Overview"
+        box = view.find("x:node", NS)
+        assert box is not None and box.get("elementRef") == "n-1"
+        assert (box.get("x"), box.get("w")) == ("10", "100")
+
+    async def test_with_views_false_leaves_them_out(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        exchange_service: ExchangeService,
+    ) -> None:
+        a = await service.create_element(element_type=E.NODE, name="srv")
+        diagram = await diagram_service.create(name="Overview")
+        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+
+        root = DefusedET.fromstring(
+            await exported(exchange_service, ExportRequest(with_views=False))
+        )
+
+        assert root.find("x:views", NS) is None
+
+    async def test_two_names_that_normalise_alike_keep_distinct_identifiers(
+        self, diagram_service: DiagramService, exchange_service: ExchangeService
+    ) -> None:
+        for name in ("a b", "a_b"):
+            await diagram_service.create(name=name)
+
+        root = DefusedET.fromstring(await exported(exchange_service))
+
+        identifiers = [v.get("identifier") for v in root.findall("x:views/x:diagrams/x:view", NS)]
+        assert len(set(identifiers)) == 2
+
+    async def test_a_source_id_that_looks_like_a_view_is_not_taken_for_one(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        exchange_service: ExchangeService,
+    ) -> None:
+        a = await service.create_element(
+            element_type=E.NODE, name="srv", properties={SOURCE_ID: "view-Overview"}
+        )
+        diagram = await diagram_service.create(name="Overview")
+        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+
+        root = DefusedET.fromstring(await exported(exchange_service))
+
+        (element,) = root.findall("x:elements/x:element", NS)
+        view = root.find("x:views/x:diagrams/x:view", NS)
+        assert view is not None and element.get("identifier") != view.get("identifier")
+
+    async def test_csv_has_no_views(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        exchange_service: ExchangeService,
+    ) -> None:
+        a = await service.create_element(element_type=E.NODE, name="srv")
+        diagram = await diagram_service.create(name="Overview")
+        await diagram_service.replace_layout(diagram.id, [DiagramNode(a.id, 0, 0)])
+
+        archive = zipfile.ZipFile(io.BytesIO(await zip_of(exchange_service)))
+
+        assert archive.namelist() == ["elements.csv", "relations.csv", "properties.csv"]
