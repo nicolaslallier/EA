@@ -100,6 +100,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/impact/ImpactSection.vue'),
   },
   {
+    path: '/analyse/matrice',
+    name: 'matrix',
+    label: 'Matrice',
+    summary: 'Croiser deux ensembles d’éléments : qui est relié à quoi, et créer le lien.',
+    group: 'analysis',
+    view: () => import('../features/matrix/MatrixSection.vue'),
+  },
+  {
     path: '/recherche',
     name: 'search',
     label: 'Recherche',
