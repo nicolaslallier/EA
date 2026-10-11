@@ -38,7 +38,7 @@ from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.audit import events_for
+from ea.domain.audit import AUDIT_LISTED_IDS, events_for
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     DomainError,
@@ -48,7 +48,7 @@ from ea.domain.errors import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, VRF_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship
-from ea.domain.ports import ElementChange, ElementFilter, ElementRemoval, GraphView
+from ea.domain.ports import ElementChange, ElementFilter, ElementRemoval, GraphView, Held
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 from ea.repositories.audit_store import write_events
 
@@ -392,21 +392,28 @@ async def _links_within(
 async def _removal_of(session: AsyncSession, row: ElementRecord) -> ElementRemoval:
     """What deleting this (locked) element takes along, in the caller's transaction."""
     link = RelationshipRecord
+    touching = or_(link.source_id == row.id, link.target_id == row.id)
     links = await session.scalars(
-        select(link)
-        .where(or_(link.source_id == row.id, link.target_id == row.id))
-        .order_by(link.created_at, link.id)
+        select(link).where(touching).order_by(link.created_at, link.id).limit(AUDIT_LISTED_IDS)
     )
-    documents = select(ElementDocument.id).where(ElementDocument.element_id == row.id)
-    diagrams = select(DiagramNodeRecord.diagram_id).where(DiagramNodeRecord.element_id == row.id)
     return ElementRemoval(
         element=element_from_row(row),
+        relationship_count=int(await session.scalar(select(func.count()).where(touching)) or 0),
         relationships=tuple(relationship_from_row(found) for found in links),
-        document_ids=tuple(await session.scalars(documents.order_by(ElementDocument.id))),
-        diagram_ids=tuple(
-            await session.scalars(diagrams.order_by(DiagramNodeRecord.diagram_id).distinct())
+        documents=await _held(session, ElementDocument.id, ElementDocument.element_id == row.id),
+        diagrams=await _held(
+            session, DiagramNodeRecord.diagram_id, DiagramNodeRecord.element_id == row.id
         ),
     )
+
+
+async def _held(session: AsyncSession, column: Any, where: ColumnElement[bool]) -> Held:
+    """The exact count of rows matching `where`, and the first few of `column`."""
+    total = await session.scalar(select(func.count()).where(where))
+    ids = await session.scalars(
+        select(column).where(where).order_by(column).limit(AUDIT_LISTED_IDS)
+    )
+    return Held(count=int(total or 0), ids=tuple(ids))
 
 
 # --------------------------------------------------------------------------

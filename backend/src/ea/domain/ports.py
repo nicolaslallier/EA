@@ -46,6 +46,14 @@ class GraphView:
 
 
 @dataclass(frozen=True, slots=True)
+class Held:
+    """How many things a package holds, and the first few of them (`AUDIT_LISTED_IDS`)."""
+
+    count: int = 0
+    ids: tuple[UUID, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ElementChange:
     """An element as the repository found it under its lock, and as the patch left it."""
 
@@ -61,17 +69,12 @@ class ElementRemoval:
     """
 
     element: Element
+    #: Exact, while `relationships` holds only the first `AUDIT_LISTED_IDS`: an
+    #: event about a hub of ten thousand links must not weigh megabytes.
+    relationship_count: int = 0
     relationships: tuple[Relationship, ...] = ()
-    document_ids: tuple[UUID, ...] = ()
-    diagram_ids: tuple[UUID, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class Held:
-    """How many things a package holds, and the first few of them (`AUDIT_LISTED_IDS`)."""
-
-    count: int = 0
-    ids: tuple[UUID, ...] = ()
+    documents: Held = Held()
+    diagrams: Held = Held()
 
 
 @dataclass(frozen=True, slots=True)

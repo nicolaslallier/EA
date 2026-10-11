@@ -139,8 +139,9 @@ async def test_a_removal_names_what_the_foreign_keys_take(
 
     (removal,) = seen
     assert removal.element.id == element.id
-    assert removal.document_ids == (document.id,)
-    assert removal.diagram_ids == (diagram.id,)
+    assert removal.documents.ids == (document.id,)
+    assert removal.diagrams.ids == (diagram.id,)
+    assert removal.relationship_count == 0
 
 
 async def test_a_document_and_its_event_commit_or_fail_together(

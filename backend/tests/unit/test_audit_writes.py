@@ -8,7 +8,7 @@ import pytest
 
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.audit import AuditAction
+from ea.domain.audit import AUDIT_LISTED_IDS, AuditAction
 from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
@@ -75,10 +75,32 @@ class TestTheGraph:
         assert event.before is not None
         assert event.before["name"] == "db-01"
         assert event.before["cascaded"] == {
-            "relationships": [{"id": str(link.id), "relationship_type": "association"}],
-            "documents": [],
-            "diagrams": [],
+            "relationships": {
+                "count": 1,
+                "items": [{"id": str(link.id), "relationship_type": "association"}],
+            },
+            "documents": {"count": 0, "ids": []},
+            "diagrams": {"count": 0, "ids": []},
         }
+
+    async def test_a_hub_deleted_lists_a_hundred_links_and_counts_them_all(
+        self, service: ArchitectureService, audit_log: InMemoryAuditLog
+    ) -> None:
+        hub = await service.create_element(element_type=E.NODE, name="hub")
+        for index in range(AUDIT_LISTED_IDS + 20):
+            spoke = await service.create_element(element_type=E.NODE, name=f"s{index}")
+            await service.connect(
+                relationship_type=R.ASSOCIATION, source_id=hub.id, target_id=spoke.id
+            )
+        audit_log.events.clear()
+
+        await service.delete_element(hub.id)
+
+        (event,) = audit_log.events
+        assert event.before is not None
+        cascaded = event.before["cascaded"]["relationships"]
+        assert cascaded["count"] == AUDIT_LISTED_IDS + 20
+        assert len(cascaded["items"]) == AUDIT_LISTED_IDS
 
     async def test_connecting_and_disconnecting_each_leave_one_event(
         self, service: ArchitectureService, audit_log: InMemoryAuditLog

@@ -249,3 +249,10 @@ class TestSavedQueries:
 
         (event,) = audit_log.events
         assert event.action is AuditAction.SAVED_QUERY_DELETED
+
+
+def test_a_moved_batch_can_never_outgrow_what_an_event_may_list() -> None:
+    """`package.elements_moved` lists every moved id: the batch limit is its bound."""
+    from ea.domain.audit import AUDIT_LISTED_IDS
+
+    assert MAX_MOVE_BATCH <= AUDIT_LISTED_IDS

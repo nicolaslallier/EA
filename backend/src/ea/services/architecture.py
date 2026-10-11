@@ -202,16 +202,26 @@ class ArchitectureService:
                     entity_id=element_id,
                     before={
                         **element_view(removal.element),
+                        # Exact counts, and the first `AUDIT_LISTED_IDS` of each.
                         "cascaded": {
-                            "relationships": [
-                                {
-                                    "id": str(link.id),
-                                    "relationship_type": link.relationship_type.value,
-                                }
-                                for link in removal.relationships
-                            ],
-                            "documents": [str(i) for i in removal.document_ids],
-                            "diagrams": [str(i) for i in removal.diagram_ids],
+                            "relationships": {
+                                "count": removal.relationship_count,
+                                "items": [
+                                    {
+                                        "id": str(link.id),
+                                        "relationship_type": link.relationship_type.value,
+                                    }
+                                    for link in removal.relationships
+                                ],
+                            },
+                            "documents": {
+                                "count": removal.documents.count,
+                                "ids": [str(i) for i in removal.documents.ids],
+                            },
+                            "diagrams": {
+                                "count": removal.diagrams.count,
+                                "ids": [str(i) for i in removal.diagrams.ids],
+                            },
                         },
                     },
                 ),

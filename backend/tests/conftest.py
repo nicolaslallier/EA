@@ -414,7 +414,12 @@ class InMemoryRepository:
         links = tuple(
             r for r in self.relationships.values() if element_id in (r.source_id, r.target_id)
         )
-        events = events_for(audit, ElementRemoval(element=element, relationships=links))
+        events = events_for(
+            audit,
+            ElementRemoval(
+                element=element, relationship_count=len(links), relationships=links[:100]
+            ),
+        )
         del self.elements[element_id]
         self.audit_log.append(events)
         return True

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
-from ea.domain.audit import AuditAction, AuditFilter, EntityKind
+from ea.domain.audit import AUDIT_LISTED_IDS, AuditAction, AuditFilter, EntityKind
 from ea.domain.errors import ElementNotFoundError
 from ea.domain.model import Element, Relationship
 from ea.domain.ports import ElementChange, ElementRemoval
@@ -124,7 +124,7 @@ async def test_a_delete_racing_a_link_lists_exactly_what_it_took(
     removal = next(e for e in page.events if e.action is AuditAction.ELEMENT_DELETED)
     assert deleted is None
     assert removal.before is not None
-    listed = [r["id"] for r in removal.before["cascaded"]["relationships"]]
+    listed = [r["id"] for r in removal.before["cascaded"]["relationships"]["items"]]
     if isinstance(linked, ElementNotFoundError):
         assert listed == []  # the link lost the race and was refused: nothing to list
     else:
@@ -167,3 +167,29 @@ async def test_an_event_that_cannot_be_built_leaves_no_write(engine_at_head: Asy
         )
 
     assert (await graph.get_element(element.id)).name == "a"  # type: ignore[union-attr]
+
+
+async def test_a_deleted_hub_costs_a_bounded_event_and_an_exact_count(
+    engine_at_head: AsyncEngine,
+) -> None:
+    sessions = create_session_factory(engine_at_head)
+    graph = PostgresArchitectureRepository(sessions)
+    hub = Element.create(element_type=E.NODE, name="hub", now=START)
+    await graph.add_element(hub, audit=())
+    for index in range(AUDIT_LISTED_IDS + 20):
+        spoke = Element.create(element_type=E.NODE, name=f"s{index}", now=START)
+        await graph.add_element(spoke, audit=())
+        await graph.add_relationship(
+            Relationship.between(R.ASSOCIATION, hub, spoke, now=START), audit=()
+        )
+    seen: list[ElementRemoval] = []
+
+    def record(removal: ElementRemoval) -> tuple[()]:
+        seen.append(removal)
+        return ()
+
+    assert await graph.delete_element(hub.id, audit=record)
+
+    (removal,) = seen
+    assert removal.relationship_count == AUDIT_LISTED_IDS + 20
+    assert len(removal.relationships) == AUDIT_LISTED_IDS
