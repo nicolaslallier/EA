@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 from ea.domain.audit import AuditChannel
-from ea.domain.auth import EDITOR_ROLE, Caller
+from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.errors import NotAuthenticatedError, NotAuthorisedError
 
 current_caller: ContextVar[Caller | None] = ContextVar("ea_current_caller", default=None)
@@ -37,6 +37,14 @@ def require_editor() -> Caller:
     caller = require_caller()
     if not caller.can_write:
         msg = f"changing the catalogue needs the {EDITOR_ROLE} role"
+        raise NotAuthorisedError(msg)
+    return caller
+
+
+def require_approver() -> Caller:
+    caller = require_caller()
+    if not caller.can_approve:
+        msg = f"approving or locking an element needs the {APPROVER_ROLE} role"
         raise NotAuthorisedError(msg)
     return caller
 

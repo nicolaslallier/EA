@@ -15,6 +15,7 @@ from datetime import datetime
 from types import MappingProxyType
 from uuid import UUID, uuid4
 
+from ea.domain.approval import ApprovalState
 from ea.domain.archimate import (
     AccessType,
     ElementType,
@@ -76,6 +77,12 @@ class Element:
     #: The package that files this element; `None` is "at the root". Not one of
     #: the element's facts: `update_element` keeps it, only a move changes it.
     package_id: UUID | None = None
+    #: Review state (docs/adr/0046). Not a fact about the thing modelled, and not
+    #: in `properties`: a `PATCH` that replaces the map cannot erase it.
+    approval_state: ApprovalState = ApprovalState.DRAFT
+    locked: bool = False
+    approved_by_sub: str | None = None
+    approved_at: datetime | None = None
 
     @classmethod
     def create(

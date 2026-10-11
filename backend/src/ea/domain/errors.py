@@ -237,3 +237,11 @@ class RestoreConflictError(DomainError):
     plan again and retry), and a uniqueness clash with something the baseline does
     not cover (retrying the same plan fails the same way until the clash is resolved).
     """
+
+
+class ElementLockedError(DomainError):
+    """An element in review's last stage — approved, or locked — refuses this change."""
+
+
+class InvalidTransitionError(DomainError):
+    """A review transition the element's current state does not offer."""

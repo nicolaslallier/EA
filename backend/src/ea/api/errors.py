@@ -38,6 +38,7 @@ from ea.domain.errors import (
     DuplicateNetworkError,
     DuplicatePackageError,
     DuplicateSavedQueryError,
+    ElementLockedError,
     ElementNotFoundError,
     FileNotTextError,
     FileStorageUnavailableError,
@@ -47,6 +48,7 @@ from ea.domain.errors import (
     InvalidFileKeyError,
     InvalidFileMetadataError,
     InvalidQueryError,
+    InvalidTransitionError,
     NetworkExhaustedError,
     NotAddressableError,
     NotASubnetError,
@@ -102,6 +104,9 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     BaselineNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
     BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
+    # --- Review and locking (docs/adr/0046) ---
+    ElementLockedError: (status.HTTP_409_CONFLICT, "element_locked"),
+    InvalidTransitionError: (status.HTTP_409_CONFLICT, "invalid_transition"),
     RestoreBlockedError: (status.HTTP_409_CONFLICT, "restore_blocked"),
     RestoreConflictError: (status.HTTP_409_CONFLICT, "restore_conflict"),
     # --- Structured search and saved queries ---

@@ -36,7 +36,7 @@ from ea.domain.audit import (
     events_for,
     saved_query_view,
 )
-from ea.domain.auth import EDITOR_ROLE, Caller
+from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
@@ -102,6 +102,18 @@ def an_editor(**overrides: object) -> Caller:
         "roles": frozenset({EDITOR_ROLE}),
     }
     return Caller(**{**fields, **overrides})  # type: ignore[arg-type]
+
+
+def an_approver(**overrides: object) -> Caller:
+    """An approver who is also an editor: the roles accumulate (docs/adr/0046)."""
+    return an_editor(
+        **{
+            "subject": "approver-1",
+            "username": "approver",
+            "roles": frozenset({EDITOR_ROLE, APPROVER_ROLE}),
+            **overrides,
+        }
+    )
 
 
 def a_reader(**overrides: object) -> Caller:
