@@ -39,8 +39,9 @@ TAIL = b"\r\n--B--\r\n"
 class Wire:
     """The client's end: a multipart body of `size` bytes, handed out on demand and counted."""
 
-    def __init__(self, size: int = 100, *, stall: bool = False) -> None:
+    def __init__(self, size: int = 100, *, stall: bool = False, delay: float = 0.0) -> None:
         self.size = size
+        self.delay = delay  # a slow but steady client
         self.stall = stall  # never finishes sending: the client is slow
         self.sent = 0
         self.reads = 0
@@ -66,6 +67,8 @@ class Wire:
 
     async def receive(self) -> dict[str, Any]:
         self.reads += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
         item = next(self._chunks, None)
         if item is None or (self.stall and self.sent > 1000):
             if self.stall:
@@ -314,4 +317,141 @@ async def test_six_big_sends_at_once_hold_at_most_two_bodies(
     assert sum(w.sent for w in wires) <= 2 * (size + len(HEAD) + len(TAIL))
     parser.release.set()
     await asyncio.gather(*tasks)
+    assert app.state.import_admission.in_flight == 0
+
+
+# --- A client that stops sending holds no place for ever -------------------------------------
+
+
+def quick(service: ArchitectureService, store: InMemoryExchange, parser: Parser) -> Any:
+    return build(service, store, parser, exchange_read_timeout_s=0.05, exchange_read_total_s=0.5)
+
+
+async def test_two_silent_connections_are_cut_with_a_408_and_their_places_given_back(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    app = quick(service, exchange_store, parser)
+    parser.block = False
+    silent = [Wire(size=5_000_000, stall=True) for _ in range(2)]
+    tasks = [run(app, wire) for wire in silent]
+    await settle()
+    assert app.state.import_admission.in_flight == 2  # both hold a place while they stall
+
+    await asyncio.gather(*tasks)
+
+    assert [wire.status for wire in silent] == [408, 408]
+    assert app.state.import_admission.in_flight == 0
+    third = Wire()
+    await run(app, third)
+    assert third.status == 200  # a normal import enters
+
+
+async def test_the_408_is_the_typed_envelope(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    import json
+
+    app = quick(service, exchange_store, parser)
+    wire = Wire(size=5_000_000, stall=True)
+
+    await run(app, wire)
+
+    body = next(m["body"] for m in wire.answer if m["type"] == "http.response.body")
+    assert json.loads(body)["error"] == "body_timeout"
+
+
+async def test_a_slow_but_steady_client_passes_under_the_per_message_delay(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    app = quick(service, exchange_store, parser)
+    parser.block = False
+    wire = Wire(size=100_000, delay=0.02)  # 3 messages of 20 ms: well under 50 ms each
+
+    await run(app, wire)
+
+    assert wire.status == 200
+
+
+async def test_a_steady_client_is_cut_by_the_total_delay(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    app = build(
+        service, exchange_store, parser, exchange_read_timeout_s=0.05, exchange_read_total_s=0.2
+    )
+    parser.block = False
+    wire = Wire(size=2_000_000, delay=0.02)  # 32 messages: 0.6 s in all, over the 0.2 s total
+
+    await run(app, wire)
+
+    assert wire.status == 408
+    assert app.state.import_admission.in_flight == 0
+
+
+async def test_the_delays_run_only_while_the_body_is_read(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    app = quick(service, exchange_store, parser)
+    wire = Wire()
+    task = run(app, wire)
+    await asyncio.to_thread(parser.entered.wait, 5)
+
+    await asyncio.sleep(0.8)  # analysis outlasts both delays: it is not the client's silence
+    assert not task.done()
+    parser.release.set()
+    await task
+
+    assert wire.status == 200
+
+
+async def test_the_delays_are_validated_settings() -> None:
+    from pydantic import ValidationError
+
+    for name, value in (("exchange_read_timeout_s", 0), ("exchange_read_total_s", 10_000)):
+        with pytest.raises(ValidationError):
+            Settings(debug=True, auth_enabled=False, **{name: value})
+
+
+async def test_on_a_real_server_two_slow_connections_do_not_keep_a_normal_import_out(
+    service: ArchitectureService, exchange_store: InMemoryExchange, parser: Parser
+) -> None:
+    import uvicorn
+
+    from tests.exchange_files import el, exchange_xml
+
+    parser.block = False
+    app = build(service, exchange_store, parser, exchange_read_timeout_s=0.3)
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=0, lifespan="off", log_level="error")
+    )
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        await asyncio.sleep(0.01)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    head = (
+        b"POST /exchanges/imports HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        b"Content-Type: multipart/form-data; boundary=B\r\nContent-Length: %d\r\n"
+        b"Connection: close\r\n\r\n"
+    )
+    file_part = HEAD + exchange_xml(el("a", "Node", "A")) + TAIL
+    try:
+        slow = []
+        for _ in range(2):  # a few bytes of a body announced as 1000, then silence
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write((head % 1000) + b"--B\r\n")
+            await writer.drain()
+            slow.append((reader, writer))
+        await asyncio.sleep(0.1)
+        assert app.state.import_admission.in_flight == 2
+        for reader, writer in slow:
+            answer = await asyncio.wait_for(reader.read(), 5)
+            writer.close()
+            assert answer.startswith(b"HTTP/1.1 408")
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write((head % len(file_part)) + file_part)
+        await writer.drain()
+        assert (await asyncio.wait_for(reader.read(), 5)).startswith(b"HTTP/1.1 200")
+        writer.close()
+    finally:
+        server.should_exit = True
+        await task
     assert app.state.import_admission.in_flight == 0

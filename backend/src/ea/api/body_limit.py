@@ -24,6 +24,7 @@ which wrap both, still stamp the answer.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Final
 
 from fastapi.security.utils import get_authorization_scheme_param
@@ -31,7 +32,12 @@ from fastapi.security.utils import get_authorization_scheme_param
 from ea.api.auth import caller_of
 from ea.api.errors import domain_error_response
 from ea.domain.auth import EDITOR_ROLE
-from ea.domain.errors import DomainError, ExchangeFileTooLargeError, NotAuthorisedError
+from ea.domain.errors import (
+    DomainError,
+    ExchangeBodyTimeoutError,
+    ExchangeFileTooLargeError,
+    NotAuthorisedError,
+)
 from ea.services.exchange_admission import ImportAdmission, current_ticket
 
 if TYPE_CHECKING:
@@ -50,7 +56,11 @@ class LimitingRequestBodies:
         path_suffix: str,
         limit: int,
         admission: ImportAdmission | None = None,
+        read_timeout: float = 15.0,
+        total_timeout: float = 120.0,
     ) -> None:
+        self._read_timeout = read_timeout
+        self._total_timeout = total_timeout
         self._app = app
         self._suffix = path_suffix
         self._limit = limit
@@ -108,10 +118,24 @@ class LimitingRequestBodies:
     async def _receive_and_serve(self, scope: Scope, receive: Receive, send: Send) -> None:
         seen = 0
         exceeded = False
+        timed_out = False
+        body_complete = False
+        deadline = asyncio.get_running_loop().time() + self._total_timeout
 
         async def counting() -> Message:
-            nonlocal seen, exceeded
-            message = await receive()
+            nonlocal seen, exceeded, timed_out, body_complete
+            if body_complete:  # the analysis and the import are long by nature: no delay
+                return await receive()
+            # A place is held while the client sends: a silent or crawling one must not keep
+            # it. A delay between two pieces, and one for the whole body.
+            left = deadline - asyncio.get_running_loop().time()
+            try:
+                message = await asyncio.wait_for(
+                    receive(), timeout=max(0.0, min(self._read_timeout, left))
+                )
+            except TimeoutError:
+                timed_out = True
+                return {"type": "http.disconnect"}
             if message["type"] == "http.request":
                 seen += len(message.get("body", b""))
                 if seen > self._limit:
@@ -119,16 +143,20 @@ class LimitingRequestBodies:
                     # Hang up on the application: it stops reading, and whatever it
                     # answers next is muted below and replaced by the 413.
                     return {"type": "http.disconnect"}
+                body_complete = not message.get("more_body", False)
             return message
 
         async def muted(message: Message) -> None:
-            if not exceeded:
+            if not exceeded and not timed_out:
                 await send(message)
 
         try:
             await self._app(scope, counting, muted)
         except Exception:
-            if not exceeded:
+            if not exceeded and not timed_out:
                 raise
         if exceeded:
             await domain_error_response(self._too_large())(scope, receive, send)
+        elif timed_out:
+            refusal = ExchangeBodyTimeoutError("the body of the import did not arrive in time")
+            await domain_error_response(refusal)(scope, receive, send)

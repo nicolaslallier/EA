@@ -275,6 +275,10 @@ class ExchangeFileTooLargeError(DomainError):
     """
 
 
+class ExchangeBodyTimeoutError(DomainError):
+    """The client stopped sending, or sent too slowly, the body of an import (a 408)."""
+
+
 class ImportInProgressError(DomainError):
     """Another import holds the advisory lock; only one runs at a time."""
 

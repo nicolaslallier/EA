@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     # The upper bound is the point at which a file is read in a thread for minutes and
     # holds hundreds of megabytes: past it, split the file.
     exchange_max_bytes: int = Field(default=MAX_EXCHANGE_BYTES, ge=1024, le=100 * 1024 * 1024)
+    # How long an import's client may stay silent between two pieces of its body, and how
+    # long the whole body may take to arrive (docs/adr/0048). A place is held while the body
+    # is read: without these, two slow connections hold every place. They run only during the
+    # reception, not during the analysis, and add to the proxy's `client_body_timeout`.
+    exchange_read_timeout_s: float = Field(default=15.0, ge=0.01, le=60.0)
+    exchange_read_total_s: float = Field(default=120.0, ge=0.05, le=600.0)
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
     # Ollama on the cluster, beside the graph, serving an OpenAI-compatible

@@ -181,6 +181,14 @@ un client qui raccroche laisse le thread courir, et la place reste prise avec lu
 théorique des corps détenus est donc workers x 2 x plafond. La porte d'analyse du service reste, pour les
 appelants qui n'arrivent pas par HTTP.
 
+Une place tenue pendant que le client envoie ne doit pas l'être indéfiniment : deux connexions
+authentifiées qui envoient quelques octets puis se taisent tiendraient les deux places. Chaque lecture du corps
+est donc bornée par `EA_EXCHANGE_READ_TIMEOUT_S` (15 s entre deux morceaux) et la réception entière par
+`EA_EXCHANGE_READ_TOTAL_S` (120 s, plafonné à 600 s) ; à l'expiration, 408 `body_timeout` (enveloppe typée,
+CORS et identifiant de requête), la place est rendue par le `finally`. Ces délais ne courent que pendant la
+réception : l'analyse et l'import sont longs par nature. Le `client_body_timeout` de NGINX s'applique aussi
+devant et se cumule avec eux : c'est le plus court des deux qui coupe.
+
 ## Références
 
 - ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md), [0049](0049-defusedxml-et-validation-xsd.md)

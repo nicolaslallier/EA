@@ -613,6 +613,8 @@ def create_app(
         path_suffix="/exchanges/imports",
         limit=settings.exchange_max_bytes + BODY_ENVELOPE_MARGIN,
         admission=admission,
+        read_timeout=settings.exchange_read_timeout_s,
+        total_timeout=settings.exchange_read_total_s,
     )
     app.add_middleware(AnsweringUnexpectedFailures)
     app.add_middleware(
