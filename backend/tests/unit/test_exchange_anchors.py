@@ -16,7 +16,7 @@ from ea.domain.exchange import xml_identifier
 
 SRC = Path(__file__).parents[2] / "src" / "ea"
 NCNAME = re.compile(r"\A[A-Za-z_][A-Za-z0-9_.-]*\Z")
-DIRTY = ["x\n", "x\r\n", "x\x00", " x", "x ", "\nx", "x "]
+DIRTY = ["x\n", "x\r\n", "x\x00", " x", "x ", "\nx", "x" + chr(0x2028)]
 
 
 @pytest.mark.parametrize("raw", DIRTY)

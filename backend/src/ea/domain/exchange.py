@@ -40,6 +40,8 @@ JUNCTION_NAMES: Final = frozenset({"AndJunction", "OrJunction"})
 
 _EMPTY: Mapping[str, str] = MappingProxyType({})
 _NCNAME = re.compile(r"\A[A-Za-z_][A-Za-z0-9_.-]*\Z")
+#: What `id-{uuid}` looks like: no `source_id` may mimic it for another object.
+_GENERATED = re.compile(r"\Aid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 _NOT_NCNAME = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -108,9 +110,50 @@ def xml_identifier(raw: str) -> str:
     return "id-" + _NOT_NCNAME.sub("_", raw)
 
 
-def identifier_of(source_id: str | None, uid: UUID) -> str:
+def identifier_of(
+    source_id: str | None, uid: UUID
+) -> str:  # ordering key only, see IdentifierRegistry
     """What a file calls this element: its `source_id`, or a name made of its UUID."""
     return xml_identifier(source_id) if source_id else f"id-{uid}"
+
+
+class IdentifierRegistry:
+    """Hands out the identifiers of one exported file, each exactly once.
+
+    An `xs:ID` is unique in a file, and a relationship's `source`/`target` point
+    at one by name: two objects under the same identifier would make a link
+    point at the wrong one. So an object's `source_id` is used only when it is a
+    safe XML name, is not shaped like a generated `id-{uuid}` (unless it is this
+    very object's), is not reserved, and nobody has it yet; otherwise the object
+    gets `id-{uuid}`, which cannot collide — a UUID is unique and no other
+    object may use that shape. One set lookup per object: linear in the file.
+    """
+
+    def __init__(self, taken: set[str] | None = None) -> None:
+        self._taken = taken if taken is not None else set()
+        self._taken.add(MODEL_IDENTIFIER)
+        #: The objects whose `source_id` could not be used, in the order met.
+        self.replaced: list[UUID] = []
+
+    def assign(self, source_id: str | None, uid: UUID) -> str:
+        generated = f"id-{uid}"
+        if source_id and self._usable(source_id, generated):
+            self._taken.add(source_id)
+            return source_id
+        if source_id:
+            self.replaced.append(uid)
+        self._taken.add(generated)
+        return generated
+
+    def _usable(self, source_id: str, generated: str) -> bool:
+        if source_id == generated:
+            return generated not in self._taken
+        return (
+            _NCNAME.match(source_id) is not None
+            and _GENERATED.match(source_id) is None
+            and not source_id.startswith(PROPERTY_DEFINITION_PREFIX)
+            and source_id not in self._taken
+        )
 
 
 # --- What a file carries -------------------------------------------------
@@ -147,9 +190,13 @@ def _without_source_id(properties: Mapping[str, str]) -> Mapping[str, str]:
     return MappingProxyType({k: v for k, v in properties.items() if k != SOURCE_ID})
 
 
-def exchange_element_of(element: Element) -> ExchangeElement:
+def exchange_element_of(
+    element: Element, registry: IdentifierRegistry | None = None
+) -> ExchangeElement:
     return ExchangeElement(
-        identifier=identifier_of(element.properties.get(SOURCE_ID), element.id),
+        identifier=(registry or IdentifierRegistry()).assign(
+            element.properties.get(SOURCE_ID), element.id
+        ),
         element_type=element.element_type,
         name=element.name,
         description=element.description,
@@ -159,10 +206,16 @@ def exchange_element_of(element: Element) -> ExchangeElement:
 
 
 def exchange_relationship_of(
-    relationship: Relationship, *, source: str, target: str
+    relationship: Relationship,
+    *,
+    source: str,
+    target: str,
+    registry: IdentifierRegistry | None = None,
 ) -> ExchangeRelationship:
     return ExchangeRelationship(
-        identifier=identifier_of(relationship.properties.get(SOURCE_ID), relationship.id),
+        identifier=(registry or IdentifierRegistry()).assign(
+            relationship.properties.get(SOURCE_ID), relationship.id
+        ),
         relationship_type=relationship.relationship_type,
         source=source,
         target=target,
