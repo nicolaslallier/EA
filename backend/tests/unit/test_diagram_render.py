@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
+from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.diagram_render import (
+    BOX_INK,
     LAYER_FILL,
     RELATIONSHIP_VERBS,
     render_svg,
@@ -163,3 +168,56 @@ def test_a_non_finite_coordinate_is_never_written_as_inf_or_nan() -> None:
     ET.fromstring(svg)
     assert not re.search(r'(=|\s)"?-?(inf|nan)\b', svg)
     assert 'x="0" y="0"' in svg
+
+
+FIXTURE = Path(__file__).parents[3] / "frontend" / "tests" / "fixtures" / "diagram-parity.json"
+
+
+def detail_from_fixture(data: dict) -> DiagramDetail:  # type: ignore[type-arg]
+    elements = {
+        e["id"]: Element.create(
+            element_type=ElementType(e["element_type"]),
+            name=e["name"],
+            now=NOW,
+            element_id=UUID(e["id"]),
+        )
+        for e in data["elements"]
+    }
+    links = tuple(
+        Relationship.between(
+            RelationshipType(r["relationship_type"]),
+            elements[r["source_id"]],
+            elements[r["target_id"]],
+            now=NOW,
+            relationship_id=UUID(r["id"]),
+        )
+        for r in data["relationships"]
+    )
+    return DiagramDetail(
+        diagram=Diagram.create(name=data["name"], now=NOW),
+        nodes=tuple(
+            DiagramNode(UUID(n["element_id"]), n["x"], n["y"], n["width"], n["height"])
+            for n in data["nodes"]
+        ),
+        graph=GraphView(elements=tuple(elements.values()), relationships=links),
+    )
+
+
+class TestTheSharedParityFixture:
+    """The editor's geometry (Vitest) and this drawing read the same fixture."""
+
+    def test_the_server_drawing_is_the_one_the_editor_is_compared_with(self) -> None:
+        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        svg = render_svg(detail_from_fixture(data))
+        if os.environ.get("UPDATE_PARITY_FIXTURE") == "1":
+            data["svg"] = svg
+            FIXTURE.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+        assert svg == data["svg"]
+
+    def test_the_palette_is_the_one_the_editor_paints_with(self) -> None:
+        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+        assert {layer.value: fill for layer, fill in LAYER_FILL.items()} == data["layer_colours"]
+        assert data["box_ink"] == BOX_INK
