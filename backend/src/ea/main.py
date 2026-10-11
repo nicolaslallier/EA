@@ -19,6 +19,7 @@ from ea.api.auth import Authenticated, verifier_of
 from ea.api.baselines import router as baselines_router
 from ea.api.body_limit import BODY_ENVELOPE_MARGIN, LimitingRequestBodies
 from ea.api.dependencies import (
+    analysis_service_of,
     architecture_service_of,
     audit_service_of,
     baseline_service_of,
@@ -487,6 +488,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: audit_service_of(app),
         lambda: baseline_service_of(app),
         lambda: exchange_service_of(app),
+        lambda: analysis_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

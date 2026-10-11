@@ -18,6 +18,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.domain.errors import InvalidExchangeFileError
 from ea.mcp import build_mcp_server
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -27,7 +28,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
-from tests.conftest import InMemoryAuditLog, InMemoryExchange
+from tests.conftest import InMemoryAuditLog, InMemoryExchange, InMemoryRepository
 from tests.exchange_files import DATA
 from tests.unit.test_exchange_admission import Parser, Wire, run, settle
 from tests.unit.test_exchange_admission_callers import ALICE, BOB, CAROL, build, hold
@@ -62,6 +63,7 @@ def mcp_over(
         lambda: AuditService(audit_log),
         lambda: baseline_service,
         lambda: app.state.exchange_service,
+        lambda: AnalysisService(service, InMemoryRepository()),
     )
 
 

@@ -21,6 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from ea.api.schemas import (
     AddressAssign,
     ApprovalRequest,
+    AxisSelect,
     BaselineCreate,
     ElementCreate,
     ElementQuerySchema,
@@ -38,6 +39,7 @@ from ea.core.config import Settings
 from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -72,6 +74,7 @@ def server(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
+    analysis: AnalysisService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -84,6 +87,7 @@ def server(
         lambda: AuditService(audit_log),
         lambda: baseline_service,
         lambda: exchange_service,
+        lambda: analysis,
     )
 
 
@@ -98,6 +102,7 @@ def server_without_an_index(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     exchange_service: ExchangeService,
+    analysis: AnalysisService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -110,6 +115,7 @@ def server_without_an_index(
         lambda: AuditService(audit_log),
         lambda: baseline_service,
         lambda: exchange_service,
+        lambda: analysis,
     )
 
 
@@ -344,7 +350,9 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert len(names) == 53  # fifty-one, and the two ways in and out of an exchange file
+        assert (
+            len(names) == 54
+        )  # fifty-one, the two ways in and out of an exchange file, the matrix
         assert names == {
             "export_model",
             "import_model",
@@ -362,6 +370,7 @@ class TestTheToolset:
             "describe_metamodel",
             "permitted_relationships",
             "relationship_matrix_row",
+            "get_relationship_matrix",
             "attach_document",
             "list_documents",
             "read_document",
@@ -2086,3 +2095,59 @@ class TestAnImportsTextIsNeverQuoted:
         with acting_as(a_reader()), pytest.raises(ToolError) as refused:
             await server.call_tool("import_model", {"content": big})
         assert "at most" not in str(refused.value)
+
+
+@pytest.mark.asyncio
+class TestTheRelationshipMatrixTool:
+    async def test_it_answers_with_the_grid_and_the_links(self, server: MCPServer[Any]) -> None:
+        api = await an_element(server, "application_service", "Invoice API")
+        process = await an_element(server, "business_process", "Order to cash")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="serving",
+            source_id=api["id"],
+            target_id=process["id"],
+        )
+
+        grid = await call(
+            server,
+            "get_relationship_matrix",
+            rows={"element_ids": [api["id"]]},
+            cols={"element_ids": [process["id"]]},
+        )
+
+        assert [c["links"][0]["relationship_type"] for c in grid["cells"]] == ["serving"]
+
+    async def test_it_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_relationship_matrix")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
+
+    async def test_an_unknown_element_is_a_message_the_model_can_act_on(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="no element with id"):
+            await call(
+                server,
+                "get_relationship_matrix",
+                rows={"element_ids": ["00000000-0000-4000-8000-000000000001"]},
+                cols={},
+            )
+
+    async def test_too_many_named_elements_are_refused_with_the_ceiling(
+        self, server: MCPServer[Any]
+    ) -> None:
+        ids = [f"00000000-0000-4000-8000-{n:012d}" for n in range(51)]
+
+        with pytest.raises(ToolError, match="at most 50"):
+            await call(server, "get_relationship_matrix", rows={"element_ids": ids}, cols={})
+
+    async def test_its_axis_bounds_are_the_http_ones(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_relationship_matrix")
+        sent = tool.input_schema["$defs"]["AxisSelect"]["properties"]["element_ids"]
+        served = AxisSelect.model_json_schema()["properties"]["element_ids"]
+
+        assert bounds_of(sent) == bounds_of(served)
+        assert bounds_of(sent)["maxItems"] == 500
