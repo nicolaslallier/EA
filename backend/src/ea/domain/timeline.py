@@ -13,12 +13,18 @@ written, exactly like `validate_ipam_properties`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
-from typing import Final
+from datetime import date, timedelta
+from typing import TYPE_CHECKING, Final
 
-from ea.domain.errors import InvalidLifespanError
+from ea.domain.archimate import ElementType, RelationshipType
+from ea.domain.errors import InvalidLifespanError, InvalidTimelineError
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from ea.domain.model import Element, Relationship
 
 VALID_FROM: Final = "valid_from"
 VALID_UNTIL: Final = "valid_until"
@@ -128,3 +134,187 @@ def validate_lifespan_properties(
         msg = f"{VALID_UNTIL} is before {VALID_FROM}"
         raise InvalidLifespanError(msg)
     return canonical
+
+
+# --- Plateaus and the roadmap (docs/adr/0061) ---------------------------------------------
+
+#: A roadmap window wider than this is a dump wearing a filter: 20 years, in days.
+MAX_ROADMAP_DAYS: Final = 20 * 366
+#: Plateaus are a handful; this bounds a runaway catalogue. Past it the question is refused.
+MAX_PLATEAUS: Final = 500
+#: Plateaus, work packages and deliverables a roadmap will draw - beyond it, give a window.
+MAX_ROADMAP_ITEMS: Final = 1000
+#: Links a roadmap reads among its items.
+MAX_ROADMAP_LINKS: Final = 5000
+#: Members of one plateau that a comparison will hold.
+MAX_PLATEAU_MEMBERS: Final = 5000
+#: Gaps already drawn between two plateaus that a comparison lists.
+MAX_GAPS_LISTED: Final = 100
+
+#: What a roadmap draws.
+ROADMAP_TYPES: Final = (ElementType.PLATEAU, ElementType.WORK_PACKAGE, ElementType.DELIVERABLE)
+#: A plateau contains what it composes or aggregates; computed, never stored.
+MEMBERSHIP: Final = (RelationshipType.COMPOSITION, RelationshipType.AGGREGATION)
+#: The links a roadmap draws between its items.
+ROADMAP_EDGES: Final = (RelationshipType.TRIGGERING, RelationshipType.REALIZATION)
+
+
+def _by_name(elements: Iterable[Element]) -> tuple[Element, ...]:
+    """One of each (by id), in a stable order: name, then id."""
+    unique = {element.id: element for element in elements}
+    return tuple(sorted(unique.values(), key=lambda e: (e.name.lower(), str(e.id))))
+
+
+@dataclass(frozen=True, slots=True)
+class PlateauGap:
+    """What changes between two plateaus: departures, arrivals, and what stays."""
+
+    only_in_a: tuple[Element, ...]
+    only_in_b: tuple[Element, ...]
+    common: tuple[Element, ...]
+
+
+def diff_plateaus(a: Iterable[Element], b: Iterable[Element]) -> PlateauGap:
+    """Compare the members of two plateaus. Computed, never stored (docs/adr/0061)."""
+    in_a = {element.id: element for element in a}
+    in_b = {element.id: element for element in b}
+    return PlateauGap(
+        only_in_a=_by_name(e for i, e in in_a.items() if i not in in_b),
+        only_in_b=_by_name(e for i, e in in_b.items() if i not in in_a),
+        common=_by_name(e for i, e in in_a.items() if i in in_b),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PlateauSummary:
+    element: Element
+    lifespan: Lifespan
+    member_count: int
+
+
+def _chronological(lifespan: Lifespan, name: str, element_id: UUID) -> tuple[bool, date, str, str]:
+    return (lifespan.start is None, lifespan.start or date.min, name.lower(), str(element_id))
+
+
+def sort_plateaus(summaries: Iterable[PlateauSummary]) -> tuple[PlateauSummary, ...]:
+    """Earliest first; a plateau with no start last; then by name."""
+    return tuple(
+        sorted(summaries, key=lambda s: _chronological(s.lifespan, s.element.name, s.element.id))
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PlateauComparison:
+    """Two plateaus, how they differ, and the gaps already drawn between them."""
+
+    a: Element
+    b: Element
+    diff: PlateauGap
+    gaps: tuple[Element, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RoadmapItem:
+    element: Element
+    lifespan: Lifespan
+    #: The plateaus (among the roadmap's items) that contain it.
+    plateau_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RoadmapEdge:
+    source_id: UUID
+    target_id: UUID
+    relationship_type: RelationshipType
+
+
+@dataclass(frozen=True, slots=True)
+class Roadmap:
+    items: tuple[RoadmapItem, ...]
+    edges: tuple[RoadmapEdge, ...]
+    window_from: date | None
+    window_to: date | None
+
+
+def check_window(start: date | None, end: date | None) -> None:
+    """Refuse a window before anything is read: two bounds, in order, at most 20 years apart."""
+    if start is None or end is None:
+        return
+    if end < start:
+        msg = "the roadmap window ends before it starts"
+        raise InvalidTimelineError(msg)
+    if (end - start).days > MAX_ROADMAP_DAYS:
+        msg = "the roadmap window is wider than 20 years"
+        raise InvalidTimelineError(msg)
+
+
+def resolve_window(
+    lifespans: Iterable[Lifespan], start: date | None, end: date | None
+) -> tuple[date | None, date | None]:
+    """The days a roadmap spans: the bounds asked for, else those of the data.
+
+    Two explicit bounds are checked by `check_window`; a bound taken from the data is
+    cut to `MAX_ROADMAP_DAYS` instead of refused, since the caller did not choose it.
+    """
+    check_window(start, end)
+    days = [d for span in lifespans for d in (span.start, span.end) if d is not None]
+    low = start or (min(days) if days else None)
+    high = end or (max(days) if days else None)
+    if low is None or high is None:
+        return low, high
+    if high < low:  # one explicit bound beyond the other end of the data
+        low, high = (low, low) if end is None else (high, high)
+    if (high - low).days > MAX_ROADMAP_DAYS:
+        if end is None:
+            high = low + timedelta(days=MAX_ROADMAP_DAYS)
+        else:
+            low = high - timedelta(days=MAX_ROADMAP_DAYS)
+    return low, high
+
+
+def in_window(lifespan: Lifespan, start: date | None, end: date | None) -> bool:
+    """Undated things are always in (they are listed apart, never hidden)."""
+    return not lifespan.is_dated or lifespan.overlaps(Lifespan(start, end))
+
+
+def build_roadmap(
+    elements: Sequence[Element],
+    links: Sequence[Relationship],
+    start: date | None,
+    end: date | None,
+) -> Roadmap:
+    """The items of a roadmap with their dates, plateaus and edges - sorted, so deterministic.
+
+    The window defaults to the bounds of the data given. Containment is computed from the
+    links (a composition or aggregation from a plateau); a link to a thing the window left
+    out is dropped.
+    """
+    spans = {element.id: Lifespan.read_tolerant(element.properties) for element in elements}
+    low, high = resolve_window(spans.values(), start, end)
+    kept = {e.id: e for e in elements if in_window(spans[e.id], low, high)}
+    contained: dict[UUID, set[UUID]] = {}
+    for link in links:
+        if (
+            link.relationship_type in MEMBERSHIP
+            and link.source_type is ElementType.PLATEAU
+            and link.source_id in kept
+            and link.target_id in kept
+        ):
+            contained.setdefault(link.target_id, set()).add(link.source_id)
+    items = tuple(
+        RoadmapItem(e, spans[e.id], tuple(sorted(contained.get(e.id, ()), key=str)))
+        for e in sorted(kept.values(), key=lambda e: _chronological(spans[e.id], e.name, e.id))
+    )
+    edges = tuple(
+        sorted(
+            (
+                RoadmapEdge(link.source_id, link.target_id, link.relationship_type)
+                for link in links
+                if link.relationship_type in ROADMAP_EDGES
+                and link.source_id in kept
+                and link.target_id in kept
+            ),
+            key=lambda e: (str(e.source_id), str(e.target_id), e.relationship_type.value),
+        )
+    )
+    return Roadmap(items, edges, low, high)
