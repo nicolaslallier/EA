@@ -26,9 +26,12 @@ const READ: Route = {
     description: '',
     created_at: '2026-09-13T12:00:00Z',
     updated_at: '2026-09-13T12:00:00Z',
-    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46 }],
+    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46, parent_object_id: null, z: 0 }],
     elements: [A],
     relationships: [],
+    revision: 0,
+    objects: [],
+    edges: [],
   },
 }
 const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 204 }

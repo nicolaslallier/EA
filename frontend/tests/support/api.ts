@@ -87,7 +87,7 @@ export function stubApi(routes: Route[]): RecordedCall[] {
       }
       const status = route.status ?? 200
       if (status === 204) {
-        return new Response(null, { status })
+        return new Response(null, { status, headers: route.headers })
       }
       return new Response(JSON.stringify(route.body ?? {}), {
         status,

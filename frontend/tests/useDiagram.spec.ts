@@ -39,17 +39,22 @@ function aDiagram(overrides: Record<string, unknown> = {}) {
     created_at: '2026-09-13T12:00:00Z',
     updated_at: '2026-09-13T12:00:00Z',
     nodes: [
-      { element_id: A.id, x: 10, y: 20, width: 132, height: 46 },
-      { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
+      { element_id: A.id, x: 10, y: 20, width: 132, height: 46, parent_object_id: null, z: 0 },
+      { element_id: GONE, x: 400, y: 400, width: 132, height: 46, parent_object_id: null, z: 0 },
     ],
     elements: [A],
     relationships: [],
+    revision: 0,
+    objects: [],
+    edges: [],
     ...overrides,
   }
 }
 
 const READ: Route = { path: `/diagrams/${DIAGRAM_ID}`, body: aDiagram() }
-const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 204 }
+const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 204,
+  headers: { 'X-Diagram-Revision': '1' },
+}
 
 const saves = (calls: RecordedCall[]) => calls.filter((call) => call.method === 'PUT')
 
@@ -74,8 +79,8 @@ describe('useDiagram', () => {
         path: `/diagrams/${DIAGRAM_ID}`,
         body: aDiagram({
           nodes: [
-            { element_id: A.id, x: 0, y: 0, width: 132, height: 46 },
-            { element_id: B.id, x: 200, y: 0, width: 132, height: 46 },
+            { element_id: A.id, x: 0, y: 0, width: 132, height: 46, parent_object_id: null, z: 0 },
+            { element_id: B.id, x: 200, y: 0, width: 132, height: 46, parent_object_id: null, z: 0 },
           ],
           elements: [A, B],
           inactive_element_ids: [B.id],
@@ -112,10 +117,13 @@ describe('useDiagram', () => {
 
     expect(saves(calls)).toHaveLength(1)
     expect(saves(calls)[0].body).toEqual({
+      revision: 0,
+      objects: [],
+      edges: [],
       nodes: [
-        { element_id: A.id, x: 10, y: 20, width: 132, height: 46 },
-        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
-        { element_id: B.id, x: 300, y: 100, width: 132, height: 46 },
+        { element_id: A.id, x: 10, y: 20, width: 132, height: 46, parent_object_id: null, z: 0 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46, parent_object_id: null, z: 0 },
+        { element_id: B.id, x: 300, y: 100, width: 132, height: 46, parent_object_id: null, z: 0 },
       ],
     })
     expect(editor.placed.value.has(B.id)).toBe(true)
@@ -141,9 +149,12 @@ describe('useDiagram', () => {
     await pause()
 
     expect(saves(calls)[0].body).toEqual({
+      revision: 0,
+      objects: [],
+      edges: [],
       nodes: [
-        { element_id: A.id, x: 50, y: 60, width: 132, height: 46 },
-        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
+        { element_id: A.id, x: 50, y: 60, width: 132, height: 46, parent_object_id: null, z: 0 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46, parent_object_id: null, z: 0 },
       ],
     })
   })
@@ -160,9 +171,12 @@ describe('useDiagram', () => {
     await pause()
 
     expect(saves(calls)[0].body).toEqual({
+      revision: 0,
+      objects: [],
+      edges: [],
       nodes: [
-        { element_id: A.id, x: 10, y: 20, width: 200, height: 80 },
-        { element_id: GONE, x: 400, y: 400, width: 132, height: 46 },
+        { element_id: A.id, x: 10, y: 20, width: 200, height: 80, parent_object_id: null, z: 0 },
+        { element_id: GONE, x: 400, y: 400, width: 132, height: 46, parent_object_id: null, z: 0 },
       ],
     })
   })
@@ -174,7 +188,38 @@ describe('useDiagram', () => {
     await pause()
 
     expect(editor.boxes.value).toEqual([])
-    expect(saves(calls)[0].body).toEqual({ nodes: [{ element_id: GONE, x: 400, y: 400, width: 132, height: 46 }] })
+    expect(saves(calls)[0].body).toEqual({
+      revision: 0,
+      objects: [],
+      edges: [],
+      nodes: [{ element_id: GONE, x: 400, y: 400, width: 132, height: 46, parent_object_id: null, z: 0 }],
+    })
+  })
+
+  it('sends the revision it read, and keeps the one the server answers', async () => {
+    const { calls, editor } = await opened()
+
+    editor.place(B, { x: 300, y: 100 })
+    await pause()
+    editor.place(anElement({ id: 'cccccccc-3333-4333-8333-333333333333', name: 'C' }), {
+      x: 1,
+      y: 1,
+    })
+    await pause()
+
+    expect(saves(calls).map((call) => (call.body as { revision: number }).revision)).toEqual([
+      0, 1,
+    ])
+    expect(editor.revision.value).toBe(1)
+  })
+
+  it('falls back to counting when the answer carries no revision header', async () => {
+    const { editor } = await opened([READ, { ...SAVE, headers: {} }])
+
+    editor.place(B, { x: 300, y: 100 })
+    await pause()
+
+    expect(editor.revision.value).toBe(1)
   })
 
   it('keeps a refused save on screen', async () => {

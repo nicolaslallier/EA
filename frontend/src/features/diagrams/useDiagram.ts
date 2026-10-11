@@ -25,6 +25,8 @@ import { useLatestRequest } from '../../lib/latest'
 
 export type DiagramRead = components['schemas']['DiagramRead']
 export type DiagramNode = components['schemas']['DiagramNode']
+export type DiagramObject = components['schemas']['DiagramObject']
+export type DiagramEdge = components['schemas']['DiagramEdge']
 export type ElementRead = components['schemas']['ElementRead']
 export type RelationshipRead = components['schemas']['RelationshipRead']
 export type RelationshipCreate = components['schemas']['RelationshipCreate']
@@ -46,6 +48,12 @@ export function useDiagram() {
   const nodes = ref<DiagramNode[]>([])
   const elements = ref<ElementRead[]>([])
   const relationships = ref<RelationshipRead[]>([])
+  const objects = ref<DiagramObject[]>([])
+  const edges = ref<DiagramEdge[]>([])
+  /** The revision of the scene as last read or saved: the token the next save presents. */
+  const revision = ref(0)
+  /** The same, per diagram: a save asked for one diagram must not use another's. */
+  const revisions = new Map<string, number>()
   /** Boxes whose element is out of period on the day asked: greyed, never removed (docs/adr/0060). */
   const inactiveIds = ref<string[]>([])
   const read = useLatestRequest()
@@ -107,16 +115,34 @@ export function useDiagram() {
       return queue
     }
     pending = false
-    const body = { nodes: nodes.value.map((node) => ({ ...node })) }
+    const snapshot = {
+      nodes: nodes.value.map((node) => ({ ...node })),
+      objects: objects.value.map((item) => ({ ...item })),
+      edges: edges.value.map((edge) => ({
+        ...edge,
+        waypoints: edge.waypoints.map((point) => ({ ...point })),
+      })),
+    }
     queue = queue.then(async () => {
+      // The content is frozen when the save is *asked*; the revision when it
+      // *leaves*, so a second save asked before the first ends goes out on the
+      // revision the first has just received.
+      const body = { revision: revisions.get(current.id) ?? revision.value, ...snapshot }
       saving.value = true
       try {
-        unwrap(
-          await api.PUT('/diagrams/{diagram_id}/layout', {
-            params: { path: { diagram_id: current.id } },
-            body,
-          }),
-        )
+        const result = await api.PUT('/diagrams/{diagram_id}/layout', {
+          params: { path: { diagram_id: current.id } },
+          body,
+        })
+        unwrap(result)
+        // The server's revision when it sent one (a browser sees it through
+        // CORS `expose_headers`), else one more than the revision just sent.
+        const answered = Number(result.response.headers.get('X-Diagram-Revision'))
+        const next = Number.isInteger(answered) && answered > 0 ? answered : body.revision + 1
+        revisions.set(current.id, next)
+        if (diagram.value?.id === current.id) {
+          revision.value = next
+        }
         saveError.value = ''
       } catch (caught) {
         saveError.value = messageOf(caught)
@@ -164,6 +190,10 @@ export function useDiagram() {
         nodes.value = answer.nodes
         elements.value = answer.elements
         relationships.value = answer.relationships
+        objects.value = answer.objects
+        edges.value = answer.edges
+        revision.value = answer.revision
+        revisions.set(answer.id, answer.revision)
         inactiveIds.value = answer.inactive_element_ids ?? []
         gestureBefore = null
         history.clear()
@@ -182,6 +212,9 @@ export function useDiagram() {
     nodes.value = []
     elements.value = []
     relationships.value = []
+    objects.value = []
+    edges.value = []
+    revision.value = 0
     inactiveIds.value = []
     gestureBefore = null
     history.clear()
@@ -192,7 +225,14 @@ export function useDiagram() {
       return
     }
     const before = copy(nodes.value)
-    nodes.value.push({ element_id: element.id, x: at.x, y: at.y, ...DEFAULT_BOX })
+    nodes.value.push({
+      element_id: element.id,
+      x: at.x,
+      y: at.y,
+      ...DEFAULT_BOX,
+      parent_object_id: null,
+      z: 0,
+    })
     if (!byId.value.has(element.id)) {
       elements.value.push(element)
     }
@@ -339,6 +379,9 @@ export function useDiagram() {
     resize,
     persist,
     remove,
+    objects,
+    edges,
+    revision,
     removeMany,
     endGesture,
     align,

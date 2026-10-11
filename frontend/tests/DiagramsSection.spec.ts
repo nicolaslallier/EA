@@ -37,9 +37,12 @@ const READ: Route = {
   path: `/diagrams/${DIAGRAM_ID}`,
   body: {
     ...SUMMARY,
-    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46 }],
+    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46, parent_object_id: null, z: 0 }],
     elements: [A],
     relationships: [],
+    revision: 0,
+    objects: [],
+    edges: [],
   },
 }
 const PALETTE: Route = { path: '/elements', body: aPage([A, B]) }
