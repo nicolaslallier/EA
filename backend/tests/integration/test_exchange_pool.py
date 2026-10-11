@@ -42,7 +42,9 @@ async def test_three_downloads_nobody_reads_hold_no_connection(
     architecture = ArchitectureService(PostgresArchitectureRepository(sessions))
     for number in range(20):
         await architecture.create_element(element_type=E.NODE, name=f"n{number}")
-    exchange = ExchangeService(PostgresExchangeRepository(sessions), architecture)
+    exchange = ExchangeService(
+        PostgresExchangeRepository(sessions), architecture, max_exports=3, exports_per_caller=3
+    )
 
     exports = [await exchange.export(ExportRequest(format=fmt)) for _ in range(3)]
 
