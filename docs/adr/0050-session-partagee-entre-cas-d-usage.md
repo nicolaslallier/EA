@@ -1,11 +1,11 @@
 ---
-titre: Session partagée entre cas d'usage — une transaction, un savepoint par ligne, un import à la fois
+titre: Session partagée entre cas d'usage — une transaction, un savepoint par lot de lignes, un import à la fois
 date: 2026-10-11
 statut: Proposition
 affects: backend/src/ea/db/unit_of_work.py, backend/src/ea/repositories/{architecture,document,diagram,package,saved_query,baseline}_store.py, backend/src/ea/repositories/conflicts.py, backend/src/ea/domain/ports.py
 ---
 
-# 50. Session partagée entre cas d'usage — une transaction, un savepoint par ligne, un import à la fois
+# 50. Session partagée entre cas d'usage — une transaction, un savepoint par lot de lignes, un import à la fois
 
 Date : 2026-10-11
 Statut : Proposition
@@ -30,11 +30,12 @@ le dépôt utilise, il suffit donc que cette session puisse être celle de l'imp
 
 | Signature | Rôle |
 |---|---|
-| `work(sessions, *, alone=False)` | session d'une **écriture** de dépôt. Hors import : `sessions.begin()`, exactement comme avant. Dans un import : la session partagée, dans un `SAVEPOINT` (`begin_nested`) |
+| `work(sessions, *, alone=False)` | session d'une **écriture** de dépôt. Hors import : `sessions.begin()`, exactement comme avant. Dans un import : la session partagée, dans un `SAVEPOINT`, sauf si un lot est ouvert (le savepoint du lot le couvre) |
 | `reading(sessions, *, alone=False)` | session d'une **lecture**. Hors import : `sessions()`, comme avant. Dans un import : la session partagée (elle voit les écritures de l'import) |
 | `shared_transaction(sessions, *, commit, exclusive=False)` | ouvre la transaction de l'import et la lie à une `ContextVar` ; rend un `Transaction` (`commit` modifiable). Refuse l'imbrication |
-| `savepoint()` | un `SAVEPOINT` pour une ligne ; relève l'exception après `ROLLBACK TO SAVEPOINT`, c'est à l'appelant de la rattraper |
-| `ambient_session()`, `in_unit()`, `condemn_unit()`, `is_serialization_failure(error)` | état de l'import en cours |
+| `apply_rows(rows, apply, *, batch_size=BATCH_SIZE, max_refused=MAX_REFUSED_ROWS)` | applique des lignes par lots d'un `SAVEPOINT` ; rend la liste des `RowRefusal(index, error)` |
+| `savepoint()` | le `SAVEPOINT` d'un lot (primitive de `apply_rows`) ; relève l'exception après l'avoir annulé **et relâché** |
+| `ambient_session()`, `in_unit()`, `condemn_unit()`, `is_serialization_failure(error)` (40001, 40P01, 55P03) | état de l'import en cours |
 
 Les six dépôts du modèle (`architecture`, `document`, `diagram`, `package`, `saved_query`, `baseline`) n'ouvrent
 plus jamais `self._sessions.begin()` ni `self._sessions()` : ils passent par `work` / `reading`.
@@ -49,19 +50,32 @@ variable est remise à zéro à la sortie, exception comprise. *Piège connu* : 
 l'import en hérite (copie du contexte) ; un test qui veut un acteur indépendant copie le contexte avant
 (`contextvars.copy_context()` puis `create_task(..., context=...)`).
 
-**Un `SAVEPOINT` par écriture, et un par ligne.** Chaque appel de dépôt est atomique à lui seul (un échec
-défait ses propres écritures, événement d'audit compris) ; `savepoint()` enveloppe en plus une *ligne* de
-l'import, qui peut enchaîner plusieurs appels (créer deux éléments puis les relier) : un refus du domaine
-(`ArchimateRuleError`, `DuplicateElementError`, `ElementLockedError`…) ou une `IntegrityError` défait la ligne
-entière — éléments, liens et événements — et la transaction reste utilisable. Aucun événement n'est orphelin.
+**Un `SAVEPOINT` par lot de 1 000 lignes, pas par ligne.** Hors lot, chaque appel de dépôt est atomique à lui
+seul (un échec défait ses propres écritures, événement d'audit compris). Dans `apply_rows`, un seul `SAVEPOINT`
+couvre un lot de `BATCH_SIZE = 1 000` lignes et les appels de dépôt n'en ouvrent aucun. Quand la ligne k d'un lot
+est refusée (règle du domaine : `ArchimateRuleError`, `DuplicateElementError`, `ElementLockedError`… ; ou
+contrainte : `IntegrityError`, `DataError`) : `ROLLBACK TO SAVEPOINT` du lot, **rejeu des lignes 0..k-1 du lot sans
+savepoint**, la ligne k est écartée (une `RowRefusal` pour le rapport), un nouveau lot repart à k+1. Aucun
+événement n'est orphelin : tout ce que le lot avait écrit, audit compris, a été annulé, et le rejeu réécrit
+celui des lignes conservées. Un rejeu qui échoue à une ligne j<k (ce qui s'est passé n'est plus reproductible)
+**condamne** l'import (409 `write_conflict`, rien d'écrit). Ce qui n'est pas la faute de la ligne
+(`WriteConflictError`, rôle manquant, import déjà en cours) n'est jamais un refus de ligne. Plus de
+`MAX_REFUSED_ROWS = 100` refus, l'import est rejeté en entier (`TooManyRefusedRowsError`, 422
+`too_many_refused_rows`) : un fichier où autant de lignes sont refusées est presque toujours le mauvais fichier, et
+chaque refus coûte un rejeu.
 
-**40001 et 40P01 ne se rattrapent pas ligne par ligne.** PostgreSQL a abandonné la transaction : la suite ne
-serait pas plus fiable que ce qui précède. `work` lève `WriteConflictError` (409 `write_conflict`, rejouable) et
-**condamne** l'import : tout appel, lecture et `savepoint()` ultérieur relève la même erreur, et la sortie du bloc
-annule tout, même si l'appelant a avalé l'exception (sinon un `COMMIT` sur une transaction abandonnée serait un
-`ROLLBACK` silencieux présenté comme un succès). Rien n'est écrit pour tout l'import. Même règle si le
-`COMMIT` lui-même est refusé. `replayable` ne ré-exécute rien (il ne l'a jamais fait) ; dans un import il
-condamne l'import au lieu de laisser croire qu'un nouvel essai local a un sens.
+Le rejeu **ne rejoue pas à l'identique** : `ArchitectureService` donne un nouvel identifiant à un élément créé, et le
+premier passage a disparu avec le `ROLLBACK TO`. Le rappel `apply` d'une ligne doit donc ne tirer son état que
+de ce qu'il fait *maintenant* (la table « identifiant du fichier -> id créé » se réécrit à chaque passage) et ne rien
+supposer d'un passage précédent, y compris pour la ligne refusée, dont les entrées partielles sont à ignorer.
+
+**40001, 40P01 et 55P03 ne se rattrapent pas ligne par ligne.** PostgreSQL a abandonné la transaction (ou, pour 55P03,
+un verrou n'est pas venu à temps) : la suite ne serait pas plus fiable que ce qui précède. `work` lève
+`WriteConflictError` (409 `write_conflict`, rejouable) et **condamne** l'import : tout appel, lecture et `savepoint()`
+ultérieur relève la même erreur, et la sortie du bloc annule tout, même si l'appelant a avalé l'exception (sinon un
+`COMMIT` sur une transaction abandonnée serait un `ROLLBACK` silencieux présenté comme un succès). Rien n'est
+écrit pour tout l'import. Même règle si le `COMMIT` lui-même est refusé. `replayable` ne ré-exécute rien (il ne l'a
+jamais fait) ; il condamne l'import au lieu de laisser croire qu'un nouvel essai local a un sens.
 
 **`dry_run` = exécution complète, puis `ROLLBACK`.** `shared_transaction(commit=False)` exécute les mêmes
 règles, les mêmes contraintes d'unicité, la même détection de collisions, puis annule : ni élément, ni relation,
@@ -100,45 +114,65 @@ Les verrous de ligne (`FOR UPDATE`, `FOR NO KEY UPDATE`) et le verrou consultati
 **s'accumulent** jusqu'à la fin de la transaction : un import les garde pendant toute sa durée, là où une écriture
 normale les rend au bout de quelques millisecondes.
 
-- Une écriture ordinaire sur un élément verrouillé par l'import **attend** la fin de l'import, puis passe
-  (test : `test_a_normal_write_waits_for_the_import_to_commit_then_goes_through`) ; elle ne perd ni n'écrase la
-  modification de l'import.
-- Les ids sont verrouillés dans l'ordre à l'intérieur d'**un** appel, pas d'un appel à l'autre : un import qui
-  verrouille `Z` puis `A` peut croiser une écriture qui verrouille `A` puis attend `Z`. PostgreSQL détecte ce
-  cycle (`deadlock_timeout`, 1 s) et abandonne **l'une** des deux : l'écriture ordinaire reçoit alors un 409
-  `write_conflict` rejouable, ou l'import entier (condamné, rien d'écrit). Jamais d'attente infinie, jamais une
-  500 (test : `test_a_deadlock_with_a_normal_write_is_a_replayable_conflict_never_a_hang`).
-- Aucun `lock_timeout` n'est posé : une écriture ordinaire peut attendre aussi longtemps que dure l'import. C'est
-  la raison de la borne ci-dessous.
+- **`lock_timeout` de 10 s sur les connexions de l'API** (`EA_DB_LOCK_TIMEOUT_MS`, défaut 10 000, 0 = désactivé,
+  validé `>= 0` par `Settings` ; envoyé comme paramètre de serveur par `create_api_engine`, jamais par
+  `create_engine` : ni les migrations Alembic ni `ea.reindex`, `ea.baseline_capture`, `ea.files_reconcile` ne
+  l'ont, ils peuvent attendre aussi longtemps qu'il le faut). Sans lui, avec un pool de 5+5 connexions, dix
+  écritures ordinaires bloquées derrière un import occuperaient tout le pool pendant des minutes : lectures,
+  `/health` et `/me` gelés, puis un 504 de NGINX alors que l'écriture finit par passer et que le client la rejoue
+  (doublon ou 409). Un verrou qui n'arrive pas en 10 s lève SQLSTATE 55P03, traduit en 409 `write_conflict`
+  rejouable (`conflicts.py`) et qui condamne l'import s'il survient dans un import. Le `proxy_read_timeout` de
+  NGINX (60 s) reste supérieur au `lock_timeout` (10 s) exprès : l'API doit répondre elle-même, par un 409 typé,
+  avant que le proxy ne coupe la connexion.
+- **L'import hérite du même `lock_timeout`** (ses connexions sont celles de l'API) : une ligne qui attend plus de
+  10 s une écriture ordinaire condamne l'import entier (409 `write_conflict`, rien d'écrit). Une attente brève
+  est sans effet (test : `test_an_import_survives_a_short_wait_and_is_condemned_by_a_long_one`).
+- Une écriture ordinaire sur un élément verrouillé par l'import **attend** la fin de l'import, au plus 10 s, puis
+  passe (test : `test_a_normal_write_waits_for_the_import_to_commit_then_goes_through`) ou reçoit un 409 rejouable
+  (`test_a_normal_write_waits_for_the_timeout_then_gets_a_replayable_conflict`) ; elle ne perd ni n'écrase
+  jamais la modification de l'import.
+- **Limite connue : l'interblocage import/écriture.** Les ids sont verrouillés dans l'ordre à l'intérieur d'**un**
+  appel, pas d'un appel à l'autre : un import qui a verrouillé `Z` puis demande `A` peut croiser une écriture
+  ordinaire qui tient `A` et demande `Z`. PostgreSQL détecte le cycle (`deadlock_timeout`, 1 s) et abandonne **l'une**
+  des deux : l'écriture ordinaire reçoit un 409 rejouable, ou l'import entier est condamné (rien d'écrit, quelques
+  minutes perdues, 409 rejouable). Aucune donnée perdue, jamais d'attente infinie (test :
+  `test_a_deadlock_with_a_normal_write_is_a_replayable_conflict_never_a_hang`). **Atténuation non implémentée** :
+  verrouiller par avance, dans l'ordre des ids, les éléments *existants* que l'import sait toucher (ceux de ses
+  collisions (type, nom) pour lesquels il va créer des liens). Elle suppose de connaître cet ensemble avant la
+  première écriture, donc de l'analyseur et du plan d'import (tâches suivantes), et d'une méthode de dépôt qui prend
+  des verrous sans écrire ; ce n'est pas simple ici, et elle est laissée à l'import (`lock_elements` est déjà la
+  fonction à appeler).
 
 ## Coût et bornes
 
-Mesuré sur le PostgreSQL jetable (Mac, 1 000 lignes = 2 éléments + 1 lien, soit 3 écritures chacune) :
+**Ce qui coûte vraiment : les sous-transactions suivies.** PostgreSQL suit au plus 64 sous-transactions par
+transaction dans le cache de chaque session ; au-delà (`subxact_overflowed`) les instantanés de **toutes** les sessions
+de la base partagée passent par `pg_subtrans`, plus lent. Mesuré sur PostgreSQL 17 avec
+`pg_stat_get_backend_subxact` : un `SAVEPOINT` qui n'écrit pas ne coûte rien, mais **un `SAVEPOINT` qui écrit reste
+compté même relâché** (`RELEASE` ne libère rien) : 100 savepoints écrivants donnent 64 suivis, `overflowed = true`.
+Deux niveaux écrivants par ligne (celui de la ligne et celui de l'appel de dépôt) font déborder dès ~32 lignes.
 
-| Mode | Durée |
-|---|---|
-| 3 000 écritures, une transaction chacune (aujourd'hui) | 8,3 s |
-| une transaction, un `SAVEPOINT` par écriture | 7,3 s |
-| + un `SAVEPOINT` par ligne | 9,1 s |
-| + un `SAVEPOINT` par lot de 10 lignes | 7,9 s |
+Deux autres sources de sous-transactions ont été trouvées et neutralisées :
 
-Environ 2,5 ms par écriture, dominés par les allers-retours et l'événement d'audit ; le `SAVEPOINT` de ligne coûte
-~1,8 ms par ligne (+25 %). La mémoire est sans surprise : le cache d'identité de SQLAlchemy ne retient que ce qui
-est référencé, et chaque appel le vide.
+- `ROLLBACK TO SAVEPOINT` annule les écritures mais **laisse le savepoint vivant**, comme un niveau vide de plus ; la
+  prochaine écriture donne un identifiant à tous les niveaux au-dessus d'elle. Chaque refus ajoutait donc un
+  niveau suivi (mesuré : 1, 10, 30, 60 refus -> 2, 11, 31, 61 suivis). `_nested` relâche (`RELEASE SAVEPOINT`) le
+  savepoint juste après l'avoir annulé : 100 refus consécutifs -> 1 suivi.
+- Les appels de dépôt à l'intérieur d'un lot n'ouvrent pas leur propre savepoint (compteur `batched`).
 
-La **borne de taille** est `MAX_EXCHANGE_ITEMS = 50 000` éléments + relations par fichier (Task 10), soit de
-l'ordre de 2 à 3 minutes d'import dans une seule transaction, pendant lesquelles les verrous s'accumulent. C'est
-volontairement un ordre de grandeur supportable plutôt qu'un traitement par morceaux : un import validé par
-morceaux ne serait plus atomique.
+Résultat, `BATCH_SIZE = 1 000` : au plus `lignes / 1 000` lots complets, soit **50 pour 50 000 lignes (< 64)**.
+Mesures (`subxact_count`, `overflowed`) : 2 000 lignes -> 2, non ; 6 000 lignes dont 20 refusées -> 1, non ;
+100 refus consécutifs -> 1, non ; la même chose avec un savepoint par ligne -> 64, oui. Chaque refus coûte le rejeu
+des lignes qui précèdent la ligne refusée dans son lot (au plus 999) : d'où `MAX_REFUSED_ROWS = 100`, soit au pire
+100 000 écritures rejouées, de l'ordre de la minute.
 
-Le vrai coût d'un `SAVEPOINT` n'est pas le temps mais la **sous-transaction** : chaque `SAVEPOINT` qui écrit
-consomme un identifiant de sous-transaction, et au-delà de 64 par transaction PostgreSQL déborde son cache
-(`suboverflowed`), ce qui ralentit les instantanés des *autres* sessions pendant l'import. Un `SAVEPOINT` par
-ligne et par écriture sur 50 000 lignes dépasse largement 64. Si la mesure en charge réelle montre ce ralentissement,
-la parade prévue est un `SAVEPOINT` par **lot** (par exemple 100 lignes) ; si une ligne du lot est refusée, le lot
-est annulé et ses lignes rejouées une à une, chacune avec son `SAVEPOINT`. Rien n'est à changer dans
-`unit_of_work` pour cela : `savepoint()` s'imbrique. Cette parade n'est pas implémentée : elle ne l'a pas été
-parce que ce serait de l'optimisation sans mesure.
+Durées mesurées (PostgreSQL jetable, Mac) : 2 000 lignes de 1 écriture -> 1,2 s par lots, 3,8 s avec le savepoint
+d'un appel par ligne ; 6 000 lignes dont 20 refusées -> 7,5 s ; 100 refus consécutifs -> 0,2 s. La mémoire est sans
+surprise : le cache d'identité de SQLAlchemy ne retient que ce qui est référencé, et chaque appel le vide.
+
+La **borne de taille** est `MAX_EXCHANGE_ITEMS = 50 000` éléments + relations par fichier (Task 10), soit de l'ordre
+de 2 à 3 minutes d'import dans une seule transaction, pendant lesquelles les verrous s'accumulent (d'où le
+`lock_timeout` ci-dessus pour les autres).
 
 ## Alternatives envisagées et écartées
 
@@ -148,13 +182,14 @@ parce que ce serait de l'optimisation sans mesure.
 | Un service d'import qui écrit en SQL | une seule session | contourne `ArchitectureService` : un graphe que l'API refuserait, des règles recopiées | écarté |
 | Une transaction par ligne | aucun changement | pas d'annulation globale, un `dry_run` qui écrit, pas d'atomicité | écarté |
 | Session dans `app.state` ou globale | simple | partagée entre requêtes | écarté |
+| Un `SAVEPOINT` par ligne (première version de ce document) | simple | 2 niveaux écrivants par ligne : le cache de 64 sous-transactions déborde dès ~32 lignes et ralentit toute la base | écarté, remplacé par les lots |
 | Rattraper 40001/40P01 ligne par ligne | import plus tolérant | la transaction est abandonnée : on continuerait sur un état qu'on ne peut plus raisonner, ou on validerait un `ROLLBACK` | écarté |
 | Un canal d'audit « import » | trace plus fine | forgeable, et le canal dit la *porte* : l'import entre par HTTP ou MCP | écarté |
 
 ## Conséquences
 
 - Hors import, rien ne change : mêmes transactions, mêmes verrous, mêmes erreurs, mêmes tests.
-- Une écriture de dépôt dans un import coûte un aller-retour de `SAVEPOINT` supplémentaire (mesuré ci-dessus).
+- Une écriture de dépôt dans un lot n'ajoute aucun aller-retour ; le coût d'un import est celui de ses écritures plus un `SAVEPOINT` par lot.
 - Tout nouveau dépôt qui écrit le modèle doit passer par `work` / `reading` (le test AST l'exige) ; tout appel
   qui fixe un niveau d'isolation passe `alone=True`.
 - **Non garanti** : une lecture faite depuis une autre session *pendant* un import long voit l'état d'avant

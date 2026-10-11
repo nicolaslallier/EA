@@ -654,10 +654,14 @@ an Alembic revision like any other. See `docs/adr/0033`.
 `self._sessions.begin()` or `self._sessions()` in a model store (an AST test,
 `test_one_way_to_open_a_unit.py`, fails on it). Outside an import they behave
 exactly as before; inside `shared_transaction(...)` (a `ContextVar`, like the
-caller) every write is a `SAVEPOINT` of one shared session, `savepoint()` wraps
-a row, `commit=False` is the dry run, `exclusive=True` takes the one-import-at-a-time
+caller) every write is a `SAVEPOINT` of one shared session — except inside
+`apply_rows(...)`, which runs rows in batches of one savepoint (PostgreSQL tracks
+only 64 sub-transactions per transaction) — `commit=False` is the dry run, `exclusive=True` takes the one-import-at-a-time
 lock, and a 40001/40P01 condemns the whole import (nothing is written). A call that
-sets its own isolation level passes `alone=True`. See `docs/adr/0050`.
+sets its own isolation level passes `alone=True`. The API's engine
+(`create_api_engine`) gives up a row-lock wait after `EA_DB_LOCK_TIMEOUT_MS`
+(10 s; SQLSTATE 55P03 is a 409 `write_conflict`); scripts and migrations wait.
+See `docs/adr/0050`.
 
 ## Who is calling is decided once, in `services/`
 
