@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ea.domain.approval import (
+    Transition,
+    apply_transition,
     check_modifiable,
+    needs_approver,
     reviewed_after_change,
 )
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
@@ -29,7 +32,7 @@ from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview
 from ea.services.audit import AuditTrail
-from ea.services.caller import require_caller, require_editor
+from ea.services.caller import require_approver, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -47,6 +50,16 @@ Clock = Callable[[], datetime]
 
 #: Relationships that build the containment tree, and so must stay acyclic.
 _CONTAINMENT = frozenset({RelationshipType.COMPOSITION, RelationshipType.AGGREGATION})
+
+#: The journal action of each review transition.
+_ACTION_OF = {
+    Transition.SUBMIT: AuditAction.ELEMENT_SUBMITTED,
+    Transition.APPROVE: AuditAction.ELEMENT_APPROVED,
+    Transition.REJECT: AuditAction.ELEMENT_REJECTED,
+    Transition.REOPEN: AuditAction.ELEMENT_REOPENED,
+    Transition.LOCK: AuditAction.ELEMENT_LOCKED,
+    Transition.UNLOCK: AuditAction.ELEMENT_UNLOCKED,
+}
 
 
 def _utc_now() -> datetime:
@@ -67,6 +80,12 @@ class ArchitectureService:
         self._now = clock
         self._trail = AuditTrail(clock)
         self._separate_duties = separate_duties
+        if not separate_duties:
+            logger.warning(
+                "separation of duties is OFF (EA_APPROVAL_SEPARATION=false): an approver "
+                "may approve what they changed last",
+                extra={"action": "separation_disabled"},
+            )
 
     def _review_of_ends(self) -> EndsReview:
         """What a link change does to its two ends, applied by the repository under their locks.
@@ -276,6 +295,63 @@ class ArchitectureService:
             "element deleted, with everything attached to it",
             extra={"action": "deleted", "element_id": str(element_id)},
         )
+
+    async def transition_element(
+        self,
+        element_id: UUID,
+        transition: Transition,
+        *,
+        expected_revision: int | None = None,
+    ) -> Element:
+        """Move an element through review: submit, approve, reject, reopen, lock, unlock.
+
+        The caller is the one the adapter proved (the token's roles), never a
+        field of the request. Everything is decided by the repository on the row
+        it holds locked, in the transaction that also writes the one event:
+        the role, the state, the revision (`approve` needs the `expected_revision`
+        the approver read — the others certify no content and ignore it) and the
+        separation of duties.
+        """
+        caller = require_caller()
+        if needs_approver(transition):
+            require_approver()
+        else:
+            require_editor()
+
+        def change(stored: Element, last_author: str | None) -> Element:
+            return apply_transition(
+                stored,
+                transition,
+                caller,
+                now=self._now(),
+                last_author=last_author,
+                expected_revision=expected_revision,
+                separate_duties=self._separate_duties,
+            )
+
+        def events(changed: ElementChange) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    _ACTION_OF[transition],
+                    entity_id=element_id,
+                    before=element_view(changed.before),
+                    after=element_view(changed.after),
+                ),
+            )
+
+        with logged_refusal("transition_refused", [element_id]):
+            stored = await self._repository.transition_element(element_id, change, audit=events)
+        logger.info(
+            "element %r: %s",
+            stored.name,
+            transition.value,
+            extra={
+                "action": f"element_{transition.value}",
+                "element_id": str(element_id),
+                "transition": transition.value,
+            },
+        )
+        return stored
 
     # --- Relationships ----------------------------------------------------
 

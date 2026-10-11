@@ -274,7 +274,9 @@ def _lifespan(
                         settings.postgres_port,
                         settings.postgres_database,
                     )
-                    app.state.architecture_service = ArchitectureService(repository)
+                    app.state.architecture_service = ArchitectureService(
+                        repository, separate_duties=settings.approval_separation
+                    )
                     # The IP addressing is a reading of that same graph and adds
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.

@@ -111,3 +111,40 @@ async def test_the_review_fields_survive_a_write_and_a_read(engine_at_head: Asyn
     await graph.add_element(approved, audit=())
 
     assert await graph.get_element(element.id) == approved
+
+
+async def test_an_element_older_than_the_audit_trail_can_be_approved_by_an_approver(
+    postgres_engine: AsyncEngine, alembic_config: Config
+) -> None:
+    """Its first journal line is the backfilled creation by `ea-system`: nobody's own change."""
+    from ea.domain.approval import Transition
+    from ea.services.architecture import ArchitectureService
+    from ea.services.caller import acting_as
+    from tests.conftest import an_approver
+
+    existing = uuid4()
+    await asyncio.to_thread(command.upgrade, alembic_config, "0010")
+    try:
+        async with postgres_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO elements (id, element_type, layer, aspect, name, created_at, "
+                    "updated_at) VALUES (:id, 'node', 'technology', 'active_structure', 'old', "
+                    ":at, :at)"
+                ),
+                {"id": existing, "at": AT},
+            )
+        await asyncio.to_thread(command.upgrade, alembic_config, "head")
+        service = ArchitectureService(
+            PostgresArchitectureRepository(create_session_factory(postgres_engine))
+        )
+
+        await service.transition_element(existing, Transition.SUBMIT)  # an editor
+        with acting_as(an_approver()):
+            approved = await service.transition_element(
+                existing, Transition.APPROVE, expected_revision=1
+            )
+
+        assert approved.approval_state is ApprovalState.APPROVED
+    finally:
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")

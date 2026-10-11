@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
@@ -177,9 +176,11 @@ async def test_a_concurrent_lock_and_link_never_leave_a_link_on_a_locked_element
     two = await world.graph.create_element(element_type=E.NODE, name="b")
     await put_in_state(engine_at_head, one.id, "approved")
     sessions = create_session_factory(engine_at_head)
-    link: Callable[[], Awaitable[object]] = lambda: world.graph.connect(  # noqa: E731
-        relationship_type=R.ASSOCIATION, source_id=one.id, target_id=two.id
-    )
+
+    async def link() -> object:
+        return await world.graph.connect(
+            relationship_type=R.ASSOCIATION, source_id=one.id, target_id=two.id
+        )
 
     async with sessions.begin() as session:
         await session.execute(
@@ -191,3 +192,145 @@ async def test_a_concurrent_lock_and_link_never_leave_a_link_on_a_locked_element
         await writer
 
     assert (await world.graph.relations_of(one.id)).relationships == ()
+
+
+# --- Transitions: decided on the row read under the lock (docs/adr/0046) ----
+
+from ea.domain.approval import Transition as Tr  # noqa: E402
+from ea.domain.errors import (  # noqa: E402
+    ApprovalStaleError,
+    InvalidTransitionError,
+    NotAuthorisedError,
+)
+
+
+async def in_review(world: World) -> UUID:
+    element = await world.graph.create_element(element_type=E.NODE, name="db-01")  # editor-1
+    await world.graph.transition_element(element.id, Tr.SUBMIT)
+    return element.id
+
+
+async def test_an_approval_is_refused_when_the_element_changed_after_it_was_read(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """A is still writing when B approves what B read: the lock makes B wait, then see A."""
+    world = World(engine_at_head)
+    element_id = await in_review(world)
+    read_by_the_approver = (await world.graph.get_element(element_id)).revision
+    sessions = create_session_factory(engine_at_head)
+
+    async with sessions.begin() as session:  # A's write, not yet committed
+        await session.execute(
+            text("UPDATE elements SET description = 'A', revision = revision + 1 WHERE id = :id"),
+            {"id": element_id},
+        )
+        with acting_as(an_approver()):
+            approval = asyncio.create_task(
+                world.graph.transition_element(
+                    element_id, Tr.APPROVE, expected_revision=read_by_the_approver
+                )
+            )
+            await wait_until_a_statement_waits_for_a_lock(engine_at_head)
+    with pytest.raises(ApprovalStaleError):
+        await approval
+    assert (await state_of(engine_at_head, element_id))[0] == "in_review"
+
+    with acting_as(an_approver()):  # B reads again, then approves what A wrote
+        fresh = (await world.graph.get_element(element_id)).revision
+        approved = await world.graph.transition_element(
+            element_id, Tr.APPROVE, expected_revision=fresh
+        )
+    assert approved.approval_state.value == "approved" and approved.revision == fresh
+
+    with acting_as(an_approver()):  # and a later change sends it back to review
+        await world.graph.update_element(element_id, description="B")
+    assert (await state_of(engine_at_head, element_id))[0] == "in_review"
+
+
+async def test_the_last_author_is_read_from_the_journal_in_the_transition_and_refuses_them(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    element_id = await in_review(world)
+
+    with acting_as(an_approver()):
+        await world.graph.update_element(element_id, description="by B")
+        fresh = (await world.graph.get_element(element_id)).revision
+        with pytest.raises(NotAuthorisedError, match="separation"):
+            await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=fresh)
+    with acting_as(an_approver(subject="approver-2", username="other")):
+        approved = await world.graph.transition_element(
+            element_id, Tr.APPROVE, expected_revision=fresh
+        )
+
+    assert approved.approved_by_sub == "approver-2"
+
+
+async def test_a_concurrent_change_and_approval_by_the_same_person_never_end_approved(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    element_id = await in_review(world)
+    revision = (await world.graph.get_element(element_id)).revision
+
+    with acting_as(an_approver()):
+        outcomes = await asyncio.gather(
+            world.graph.update_element(element_id, description="by B"),
+            world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=revision),
+            return_exceptions=True,
+        )
+
+    assert not isinstance(outcomes[0], BaseException)  # the change always lands
+    state, _, final_revision = await state_of(engine_at_head, element_id)
+    assert state == "in_review" and final_revision == revision + 1
+    # Approve first: legal (the last author was the editor) and then undone by B's change;
+    # change first: stale. Either way no approval stands over B's unreviewed change.
+    assert isinstance(outcomes[1], ApprovalStaleError) or outcomes[1].approval_state.value == (
+        "approved"
+    )
+
+
+async def test_two_simultaneous_transitions_let_exactly_one_through(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    element_id = await in_review(world)
+    revision = (await world.graph.get_element(element_id)).revision
+
+    async def approve(who: str) -> object:
+        with acting_as(an_approver(subject=who, username=who)):
+            return await world.graph.transition_element(
+                element_id, Tr.APPROVE, expected_revision=revision
+            )
+
+    outcomes = await asyncio.gather(
+        approve("approver-a"), approve("approver-b"), return_exceptions=True
+    )
+
+    failures = [o for o in outcomes if isinstance(o, BaseException)]
+    assert len(failures) == 1 and isinstance(failures[0], InvalidTransitionError)
+    assert (await state_of(engine_at_head, element_id))[0] == "approved"
+    approvals = [
+        e
+        for e in await world.events(EntityKind.ELEMENT)
+        if e.action is AuditAction.ELEMENT_APPROVED
+    ]
+    assert len(approvals) == 1
+
+
+async def test_an_element_older_than_the_journal_cannot_be_approved_by_anyone_who_cannot_be_checked(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """No journal entry about the element: the separation rule refuses, it is never skipped."""
+    world = World(engine_at_head)
+    element_id = await in_review(world)
+    revision = (await world.graph.get_element(element_id)).revision
+    async with engine_at_head.begin() as connection:
+        await connection.execute(text("ALTER TABLE audit_events DISABLE TRIGGER ALL"))
+        await connection.execute(
+            text("DELETE FROM audit_events WHERE entity_id = :id"), {"id": element_id}
+        )
+        await connection.execute(text("ALTER TABLE audit_events ENABLE TRIGGER ALL"))
+
+    with acting_as(an_approver()), pytest.raises(NotAuthorisedError, match="unknown"):
+        await world.graph.transition_element(element_id, Tr.APPROVE, expected_revision=revision)

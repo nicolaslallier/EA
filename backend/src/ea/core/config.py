@@ -187,6 +187,10 @@ class Settings(BaseSettings):
     #: 127.0.0.1 behind a certificate the system trust store does not know.
     auth_ca_cert: str | None = None
     auth_timeout_seconds: float = 5.0
+    #: Whoever last changed an element cannot approve it (docs/adr/0046). Only an
+    #: explicit `false` turns this off — for a repository with a single user; a
+    #: missing fact about who changed it never does.
+    approval_separation: bool = True
     #: The resource identifier `/mcp` publishes (RFC 9728). It names port 8000
     #: and is not derived from the port uvicorn was started on, which no setting
     #: here knows: `make run-be BE_PORT=8001` needs this set with it, or the
