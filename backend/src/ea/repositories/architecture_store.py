@@ -64,7 +64,7 @@ from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, Rel
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -473,26 +473,72 @@ def author_of(events: Sequence[AuditEvent]) -> str | None:
     return events[0].actor_sub if events else None
 
 
-async def _review_ends(
-    session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview, author: str | None
-) -> list[ElementChange]:
-    """Lock the elements at the ends of a link, review them, write what changed.
+#: How many element rows one locking statement takes. Statements follow each other in
+#: id order, so the order holds across chunks.
+LOCK_CHUNK: Final = 100
 
-    Locked in id order (two writers cannot wait on each other) and with
-    `FOR NO KEY UPDATE`: a link insert only needs the key of its ends. A missing
-    end is the refusal an insert would have given. Each end is a new revision
-    last changed by `author`.
+
+def lock_order(ids: Iterable[UUID]) -> list[UUID]:
+    """THE order in which element rows are locked, everywhere: ascending ids, each once.
+
+    Two writers that lock overlapping sets of elements — a link between two of them,
+    a batch of filings, the neighbours of a deleted element — queue behind one
+    another instead of each holding what the other wants (docs/adr/0046).
     """
-    found = await session.scalars(
-        select(ElementRecord)
-        .where(ElementRecord.id.in_(set(end_ids)))
-        .order_by(ElementRecord.id)
-        .with_for_update(key_share=True)
-        .execution_options(populate_existing=True)
+    return sorted(set(ids))
+
+
+async def lock_elements(
+    session: AsyncSession,
+    ids: Iterable[UUID],
+    *,
+    key_only: bool,
+    after_chunk: Callable[[int], Awaitable[None]] | None = None,
+) -> dict[UUID, ElementRecord]:
+    """Lock the rows of these elements in `lock_order`, and give back the ones that exist.
+
+    `key_only` takes `FOR NO KEY UPDATE`, which a link insert (a `FOR KEY SHARE` on
+    its ends) does not wait for; otherwise `FOR UPDATE`. `after_chunk` is the seam
+    a test uses to interleave two writers between two chunks.
+    """
+    ordered = lock_order(ids)
+    rows: dict[UUID, ElementRecord] = {}
+    for chunk, start in enumerate(range(0, len(ordered), LOCK_CHUNK)):
+        found = await session.scalars(
+            select(ElementRecord)
+            .where(ElementRecord.id.in_(ordered[start : start + LOCK_CHUNK]))
+            .order_by(ElementRecord.id)
+            .with_for_update(key_share=key_only)
+            .execution_options(populate_existing=True)
+        )
+        rows |= {row.id: row for row in found}
+        if after_chunk is not None:
+            await after_chunk(chunk)
+    return rows
+
+
+async def _other_ends(session: AsyncSession, element_id: UUID) -> set[UUID]:
+    """The elements this one is linked to (a plain read: the caller locks them)."""
+    touching = or_(
+        RelationshipRecord.source_id == element_id, RelationshipRecord.target_id == element_id
     )
-    rows = {row.id: row for row in found}
-    if rows.keys() != set(end_ids):
-        raise ElementNotFoundError("cannot link: an element at one end does not exist")
+    found = await session.execute(
+        select(RelationshipRecord.source_id, RelationshipRecord.target_id).where(touching)
+    )
+    return {end for pair in found for end in pair} - {element_id}
+
+
+async def _review_rows(
+    session: AsyncSession,
+    rows: dict[UUID, ElementRecord],
+    ends: EndsReview,
+    author: str | None,
+) -> list[ElementChange]:
+    """Review the (locked) elements at the ends of a link change, and write what changed.
+
+    Each is a new revision last changed by `author`; `ends.change` raising refuses the
+    whole write.
+    """
     changes = [
         ElementChange(c.before, replace(c.after, last_modified_by_sub=author))
         for c in ends.apply(element_from_row(row) for row in rows.values())
@@ -501,6 +547,16 @@ async def _review_ends(
         _write_review(rows[change.after.id], change.after)
     await session.flush()
     return changes
+
+
+async def _review_ends(
+    session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview, author: str | None
+) -> list[ElementChange]:
+    """Lock the two ends of a link and review them. A missing end is the refusal an insert gives."""
+    rows = await lock_elements(session, end_ids, key_only=True)
+    if rows.keys() != set(end_ids):
+        raise ElementNotFoundError("cannot link: an element at one end does not exist")
+    return await _review_rows(session, rows, ends, author)
 
 
 def _write_review(row: ElementRecord, after: Element) -> None:
@@ -630,23 +686,42 @@ class PostgresArchitectureRepository:
         *,
         audit: AuditOf[ElementRemoval],
         guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
     ) -> bool:
-        """Its relationships follow by the foreign keys.
+        """Its relationships follow by the foreign keys — and so is a change to their other ends.
 
         What they take is read here, under the element's lock: a link or a
         document filed on it meanwhile waits on the foreign key, so the list the
-        event carries is exactly what the cascade removes.
+        event carries is exactly what the cascade removes. The elements at the
+        other ends are locked with it, in `lock_order`, and put to `ends` like the
+        ends of a `disconnect`: a locked one refuses the whole deletion.
         """
         async with self._sessions.begin() as session:
-            row = await session.get(ElementRecord, element_id, with_for_update=True)
+            neighbours = await _other_ends(session, element_id)
+            rows = await lock_elements(session, {element_id, *neighbours}, key_only=False)
+            row = rows.get(element_id)
             if row is None:
                 return False
+            late = await _other_ends(session, element_id) - neighbours  # linked before our lock
+            rows |= await lock_elements(session, late, key_only=False)
             if guard is not None:
                 guard(element_from_row(row))
             removal = await _removal_of(session, row)
             events = events_for(audit, removal)
+            reviewed = (
+                await _review_rows(
+                    session,
+                    {i: rows[i] for i in neighbours | late if i in rows},
+                    ends,
+                    author_of(events),
+                )
+                if ends is not None
+                else []
+            )
             await session.execute(delete(ElementRecord).where(ElementRecord.id == element_id))
             write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
         return True
 
     # --- Relationships ----------------------------------------------------

@@ -56,8 +56,9 @@ class RecordingSession:
     async def connection(self, **_: Any) -> None:
         self.calls.append("connection")
 
-    async def execute(self, statement: Any) -> None:
+    async def execute(self, statement: Any) -> list[Any]:
         self.calls.append(str(statement).split(" ")[0] + " " + str(statement).split()[2])
+        return []
 
     async def get(self, model: Any, identifier: Any) -> Any:
         return SimpleNamespace(properties={})  # a row the update assigns to
@@ -147,7 +148,9 @@ class TestApplyingAPlan:
 
         assert session.calls == ["connection"]
 
-    async def test_links_out_then_elements_out_then_fields_then_new_ones_then_boxes(self) -> None:
+    async def test_the_write_order_of_a_plan(
+        self,
+    ) -> None:
         session = RecordingSession()
         plan = the_whole_plan()
 
@@ -156,6 +159,8 @@ class TestApplyingAPlan:
         assert session.calls == [
             "connection",
             "expunge",
+            "SELECT relationships.target_id",  # who the deleted elements' links reach...
+            "UPDATE SET",  # ...a link changing is a change to its ends: a new revision
             "DELETE relationships",
             "DELETE elements",
             "flush",  # every element to put back steps aside under its id...

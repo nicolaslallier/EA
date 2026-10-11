@@ -216,11 +216,13 @@ class ArchitectureRepository(Protocol):
         *,
         audit: AuditOf[ElementRemoval],
         guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
     ) -> bool:
         """Remove an element and every relationship attached to it.
 
         `audit` is written only if a row was deleted; `False` writes nothing.
-        `guard` sees the element under its lock, before anything is removed.
+        `guard` sees the element under its lock, before anything is removed; `ends`
+        reviews the elements at the other ends of the links that go with it.
         """
         ...
 

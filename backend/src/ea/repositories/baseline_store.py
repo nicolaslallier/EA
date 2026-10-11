@@ -65,6 +65,7 @@ from ea.repositories.architecture_store import (
     rejected,
     relationship_from_row,
     relationship_row,
+    touch,
 )
 from ea.repositories.audit_store import write_events
 
@@ -625,6 +626,26 @@ async def _write(
 ) -> None:
     """Links out, elements out (their documents, boxes and links follow by foreign key),
     then fields, elements and links back, then boxes."""
+    # A link that appears, disappears or goes with a deleted element is a change to the
+    # elements at its other end (docs/adr/0046): each is a new revision, by `author`. The
+    # plan has already refused any of them that is approved or locked (`touched`).
+    gone = {e.id for e in plan.elements_to_delete}
+    rewritten = {u.current.id for u in plan.elements_to_update}
+    ends = {
+        end
+        for link in (*plan.relationships_to_delete, *plan.relationships_to_create)
+        for end in (link.source_id, link.target_id)
+    }
+    if gone:
+        cascaded = await session.execute(
+            select(RelationshipRecord.source_id, RelationshipRecord.target_id).where(
+                RelationshipRecord.source_id.in_(gone) | RelationshipRecord.target_id.in_(gone)
+            )
+        )
+        ends |= {end for pair in cascaded for end in pair}
+    await touch(
+        session, sorted((ends - gone - rewritten) - {e.id for e in plan.elements_to_create}), author
+    )
     for link in plan.relationships_to_delete:
         await session.execute(delete(RelationshipRecord).where(RelationshipRecord.id == link.id))
     for element in plan.elements_to_delete:

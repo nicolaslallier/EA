@@ -483,6 +483,7 @@ class InMemoryRepository:
         *,
         audit: AuditOf[ElementRemoval],
         guard: ElementGuard | None = None,
+        ends: EndsReview | None = None,
     ) -> bool:
         element = self.elements.get(element_id)
         if element is None:
@@ -498,8 +499,14 @@ class InMemoryRepository:
                 element=element, relationship_count=len(links), relationships=links[:100]
             ),
         )
+        neighbours = {end for r in links for end in (r.source_id, r.target_id)} - {element_id}
+        reviewed = self._review_ends(tuple(neighbours), ends, events) if ends is not None else []
         del self.elements[element_id]
+        for link in links:
+            del self.relationships[link.id]
         self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
         return True
 
     async def add_relationship(

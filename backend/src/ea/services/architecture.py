@@ -288,7 +288,9 @@ class ArchitectureService:
             guard_element_write(stored, WriteKind.CONTENT, caller)
 
         with logged_refusal("lock_refused", [element_id]):
-            deleted = await self._repository.delete_element(element_id, audit=events, guard=guard)
+            deleted = await self._repository.delete_element(
+                element_id, audit=events, guard=guard, ends=self._review_of_ends()
+            )
         if not deleted:
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)

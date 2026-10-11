@@ -15,7 +15,7 @@ from ea.domain.approval import reviewed_after_change
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction, EntityKind
-from ea.domain.errors import ElementLockedError, ElementNotFoundError
+from ea.domain.errors import ElementLockedError, ElementNotFoundError, RestoreBlockedError
 from ea.domain.model import Relationship
 from ea.domain.ports import EndsReview
 from ea.repositories.architecture_store import PostgresArchitectureRepository
@@ -717,3 +717,120 @@ async def test_the_sql_twin_of_the_rule_agrees_with_it_for_every_state(
         except ElementLockedError:
             refused = True
         assert (element_id in protected) is refused, (state, locked)
+
+
+# --- Deleting a neighbour cascades its links away: a change to the element at the other end ---
+
+
+async def test_deleting_the_neighbour_of_a_locked_element_is_refused_whole(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    locked = await world.graph.create_element(element_type=E.NODE, name="y")
+    neighbour = await world.graph.create_element(element_type=E.NODE, name="x")
+    await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=neighbour.id, target_id=locked.id
+    )
+    await put_in_state(engine_at_head, locked.id, "approved", locked=True)
+    before = len(await world.events(EntityKind.ELEMENT))
+    frozen = await state_of(engine_at_head, locked.id)
+
+    with pytest.raises(ElementLockedError):
+        await world.graph.delete_element(neighbour.id)  # a plain editor
+
+    assert await world.graph.get_element(neighbour.id) is not None
+    assert len((await world.graph.relations_of(locked.id)).relationships) == 1
+    assert await state_of(engine_at_head, locked.id) == frozen == ("approved", True, 2)
+    assert len(await world.events(EntityKind.ELEMENT)) == before
+
+
+async def test_deleting_the_neighbour_of_an_approved_element_sends_it_back_to_review(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    approved = await world.graph.create_element(element_type=E.NODE, name="y")
+    draft = await world.graph.create_element(element_type=E.NODE, name="d")
+    neighbour = await world.graph.create_element(element_type=E.NODE, name="x")
+    for other in (approved, draft):
+        await world.graph.connect(
+            relationship_type=R.ASSOCIATION, source_id=neighbour.id, target_id=other.id
+        )
+    await put_in_state(engine_at_head, approved.id, "approved")
+    revisions = {i: (await state_of(engine_at_head, i))[2] for i in (approved.id, draft.id)}
+
+    with acting_as(an_editor(subject="deleter", username="deleter")):
+        await world.graph.delete_element(neighbour.id)
+
+    assert await state_of(engine_at_head, approved.id) == (
+        "in_review",
+        False,
+        revisions[approved.id] + 1,
+    )
+    assert await state_of(engine_at_head, draft.id) == ("draft", False, revisions[draft.id] + 1)
+    assert (await authored(engine_at_head, approved.id))[0] == "deleter"
+    updates = [
+        e.entity_id
+        for e in await world.events(EntityKind.ELEMENT)
+        if e.action is AuditAction.ELEMENT_UPDATED
+    ]
+    assert updates == [approved.id]  # only the state change is journalled
+
+
+async def test_a_restoration_that_removes_or_adds_a_link_to_an_approved_element_is_blocked(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.repositories.baseline_store import PostgresBaselineRepository
+    from ea.services.baselines import BaselineService
+
+    world = World(engine_at_head)
+    baselines = BaselineService(
+        PostgresBaselineRepository(create_session_factory(engine_at_head)), clock=lambda: START
+    )
+    left = await world.graph.create_element(element_type=E.NODE, name="l")
+    right = await world.graph.create_element(element_type=E.NODE, name="r")
+    link = await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=left.id, target_id=right.id
+    )
+    with_link = await baselines.create(name="with")
+    await world.graph.disconnect(link.id)
+    without = await baselines.create(name="without")
+    await put_in_state(engine_at_head, right.id, "approved")
+
+    for target, name in ((with_link, "adds"), (without, "removes")):
+        if name == "removes":
+            await put_in_state(engine_at_head, right.id, "draft")
+            await world.graph.connect(
+                relationship_type=R.ASSOCIATION, source_id=left.id, target_id=right.id
+            )
+            await put_in_state(engine_at_head, right.id, "approved")
+        plan = await baselines.restore(target.id)
+        assert [e.id for e in plan.plan.blocked] == [right.id], name
+        with pytest.raises(RestoreBlockedError):
+            await baselines.restore(target.id, dry_run=False, expected_digest=plan.digest)
+
+
+async def test_a_restoration_changing_a_link_bumps_the_revision_of_a_draft_end(
+    engine_at_head: AsyncEngine,
+) -> None:
+    from ea.repositories.baseline_store import PostgresBaselineRepository
+    from ea.services.baselines import BaselineService
+
+    world = World(engine_at_head)
+    baselines = BaselineService(
+        PostgresBaselineRepository(create_session_factory(engine_at_head)), clock=lambda: START
+    )
+    left = await world.graph.create_element(element_type=E.NODE, name="l")
+    right = await world.graph.create_element(element_type=E.NODE, name="r")
+    link = await world.graph.connect(
+        relationship_type=R.ASSOCIATION, source_id=left.id, target_id=right.id
+    )
+    with_link = await baselines.create(name="with")
+    await world.graph.disconnect(link.id)
+    before = {i: await authored(engine_at_head, i) for i in (left.id, right.id)}
+
+    plan = await baselines.restore(with_link.id)
+    with acting_as(an_editor(subject="restorer", username="restorer")):
+        await baselines.restore(with_link.id, dry_run=False, expected_digest=plan.digest)
+
+    for element_id in (left.id, right.id):
+        assert await authored(engine_at_head, element_id) == ("restorer", before[element_id][1] + 1)
