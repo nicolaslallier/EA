@@ -4,7 +4,7 @@
 // L'API décide de tout ; ici on garde en mémoire ce qui a été simulé pour ne
 // proposer la confirmation que sur la même chose. Les fichiers ne quittent jamais
 // la mémoire du composant (ni `localStorage`).
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import type { components } from '../../api/schema'
 import { ApiError, api, unwrap } from '../../lib/api'
@@ -134,6 +134,7 @@ export function useExchanges(deps: { digest?: (files: File[]) => Promise<string>
 
   /** Ce qui cloche après coup : l'import appliqué n'est pas celui qui a été simulé. */
   const warning = ref('')
+  const refusal = ref('')
   const packages = ref<PackageOption[]>([])
   const queries = ref<QueryOption[]>([])
 
@@ -145,6 +146,9 @@ export function useExchanges(deps: { digest?: (files: File[]) => Promise<string>
 
   async function track(format: ExchangeFormat, picked: Picked): Promise<void> {
     const files = filesOf(format, picked)
+    // Un autre fichier est choisi : l'ancienne empreinte ne vaut plus, tout de suite,
+    // pas seulement quand la nouvelle sera calculée.
+    currentDigest.value = null
     await tracking.run(
       async () => {
         if (files.length === 0) {
@@ -181,6 +185,22 @@ export function useExchanges(deps: { digest?: (files: File[]) => Promise<string>
   }
 
   async function confirm(format: ExchangeFormat, picked: Picked, choice: ImportChoice): Promise<void> {
+    // Ce qui part est ce qui est empreint *maintenant*, pas ce que l'écran croyait :
+    // un fichier remplacé depuis la simulation ne s'écrit pas. (Garantie côté client
+    // seulement : le serveur ne lie pas la confirmation à l'empreinte simulée.)
+    refusal.value = ''
+    let now: string
+    try {
+      now = await digest(filesOf(format, picked))
+    } catch {
+      refusal.value = NO_DIGEST
+      return
+    }
+    if (report.value?.sha256 !== now) {
+      refusal.value =
+        "Le fichier a changé depuis la simulation : rien n'a été écrit. Simulez de nouveau."
+      return
+    }
     await confirmation.run(
       async (signal) =>
         unwrapExchange(
@@ -264,6 +284,7 @@ export function useExchanges(deps: { digest?: (files: File[]) => Promise<string>
   function forget(): void {
     report.value = null
     warning.value = ''
+    refusal.value = ''
     simulatedWith.value = ''
     currentDigest.value = null
     digestProblem.value = ''
@@ -285,7 +306,7 @@ export function useExchanges(deps: { digest?: (files: File[]) => Promise<string>
     simulateStatus: simulation.status,
     simulateError: simulation.error,
     confirmStatus: confirmation.status,
-    confirmError: confirmation.error,
+    confirmError: computed(() => refusal.value || confirmation.error.value),
     track,
     simulate,
     confirm,

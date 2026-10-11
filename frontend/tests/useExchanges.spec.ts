@@ -126,6 +126,34 @@ describe('simulating, then confirming', () => {
   })
 })
 
+describe('confirming a file that is no longer the simulated one', () => {
+  it('writes nothing and says so', async () => {
+    const calls = stubApi([{ method: 'POST', path: '/exchanges/imports', body: aReport({ sha256: 'a.xml:1' }) }])
+    const exchanges = useExchanges({ digest })
+    const simulated = { file: file('a.xml') }
+    await exchanges.track('archimate-xml', simulated)
+    await exchanges.simulate('archimate-xml', simulated, choice)
+
+    await exchanges.confirm('archimate-xml', { file: file('a.xml', 'replaced') }, choice)
+
+    expect(calls).toHaveLength(1)
+    expect(exchanges.confirmError.value).toMatch(/changé depuis la simulation/)
+    expect(exchanges.report.value?.dry_run).toBe(true)
+  })
+
+  it('is not confirmable as soon as another file is picked, before its digest is known', async () => {
+    stubApi([{ method: 'POST', path: '/exchanges/imports', body: aReport({ sha256: 'a.xml:1' }) }])
+    const exchanges = useExchanges({ digest })
+    const simulated = { file: file('a.xml') }
+    await exchanges.track('archimate-xml', simulated)
+    await exchanges.simulate('archimate-xml', simulated, choice)
+
+    const pending = exchanges.track('archimate-xml', { file: file('b.xml') })
+    expect(exchanges.canConfirm(choice)).toBe(false)
+    await pending
+  })
+})
+
 describe('exporting', () => {
   it('asks for the format and the scope, then hands the blob to the browser under its own name', async () => {
     const createObjectURL = vi.fn(() => 'blob:x')
