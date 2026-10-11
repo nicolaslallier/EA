@@ -42,6 +42,7 @@ from ea.domain.exchange import (
     Issue,
     ReportBuilder,
     Severity,
+    build_organization,
     exchange_element_of,
     exchange_relationship_of,
     xml_identifier,
@@ -53,9 +54,11 @@ from ea.services.exchange_admission import current_ticket
 from ea.services.exchange_import import ImportRun
 
 if TYPE_CHECKING:
+    from ea.domain.exchange import PackageNode
     from ea.domain.ports import ExchangeRepository, ExportSnapshot
     from ea.services.architecture import ArchitectureService
     from ea.services.diagrams import DiagramService
+    from ea.services.packages import PackageService
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +119,11 @@ class ExchangeService:
         monotonic: Callable[[], float] = time.monotonic,
         parser: Callable[[bytes], ExchangeModel] = parse_model,
         diagrams: DiagramService | None = None,
+        packages: PackageService | None = None,
     ) -> None:
         self._parse = parser
         self._diagrams = diagrams
+        self._packages = packages
         self._repository = repository
         self._architecture = architecture
         self._max_bytes = max_bytes
@@ -154,7 +159,11 @@ class ExchangeService:
             quiet = names_in_logs.set(False)  # the rows' log lines must not quote the file
             try:
                 await ImportRun(
-                    self._repository, self._architecture, options, diagrams=self._diagrams
+                    self._repository,
+                    self._architecture,
+                    options,
+                    diagrams=self._diagrams,
+                    packages=self._packages,
                 ).run(model, report)
             finally:
                 names_in_logs.reset(quiet)
@@ -256,12 +265,14 @@ class ExchangeService:
         dropped: dict[str, int] = {}
         async with self._repository.snapshot(request.scope) as snapshot:
             streams = _Streams(snapshot, self._monotonic)
+            streams.packages = await snapshot.packages()
             parts = render_model(
                 "EA catalogue",
                 streams.elements(),
                 streams.relationships(),
                 on_dropped=lambda identifier, count: dropped.__setitem__(identifier, count),
                 views=streams.views(request.with_views),
+                organizations=lambda: build_organization(streams.packages, streams.members),
             )
             async for chunk in buffered(parts):
                 yield chunk
@@ -309,6 +320,9 @@ class _Streams:
         self._deadline = monotonic() + EXPORT_TIMEOUT_SECONDS
         self.registry = IdentifierRegistry()
         self.identifiers: dict[UUID, str] = {}
+        #: The identifiers of the elements by package (`None`: unfiled), for `organizations`.
+        self.members: dict[UUID | None, list[str]] = {}
+        self.packages: tuple[PackageNode, ...] = ()
         self.counts = {"elements": 0, "relationships": 0, "views": 0}
         self.skipped_views = 0
 
@@ -324,6 +338,7 @@ class _Streams:
             for element in page:
                 item = exchange_element_of(element, self.registry)
                 self.identifiers[element.id] = item.identifier
+                self.members.setdefault(element.package_id, []).append(item.identifier)
                 self.counts["elements"] += 1
                 yield item
             offset += len(page)

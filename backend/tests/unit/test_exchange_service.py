@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import logging
 import zipfile
@@ -35,7 +36,8 @@ from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.exchanges import ExchangeService
-from tests.conftest import FIXED_NOW, a_reader
+from ea.services.packages import PackageService
+from tests.conftest import FIXED_NOW, InMemoryRepository, a_reader
 
 pytestmark = pytest.mark.asyncio
 NS = {"x": NAMESPACE}
@@ -505,3 +507,48 @@ class TestViewsInTheExport:
         archive = zipfile.ZipFile(io.BytesIO(await zip_of(exchange_service)))
 
         assert archive.namelist() == ["elements.csv", "relations.csv", "properties.csv"]
+
+
+class TestOrganizationsInTheExport:
+    async def test_the_package_tree_is_written_as_organizations(
+        self,
+        service: ArchitectureService,
+        package_service: PackageService,
+        exchange_service: ExchangeService,
+        repository: InMemoryRepository,
+    ) -> None:
+        infra = (await package_service.create(name="Infra")).package.id
+        net = (await package_service.create(name="Net", parent_id=infra)).package.id
+        await package_service.create(name="Empty")
+        a = await service.create_element(
+            element_type=E.NODE, name="srv", properties={SOURCE_ID: "n-1"}
+        )
+        b = await service.create_element(
+            element_type=E.NODE, name="sw", properties={SOURCE_ID: "n-2"}
+        )
+        await service.create_element(
+            element_type=E.NODE, name="loose", properties={SOURCE_ID: "n-3"}
+        )
+        repository.elements[a.id] = dataclasses.replace(a, package_id=infra)
+        repository.elements[b.id] = dataclasses.replace(b, package_id=net)
+
+        root = DefusedET.fromstring(await exported(exchange_service))
+
+        labels = [
+            i.find("x:label", NS).text for i in root.findall("x:organizations/x:item[x:label]", NS)
+        ]  # type: ignore[union-attr]
+        assert labels == ["Empty", "Infra"]
+        folder = root.find("x:organizations/x:item[x:label='Infra']", NS)
+        assert folder is not None
+        assert folder.find("x:item[@identifierRef='n-1']", NS) is not None
+        assert folder.find("x:item/x:item[@identifierRef='n-2']", NS) is not None
+        assert root.find("x:organizations/x:item[@identifierRef='n-3']", NS) is not None
+
+    async def test_a_catalogue_without_packages_has_no_organizations(
+        self, service: ArchitectureService, exchange_service: ExchangeService
+    ) -> None:
+        await service.create_element(element_type=E.NODE, name="srv")
+
+        root = DefusedET.fromstring(await exported(exchange_service))
+
+        assert root.find("x:organizations", NS) is None

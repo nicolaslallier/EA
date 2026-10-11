@@ -186,3 +186,44 @@ async def test_views_come_ordered_by_name_with_their_boxes_in_identifier_order(
 
     assert (view.name, view.description) == ("V", "d")
     assert [box.element_id for box in view.boxes] == [second.id, first.id]
+
+
+async def test_the_snapshot_lists_the_packages_with_their_parents(
+    exchange: PostgresExchangeRepository, engine_at_head: AsyncEngine
+) -> None:
+    from ea.db.postgres import create_session_factory
+    from tests.integration.exchange_support import make_package
+
+    sessions = create_session_factory(engine_at_head)
+    top = await make_package(sessions, "Top")
+    sub = await make_package(sessions, "Sub", top)
+
+    async with exchange.snapshot(ExportScope()) as snapshot:
+        found = {(p.name, p.parent_id) for p in await snapshot.packages()}
+
+    assert found == {("Top", None), ("Sub", top)}
+    assert sub  # created below Top
+
+
+async def test_the_tree_lock_of_an_import_is_the_one_a_package_write_takes(
+    exchange: PostgresExchangeRepository, engine_at_head: AsyncEngine
+) -> None:
+    from sqlalchemy import func, select
+
+    from ea.repositories.package_store import TREE_LOCK
+
+    async with exchange.transaction(commit=False):
+        await exchange.lock_package_tree()
+        async with engine_at_head.connect() as other:
+            free = await other.scalar(select(func.pg_try_advisory_xact_lock(TREE_LOCK)))
+        assert free is False  # held by the import: a package write would wait here
+
+    async with engine_at_head.connect() as other:
+        assert await other.scalar(select(func.pg_try_advisory_xact_lock(TREE_LOCK))) is True
+
+
+async def test_the_tree_lock_needs_the_transaction_of_an_import(
+    exchange: PostgresExchangeRepository,
+) -> None:
+    with pytest.raises(RuntimeError):
+        await exchange.lock_package_tree()

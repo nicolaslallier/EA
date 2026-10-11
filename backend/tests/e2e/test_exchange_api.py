@@ -6,6 +6,7 @@ import hashlib
 import io
 import zipfile
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from ea.services.architecture import ArchitectureService
 from tests.conftest import (
     InMemoryDiagrams,
     InMemoryExchange,
+    InMemoryPackages,
     InMemoryRepository,
     StaticVerifier,
     a_reader,
@@ -30,13 +32,17 @@ pytestmark = pytest.mark.asyncio
 
 @pytest_asyncio.fixture
 async def client(
-    service: ArchitectureService, exchange_store: InMemoryExchange, diagrams: InMemoryDiagrams
+    service: ArchitectureService,
+    exchange_store: InMemoryExchange,
+    diagrams: InMemoryDiagrams,
+    packages: InMemoryPackages,
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         exchanges=exchange_store,  # type: ignore[arg-type]
         diagrams=diagrams,  # type: ignore[arg-type]
+        packages=packages,  # type: ignore[arg-type]
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -770,6 +776,44 @@ class TestViewsOverHttp:
             "/exchanges/imports",
             files={"elements": ("e.csv", CSV_HEADER, "text/csv")},
             **csv_upload(with_views="false"),
+        )
+
+        assert response.status_code == 422
+
+
+class TestPackagesOverHttp:
+    ORGANIZED = exchange_xml(
+        el("a", "Node", "A"),
+        extra="<organizations><item><label>Infra</label>"
+        '<item identifierRef="a"/></item></organizations>',
+    )
+
+    async def test_folders_become_packages_and_the_target_is_a_form_part(
+        self, client: httpx.AsyncClient, packages: InMemoryPackages, repository: InMemoryRepository
+    ) -> None:
+        landing = (await client.post("/packages", json={"name": "Landing"})).json()["id"]
+
+        response = await client.post(
+            "/exchanges/imports",
+            **upload(self.ORGANIZED, dry_run="false", target_package_id=landing),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["counts"]["packages"]["created"] == 1
+        infra = next(p for p in packages.packages.values() if p.name == "Infra")
+        assert str(infra.parent_id) == landing
+
+    async def test_an_unknown_target_is_a_404(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports",
+            **upload(self.ORGANIZED, dry_run="false", target_package_id=str(uuid4())),
+        )
+
+        assert response.status_code == 404
+
+    async def test_a_target_that_is_not_an_id_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports", **upload(self.ORGANIZED, target_package_id="root")
         )
 
         assert response.status_code == 422

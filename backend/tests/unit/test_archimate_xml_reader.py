@@ -463,3 +463,85 @@ class TestViews:
         many = [a_view(box(f"n{i}", "a", "0", "0"), f"V{i}", f"v{i}") for i in range(200)]
 
         assert len(parse_model(views_of(*many)).views) == 200
+
+
+class TestOrganizations:
+    EXTRA = (
+        "<organizations>"
+        '<item><label>Business</label><item identifierRef="a"/>'
+        '<item><label>Deep</label><item identifierRef="b"/></item></item>'
+        '<item identifierRef="c"/>'
+        "</organizations>"
+    )
+
+    def test_folders_and_their_items_are_read(self) -> None:
+        model = parse_model(
+            exchange_xml(
+                el("a", "Node", "A") + el("b", "Node", "B") + el("c", "Node", "C"), extra=self.EXTRA
+            )
+        )
+
+        (business,) = model.folders
+        assert (business.label, business.items) == ("Business", ("a",))
+        assert (business.children[0].label, business.children[0].items) == ("Deep", ("b",))
+
+    def test_a_reference_to_nothing_is_a_warning_and_to_a_link_is_dropped_quietly(self) -> None:
+        extra = (
+            '<organizations><item><label>F</label><item identifierRef="ghost"/>'
+            '<item identifierRef="r"/></item></organizations>'
+        )
+
+        model = parse_model(
+            exchange_xml(
+                el("a", "Node", "A") + el("b", "Node", "B"),
+                rel("r", "Association", "a", "b"),
+                extra=extra,
+            )
+        )
+
+        assert codes(model).count("unknown_reference") == 1
+        assert model.folders[0].items == ()
+
+    def test_the_reader_does_not_forget_the_folders_after_the_first_one(self) -> None:
+        extra = (
+            "<organizations>"
+            + "".join(f"<item><label>F{i}</label></item>" for i in range(50))
+            + "</organizations>"
+        )
+
+        model = parse_model(exchange_xml(el("a", "Node", "A"), extra=extra))
+
+        assert [f.label for f in model.folders] == [f"F{i}" for i in range(50)]
+
+    def test_organizations_do_not_empty_the_views_that_follow(self) -> None:
+        extra = self.EXTRA + (
+            '<views><diagrams><view identifier="v" xsi:type="Diagram"><name>V</name>'
+            "</view></diagrams></views>"
+        )
+
+        model = parse_model(exchange_xml(el("a", "Node", "A"), extra=extra))
+
+        assert len(model.folders) == 1 and len(model.views) == 1
+
+    def test_folders_nested_beyond_the_ceiling_are_refused(self) -> None:
+        opening = "<item><label>x</label>" * 201
+        extra = f"<organizations>{opening}{'</item>' * 201}</organizations>"
+
+        with pytest.raises(InvalidExchangeFileError, match="nested"):
+            parse_model(exchange_xml(extra=extra))
+
+    def test_a_file_that_lists_too_many_entries_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_ORGANIZATION_ENTRIES", 3)
+        extra = "<organizations>" + '<item identifierRef="a"/>' * 4 + "</organizations>"
+
+        with pytest.raises(InvalidExchangeFileError, match="at most 3 entries"):
+            parse_model(exchange_xml(el("a", "Node", "A"), extra=extra))
+
+    def test_a_folder_without_a_label_is_not_a_folder(self) -> None:
+        extra = '<organizations><item><item identifierRef="a"/></item></organizations>'
+
+        model = parse_model(exchange_xml(el("a", "Node", "A"), extra=extra))
+
+        assert model.folders == ()

@@ -11,7 +11,7 @@ import hashlib
 import math
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
@@ -22,6 +22,7 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType, valid
 from ea.domain.errors import DomainError, IllegalRelationshipError, RowRefusedError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, is_property_key
+from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, validate_package_name
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
 EXPORT_PAGE_SIZE: Final = 1_000
@@ -230,6 +231,8 @@ class ExchangeElement:
     #: Position in the source file (CSV line); XML reports a path instead.
     line: int | None = None
     path: str | None = None
+    #: The package that files the element (export only; an import files by folder).
+    package_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +265,7 @@ def exchange_element_of(
         description=element.description,
         documentation=element.documentation,
         properties=_without_source_id(element.properties),
+        package_id=element.package_id,
     )
 
 
@@ -284,6 +288,168 @@ def exchange_relationship_of(
         directed=relationship.directed,
         properties=_without_source_id(relationship.properties),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PackageNode:
+    id: UUID
+    parent_id: UUID | None
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeFolder:
+    """A folder of `organizations`: a package's label, the elements directly in it."""
+
+    label: str
+    items: tuple[str, ...]
+    children: tuple[ExchangeFolder, ...]
+
+
+def build_organization(
+    packages: Sequence[PackageNode], members: Mapping[UUID | None, Sequence[str]]
+) -> ExchangeFolder:
+    """The anonymous root: unfiled elements, and every package whose parent is not listed.
+
+    Siblings by name, members by identifier: the same catalogue gives the same file.
+    """
+    known = {p.id for p in packages}
+    by_parent: dict[UUID | None, list[PackageNode]] = {}
+    for package in sorted(packages, key=lambda p: (p.name, str(p.id))):
+        parent = package.parent_id if package.parent_id in known else None
+        by_parent.setdefault(parent, []).append(package)
+
+    def folder(package: PackageNode) -> ExchangeFolder:
+        return ExchangeFolder(
+            package.name,
+            tuple(sorted(members.get(package.id, ()))),
+            tuple(folder(child) for child in by_parent.get(package.id, ())),
+        )
+
+    return ExchangeFolder(
+        "",
+        tuple(sorted(members.get(None, ()))),
+        tuple(folder(package) for package in by_parent.get(None, ())),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FolderStep:
+    """A folder to find or create: where, under what name, and the elements it files.
+
+    `path` is the casefolded names from the root of the package tree down (the target's
+    included): the key a folder is found by, since sibling names are unique ignoring case.
+    """
+
+    path: tuple[str, ...]
+    parent: tuple[str, ...]
+    name: str
+    identifiers: tuple[str, ...]
+    where: str
+
+
+@dataclass(frozen=True, slots=True)
+class FolderNote:
+    """What the plan says about a folder it did not take as it was: a folder refused (with its
+    subtree) or an element that stays in the first folder that listed it."""
+
+    code: str
+    message: str
+    where: str
+    rejected: bool = True
+
+
+def plan_folders(
+    folders: Sequence[ExchangeFolder],
+    *,
+    base: tuple[str, ...],
+    existing: Collection[tuple[str, ...]],
+) -> tuple[list[FolderStep], list[FolderNote]]:
+    """Judge the folders of a file against the rules of the package tree, in memory.
+
+    Nothing here touches the database, so a hostile or merely deep `organizations` costs
+    no refused row: a name a package cannot carry (blank, over 200, `/`, NUL), a sibling
+    named like another ignoring case, a level past `MAX_PACKAGE_DEPTH` (counted from the
+    root of the tree, the `base` target included), more than `MAX_PACKAGES` in all. A folder
+    refused takes its subtree with it; a folder that already exists is found, not counted.
+    Parents come before children. Folders are merged with the tree by path and never moved.
+    """
+    steps: list[FolderStep] = []
+    notes: list[FolderNote] = []
+    present = set(existing)
+    seen: set[tuple[str, ...]] = set()
+    placed: set[str] = set()
+    created = 0
+    stack = [
+        (folder, base, f"organizations/item[{index}]", False)
+        for index, folder in reversed(list(enumerate(folders, start=1)))
+    ]
+    while stack:
+        folder, parent, where, parent_refused = stack.pop()
+        if parent_refused:
+            notes.append(
+                FolderNote("parent_rejected", "the folder above this one was rejected", where)
+            )
+            refused = True
+        else:
+            refused = False
+            try:
+                name = validate_package_name(folder.label)
+            except ValueError:
+                notes.append(
+                    FolderNote("invalid_package_name", "a package cannot carry this name", where)
+                )
+                refused = True
+            else:
+                path = (*parent, name.casefold())
+                if path in seen:
+                    notes.append(
+                        FolderNote(
+                            "duplicate_package",
+                            "a folder of this name (ignoring case) is already listed here",
+                            where,
+                        )
+                    )
+                    refused = True
+                elif len(path) > MAX_PACKAGE_DEPTH:
+                    notes.append(
+                        FolderNote(
+                            "package_too_deep",
+                            f"packages nest at most {MAX_PACKAGE_DEPTH} levels deep",
+                            where,
+                        )
+                    )
+                    refused = True
+                elif path not in present and len(present) + created >= MAX_PACKAGES:
+                    notes.append(
+                        FolderNote(
+                            "too_many_packages",
+                            f"the tree holds at most {MAX_PACKAGES} packages",
+                            where,
+                        )
+                    )
+                    refused = True
+        if not refused:
+            seen.add(path)
+            created += path not in present
+            fresh = tuple(i for i in folder.items if i not in placed)
+            for identifier in folder.items:
+                if identifier in placed:
+                    notes.append(
+                        FolderNote(
+                            "package_duplicate_item",
+                            "an element listed in two folders stays in the first one",
+                            where,
+                            rejected=False,
+                        )
+                    )
+            placed.update(fresh)
+            steps.append(FolderStep(path, parent, name, tuple(dict.fromkeys(fresh)), where))
+        for index, child in reversed(list(enumerate(folder.children, start=1))):
+            stack.append(
+                (child, path if not refused else parent, f"{where}/item[{index}]", refused)
+            )
+    return steps, notes
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +531,13 @@ MIN_VIEW_BOX_SIZE: Final = 20
 MAX_VIEW_BOX_SIZE: Final = 5_000
 
 
+#: Levels of folders in `organizations`, and the entries (folders and references) of the whole
+#: section: what a file may make the reader hold. The packages a catalogue can carry are fewer
+#: (`domain.packages`); the import judges that, folder by folder, before the database.
+MAX_ORGANIZATION_DEPTH: Final = 200
+MAX_ORGANIZATION_ENTRIES: Final = 2 * MAX_EXCHANGE_ITEMS
+
+
 class Severity(StrEnum):
     ERROR = "error"
     WARNING = "warning"
@@ -412,6 +585,7 @@ class ExchangeModel:
     unreadable: tuple[Unreadable, ...] = ()
     issues: tuple[Issue, ...] = ()
     views: tuple[ExchangeView, ...] = ()
+    folders: tuple[ExchangeFolder, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +672,8 @@ class ImportOptions:
     safe_cells: bool = True
     #: XML only: recreate the views of the file (their boxes; never a link).
     with_views: bool = True
+    #: Where the folders of the file are created, and the new elements outside any folder go.
+    target_package_id: UUID | None = None
 
 
 def digest_of(*parts: bytes) -> str:

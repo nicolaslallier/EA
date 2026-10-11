@@ -43,6 +43,8 @@ from ea.domain.exchange import (
     MAX_NESTING_DEPTH,
     MAX_NODES_PER_ITEM,
     MAX_NODES_PER_VIEW,
+    MAX_ORGANIZATION_DEPTH,
+    MAX_ORGANIZATION_ENTRIES,
     MAX_PROPERTIES_PER_OBJECT,
     MAX_SILENT_BYTES,
     MAX_VIEW_DEPTH,
@@ -53,6 +55,7 @@ from ea.domain.exchange import (
     Category,
     ExchangeBox,
     ExchangeElement,
+    ExchangeFolder,
     ExchangeModel,
     ExchangeRelationship,
     ExchangeView,
@@ -123,6 +126,11 @@ class _Writer:
             self._on_dropped(identifier, self._dropped)
             self._dropped = 0
 
+    def folder(self, folder: ExchangeFolder) -> str:
+        body = "".join(self.folder(child) for child in folder.children)
+        body += "".join(f'<item identifierRef="{self.attr(ref)}"/>' for ref in folder.items)
+        return f"<item>{self.lang('label', folder.label)}{body}</item>"
+
     def view(self, view: ExchangeView) -> str:
         """A view as `Diagram` nodes: boxes only, in whole units; never a connection."""
         body = self.lang("name", view.name)
@@ -180,6 +188,7 @@ async def render_model(
     *,
     on_dropped: DroppedReport = _ignore,
     views: AsyncIterator[ExchangeView] | None = None,
+    organizations: Callable[[], ExchangeFolder | None] | None = None,
 ) -> AsyncIterator[str]:
     """The whole document as text pieces, pulling from the two iterators in turn.
 
@@ -210,6 +219,15 @@ async def render_model(
         yield writer.relationship(link)
     if opened:
         yield "</relationships>"
+    # Read once everything above is written: the folders hold references to those elements.
+    root = organizations() if organizations is not None else None
+    if root is not None and root.children:  # unfiled alone says nothing
+        yield "<organizations>"
+        for child in root.children:
+            yield writer.folder(child)
+        for reference in root.items:
+            yield f'<item identifierRef="{writer.attr(reference)}"/>'
+        yield "</organizations>"
     if writer.used:
         yield "<propertyDefinitions>"
         for key in sorted(writer.used):
@@ -293,6 +311,8 @@ class _Reading:
     definitions: dict[str, str] = field(default_factory=dict)
     views: list[tuple[ExchangeView, list[Issue]]] = field(default_factory=list)
     lost_views: list[tuple[Unreadable, Issue]] = field(default_factory=list)
+    folders: list[ExchangeFolder] = field(default_factory=list)
+    entries: int = 0
     view_count: int = 0
     view_boxes: int = 0
     items: int = 0
@@ -601,6 +621,8 @@ def _read(data: bytes) -> _Reading:
                 counts["relationship"] += 1
                 slot = _read_relationship(node, counts["relationship"], reading)
                 reading.links.append(_too_many_properties(slot, Category.RELATIONSHIPS))
+            elif section == _q("organizations") and tag == _q("item"):
+                _read_folder_item(node, reading)
             elif section == _q("propertyDefinitions") and tag == _q("propertyDefinition"):
                 _read_definition(node, reading)  # clears the definition and its name
                 # Its content is freed; the empty shell stays under its parent, and stays counted.
@@ -615,6 +637,64 @@ def _read(data: bytes) -> _Reading:
         tags.pop()
         nodes.pop()
     return reading
+
+
+def _read_folder_item(node: Element, reading: _Reading) -> None:
+    """A top-level item of `organizations`: a folder is kept, a bare reference means "the root"."""
+    if node.get("identifierRef") is None and node.find(_q("label")) is not None:
+        reading.folders.append(_folder(node, reading, 1))
+    else:
+        _count_entry(reading)
+    node.clear()
+
+
+def _count_entry(reading: _Reading) -> None:
+    reading.entries += 1
+    if reading.entries > MAX_ORGANIZATION_ENTRIES:
+        raise _refuse(f"organizations hold at most {MAX_ORGANIZATION_ENTRIES} entries")
+
+
+def _folder(node: Element, reading: _Reading, depth: int) -> ExchangeFolder:
+    if depth > MAX_ORGANIZATION_DEPTH:
+        raise _refuse(f"organizations are nested more than {MAX_ORGANIZATION_DEPTH} levels deep")
+    _count_entry(reading)
+    items: list[str] = []
+    children: list[ExchangeFolder] = []
+    for child in node.findall(_q("item")):
+        reference = child.get("identifierRef")
+        if reference is not None:
+            _count_entry(reading)
+            items.append(reference)
+        elif child.find(_q("label")) is not None:
+            children.append(_folder(child, reading, depth + 1))
+    label = node.find(_q("label"))
+    return ExchangeFolder(
+        (label.text or "") if label is not None else "", tuple(items), tuple(children)
+    )
+
+
+def _resolved_folder(
+    folder: ExchangeFolder, elements: set[str], others: set[str], issues: list[Issue]
+) -> ExchangeFolder:
+    """Keep the references to elements; a link's or a view's is dropped, an unknown one said."""
+    items: list[str] = []
+    for reference in folder.items:
+        if reference in elements:
+            items.append(reference)
+        elif reference not in others:
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "unknown_reference",
+                    "an organization item refers to an identifier the file does not define",
+                    reference,
+                )
+            )
+    return ExchangeFolder(
+        folder.label,
+        tuple(items),
+        tuple(_resolved_folder(child, elements, others, issues) for child in folder.children),
+    )
 
 
 def _read_view(node: Element, reading: _Reading) -> None:
@@ -780,8 +860,13 @@ def parse_model(data: bytes) -> ExchangeModel:
         issues.extend(
             Issue(i.severity, i.code, i.message, view.identifier, path=view.path) for i in local
         )
+    element_ids = {e.identifier for e in elements}
+    folders = tuple(
+        _resolved_folder(folder, element_ids, reading.seen - element_ids, issues)
+        for folder in reading.folders
+    )
     return ExchangeModel(
-        tuple(elements), tuple(links), tuple(unreadable), tuple(issues), tuple(views)
+        tuple(elements), tuple(links), tuple(unreadable), tuple(issues), tuple(views), folders
     )
 
 

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
-    from ea.domain.exchange import ExportedView, ExportScope
+    from ea.domain.exchange import ExportedView, ExportScope, PackageNode
 
 
 @dataclass(slots=True)
@@ -767,6 +767,10 @@ class ExportSnapshot(Protocol):
 
     async def relationships_page(self, offset: int, limit: int) -> tuple[Relationship, ...]: ...
 
+    async def packages(self) -> tuple[PackageNode, ...]:
+        """The packages of the export, with the parent each names (the scope may cut the tree)."""
+        ...
+
     async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
         """Saved diagrams with their boxes, by name; boxes by exported identifier."""
         ...
@@ -810,6 +814,10 @@ class ExchangeRepository(Protocol):
 
     async def known_relationship_keys(self) -> frozenset[tuple[RelationshipType, UUID, UUID]]:
         """`(type, source, target)` of every link, to tell a new link from an existing one."""
+        ...
+
+    async def lock_package_tree(self) -> None:
+        """Take the package tree's lock, before any element lock, as a package write does."""
         ...
 
     async def lock_elements(self, ids: Iterable[UUID]) -> None:

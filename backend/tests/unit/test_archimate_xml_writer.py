@@ -12,6 +12,7 @@ from ea.domain.exchange import (
     NAMESPACE,
     ExchangeBox,
     ExchangeElement,
+    ExchangeFolder,
     ExchangeRelationship,
     ExchangeView,
 )
@@ -235,3 +236,87 @@ async def test_the_text_of_a_view_is_escaped_and_cleaned_like_any_other() -> Non
     found = root.find("x:views/x:diagrams/x:view", NS)
     assert found is not None
     assert found.find("x:name", NS).text == 'a <b> & "c"'  # type: ignore[union-attr]
+
+
+async def test_organizations_nest_folders_and_reference_elements() -> None:
+    inner = ExchangeFolder("Sub", ("a-2",), ())
+    root = ExchangeFolder("", ("a-1",), (ExchangeFolder("Pkg", ("a-3",), (inner,)),))
+    parts = render_model(
+        "M",
+        aiter_of([actor("a-1"), actor("a-2", "B"), actor("a-3", "C")]),
+        aiter_of([]),
+        organizations=lambda: root,
+    )
+
+    xml = DefusedET.fromstring("".join([p async for p in parts]))
+
+    assert [c.tag.split("}")[1] for c in xml] == ["name", "elements", "organizations"]
+    folder = xml.find("x:organizations/x:item[x:label]", NS)
+    assert folder is not None and folder.find("x:label", NS).text == "Pkg"  # type: ignore[union-attr]
+    assert folder.find("x:item[@identifierRef='a-3']", NS) is not None
+    assert folder.find("x:item/x:label", NS).text == "Sub"  # type: ignore[union-attr]
+    assert xml.find("x:organizations/x:item[@identifierRef='a-1']", NS) is not None
+
+
+async def test_an_empty_organization_writes_no_section() -> None:
+    parts = render_model(
+        "M", aiter_of([actor()]), aiter_of([]), organizations=lambda: ExchangeFolder("", (), ())
+    )
+
+    xml = DefusedET.fromstring("".join([p async for p in parts]))
+
+    assert xml.find("x:organizations", NS) is None
+
+
+async def test_an_empty_package_is_still_a_folder() -> None:
+    parts = render_model(
+        "M",
+        aiter_of([actor()]),
+        aiter_of([]),
+        organizations=lambda: ExchangeFolder("", (), (ExchangeFolder("Empty", (), ()),)),
+    )
+
+    xml = DefusedET.fromstring("".join([p async for p in parts]))
+
+    assert xml.find("x:organizations/x:item/x:label", NS).text == "Empty"  # type: ignore[union-attr]
+
+
+async def test_sections_keep_the_order_of_the_schema() -> None:
+    parts = render_model(
+        "M",
+        aiter_of([actor(properties={"k": "v"})]),
+        aiter_of([]),
+        views=aiter_of([ExchangeView("view-V", "V", ())]),
+        organizations=lambda: ExchangeFolder("", ("a-1",), (ExchangeFolder("F", (), ()),)),
+    )
+
+    xml = DefusedET.fromstring("".join([p async for p in parts]))
+
+    assert [c.tag.split("}")[1] for c in xml] == [
+        "name",
+        "elements",
+        "organizations",
+        "propertyDefinitions",
+        "views",
+    ]
+
+
+def test_build_organization_roots_the_packages_whose_parent_is_not_listed() -> None:
+    from uuid import uuid4
+
+    from ea.domain.exchange import PackageNode, build_organization
+
+    top, sub, orphan = uuid4(), uuid4(), uuid4()
+    packages = [
+        PackageNode(sub, top, "Sub"),
+        PackageNode(top, None, "Top"),
+        PackageNode(orphan, uuid4(), "Orphan"),  # its parent is outside the scope
+    ]
+
+    root = build_organization(packages, {None: ["u"], top: ["b", "a"], sub: ["c"]})
+
+    assert root.items == ("u",)
+    assert [f.label for f in root.children] == ["Orphan", "Top"]
+    top_folder = root.children[1]
+    assert top_folder.items == ("a", "b")
+    assert [(f.label, f.items) for f in top_folder.children] == [("Sub", ("c",))]

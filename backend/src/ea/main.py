@@ -327,6 +327,7 @@ def _lifespan(
                     exchange_store,
                     architecture_service_of(app),
                     diagrams=getattr(app.state, "diagram_service", None),
+                    packages=getattr(app.state, "package_service", None),
                     max_bytes=settings.exchange_max_bytes,
                 )
             if audit_store is not None:
@@ -597,6 +598,7 @@ def create_app(
                 exchanges,
                 architecture_service,
                 diagrams=getattr(app.state, "diagram_service", None),
+                packages=getattr(app.state, "package_service", None),
                 max_bytes=settings.exchange_max_bytes,
             )
     if files is not None:

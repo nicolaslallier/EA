@@ -74,6 +74,7 @@ from ea.domain.exchange import (
     ExportedBox,
     ExportedView,
     ExportScope,
+    PackageNode,
     identifier_of,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
@@ -1287,10 +1288,21 @@ class _MemorySnapshot:
     """The pages the PostgreSQL snapshot would give, sorted the way its SQL sorts."""
 
     def __init__(
-        self, repository: InMemoryRepository, diagrams: InMemoryDiagrams | None = None
+        self,
+        repository: InMemoryRepository,
+        diagrams: InMemoryDiagrams | None = None,
+        packages: InMemoryPackages | None = None,
     ) -> None:
         self._repository = repository
         self._diagrams = diagrams
+        self._packages = packages
+
+    async def packages(self) -> tuple[PackageNode, ...]:
+        if self._packages is None:
+            return ()
+        return tuple(
+            PackageNode(p.id, p.parent_id, p.name) for p in self._packages.packages.values()
+        )
 
     @staticmethod
     def _identifier(item: Element | Relationship) -> str:
@@ -1374,10 +1386,12 @@ class InMemoryExchange:
         self.applied = 0
         self.replayed = 0
         self.locked: list[UUID] = []
+        #: The order the locks were taken in.
+        self.calls: list[str] = []
 
     @asynccontextmanager
     async def snapshot(self, scope: ExportScope) -> AsyncIterator[_MemorySnapshot]:
-        yield _MemorySnapshot(self.repository, self.diagrams)
+        yield _MemorySnapshot(self.repository, self.diagrams, self.packages)
 
     def _copy(self) -> dict[str, Any]:
         """Everything an import may write: the graph, the audit log, the views, the packages."""
@@ -1473,7 +1487,11 @@ class InMemoryExchange:
             for link in self.repository.relationships.values()
         )
 
+    async def lock_package_tree(self) -> None:
+        self.calls.append("tree")
+
     async def lock_elements(self, ids: Iterable[UUID]) -> None:
+        self.calls.append("elements")
         self.locked.extend(sorted(set(ids)))
 
 

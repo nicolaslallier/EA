@@ -35,10 +35,14 @@ from ea.domain.errors import (
     DomainError,
     DuplicateDiagramError,
     DuplicateElementError,
+    DuplicatePackageError,
     ElementLockedError,
     ElementNotFoundError,
     IllegalRelationshipError,
+    PackageNotFoundError,
+    PackageTooDeepError,
     RowRefusedError,
+    TooManyPackagesError,
 )
 from ea.domain.exchange import (
     MAX_DESCRIPTION_LENGTH,
@@ -51,6 +55,7 @@ from ea.domain.exchange import (
     ExchangeModel,
     ExchangeRelationship,
     ExchangeView,
+    FolderStep,
     ImportOptions,
     Issue,
     Outcome,
@@ -59,10 +64,12 @@ from ea.domain.exchange import (
     Unreadable,
     accept_element,
     accept_link,
+    plan_folders,
     validate_box,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element
+from ea.domain.packages import MAX_MOVE_BATCH
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, MutableSet, Sequence
@@ -70,6 +77,7 @@ if TYPE_CHECKING:
     from ea.domain.ports import ExchangeRepository
     from ea.services.architecture import ArchitectureService
     from ea.services.diagrams import DiagramService
+    from ea.services.packages import PackageService
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +90,10 @@ _CODES: Final[dict[type[Exception], str]] = {
     ElementNotFoundError: "unknown_end",
     ElementLockedError: "element_locked",
     DuplicateDiagramError: "duplicate_view",
+    DuplicatePackageError: "duplicate_package",
+    PackageTooDeepError: "package_too_deep",
+    TooManyPackagesError: "too_many_packages",
+    PackageNotFoundError: "unknown_package",
 }
 _MISSING: Final = object()
 _ADDED: Final = object()
@@ -168,6 +180,9 @@ class _State:
     ids: dict[str, UUID] = field(default_factory=dict)
     #: Diagram names taken: the catalogue's, then this import's (through the ledger).
     diagram_names: set[str] = field(default_factory=set)
+    #: The package tree by path (casefolded names from the root): the catalogue's, then this
+    #: import's (through the ledger).
+    packages: dict[tuple[str, ...], UUID] = field(default_factory=dict)
     created: set[ElementKey] = field(default_factory=set)
     added_links: set[LinkKey] = field(default_factory=set)
     #: File identifiers whose row was refused. Deliberately outside the ledger: a refused
@@ -192,10 +207,28 @@ class _ViewStep:
 
 
 @dataclass(frozen=True, slots=True)
+class _FolderStep:
+    """A folder judged in memory: the elements this import created that it files, and the
+    ones it merely found (which stay where they are)."""
+
+    folder: FolderStep
+    created: tuple[UUID, ...]
+    found: tuple[tuple[str, UUID], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _FilingStep:
+    """The new elements that no folder lists, filed in the target package."""
+
+    package: UUID
+    created: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _Row:
     index: int  # position in the file; the report follows it
     category: Category
-    item: ExchangeElement | ExchangeRelationship | _ViewStep
+    item: ExchangeElement | ExchangeRelationship | _ViewStep | _FolderStep | _FilingStep
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,11 +238,18 @@ class _Result:
     issues: tuple[Issue, ...] = ()
 
 
-def _located(issue: Issue, item: ExchangeElement | ExchangeRelationship | _ViewStep) -> Issue:
+def _located(
+    issue: Issue,
+    item: ExchangeElement | ExchangeRelationship | _ViewStep | _FolderStep | _FilingStep,
+) -> Issue:
     if isinstance(item, _ViewStep):
         return Issue(
             issue.severity, issue.code, issue.message, item.view.identifier, None, item.view.path
         )
+    if isinstance(item, _FolderStep):
+        return Issue(issue.severity, issue.code, issue.message, None, None, item.folder.where)
+    if isinstance(item, _FilingStep):
+        return issue
     return Issue(issue.severity, issue.code, issue.message, item.identifier, item.line, item.path)
 
 
@@ -252,7 +292,11 @@ class ImportRun:
         options: ImportOptions,
         *,
         diagrams: DiagramService | None = None,
+        packages: PackageService | None = None,
     ) -> None:
+        self._packages = packages
+        self._package_of: dict[UUID, UUID | None] = {}
+        self._loose: list[tuple[Category, Issue]] = []
         self._repository = repository
         self._architecture = architecture
         self._options = options
@@ -276,6 +320,13 @@ class ImportRun:
         )
         for skipped in model.unreadable:
             self._count_unreadable(skipped, state, report)
+        # The tree before the elements: a deletion or a move in the tree takes its lock and then
+        # the rows of the elements it carries, so an import that held elements and then waited
+        # for the tree could be a half of a deadlock. The target is checked before any write.
+        if self._files_into_packages(model):
+            await self._seed_packages(state)
+            await self._repository.lock_package_tree()
+        self._package_of = {e.id: e.package_id for e in known}
         rows = self._plan(model, state)
         await self._repository.lock_elements(self._touched(rows, state))
 
@@ -299,6 +350,8 @@ class ImportRun:
             report.count(result.category, result.outcome)
             for issue in result.issues:
                 report.add(issue, result.category)
+        for category, issue in self._loose:
+            report.add(issue, category)
 
     def _refuse_row(self, row: _Row, error: Exception) -> None:
         self._results[row.index] = _Result(
@@ -420,7 +473,7 @@ class ImportRun:
         touched: set[UUID] = set()
         for row in rows:
             item = row.item
-            if isinstance(item, _ViewStep):
+            if not isinstance(item, ExchangeElement | ExchangeRelationship):
                 continue
             names = (
                 [item.identifier]
@@ -439,8 +492,13 @@ class ImportRun:
                 result = await self._element(row, row.item, state)
             elif isinstance(row.item, ExchangeRelationship):
                 result = await self._link(row, row.item, state)
-            else:
+            elif isinstance(row.item, _ViewStep):
                 result = await self._view(row, row.item, state)
+            elif isinstance(row.item, _FolderStep):
+                result = await self._folder(row, row.item, state)
+            else:
+                await self._file(row.item.created, row.item.package)
+                result = _Result(row.category, Outcome.REUSED)
         except Exception as error:
             if isinstance(row.item, ExchangeElement):
                 state.refused.add(row.item.identifier)
@@ -603,7 +661,89 @@ class ImportRun:
         is left to refuse is a name taken a moment ago or a lost race, not a bad file.
         """
         rows: list[_Row] = []
+        rows.extend(self._plan_packages(model, state))
         rows.extend(await self._plan_views(model, state))
+        return rows
+
+    def _files_into_packages(self, model: ExchangeModel) -> bool:
+        return self._packages is not None and bool(model.folders or self._options.target_package_id)
+
+    async def _seed_packages(self, state: _State) -> None:
+        """Read the tree once: every path, and the target (which must exist: a 404 otherwise)."""
+        if self._packages is None:  # pragma: no cover - guarded by `_files_into_packages`
+            return
+        by_id = {s.package.id: s.package for s in await self._packages.list_packages()}
+
+        def path_of(package_id: UUID) -> tuple[str, ...]:
+            names: list[str] = []
+            current: UUID | None = package_id
+            while current is not None and current in by_id and len(names) <= len(by_id):
+                names.append(by_id[current].name.casefold())
+                current = by_id[current].parent_id
+            return tuple(reversed(names))
+
+        for package_id in by_id:
+            state.packages[path_of(package_id)] = package_id
+        target = self._options.target_package_id
+        if target is not None and target not in by_id:
+            msg = f"no package with id {target}"
+            raise PackageNotFoundError(msg)
+
+    def _plan_packages(self, model: ExchangeModel, state: _State) -> list[_Row]:
+        """Judge the folders in memory; the database is left to refuse only a lost race."""
+        if not model.folders and not self._options.target_package_id:
+            return []
+        if self._packages is None:
+            if model.folders:
+                self._loose.append(
+                    (
+                        Category.PACKAGES,
+                        Issue(
+                            Severity.INFO,
+                            "packages_not_available",
+                            "this deployment cannot store packages; the folders are ignored",
+                        ),
+                    )
+                )
+            return []
+        target = self._options.target_package_id
+        base = next((p for p, i in state.packages.items() if i == target), ()) if target else ()
+        steps, notes = plan_folders(model.folders, base=base, existing=list(state.packages))
+        for note in notes:
+            issue = Issue(
+                Severity.ERROR if note.rejected else Severity.WARNING,
+                note.code,
+                note.message,
+                None,
+                None,
+                note.where,
+            )
+            if note.rejected:
+                self._results[self._take()] = _Result(Category.PACKAGES, Outcome.REJECTED, (issue,))
+            else:
+                self._loose.append((Category.PACKAGES, issue))
+        created_ids = {state.by_key[key].id for key in state.created}
+        rows: list[_Row] = []
+        filed: set[UUID] = set()
+        for step in steps:
+            made: list[UUID] = []
+            found: list[tuple[str, UUID]] = []
+            for identifier in step.identifiers:
+                uid = None if identifier in state.refused else state.ids.get(identifier)
+                if uid is None:
+                    continue
+                if uid in created_ids:
+                    if uid not in filed:
+                        filed.add(uid)
+                        made.append(uid)
+                else:
+                    found.append((identifier, uid))
+            rows.append(
+                _Row(self._take(), Category.PACKAGES, _FolderStep(step, tuple(made), tuple(found)))
+            )
+        loose = sorted(created_ids - filed, key=str)
+        if target is not None and loose:
+            rows.append(_Row(self._take(), Category.PACKAGES, _FilingStep(target, tuple(loose))))
         return rows
 
     def _take(self) -> int:
@@ -719,6 +859,43 @@ class ImportRun:
         self._ledger.add(state.diagram_names, name)
         await diagrams.replace_layout(diagram.id, list(step.nodes))
         return _Result(row.category, Outcome.CREATED, step.notes)
+
+    async def _folder(self, row: _Row, step: _FolderStep, state: _State) -> _Result:
+        """Find or create the package, then file the elements this import created into it.
+        An element that was already there is not moved: filing is a change to it, and an
+        approved one would be refused; the import never changes what it merely found."""
+        packages = self._packages
+        if packages is None:  # pragma: no cover - a step exists only when there is a service
+            msg = "no package service"
+            raise RuntimeError(msg)
+        folder = step.folder
+        package = state.packages.get(folder.path)
+        outcome = Outcome.REUSED
+        if package is None:
+            parent = state.packages.get(folder.parent) if folder.parent else None
+            package = (await packages.create(name=folder.name, parent_id=parent)).package.id
+            self._ledger.put(state.packages, folder.path, package)
+            outcome = Outcome.CREATED
+        await self._file(step.created, package)
+        issues = tuple(
+            Issue(
+                Severity.WARNING,
+                "package_not_applied",
+                "an element already in the catalogue keeps its package",
+                identifier,
+                None,
+                folder.where,
+            )
+            for identifier, uid in step.found
+            if self._package_of.get(uid) != package
+        )
+        return _Result(row.category, outcome, issues)
+
+    async def _file(self, elements: Sequence[UUID], package: UUID) -> None:
+        if self._packages is None:  # pragma: no cover
+            return
+        for start in range(0, len(elements), MAX_MOVE_BATCH):
+            await self._packages.move_elements(elements[start : start + MAX_MOVE_BATCH], package)
 
 
 def _ignored_notes(view: ExchangeView) -> tuple[Issue, ...]:

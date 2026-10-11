@@ -399,3 +399,116 @@ class TestBoxes:
 
         assert (MAX_VIEW_BOXES, MAX_VIEW_COORDINATE) == (MAX_DIAGRAM_NODES, MAX_COORDINATE)
         assert (MIN_VIEW_BOX_SIZE, MAX_VIEW_BOX_SIZE) == (MIN_BOX_SIZE, MAX_BOX_SIZE)
+
+
+class TestPlanningFolders:
+    def folder(self, label: str, *children, items: tuple[str, ...] = ()):  # type: ignore[no-untyped-def]
+        from ea.domain.exchange import ExchangeFolder
+
+        return ExchangeFolder(label, items, tuple(children))
+
+    def test_a_tree_is_planned_parent_first_with_the_names_cased_folded(self) -> None:
+        from ea.domain.exchange import plan_folders
+
+        tree = self.folder("Top", self.folder("Sub", items=("a",)), items=("b",))
+
+        steps, refusals = plan_folders([tree], base=(), existing=())
+
+        assert refusals == []
+        assert [(s.path, s.name, s.identifiers) for s in steps] == [
+            (("top",), "Top", ("b",)),
+            (("top", "sub"), "Sub", ("a",)),
+        ]
+
+    @pytest.mark.parametrize(
+        ("label", "code"),
+        [
+            ("A/B", "invalid_package_name"),
+            (" ", "invalid_package_name"),
+            ("x" * 201, "invalid_package_name"),
+            ("a\x00", "invalid_package_name"),
+        ],
+    )
+    def test_a_name_a_package_cannot_carry_is_refused_with_its_subtree(
+        self, label: str, code: str
+    ) -> None:
+        from ea.domain.exchange import plan_folders
+
+        steps, refusals = plan_folders(
+            [self.folder(label, self.folder("Child")), self.folder("Fine")], base=(), existing=()
+        )
+
+        assert [s.name for s in steps] == ["Fine"]
+        assert [r.code for r in refusals] == [code, "parent_rejected"]
+
+    def test_two_siblings_differing_only_by_case_are_a_duplicate(self) -> None:
+        from ea.domain.exchange import plan_folders
+
+        steps, refusals = plan_folders(
+            [self.folder("Net"), self.folder("net")], base=(), existing=()
+        )
+
+        assert [s.name for s in steps] == ["Net"]
+        assert [r.code for r in refusals] == ["duplicate_package"]
+
+    def test_the_same_name_under_two_parents_is_fine(self) -> None:
+        from ea.domain.exchange import plan_folders
+
+        steps, refusals = plan_folders(
+            [self.folder("A", self.folder("X")), self.folder("B", self.folder("X"))],
+            base=(),
+            existing=(),
+        )
+
+        assert refusals == [] and len(steps) == 4
+
+    def test_depth_counts_from_the_root_of_the_tree_the_target_included(self) -> None:
+        from ea.domain.exchange import plan_folders
+        from ea.domain.packages import MAX_PACKAGE_DEPTH
+
+        chain = self.folder("l1")
+        for level in range(2, 6):
+            chain = self.folder(f"l{level}", chain)  # built inside out: l5 is the root
+        base = tuple(f"t{i}" for i in range(MAX_PACKAGE_DEPTH - 2))  # a target at level 10
+
+        steps, refusals = plan_folders([chain], base=base, existing=())
+
+        assert [s.name for s in steps] == ["l5", "l4"]  # levels 11 and 12
+        assert {r.code for r in refusals} == {"package_too_deep", "parent_rejected"}
+
+    def test_the_catalogue_holds_at_most_so_many_packages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ea.domain.exchange import plan_folders
+
+        monkeypatch.setattr("ea.domain.exchange.MAX_PACKAGES", 3)
+
+        steps, refusals = plan_folders(
+            [self.folder("A"), self.folder("B"), self.folder("C"), self.folder("D")],
+            base=(),
+            existing=[("old",)],
+        )
+
+        assert [s.name for s in steps] == ["A", "B"]
+        assert [r.code for r in refusals] == ["too_many_packages", "too_many_packages"]
+
+    def test_a_folder_already_there_costs_no_place(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ea.domain.exchange import plan_folders
+
+        monkeypatch.setattr("ea.domain.exchange.MAX_PACKAGES", 1)
+
+        steps, refusals = plan_folders([self.folder("Old")], base=(), existing=[("old",)])
+
+        assert [s.name for s in steps] == ["Old"] and refusals == []
+
+    def test_an_element_listed_in_two_folders_stays_in_the_first(self) -> None:
+        from ea.domain.exchange import plan_folders
+
+        steps, refusals = plan_folders(
+            [self.folder("A", items=("x",)), self.folder("B", items=("x", "y"))],
+            base=(),
+            existing=(),
+        )
+
+        assert [s.identifiers for s in steps] == [("x",), ("y",)]
+        assert [r.code for r in refusals] == ["package_duplicate_item"]

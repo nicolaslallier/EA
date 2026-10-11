@@ -8,6 +8,7 @@ caller sent.
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
@@ -108,7 +109,7 @@ IMPORT_ERRORS: dict[int | str, dict[str, type[ErrorResponse]]] = {
 #: The parts every import's form may carry, and those of each format. Anything else is
 #: refused, not ignored: an unknown field is a client that believes it asked for something
 #: the server will not do, and a file of the other format is a client that sent the wrong one.
-SHARED_FIELDS = frozenset({"format", "dry_run", "on_conflict", "strict"})
+SHARED_FIELDS = frozenset({"format", "dry_run", "on_conflict", "strict", "target_package_id"})
 XML_FIELDS = frozenset({"file", "with_views"})
 CSV_FIELDS = frozenset({"elements", "relations", "properties", "safe_cells"})
 IMPORT_FIELDS = SHARED_FIELDS | XML_FIELDS | CSV_FIELDS
@@ -155,6 +156,10 @@ async def import_model(
     strict: Annotated[
         bool, Form(description="If any row is refused, write nothing at all.")
     ] = False,
+    target_package_id: Annotated[
+        UUID | None,
+        Form(description="Where new packages and new elements outside any folder are put."),
+    ] = None,
     with_views: Annotated[
         bool, Form(description="XML only. Recreate the views of the file (their boxes).")
     ] = True,
@@ -194,6 +199,7 @@ async def import_model(
             strict=strict,
             safe_cells=safe_cells,
             with_views=with_views,
+            target_package_id=target_package_id,
         ),
     )
     return ImportReportRead.of(report)

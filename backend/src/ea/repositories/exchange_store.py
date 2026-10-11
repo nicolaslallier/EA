@@ -18,15 +18,17 @@ from sqlalchemy.orm import aliased
 
 from ea.db.models.architecture import ElementRecord, RelationshipRecord
 from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
+from ea.db.models.package import PackageRecord
 from ea.db.unit_of_work import apply_rows, in_unit, reading, shared_transaction
 from ea.domain.archimate import RelationshipType
-from ea.domain.exchange import SOURCE_ID, ExportedBox, ExportedView
+from ea.domain.exchange import SOURCE_ID, ExportedBox, ExportedView, PackageNode
 from ea.repositories.architecture_store import (
     element_from_row,
     lock_elements,
     relationship_from_row,
 )
 from ea.repositories.conflicts import replayable
+from ea.repositories.package_store import TREE_LOCK
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
@@ -83,6 +85,12 @@ class _Snapshot:
             .limit(limit)
         )
         return tuple(relationship_from_row(row) for row in await self._session.scalars(statement))
+
+    async def packages(self) -> tuple[PackageNode, ...]:
+        rows = await self._session.execute(
+            select(PackageRecord.id, PackageRecord.parent_id, PackageRecord.name)
+        )
+        return tuple(PackageNode(*row) for row in rows)
 
     async def views_page(self, offset: int, limit: int) -> tuple[ExportedView, ...]:
         diagrams = (
@@ -178,6 +186,14 @@ class PostgresExchangeRepository:
             return frozenset(
                 (RelationshipType(kind), source, target) for kind, source, target in rows
             )
+
+    @replayable
+    async def lock_package_tree(self) -> None:
+        # The lock every write to the tree takes first (docs/adr/0042), taken before the
+        # element locks so that an import and a package write meet in the same order.
+        self._inside_a_transaction()
+        async with reading(self._sessions) as session:
+            await session.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
 
     @replayable
     async def lock_elements(self, ids: Iterable[UUID]) -> None:
