@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from ea.domain.approval import ApprovalState
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AUDIT_LISTED_IDS
@@ -401,3 +402,43 @@ class TestTheDigestOfAPlan:
         other_ids = replace(base, cascades=(replace(base.cascades[0], document_ids=(uuid4(),)),))
 
         assert len({plan_digest(base), plan_digest(moved), plan_digest(other_ids)}) == 3
+
+
+class TestReview:
+    """What a restoration does to the review state of the elements it writes (docs/adr/0046)."""
+
+    def test_an_updated_element_keeps_the_review_state_it_has_now(self) -> None:
+        original = node("billing")
+        in_review = replace(original, name="invoicing", approval_state=ApprovalState.IN_REVIEW)
+
+        result = plan(ModelSnapshot((original,), ()), ModelSnapshot((in_review,), ()))
+
+        (update,) = result.elements_to_update
+        assert update.restored.name == "billing"
+        assert update.restored.approval_state is ApprovalState.IN_REVIEW
+
+    def test_an_approved_element_the_plan_changes_would_go_back_to_review_never_stay_approved(
+        self,
+    ) -> None:
+        """Defence in depth: the repository blocks these; the planner never approves in silence."""
+        original = node("billing")
+        approved = replace(
+            original,
+            name="invoicing",
+            approval_state=ApprovalState.APPROVED,
+            approved_by_sub="approver-1",
+            approved_at=NOW,
+        )
+
+        result = plan(ModelSnapshot((original,), ()), ModelSnapshot((approved,), ()))
+
+        (update,) = result.elements_to_update
+        assert update.restored.approval_state is ApprovalState.IN_REVIEW
+        assert update.restored.approved_by_sub is None
+
+    def test_a_recreated_element_is_a_draft(self) -> None:
+        gone = node("gone")
+
+        result = plan(ModelSnapshot((gone,), ()), ModelSnapshot((), ()))
+
+        assert result.elements_to_create[0].approval_state is ApprovalState.DRAFT

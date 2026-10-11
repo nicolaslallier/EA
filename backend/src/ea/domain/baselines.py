@@ -19,6 +19,7 @@ from itertools import islice
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from ea.domain.approval import reviewed_after_change
 from ea.domain.archimate import validate_relationship
 from ea.domain.audit import AUDIT_LISTED_IDS, FieldChange, diff_fields
 from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
@@ -544,8 +545,9 @@ def plan_restore(
     foreign keys — counted in `cascaded_relationships`, not listed. A link the
     metamodel no longer allows is a warning and is skipped.
 
-    **A protected element is touched by nothing.** `protected_ids` (the locked
-    elements) blocks the plan whenever the restoration would: change its fields
+    **A protected element is touched by nothing.** `protected_ids` (the approved
+    and locked elements, docs/adr/0046) blocks the plan whenever the restoration
+    would: change its fields
     or its package; delete it (and so its documents, boxes and links); delete,
     replace or cascade away a link it holds; or write an element that would take
     its (type, name), its address or its prefix. The caller re-reads the set
@@ -573,7 +575,21 @@ def plan_restore(
             element_content(cur_el[identifier]), element_content(snap_el[identifier])
         )
         if changes:
-            updates.append(ElementUpdate(cur_el[identifier], snap_el[identifier], changes))
+            now_held = cur_el[identifier]
+            # A baseline does not copy the review state (docs/adr/0046): what is
+            # written keeps the state the element has now — and is never left
+            # approved, for a content it was not approved on.
+            restored = reviewed_after_change(
+                replace(
+                    snap_el[identifier],
+                    approval_state=now_held.approval_state,
+                    locked=now_held.locked,
+                    approved_by_sub=now_held.approved_by_sub,
+                    approved_at=now_held.approved_at,
+                    revision=now_held.revision,
+                )
+            )
+            updates.append(ElementUpdate(now_held, restored, changes))
     updates.sort(key=lambda u: _element_order(u.restored))
     to_delete = (
         ()

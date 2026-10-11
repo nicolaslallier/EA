@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
 
 from ea.core.logging import request_id
+from ea.domain.approval import ApprovalState
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction
@@ -30,6 +32,7 @@ from tests.conftest import (
     InMemoryBaselines,
     InMemoryDiagrams,
     InMemoryDocuments,
+    InMemoryRepository,
     a_reader,
 )
 
@@ -397,3 +400,39 @@ class TestTheTrailSaysEverythingThatWentAndMoved:
                 }
             ],
         }
+
+
+class TestApprovedAndLockedElements:
+    async def freeze(
+        self, repository: InMemoryRepository, element_id: UUID, *, locked: bool
+    ) -> None:
+        repository.elements[element_id] = replace(
+            repository.elements[element_id],
+            approval_state=ApprovalState.APPROVED,
+            locked=locked,
+            approved_by_sub="approver-1",
+            approved_at=FIXED_NOW,
+        )
+
+    @pytest.mark.parametrize("locked", [False, True])
+    async def test_an_approved_or_locked_element_blocks_the_application_not_the_dry_run(
+        self,
+        service: ArchitectureService,
+        baseline_service: BaselineService,
+        repository: InMemoryRepository,
+        audit_log: InMemoryAuditLog,
+        locked: bool,
+    ) -> None:
+        element = await service.create_element(element_type=E.NODE, name="billing")
+        baseline = await baseline_service.create(name="v1")
+        await service.update_element(element.id, name="invoicing")
+        await self.freeze(repository, element.id, locked=locked)
+        audit_log.events.clear()
+
+        planned = await baseline_service.restore(baseline.id)
+        with pytest.raises(RestoreBlockedError, match="invoicing"):
+            await apply(baseline_service, baseline.id)
+
+        assert [e.name for e in planned.plan.blocked] == ["invoicing"]
+        assert repository.elements[element.id].name == "invoicing"
+        assert audit_log.events == []

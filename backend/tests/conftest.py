@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from ea.domain.approval import is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
     AuditAction,
@@ -827,7 +828,8 @@ class InMemoryBaselines:
 
     Capture copies the dicts. `apply_restore` plans again on the double's own
     state, refuses a plan that is not the one expected or that touches a
-    protected element (`protected`, a set a test fills), mutates and swaps in
+    protected element (`protected`, a set a test fills, plus every approved or locked
+    one, as the real repository reads them), mutates and swaps in
     only if every step held — the all-or-nothing the real transaction gives,
     uniqueness of (type, name) and of addresses included.
     """
@@ -910,7 +912,8 @@ class InMemoryBaselines:
             await self.current_snapshot(),
             keep_new=keep_new,
             packages_present=frozenset(self.packages.packages if self.packages else ()),
-            protected_ids=frozenset(self.protected),
+            protected_ids=frozenset(self.protected)
+            | frozenset(e.id for e in self.graph.elements.values() if is_frozen(e)),
             diagrams_present=frozenset(self.diagrams.diagrams),
         )
         held: dict[UUID, list[UUID]] = {}

@@ -375,3 +375,106 @@ async def test_the_journal_of_a_restoration_lets_one_rebuild_everything_that_dis
         "diagrams": {"count": 1, "ids": [str(model.diagram.id)]},
     }
     assert deleted.correlation == f"restore:{empty.id}"
+
+
+# --- Review and locking (docs/adr/0046) ------------------------------------
+
+
+async def freeze(engine: AsyncEngine, element_id: UUID, *, locked: bool = False) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE elements SET approval_state = 'approved', locked = :locked, "
+                "approved_by_sub = 'approver-1', approved_at = now() WHERE id = :id"
+            ),
+            {"id": element_id, "locked": locked},
+        )
+
+
+async def test_the_real_repository_protects_approved_and_locked_elements_out_of_the_box(
+    engine_at_head: AsyncEngine,
+) -> None:
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    await model.graph.update_element(
+        model.left.id, lambda e: e.rename("renamed", now=LATER), audit=()
+    )
+
+    for locked in (False, True):
+        await freeze(engine_at_head, model.left.id, locked=locked)
+        plan = await model.baselines.restore_plan(baseline.id, keep_new=False)
+        assert [e.id for e in plan.blocked] == [model.left.id], locked
+        with pytest.raises(RestoreBlockedError, match="renamed"):
+            await model.baselines.apply_restore(
+                baseline.id, keep_new=False, expected=plan, now=LATER, audit=restored
+            )
+
+    left = await model.graph.get_element(model.left.id)
+    assert left is not None and left.name == "renamed"
+    assert await events(model) == [AuditAction.BASELINE_CREATED]  # a refusal leaves no event
+
+
+async def test_a_lock_put_after_the_dry_run_is_read_inside_the_transaction_and_stops_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    await model.graph.update_element(
+        model.left.id, lambda e: e.rename("renamed", now=LATER), audit=()
+    )
+    plan = await model.baselines.restore_plan(baseline.id, keep_new=False)
+    assert not plan.is_blocked
+
+    await freeze(engine_at_head, model.left.id, locked=True)  # after the dry run
+    with pytest.raises(RestoreBlockedError):
+        await model.baselines.apply_restore(
+            baseline.id, keep_new=False, expected=plan, now=LATER, audit=restored
+        )
+
+    left = await model.graph.get_element(model.left.id)
+    assert left is not None and left.name == "renamed"
+
+
+async def test_deleting_an_approved_element_by_restoration_is_blocked_too(
+    engine_at_head: AsyncEngine,
+) -> None:
+    model = Model(engine_at_head)
+    empty = await model.baselines.create(a_baseline("empty"), audit=created)
+    await model.seed()
+    await freeze(engine_at_head, model.right.id)
+
+    plan = await model.baselines.restore_plan(empty.id, keep_new=False)
+
+    assert model.right.id in {e.id for e in plan.blocked}
+    with pytest.raises(RestoreBlockedError):
+        await model.baselines.apply_restore(
+            empty.id, keep_new=False, expected=plan, now=LATER, audit=restored
+        )
+    assert await model.graph.get_element(model.right.id) is not None
+
+
+async def test_an_element_in_review_is_restored_and_stays_in_review(
+    engine_at_head: AsyncEngine,
+) -> None:
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    await model.graph.update_element(
+        model.left.id, lambda e: e.rename("renamed", now=LATER), audit=()
+    )
+    async with engine_at_head.begin() as connection:
+        await connection.execute(
+            text("UPDATE elements SET approval_state = 'in_review' WHERE id = :id"),
+            {"id": model.left.id},
+        )
+    before = await model.graph.get_element(model.left.id)
+    assert before is not None
+
+    await restore(model, baseline.id)
+
+    left = await model.graph.get_element(model.left.id)
+    assert left is not None and left.name == "a"
+    assert left.approval_state.value == "in_review"
+    assert left.revision == before.revision + 1  # a restoration is a change of content

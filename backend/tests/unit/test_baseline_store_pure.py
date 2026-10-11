@@ -39,7 +39,6 @@ from ea.repositories.baseline_store import (
     _copied_element,
     _copied_relationship,
     _is_serialization_failure,
-    no_element_is_protected,
 )
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
@@ -315,10 +314,6 @@ class TestReadingRows:
         row = SimpleNamespace(diagram_id=uuid4(), element_id=uuid4(), x=1, y=2, width=3, height=4)
 
         assert _box(row) == BoxSnapshot(row.diagram_id, row.element_id, 1, 2, 3, 4)  # type: ignore[arg-type]
-
-    @pytest.mark.asyncio
-    async def test_nothing_is_protected_until_the_approval_lot(self) -> None:
-        assert await no_element_is_protected(None) == frozenset()  # type: ignore[arg-type]
 
     def test_only_a_serialization_failure_or_a_deadlock_is_replayable(self) -> None:
         assert _is_serialization_failure(DBAPIError("", {}, driver_error("40001")))

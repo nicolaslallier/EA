@@ -174,7 +174,7 @@ class BaselineService:
                 "restoration refused: protected elements",
                 extra={"action": "restore_blocked", **refusal_context(baseline_id, plan.blocked)},
             )
-            msg = f"{blocked_message(plan.blocked)}. Unlock them first"
+            msg = f"{blocked_message(plan.blocked)}. Unlock or reopen them first"
             raise RestoreBlockedError(msg)
         story = f"restore:{baseline.id}"
 

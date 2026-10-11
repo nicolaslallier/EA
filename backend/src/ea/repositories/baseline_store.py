@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
+from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, or_, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as upsert
 from sqlalchemy.engine import CursorResult
@@ -112,12 +112,29 @@ _RELATIONSHIP_COLUMNS = (
 _BOX_COLUMNS = ("diagram_id", "element_id", "x", "y", "width", "height")
 
 #: Which elements are protected from a restoration, read in the transaction that
-#: applies it. Nothing protects an element until the approval lot (docs/adr/0045).
+#: applies it (docs/adr/0046).
 ProtectedIds = Callable[["AsyncSession"], Awaitable[frozenset["UUID"]]]
 
+#: The only review states a restoration may write over; any other value is protected.
+_REWRITABLE: Final = ("draft", "in_review")
 
-async def no_element_is_protected(session: AsyncSession) -> frozenset[UUID]:
-    return frozenset()
+
+async def approved_or_locked(session: AsyncSession) -> frozenset[UUID]:
+    """The elements a restoration must not touch: approved, locked, or in a state it does not know.
+
+    Fail closed: the test is "not draft and not in review", so a value outside the
+    enumeration protects instead of exposing. A restoration is a bulk rewrite, so
+    it respects the approval whoever asks — an approver reopens first — and is
+    read inside the SERIALIZABLE transaction that writes, where a lock committed
+    after its snapshot makes the update of that row a serialization failure
+    (a replayable conflict) rather than a silent overwrite.
+    """
+    found = await session.scalars(
+        select(ElementRecord.id).where(
+            or_(ElementRecord.locked.is_(True), ElementRecord.approval_state.not_in(_REWRITABLE))
+        )
+    )
+    return frozenset(found)
 
 
 def _paths() -> CTE:
@@ -368,7 +385,7 @@ class PostgresBaselineRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         limits: BaselineLimits = BaselineLimits(),  # noqa: B008 - frozen, shared on purpose
-        protected: ProtectedIds = no_element_is_protected,
+        protected: ProtectedIds = approved_or_locked,
     ) -> None:
         self._sessions = sessions
         self._limits = limits
@@ -643,6 +660,12 @@ async def _write(session: AsyncSession, plan: RestorePlan, now: datetime) -> Non
         row.properties = dict(update.restored.properties)
         row.package_id = update.restored.package_id
         row.updated_at = now
+        # A restoration changes the content: a new revision, and the review state
+        # the plan computed (which a baseline does not copy).
+        row.revision = update.current.revision + 1
+        row.approval_state = update.restored.approval_state.value
+        row.approved_by_sub = update.restored.approved_by_sub
+        row.approved_at = update.restored.approved_at
         await _flush_restoring(session, update.restored)
     for element in plan.elements_to_create:
         session.add(ElementRecord(**element_row(element), package_id=element.package_id))
