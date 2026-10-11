@@ -23,18 +23,27 @@ same replayable `WriteConflictError`, and the end of the block rolls back.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Final
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import func, select
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
 
-from ea.domain.errors import ImportInProgressError, WriteConflictError
+from ea.domain.errors import (
+    DomainError,
+    ImportInProgressError,
+    NotAuthenticatedError,
+    NotAuthorisedError,
+    TooManyRefusedRowsError,
+    WriteConflictError,
+)
 from ea.domain.ports import Transaction
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -43,6 +52,23 @@ logger = logging.getLogger(__name__)
 #: The advisory lock one import at a time holds ("EAIX"); `package_store.TREE_LOCK` is another.
 IMPORT_LOCK: Final = 0x45414958
 
+#: Rows per `SAVEPOINT`. A savepoint that wrote stays counted against the transaction until
+#: it ends, even once released, and PostgreSQL stops tracking sub-transactions at 64 per
+#: transaction (it then slows every other session's snapshots): 50 000 rows / 1 000 = 50.
+BATCH_SIZE: Final = 1_000
+#: Refused rows an import tolerates. Each costs a replay of the rows before it in its batch.
+MAX_REFUSED_ROWS: Final = 100
+
+#: What a row can be refused with. Anything else (a lost lock, a missing role) is not its fault.
+_ROW_REFUSALS: Final = (DomainError, IntegrityError, DataError)
+_NOT_THE_ROWS: Final = (
+    WriteConflictError,
+    ImportInProgressError,
+    NotAuthenticatedError,
+    NotAuthorisedError,
+    TooManyRefusedRowsError,
+)
+
 _CONDEMNED: Final = "another change got in the way of this one: run the import again"
 
 
@@ -50,6 +76,8 @@ class _Unit:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.condemned = False
+        #: Open batches (or replays): a call inside one adds no savepoint of its own.
+        self.batched = 0
 
     def refuse_if_condemned(self) -> None:
         if self.condemned:
@@ -60,10 +88,14 @@ _current: ContextVar[_Unit | None] = ContextVar("ea_unit_of_work", default=None)
 
 
 def is_serialization_failure(error: DBAPIError) -> bool:
-    """SQLSTATE 40001 (and 40P01, a deadlock) — carried by the driver's own exception."""
+    """SQLSTATE 40001, 40P01 (a deadlock) or 55P03 (a lock wait that timed out).
+
+    All three mean "another change got in the way: run it again", and the
+    sub-state they leave a transaction in is not one to carry on from.
+    """
     cause = getattr(error.orig, "__cause__", None)
     code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
-    return code in ("40001", "40P01")
+    return code in ("40001", "40P01", "55P03")
 
 
 def ambient_session() -> AsyncSession | None:
@@ -95,6 +127,37 @@ def _joined(unit: _Unit, *, alone: bool) -> AsyncSession:
     return unit.session
 
 
+_SAVEPOINT_NAME: Final = re.compile(r"sa_savepoint_\d+")
+
+
+@asynccontextmanager
+async def _nested(session: AsyncSession) -> AsyncIterator[None]:
+    """`session.begin_nested()` that also lets go of its savepoint when it is rolled back.
+
+    `ROLLBACK TO SAVEPOINT` undoes the writes but leaves the savepoint alive, as an empty
+    sub-transaction one level deeper. The next write then gives an id to every level above
+    it, so each refusal would add one tracked sub-transaction until PostgreSQL's cache of 64
+    overflows (measured: docs/adr/0050). Releasing the empty level right away costs nothing.
+    """
+    transaction = await session.begin_nested()
+    await session.connection()  # SQLAlchemy emits the SAVEPOINT on first use of the connection
+    # SQLAlchemy's own name for it: there is no public way to ask for it.
+    held: Any = transaction.sync_transaction
+    name: str = next(entry[1]._savepoint for entry in held._connections.values())
+    assert _SAVEPOINT_NAME.fullmatch(name), name
+    try:
+        yield
+    except BaseException:
+        await transaction.rollback()
+        try:
+            await session.execute(text(f"RELEASE SAVEPOINT {name}"))
+        except SQLAlchemyError:  # the connection is gone: nothing to release, the unit is lost
+            logger.warning("savepoint not released", extra={"action": "savepoint_release_failed"})
+        raise
+    else:
+        await transaction.commit()
+
+
 @asynccontextmanager
 async def work(
     sessions: async_sessionmaker[AsyncSession], *, alone: bool = False
@@ -113,8 +176,11 @@ async def work(
         return
     session = _joined(unit, alone=alone)
     try:
-        async with session.begin_nested():
+        if unit.batched:
             yield session
+        else:
+            async with _nested(session):
+                yield session
     except DBAPIError as error:
         if is_serialization_failure(error):
             unit.condemned = True
@@ -189,11 +255,90 @@ async def shared_transaction(
 
 @asynccontextmanager
 async def savepoint() -> AsyncIterator[None]:
-    """A `SAVEPOINT` for one row: a refusal undoes only its own writes, and re-raises."""
+    """A `SAVEPOINT` around several calls: any exception undoes all of them, and re-raises.
+
+    Calls made inside it open no savepoint of their own. Prefer `apply_rows`, which
+    batches rows so an import stays under PostgreSQL's 64 tracked sub-transactions.
+    """
     unit = _current.get()
     if unit is None:
         msg = "a savepoint needs a shared transaction"
         raise RuntimeError(msg)
     unit.refuse_if_condemned()
-    async with unit.session.begin_nested():
-        yield
+    unit.batched += 1
+    try:
+        async with _nested(unit.session):
+            yield
+    finally:
+        unit.batched -= 1
+
+
+@dataclass(frozen=True, slots=True)
+class RowRefusal:
+    index: int
+    error: Exception
+
+
+async def apply_rows[Row](
+    rows: Sequence[Row],
+    apply: Callable[[Row], Awaitable[None]],
+    *,
+    batch_size: int = BATCH_SIZE,
+    max_refused: int = MAX_REFUSED_ROWS,
+) -> list[RowRefusal]:
+    """Apply each row in the shared transaction; a refused row is skipped, the others stay.
+
+    Rows run in batches of `batch_size`, one `SAVEPOINT` each. A refusal (a rule of the
+    domain, a constraint) at row k rolls the batch back, replays rows 0..k-1 of the batch
+    *without* a savepoint, drops row k and starts a new batch at k+1: about one savepoint
+    per `batch_size` rows, none per refusal. A replay that fails condemns the whole import
+    (`WriteConflictError`). Anything that is not the row's fault (`WriteConflictError`, a
+    missing role) propagates; so does the `max_refused`+1th refusal
+    (`TooManyRefusedRowsError`). Nothing is committed here.
+
+    `apply` must derive its state from what it does *now*: a replayed row creates its
+    elements again, under new ids, and the first pass is gone.
+    """
+    unit = _current.get()
+    if unit is None:
+        msg = "applying rows needs a shared transaction"
+        raise RuntimeError(msg)
+    refused: list[RowRefusal] = []
+    start = 0
+    while start < len(rows):
+        end = min(start + batch_size, len(rows))
+        position = start
+        try:
+            async with savepoint():
+                for position in range(start, end):
+                    await apply(rows[position])
+        except _NOT_THE_ROWS:
+            raise
+        except _ROW_REFUSALS as error:
+            refused.append(RowRefusal(position, error))
+            if len(refused) > max_refused:
+                msg = f"more than {max_refused} rows were refused: the file was rejected as a whole"
+                raise TooManyRefusedRowsError(msg) from error
+            await _replay(unit, [rows[i] for i in range(start, position)], apply)
+            start = position + 1
+        else:
+            start = end
+    return refused
+
+
+async def _replay[Row](
+    unit: _Unit, rows: Sequence[Row], apply: Callable[[Row], Awaitable[None]]
+) -> None:
+    """Apply again, in the open transaction and with no savepoint, rows that were applied once."""
+    unit.batched += 1
+    try:
+        for row in rows:
+            await apply(row)
+    except _NOT_THE_ROWS:
+        raise
+    except _ROW_REFUSALS as error:
+        unit.condemned = True  # part of that row is written and there is no savepoint to undo it
+        msg = "rows applied once were refused the second time"
+        raise WriteConflictError(f"{msg}: {_CONDEMNED}") from error
+    finally:
+        unit.batched -= 1

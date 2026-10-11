@@ -69,6 +69,7 @@ from ea.domain.errors import (
     StoredFileExistsError,
     StoredFileNotFoundError,
     TooManyPackagesError,
+    TooManyRefusedRowsError,
     UnknownLayoutElementError,
     UnknownPackageError,
     UnknownScopeError,
@@ -165,6 +166,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # 413 literally: the bucket's `FileTooLargeError` above is a 422 and a different class.
     ExchangeFileTooLargeError: (413, "file_too_large"),
     ImportInProgressError: (status.HTTP_409_CONFLICT, "import_in_progress"),
+    TooManyRefusedRowsError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "too_many_refused_rows"),
     UnknownScopeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_scope"),
     # Never sent: a refused row is a line of the import report. The row exists
     # because every `DomainError` needs one (tests/unit/test_error_statuses.py).

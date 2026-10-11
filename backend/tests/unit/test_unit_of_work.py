@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import DBAPIError
@@ -40,25 +41,42 @@ class FakeTransaction:
         self.rolled_back = True
 
 
+class FakeNested:
+    """What `AsyncSession.begin_nested()` returns, as far as the unit of work looks at it."""
+
+    def __init__(self, session: FakeSession) -> None:
+        self.session = session
+        savepoint = SimpleNamespace(_savepoint=f"sa_savepoint_{session.savepoints}")
+        self.sync_transaction = SimpleNamespace(_connections={0: (None, savepoint, True, True)})
+
+    async def rollback(self) -> None:
+        self.session.rolled_back_savepoints += 1
+
+    async def commit(self) -> None:
+        pass
+
+
 class FakeSession:
     def __init__(self, *, lock_free: bool = True) -> None:
         self.transaction = FakeTransaction()
         self.savepoints = 0
         self.rolled_back_savepoints = 0
         self.expired = 0
+        self.statements: list[str] = []
         self.lock_free = lock_free
 
     async def begin(self) -> FakeTransaction:
         return self.transaction
 
-    @asynccontextmanager
-    async def begin_nested(self) -> AsyncIterator[None]:
+    async def begin_nested(self) -> FakeNested:
         self.savepoints += 1
-        try:
-            yield
-        except BaseException:
-            self.rolled_back_savepoints += 1
-            raise
+        return FakeNested(self)
+
+    async def connection(self) -> None:
+        pass
+
+    async def execute(self, statement: object) -> None:
+        self.statements.append(str(statement))
 
     def expire_all(self) -> None:
         self.expired += 1
@@ -362,3 +380,18 @@ async def test_replayable_does_not_run_a_write_again_inside_a_unit_and_condemns_
                     pytest.fail("a condemned unit takes no more work")
 
     assert calls == 1
+
+
+async def test_a_rolled_back_savepoint_is_released_so_it_leaves_no_empty_level_behind() -> None:
+    factory = FakeFactory()
+
+    async with shared(factory, commit=True):
+        with pytest.raises(ValueError, match="refused"):
+            async with own(factory):
+                raise ValueError("refused")
+        async with own(factory):
+            pass
+
+    session = factory.sessions[0]
+    assert session.rolled_back_savepoints == 1
+    assert session.statements == ["RELEASE SAVEPOINT sa_savepoint_1"]  # and none for the other

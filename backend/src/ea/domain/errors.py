@@ -279,6 +279,15 @@ class ImportInProgressError(DomainError):
     """Another import holds the advisory lock; only one runs at a time."""
 
 
+class TooManyRefusedRowsError(DomainError):
+    """An import with more refused rows than the batches can afford to replay: rejected whole.
+
+    Nothing was written. A file where that many rows are refused is nearly always
+    the wrong file, and each refusal costs a replay of the rows before it in its
+    batch (docs/adr/0050).
+    """
+
+
 class UnknownScopeError(DomainError):
     """An export scope that does not name what it needs (a package without an id, say)."""
 
