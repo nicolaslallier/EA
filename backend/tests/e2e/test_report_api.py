@@ -15,6 +15,7 @@ from ea.domain.archimate import ElementType
 from ea.domain.diagrams import DiagramNode
 from ea.domain.reports import MAX_REPORT_ELEMENTS
 from ea.main import create_app
+from ea.repositories.report_renderers import available_renderers
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
 from tests.conftest import (
@@ -407,3 +408,82 @@ class TestPackageReports:
         assert response.status_code == 200, response.text
         assert "Facturation" in response.text
         assert "<svg" in response.text
+
+
+FAKE_PDF = b"%PDF-1.7 fake"
+
+
+def a_client(
+    service: ArchitectureService,
+    diagrams: InMemoryDiagrams,
+    documents: InMemoryDocuments,
+    files_store: InMemoryObjectStore,
+    files_metadata: InMemoryFileMetadata,
+    renderers: Any,
+) -> httpx.AsyncClient:
+    app = create_app(
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        diagrams=diagrams,
+        documents=documents,
+        files=files_store,
+        file_metadata=files_metadata,
+        report_renderers=renderers,
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+class TestThePdfFormat:
+    async def test_an_offered_format_is_listed_and_served(
+        self,
+        service: ArchitectureService,
+        diagrams: InMemoryDiagrams,
+        documents: InMemoryDocuments,
+        files_store: InMemoryObjectStore,
+        files_metadata: InMemoryFileMetadata,
+    ) -> None:
+        renderers = {"pdf": lambda model: FAKE_PDF}
+        async with a_client(
+            service, diagrams, documents, files_store, files_metadata, renderers
+        ) as client:
+            diagram_id = await a_diagram(client, "Facturation")
+
+            templates = await client.get("/report-templates")
+            response = await client.get("/reports/render", params=render_params(diagram_id, "pdf"))
+            deposit = await client.post(
+                "/reports",
+                json={
+                    "template": "fiche-diagramme",
+                    "subject": {"kind": "diagram", "id": diagram_id},
+                    "format": "pdf",
+                },
+            )
+
+        assert templates.json()[0]["formats"] == ["html", "pdf"]
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.headers["content-disposition"].endswith(".pdf")
+        assert response.content == FAKE_PDF
+        assert deposit.json()["key"].endswith(".pdf")
+        assert deposit.json()["content_type"] == "application/pdf"
+
+    async def test_the_detected_engine_makes_a_real_pdf(
+        self,
+        service: ArchitectureService,
+        diagrams: InMemoryDiagrams,
+        documents: InMemoryDocuments,
+        files_store: InMemoryObjectStore,
+        files_metadata: InMemoryFileMetadata,
+    ) -> None:
+        detected = available_renderers()
+        if "pdf" not in detected:
+            pytest.skip("WeasyPrint is not loadable here; see docs/adr/0062")
+        async with a_client(
+            service, diagrams, documents, files_store, files_metadata, detected
+        ) as client:
+            diagram_id = await a_diagram(client, "Facturation Ελληνικά")
+
+            response = await client.get("/reports/render", params=render_params(diagram_id, "pdf"))
+
+        assert response.status_code == 200
+        assert response.content.startswith(b"%PDF")

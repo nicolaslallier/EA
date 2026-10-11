@@ -20,13 +20,21 @@ RUN uv sync --locked --no-dev --no-editable
 # le venv copié y pointe.
 FROM python:3.12.15-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 
+# Les rapports PDF (docs/adr/0062) : WeasyPrint charge Pango à l'exécution. La
+# police est embarquée (DejaVu) pour que le rendu ne dépende d'aucune machine.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --system --no-create-home ea
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
+# XDG_CACHE_HOME : l'utilisateur `ea` n'a pas de HOME ; fontconfig y écrit son cache.
+ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 XDG_CACHE_HOME=/tmp
 USER ea
 EXPOSE 8000
 

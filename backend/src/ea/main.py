@@ -86,6 +86,7 @@ from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.repositories.report_renderers import available_renderers
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
 from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
@@ -415,7 +416,7 @@ def _lifespan(
                 # there whenever the store is — and `None` only on the test
                 # seam that builds an app without PostgreSQL at all.
                 app.state.file_service = FileService(store, metadata=metadata_store)
-            _attach_reports(app)
+            _attach_reports(app, detect_engines=True)
             # Published once every probe has run: `/health` reads it, and it is
             # the only place an operator is told which store is missing without
             # opening the logs — see docs/adr/0037.
@@ -453,12 +454,15 @@ def _lifespan(
     return lifespan
 
 
-def _attach_reports(app: FastAPI) -> None:
+def _attach_reports(app: FastAPI, *, detect_engines: bool = False) -> None:
     """The report use cases, once the services they read and write through exist.
 
     Called wherever the last of those can appear: `create_app` for the injected test seams, the
     lifespan for the real stores. Idempotent. One admission serves every door (HTTP and MCP), so
     that two doors cannot hold twice the places (docs/adr/0062).
+
+    The PDF engine loads native libraries, so it is looked for only where a deployment really
+    starts (`detect_engines`, the lifespan) and when a test did not impose its own table.
     """
     diagrams = getattr(app.state, "diagram_service", None)
     files = getattr(app.state, "file_service", None)
@@ -470,6 +474,9 @@ def _attach_reports(app: FastAPI) -> None:
         or getattr(app.state, "report_service", None) is not None
     ):
         return
+    renderers = getattr(app.state, "report_renderers", None)
+    if renderers is None and detect_engines:
+        renderers = available_renderers()
     app.state.report_service = ReportService(
         diagrams,
         architecture,
@@ -477,7 +484,7 @@ def _attach_reports(app: FastAPI) -> None:
         files,
         packages=getattr(app.state, "package_service", None),
         admission=app.state.report_admission,
-        extra_renderers=getattr(app.state, "report_renderers", None),
+        extra_renderers=renderers,
         app_version=app.version,
     )
 
