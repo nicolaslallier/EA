@@ -1,0 +1,48 @@
+// Translation tables, and not one rule: what counts as a change, and which
+// action or kind of entity exists, is the backend's. The types come from the
+// generated schema and the `Record`s are exhaustive, so the day the backend
+// adds an action this file stops compiling instead of showing a raw code.
+import type { components } from '../../api/schema'
+
+export type AuditAction = components['schemas']['AuditAction']
+export type EntityKind = components['schemas']['EntityKind']
+
+export const ACTION_LABELS: Record<AuditAction, string> = {
+  'element.created': 'Élément créé',
+  'element.updated': 'Élément modifié',
+  'element.deleted': 'Élément supprimé',
+  'relationship.created': 'Relation créée',
+  'relationship.deleted': 'Relation supprimée',
+  'diagram.created': 'Diagramme créé',
+  'diagram.updated': 'Diagramme renommé',
+  'diagram.deleted': 'Diagramme supprimé',
+  'diagram.layout_replaced': 'Diagramme mis en page',
+  'document.attached': 'Document attaché',
+  'document.revised': 'Document révisé',
+  'document.discarded': 'Document retiré',
+  'package.created': 'Paquet créé',
+  'package.updated': 'Paquet modifié',
+  'package.deleted': 'Paquet supprimé',
+  'package.elements_moved': 'Éléments rangés dans un paquet',
+  'saved_query.created': 'Requête enregistrée',
+  'saved_query.updated': 'Requête modifiée',
+  'saved_query.deleted': 'Requête supprimée',
+}
+
+export const KIND_LABELS: Record<EntityKind, string> = {
+  element: 'Élément',
+  relationship: 'Relation',
+  package: 'Paquet',
+  saved_query: 'Requête enregistrée',
+  diagram: 'Diagramme',
+  document: 'Document',
+}
+
+/** A hand-written URL may name anything: only what the labels know is a filter. */
+export function isAction(value: string): value is AuditAction {
+  return Object.hasOwn(ACTION_LABELS, value)
+}
+
+export function isKind(value: string): value is EntityKind {
+  return Object.hasOwn(KIND_LABELS, value)
+}

@@ -377,3 +377,25 @@ export function aSavedQuerySummary(
 export function aSavedQuery(overrides: Partial<SavedQueryRead> = {}): SavedQueryRead {
   return { ...aSavedQuerySummary(), query: emptyQuery(), ...overrides }
 }
+
+type AuditEventRead = components['schemas']['AuditEventRead']
+
+/** One line of the audit trail, as `GET /audit` returns it. */
+export function anAuditEvent(overrides: Partial<AuditEventRead> = {}): AuditEventRead {
+  return {
+    id: '11111111-1111-4111-8111-111111111111',
+    at: '2026-10-10T12:00:00Z',
+    actor_sub: 'editor-1',
+    actor_name: 'editor',
+    action: 'element.updated',
+    entity_kind: 'element',
+    entity_id: '22222222-2222-4222-8222-222222222222',
+    before: { name: 'db-01' },
+    after: { name: 'db-02' },
+    request_id: 'req-1',
+    channel: 'http',
+    correlation: null,
+    changes: [{ field: 'name', before: 'db-01', after: 'db-02' }],
+    ...overrides,
+  }
+}

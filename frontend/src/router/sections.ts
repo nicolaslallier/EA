@@ -31,6 +31,7 @@ export const GROUPS: readonly SectionGroup[] = [
   { id: 'model', label: 'Modèle' },
   { id: 'analysis', label: 'Analyse' },
   { id: 'storage', label: 'Stockage' },
+  { id: 'governance', label: 'Gouvernance' },
 ]
 
 export const SECTIONS: readonly Section[] = [
@@ -105,6 +106,14 @@ export const SECTIONS: readonly Section[] = [
     summary: 'Déposer, parcourir, télécharger et supprimer des fichiers dans MinIO.',
     group: 'storage',
     view: () => import('../features/files/FilesSection.vue'),
+  },
+  {
+    path: '/history',
+    name: 'history',
+    label: 'Historique',
+    summary: 'Qui a changé quoi, et quand : le journal d’audit du catalogue.',
+    group: 'governance',
+    view: () => import('../features/history/HistorySection.vue'),
   },
 ]
 
