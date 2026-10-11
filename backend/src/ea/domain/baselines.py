@@ -18,15 +18,20 @@ from uuid import UUID, uuid4
 
 from ea.domain.archimate import validate_relationship
 from ea.domain.audit import FieldChange, diff_fields
-from ea.domain.errors import IllegalRelationshipError
+from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
 MAX_BASELINE_DESCRIPTION_LENGTH: Final = 2000
-#: What a capture accepts to copy. Beyond either, a baseline would be a second
-#: database: refused before anything is written (`BaselineTooLargeError`).
+#: What a baseline accepts to copy or to read back whole, per kind of row. Beyond
+#: any of them a baseline would be a second database: refused with a count,
+#: before a row is loaded (`BaselineTooLargeError`). Declared once; the store and
+#: every path that reads a baseline or the live model import them.
 MAX_BASELINE_ELEMENTS: Final = 20_000
+MAX_BASELINE_RELATIONSHIPS: Final = 100_000
+MAX_BASELINE_BOXES: Final = 100_000
+MAX_BASELINE_DIAGRAMS: Final = 5_000
 MAX_BASELINE_BYTES: Final = 64 * 1024 * 1024
 #: How a diff names an element that sits outside every package.
 ROOT_LABEL: Final = "(root)"
@@ -35,7 +40,31 @@ ROOT_LABEL: Final = "(root)"
 @dataclass(frozen=True, slots=True)
 class BaselineLimits:
     elements: int = MAX_BASELINE_ELEMENTS
+    relationships: int = MAX_BASELINE_RELATIONSHIPS
+    boxes: int = MAX_BASELINE_BOXES
+    diagrams: int = MAX_BASELINE_DIAGRAMS
     bytes: int = MAX_BASELINE_BYTES
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSize:
+    """What a model (or a baseline) weighs, counted by the server before anything is loaded."""
+
+    elements: int = 0
+    relationships: int = 0
+    boxes: int = 0
+    diagrams: int = 0
+    #: Text of the rows plus a fixed overhead per row, so many small rows count too.
+    bytes: int = 0
+
+
+def refuse_oversize(size: ModelSize, limits: BaselineLimits, *, what: str = "the model") -> None:
+    """Raise `BaselineTooLargeError` for the first kind of row past its limit."""
+    for kind in ("elements", "relationships", "boxes", "diagrams", "bytes"):
+        held, allowed = getattr(size, kind), getattr(limits, kind)
+        if held > allowed:
+            msg = f"{what} holds {held} {kind}; a baseline handles at most {allowed}"
+            raise BaselineTooLargeError(msg)
 
 
 @dataclass(frozen=True, slots=True)

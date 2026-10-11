@@ -15,7 +15,7 @@ from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AuditAction, AuditChannel, AuditEvent, AuditFilter
-from ea.domain.baselines import Baseline, BaselineLimits, diff_snapshots
+from ea.domain.baselines import Baseline, BaselineLimits, RestorePlan, diff_snapshots
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import BaselineNotFoundError, BaselineTooLargeError, DuplicateBaselineError
@@ -211,17 +211,65 @@ async def test_a_capture_reads_one_instant_of_the_model(engine_at_head: AsyncEng
     assert "read committed" not in reads
 
 
-async def test_a_model_beyond_the_limits_is_refused_before_anything_is_written(
-    engine_at_head: AsyncEngine,
-) -> None:
-    await Model(engine_at_head).seed()
-    for limits in ({"elements": 1}, {"bytes": 100}):
-        model = Model(engine_at_head, **limits)
-        with pytest.raises(BaselineTooLargeError):
-            await model.baselines.create(a_baseline("big"), audit=created)
+#: Each kind of row a baseline holds, lowered so that the seeded model (2 elements,
+#: 1 link, 1 box, 1 diagram) is over it. Injected: no fixture of a hundred thousand rows.
+LOWERED = {
+    "elements": {"elements": 1},
+    "relationships": {"relationships": 0},
+    "boxes": {"boxes": 0},
+    "bytes": {"bytes": 100},
+    "diagrams": {"diagrams": 0},
+}
+ROW_KINDS = ["elements", "relationships", "boxes", "bytes"]
+CASES = [
+    *((path, kind) for path in ("create", "current_snapshot", "snapshot_of") for kind in ROW_KINDS),
+    *((path, kind) for path in ("restore_plan", "apply_restore") for kind in LOWERED),
+]
+#: A statement that reads rows into Python, as opposed to counting them.
+ROW_TABLES = (
+    "FROM elements",
+    "FROM relationships",
+    "FROM diagram_nodes",
+    "FROM diagrams",
+    "FROM packages",
+    "FROM baseline_",
+    "INSERT INTO",
+)
 
-    assert await model.baselines.list_all() == ()
-    assert (await model.trail.page(AuditFilter())).events == ()
+
+@pytest.mark.parametrize(("path", "kind"), CASES)
+async def test_every_path_refuses_a_model_beyond_the_bound_before_reading_a_row(
+    engine_at_head: AsyncEngine, path: str, kind: str
+) -> None:
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    tight = PostgresBaselineRepository(
+        create_session_factory(engine_at_head), limits=BaselineLimits(**LOWERED[kind])
+    )
+    calls = {
+        "create": lambda: tight.create(a_baseline("big"), audit=created),
+        "current_snapshot": lambda: tight.current_snapshot(),
+        "snapshot_of": lambda: tight.snapshot_of(baseline.id),
+        "restore_plan": lambda: tight.restore_plan(baseline.id, keep_new=False),
+        "apply_restore": lambda: tight.apply_restore(
+            baseline.id, keep_new=False, expected=RestorePlan(), now=NOW, audit=lambda _: ()
+        ),
+    }
+
+    with statements_seen(engine_at_head) as seen, pytest.raises(BaselineTooLargeError):
+        await calls[path]()
+
+    reading = [
+        statement
+        for statement, _ in seen
+        if any(table in statement for table in ROW_TABLES) and "count(" not in statement.lower()
+    ]
+    assert reading == []  # only counts ran: not one row was loaded or written
+    assert [b.name for b in await model.baselines.list_all()] == ["v1"]
+    assert [e.action for e in (await model.trail.page(AuditFilter())).events] == [
+        AuditAction.BASELINE_CREATED
+    ]
 
 
 async def test_nested_package_paths_are_read_from_the_tree(engine_at_head: AsyncEngine) -> None:

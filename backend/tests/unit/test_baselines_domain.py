@@ -15,9 +15,13 @@ from ea.domain.baselines import (
     MAX_BASELINE_DESCRIPTION_LENGTH,
     MAX_BASELINE_NAME_LENGTH,
     Baseline,
+    BaselineLimits,
+    ModelSize,
     ModelSnapshot,
     diff_snapshots,
+    refuse_oversize,
 )
+from ea.domain.errors import BaselineTooLargeError
 from ea.domain.model import Element, Relationship
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
@@ -94,6 +98,23 @@ class TestTheDiff:
         assert "a" in added.label and "b" in added.label
         assert diff_snapshots(newer, older).relationships_removed[0].id == link.id
 
+    def test_a_link_renamed_or_redirected_is_a_modification_with_its_fields(self) -> None:
+        left, right = an_element("a"), an_element("b")
+        link = Relationship.between(R.ASSOCIATION, left, right, now=NOW)
+        edited = replace(link, name="uses", directed=True)
+
+        diff = diff_snapshots(
+            ModelSnapshot((left, right), (link,)), ModelSnapshot((left, right), (edited,))
+        )
+
+        (modified,) = diff.relationships_modified
+        assert modified.id == link.id
+        assert modified.changes == (
+            FieldChange("directed", False, True),
+            FieldChange("name", "", "uses"),
+        )
+        assert not diff.is_empty
+
     def test_two_equal_snapshots_have_an_empty_diff(self) -> None:
         snapshot = ModelSnapshot((an_element("a"),), ())
 
@@ -136,3 +157,19 @@ class TestTheDiff:
         newer = ModelSnapshot((element,), (), package_paths={package: "New"})
 
         assert diff_snapshots(older, newer).is_empty
+
+
+class TestTheBound:
+    """One bound for every kind of row a baseline holds, declared once."""
+
+    LIMITS = BaselineLimits(elements=10, relationships=20, boxes=30, diagrams=40, bytes=1000)
+
+    @pytest.mark.parametrize("field", ["elements", "relationships", "boxes", "diagrams", "bytes"])
+    def test_each_kind_is_refused_one_row_past_its_own_limit(self, field: str) -> None:
+        at_the_limit = ModelSize(10, 20, 30, 40, 1000)
+        refuse_oversize(at_the_limit, self.LIMITS)
+
+        with pytest.raises(BaselineTooLargeError, match=field):
+            refuse_oversize(
+                replace(at_the_limit, **{field: getattr(at_the_limit, field) + 1}), self.LIMITS
+            )

@@ -39,12 +39,13 @@ from ea.domain.baselines import (
     Baseline,
     BaselineLimits,
     BoxSnapshot,
+    ModelSize,
     ModelSnapshot,
     plan_restore,
+    refuse_oversize,
 )
 from ea.domain.errors import (
     BaselineNotFoundError,
-    BaselineTooLargeError,
     DuplicateBaselineError,
     RestoreBlockedError,
     RestoreConflictError,
@@ -260,6 +261,74 @@ async def _counts(session: AsyncSession, baseline_id: UUID) -> tuple[int, int, i
     )
 
 
+async def _measure(
+    session: AsyncSession,
+    elements: Any,
+    links: Any,
+    boxes: Any,
+    *,
+    baseline_id: UUID | None = None,
+    diagrams: bool = False,
+) -> ModelSize:
+    """Row counts and bytes of text, as aggregates: no row reaches Python.
+
+    The same function measures the live tables and a baseline's copy of them
+    (`baseline_id`), so a kind of row cannot be bounded on one side only. The
+    packages the plan reads are bounded by the tree's own `MAX_PACKAGES`.
+    """
+
+    def where(model: Any) -> list[Any]:
+        return [model.baseline_id == baseline_id] if baseline_id is not None else []
+
+    element_count, element_text = (
+        await session.execute(
+            select(
+                func.count(),
+                func.coalesce(
+                    func.sum(
+                        func.octet_length(elements.name)
+                        + func.octet_length(elements.description)
+                        + func.octet_length(elements.documentation)
+                        + func.octet_length(sql_cast(elements.properties, Text))
+                    ),
+                    0,
+                ),
+            ).where(*where(elements))
+        )
+    ).one()
+    link_count, link_text = (
+        await session.execute(
+            select(
+                func.count(),
+                func.coalesce(
+                    func.sum(
+                        func.octet_length(links.name)
+                        + func.octet_length(sql_cast(links.properties, Text))
+                    ),
+                    0,
+                ),
+            ).where(*where(links))
+        )
+    ).one()
+    box_count = int(
+        await session.scalar(select(func.count()).select_from(boxes).where(*where(boxes))) or 0
+    )
+    diagram_count = (
+        int(await session.scalar(select(func.count()).select_from(DiagramRecord)) or 0)
+        if diagrams
+        else 0
+    )
+    return ModelSize(
+        elements=element_count,
+        relationships=link_count,
+        boxes=box_count,
+        diagrams=diagram_count,
+        bytes=int(element_text)
+        + int(link_text)
+        + ROW_BYTES * (element_count + link_count + box_count),
+    )
+
+
 class PostgresBaselineRepository:
     """Baselines, stored beside the model they copy."""
 
@@ -273,6 +342,29 @@ class PostgresBaselineRepository:
         self._sessions = sessions
         self._limits = limits
         self._protected = protected
+
+    async def _guard_live(self, session: AsyncSession, *, diagrams: bool) -> None:
+        """Refuse the live model if it is past a bound — by counting, never by loading."""
+        refuse_oversize(
+            await _measure(
+                session, ElementRecord, RelationshipRecord, DiagramNodeRecord, diagrams=diagrams
+            ),
+            self._limits,
+        )
+
+    async def _guard_baseline(self, session: AsyncSession, baseline_id: UUID) -> None:
+        """The same bounds on a copy, before it is read back whole."""
+        refuse_oversize(
+            await _measure(
+                session,
+                BaselineElementRecord,
+                BaselineRelationshipRecord,
+                BaselineBoxRecord,
+                baseline_id=baseline_id,
+            ),
+            self._limits,
+            what="the baseline",
+        )
 
     @asynccontextmanager
     async def _at_one_instant(self) -> AsyncIterator[AsyncSession]:
@@ -297,60 +389,13 @@ class PostgresBaselineRepository:
             found = (await session.execute(statement)).first()
             return _baseline(*found) if found is not None else None
 
-    async def _refuse_a_model_too_large(self, session: AsyncSession) -> None:
-        """Measured at the instant the copy reads, before a single row is written."""
-        elements, element_bytes = (
-            await session.execute(
-                select(
-                    func.count(),
-                    func.coalesce(
-                        func.sum(
-                            func.octet_length(ElementRecord.name)
-                            + func.octet_length(ElementRecord.description)
-                            + func.octet_length(ElementRecord.documentation)
-                            + func.octet_length(sql_cast(ElementRecord.properties, Text))
-                        ),
-                        0,
-                    ),
-                )
-            )
-        ).one()
-        links, link_bytes = (
-            await session.execute(
-                select(
-                    func.count(),
-                    func.coalesce(
-                        func.sum(
-                            func.octet_length(RelationshipRecord.name)
-                            + func.octet_length(sql_cast(RelationshipRecord.properties, Text))
-                        ),
-                        0,
-                    ),
-                )
-            )
-        ).one()
-        boxes = int(await session.scalar(select(func.count()).select_from(DiagramNodeRecord)) or 0)
-        size = int(element_bytes) + int(link_bytes) + ROW_BYTES * (elements + links + boxes)
-        if elements > self._limits.elements:
-            msg = (
-                f"the model holds {elements} elements, a baseline copies at most "
-                f"{self._limits.elements}"
-            )
-            raise BaselineTooLargeError(msg)
-        if size > self._limits.bytes:
-            msg = (
-                f"the model weighs about {size} bytes, "
-                f"a baseline copies at most {self._limits.bytes}"
-            )
-            raise BaselineTooLargeError(msg)
-
     async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
         id_column = literal(baseline.id, Uuid())
         paths = _paths()
         async with self._sessions.begin() as session:
             # Before any statement: the snapshot every `INSERT … SELECT` below shares.
             await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-            await self._refuse_a_model_too_large(session)
+            await self._guard_live(session, diagrams=False)
             session.add(
                 BaselineRecord(
                     id=baseline.id,
@@ -404,10 +449,12 @@ class PostgresBaselineRepository:
 
     async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot:
         async with self._at_one_instant() as session:
+            await self._guard_baseline(session, baseline_id)
             return await _snapshot_of(session, baseline_id)
 
     async def current_snapshot(self) -> ModelSnapshot:
         async with self._at_one_instant() as session:
+            await self._guard_live(session, diagrams=False)
             return await _current_snapshot(session)
 
     async def _plan(
@@ -417,6 +464,9 @@ class PostgresBaselineRepository:
         if await session.get(BaselineRecord, baseline_id) is None:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
+        # Counted before any row is loaded, in the instant the plan reads.
+        await self._guard_baseline(session, baseline_id)
+        await self._guard_live(session, diagrams=True)
         plan = plan_restore(
             await _snapshot_of(session, baseline_id),
             await _current_snapshot(session),
