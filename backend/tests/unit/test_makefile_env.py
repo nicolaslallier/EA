@@ -64,6 +64,12 @@ def _dry_run(target: str, env_file: Path) -> str:
     return completed.stdout
 
 
+def _dry_run_with(target: str, env_file: Path, *variables: str) -> str:
+    completed = _run(target, env_file, "-n", *variables)
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout
+
+
 @pytest.fixture
 def an_env_file(tmp_path: Path) -> Path:
     """Un `backend/.env` désignant une base et un embedder qui ne sont pas les défauts."""
@@ -93,6 +99,33 @@ class TestTheBannerNamesTheDatabaseTheCommandWillOpen:
 
     def test_pg_migrate(self, an_env_file: Path) -> None:
         assert "192.168.2.10/eadb" in _dry_run("pg-migrate", an_env_file)
+
+
+class TestTheBaselineCaptureWritesToTheSharedDatabaseOnlyOnRequest:
+    """`make baseline-capture` écrit une baseline : même discipline que `graph-import`."""
+
+    def test_without_confirm_it_refuses_and_runs_nothing(self, an_env_file: Path) -> None:
+        completed = _run("baseline-capture", an_env_file)
+
+        assert completed.returncode != 0
+        assert "CONFIRM=yes" in completed.stdout
+        assert "192.168.2.10/eadb" in completed.stdout
+        assert "ea.baseline_capture" not in completed.stdout
+
+    def test_with_confirm_it_names_the_database_and_captures_under_the_dated_name(
+        self, an_env_file: Path
+    ) -> None:
+        recipe = _dry_run_with("baseline-capture", an_env_file, "CONFIRM=yes")
+
+        assert "192.168.2.10/eadb" in recipe
+        assert "python -m ea.baseline_capture --name" in recipe
+        assert "Avant mise en service " in recipe
+
+    def test_a_name_of_the_operator_replaces_the_default(self, an_env_file: Path) -> None:
+        recipe = _dry_run_with("baseline-capture", an_env_file, "CONFIRM=yes", "NAME=v1")
+
+        assert '--name "v1"' in recipe
+        assert "Avant mise en service" not in recipe
 
 
 class TestThePsqlTargetsFollowTheSameConfiguration:
