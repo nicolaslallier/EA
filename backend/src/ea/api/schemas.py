@@ -8,7 +8,9 @@ payload by being added to a dataclass.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
+from itertools import islice
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
@@ -30,6 +32,14 @@ from ea.domain.audit import (
     AuditPage,
     EntityKind,
     FieldChange,
+)
+from ea.domain.baselines import (
+    MAX_BASELINE_DESCRIPTION_LENGTH,
+    MAX_BASELINE_NAME_LENGTH,
+    Baseline,
+    BaselineDiff,
+    EntityRef,
+    Modified,
 )
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
@@ -77,6 +87,7 @@ from ea.domain.saved_queries import (
 )
 from ea.domain.search import Passage
 from ea.repositories.architecture_store import MAX_TRAVERSAL_DEPTH
+from ea.services.baselines import RestoreOutcome
 
 #: Shared constraints, so every endpoint bounds a payload the same way — and so
 #: does every MCP tool, which imports these rather than restating them. The two
@@ -133,6 +144,17 @@ LinkName = Annotated[str, Field(max_length=200)]
 Actor = Annotated[str, Field(max_length=200, pattern=r"^[^\x00]*$")]
 RequestIdFilter = Annotated[str, Field(max_length=128, pattern=r"^[^\x00]*$")]
 CursorToken = Annotated[str, Field(max_length=512)]
+#: The baselines (docs/adr/0045). The lengths are the domain's, imported, so the
+#: schema and `Baseline.create` cannot drift into refusing different values.
+BaselineName = Annotated[str, Field(min_length=1, max_length=MAX_BASELINE_NAME_LENGTH)]
+BaselineDescription = Annotated[str, Field(max_length=MAX_BASELINE_DESCRIPTION_LENGTH)]
+Against = Annotated[
+    str,
+    Field(max_length=36, description="A baseline id, or `current` for the model as it is now."),
+]
+#: What a dry run of a restoration hands out (`plan_digest`, a SHA-256) and what
+#: applying must hand back.
+PlanDigest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
 
 # --- Files in MinIO (docs/adr/0036), and what is known about them (docs/adr/0039) ---
 FileKey = Annotated[str, Field(min_length=1, max_length=MAX_KEY_BYTES)]
@@ -1160,4 +1182,163 @@ class AuditPageRead(BaseModel):
         return cls(
             items=[AuditEventRead.of(event) for event in page.events],
             next_cursor=page.next_cursor,
+        )
+
+
+# --- Baselines (docs/adr/0045) ------------------------------------------------
+
+#: How many entities of each kind a restoration plan names. The counts are exact
+#: and unbounded; the names are the first few, because a baseline can hold twenty
+#: thousand elements and an answer of that size is of no use to anyone.
+PLAN_LISTED_ITEMS: Final = 20
+#: A warning quotes names from the model; it is cut so one cannot be a megabyte.
+PLAN_WARNING_LENGTH: Final = 300
+
+
+class BaselineCreate(_Input):
+    name: BaselineName
+    description: BaselineDescription = ""
+
+
+class BaselineRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_by: str
+    created_at: datetime
+    element_count: int
+    relationship_count: int
+    box_count: int
+
+    @classmethod
+    def of(cls, baseline: Baseline) -> BaselineRead:
+        return cls(
+            id=baseline.id,
+            name=baseline.name,
+            description=baseline.description,
+            created_by=baseline.created_by,
+            created_at=baseline.created_at,
+            element_count=baseline.element_count,
+            relationship_count=baseline.relationship_count,
+            box_count=baseline.box_count,
+        )
+
+
+class EntityRefRead(BaseModel):
+    kind: str
+    id: UUID
+    label: str
+    type: str
+
+    @classmethod
+    def of(cls, ref: EntityRef) -> EntityRefRead:
+        return cls(kind=ref.kind, id=ref.id, label=ref.label, type=ref.type)
+
+
+class ModifiedRead(EntityRefRead):
+    changes: list[FieldChangeRead]
+
+    @classmethod
+    def of_modified(cls, modified: Modified) -> ModifiedRead:
+        return cls(
+            kind=modified.kind,
+            id=modified.id,
+            label=modified.label,
+            type=modified.type,
+            changes=[_change(change) for change in modified.changes],
+        )
+
+
+class BaselineDiffRead(BaseModel):
+    elements_added: list[EntityRefRead]
+    elements_removed: list[EntityRefRead]
+    elements_modified: list[ModifiedRead]
+    relationships_added: list[EntityRefRead]
+    relationships_removed: list[EntityRefRead]
+    relationships_modified: list[ModifiedRead]
+
+    @classmethod
+    def of(cls, diff: BaselineDiff) -> BaselineDiffRead:
+        return cls(
+            elements_added=[EntityRefRead.of(r) for r in diff.elements_added],
+            elements_removed=[EntityRefRead.of(r) for r in diff.elements_removed],
+            elements_modified=[ModifiedRead.of_modified(m) for m in diff.elements_modified],
+            relationships_added=[EntityRefRead.of(r) for r in diff.relationships_added],
+            relationships_removed=[EntityRefRead.of(r) for r in diff.relationships_removed],
+            relationships_modified=[
+                ModifiedRead.of_modified(m) for m in diff.relationships_modified
+            ],
+        )
+
+
+class RestoreRequest(_Input):
+    dry_run: bool = Field(default=True, description="Report what would change; write nothing.")
+    expected_digest: PlanDigest | None = Field(
+        default=None,
+        description="The `digest` of the dry run you read. Required to apply (dry_run false): "
+        "a model that moved since is refused with `restore_conflict`.",
+    )
+    keep_new: bool | None = Field(
+        default=None, description="Keep what was created since; false (exact) when omitted."
+    )
+
+
+class RestorePlanRead(BaseModel):
+    """What a restoration would do. Every figure is an exact count; the lists name
+    only the first few of each kind (`PLAN_LISTED_ITEMS`)."""
+
+    elements_to_create: int
+    elements_to_update: int
+    elements_to_delete: int
+    relationships_to_create: int
+    relationships_to_delete: int
+    relationships_cascaded: int
+    boxes_to_restore: int
+    documents_lost: int
+    boxes_lost: int
+    created: list[EntityRefRead]
+    updated: list[EntityRefRead]
+    deleted: list[EntityRefRead]
+    warning_count: int
+    warnings: list[str]
+    blocked_count: int
+    blocked: list[EntityRefRead]
+
+
+class RestoreRead(BaseModel):
+    applied: bool
+    digest: str = Field(description="Send it back as `expected_digest` to apply this very plan.")
+    plan: RestorePlanRead
+
+    @classmethod
+    def of(cls, outcome: RestoreOutcome) -> RestoreRead:
+        plan = outcome.plan
+
+        def named(elements: Sequence[Element]) -> list[EntityRefRead]:
+            return [
+                EntityRefRead(kind="element", id=e.id, label=e.name, type=e.element_type.value)
+                for e in islice(elements, PLAN_LISTED_ITEMS)
+            ]
+
+        return cls(
+            applied=outcome.applied,
+            digest=outcome.digest,
+            plan=RestorePlanRead(
+                elements_to_create=len(plan.elements_to_create),
+                elements_to_update=len(plan.elements_to_update),
+                elements_to_delete=len(plan.elements_to_delete),
+                relationships_to_create=len(plan.relationships_to_create),
+                relationships_to_delete=len(plan.relationships_to_delete),
+                relationships_cascaded=plan.cascaded_relationships,
+                boxes_to_restore=len(plan.boxes_to_restore),
+                documents_lost=plan.documents_lost,
+                boxes_lost=plan.boxes_lost,
+                created=named(plan.elements_to_create),
+                updated=named([u.current for u in plan.elements_to_update]),
+                deleted=named(plan.elements_to_delete),
+                warning_count=len(plan.warnings),
+                warnings=[w[:PLAN_WARNING_LENGTH] for w in plan.warnings[:PLAN_LISTED_ITEMS]],
+                blocked_count=len(plan.blocked),
+                blocked=named(plan.blocked),
+            ),
         )

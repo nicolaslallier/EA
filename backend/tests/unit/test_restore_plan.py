@@ -9,7 +9,13 @@ from uuid import UUID, uuid4
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import AUDIT_LISTED_IDS
-from ea.domain.baselines import BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
+from ea.domain.baselines import (
+    BoxSnapshot,
+    ModelSnapshot,
+    RestorePlan,
+    plan_digest,
+    plan_restore,
+)
 from ea.domain.model import Element, Relationship
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
@@ -352,3 +358,28 @@ class TestWhatADeletionTakesAlong:
 
         assert result.cascades == ()
         assert result.boxes_overwritten == (moved,)
+
+
+class TestTheDigestOfAPlan:
+    """What a caller sends back to say which plan it read: same plan, same digest."""
+
+    def test_the_same_plan_has_the_same_digest_whatever_the_input_order(self) -> None:
+        gone = [node("b"), node("a")]
+
+        first = plan(ModelSnapshot(tuple(gone), ()), ModelSnapshot((), ()))
+        second = plan(ModelSnapshot(tuple(reversed(gone)), ()), ModelSnapshot((), ()))
+
+        assert plan_digest(first) == plan_digest(second)
+        assert len(plan_digest(first)) == 64
+
+    def test_any_change_in_what_would_happen_changes_it(self) -> None:
+        gone, edited = node("gone"), node("billing")
+        snapshot = ModelSnapshot((gone, edited), ())
+        base = plan(snapshot, ModelSnapshot((replace(edited, name="x"),), ()))
+
+        other_content = plan(snapshot, ModelSnapshot((replace(edited, name="y"),), ()))
+        one_more = plan(snapshot, ModelSnapshot((replace(edited, name="x"), node("new")), ()))
+        documents = replace(base, documents_lost=3)
+
+        digests = {plan_digest(p) for p in (base, other_content, one_more, documents)}
+        assert len(digests) == 4

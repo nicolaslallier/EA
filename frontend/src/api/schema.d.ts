@@ -24,6 +24,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/baselines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Baselines */
+        get: operations["list_baselines_baselines_get"];
+        put?: never;
+        /**
+         * Create Baseline
+         * @description Freeze a copy of the whole model under a name.
+         */
+        post: operations["create_baseline_baselines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Baseline */
+        get: operations["read_baseline_baselines__baseline_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Baseline */
+        delete: operations["delete_baseline_baselines__baseline_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Baseline Diff
+         * @description What separates a baseline from another one, or from the model as it is now.
+         */
+        get: operations["read_baseline_diff_baselines__baseline_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/baselines/{baseline_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Baseline
+         * @description Put the model back as the baseline had it — a dry run unless told otherwise.
+         *
+         *     Applying needs `dry_run=false` **and** the `digest` of the dry run you read,
+         *     as `expected_digest`. One transaction: a conflict (`restore_conflict`, read
+         *     the plan again) or a locked element (`restore_blocked`) changes nothing.
+         */
+        post: operations["restore_baseline_baselines__baseline_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams": {
         parameters: {
             query?: never;
@@ -978,6 +1061,56 @@ export interface components {
              */
             next_cursor: string | null;
         };
+        /** BaselineCreate */
+        BaselineCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /** BaselineDiffRead */
+        BaselineDiffRead: {
+            /** Elements Added */
+            elements_added: components["schemas"]["EntityRefRead"][];
+            /** Elements Modified */
+            elements_modified: components["schemas"]["ModifiedRead"][];
+            /** Elements Removed */
+            elements_removed: components["schemas"]["EntityRefRead"][];
+            /** Relationships Added */
+            relationships_added: components["schemas"]["EntityRefRead"][];
+            /** Relationships Modified */
+            relationships_modified: components["schemas"]["ModifiedRead"][];
+            /** Relationships Removed */
+            relationships_removed: components["schemas"]["EntityRefRead"][];
+        };
+        /** BaselineRead */
+        BaselineRead: {
+            /** Box Count */
+            box_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Description */
+            description: string;
+            /** Element Count */
+            element_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Relationship Count */
+            relationship_count: number;
+        };
         /** Body_attach_document_elements__element_id__documents_post */
         Body_attach_document_elements__element_id__documents_post: {
             /**
@@ -1379,6 +1512,20 @@ export interface components {
          * @enum {string}
          */
         EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline";
+        /** EntityRefRead */
+        EntityRefRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
+        };
         /**
          * ErrorResponse
          * @description The single error envelope every failing endpoint returns.
@@ -1577,6 +1724,22 @@ export interface components {
             layers: components["schemas"]["Layer"][];
             /** Relationship Types */
             relationship_types: components["schemas"]["RelationshipTypeRead"][];
+        };
+        /** ModifiedRead */
+        ModifiedRead: {
+            /** Changes */
+            changes: components["schemas"]["FieldChangeRead"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Type */
+            type: string;
         };
         /**
          * MoveElements
@@ -1851,6 +2014,75 @@ export interface components {
             strength: number;
             value: components["schemas"]["RelationshipType"];
         };
+        /**
+         * RestorePlanRead
+         * @description What a restoration would do. Every figure is an exact count; the lists name
+         *     only the first few of each kind (`PLAN_LISTED_ITEMS`).
+         */
+        RestorePlanRead: {
+            /** Blocked */
+            blocked: components["schemas"]["EntityRefRead"][];
+            /** Blocked Count */
+            blocked_count: number;
+            /** Boxes Lost */
+            boxes_lost: number;
+            /** Boxes To Restore */
+            boxes_to_restore: number;
+            /** Created */
+            created: components["schemas"]["EntityRefRead"][];
+            /** Deleted */
+            deleted: components["schemas"]["EntityRefRead"][];
+            /** Documents Lost */
+            documents_lost: number;
+            /** Elements To Create */
+            elements_to_create: number;
+            /** Elements To Delete */
+            elements_to_delete: number;
+            /** Elements To Update */
+            elements_to_update: number;
+            /** Relationships Cascaded */
+            relationships_cascaded: number;
+            /** Relationships To Create */
+            relationships_to_create: number;
+            /** Relationships To Delete */
+            relationships_to_delete: number;
+            /** Updated */
+            updated: components["schemas"]["EntityRefRead"][];
+            /** Warning Count */
+            warning_count: number;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** RestoreRead */
+        RestoreRead: {
+            /** Applied */
+            applied: boolean;
+            /**
+             * Digest
+             * @description Send it back as `expected_digest` to apply this very plan.
+             */
+            digest: string;
+            plan: components["schemas"]["RestorePlanRead"];
+        };
+        /** RestoreRequest */
+        RestoreRequest: {
+            /**
+             * Dry Run
+             * @description Report what would change; write nothing.
+             * @default true
+             */
+            dry_run?: boolean;
+            /**
+             * Expected Digest
+             * @description The `digest` of the dry run you read. Required to apply (dry_run false): a model that moved since is refused with `restore_conflict`.
+             */
+            expected_digest?: string | null;
+            /**
+             * Keep New
+             * @description Keep what was created since; false (exact) when omitted.
+             */
+            keep_new?: boolean | null;
+        };
         /** SavedQueryCreate */
         SavedQueryCreate: {
             /**
@@ -2070,6 +2302,349 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_baselines_baselines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_baseline_baselines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BaselineCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_baseline_baselines__baseline_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_baseline_baselines__baseline_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_baseline_diff_baselines__baseline_id__diff_get: {
+        parameters: {
+            query?: {
+                against?: string | null;
+            };
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaselineDiffRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_baseline_baselines__baseline_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                baseline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

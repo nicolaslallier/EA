@@ -10,6 +10,8 @@ readable path for a diff), and nothing about the tree of packages itself.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -383,6 +385,42 @@ class RestorePlan:
                 self.boxes_to_restore,
             )
         )
+
+
+def plan_digest(plan: RestorePlan) -> str:
+    """A fingerprint of everything the plan would do and cost.
+
+    A dry run hands it out; applying hands it back (`expected_digest`), and the
+    service refuses to apply a plan other than the one that was read. Timestamps
+    are left out, like in a diff: only content decides.
+    """
+
+    def element(e: Element) -> list[Any]:
+        return [str(e.id), element_content(e)]
+
+    def link(r: Relationship) -> list[Any]:
+        return [str(r.id), relationship_content(r)]
+
+    def box(b: BoxSnapshot) -> list[Any]:
+        return [str(b.diagram_id), str(b.element_id), b.x, b.y, b.width, b.height]
+
+    material = {
+        "create": [element(e) for e in plan.elements_to_create],
+        "update": [
+            [str(u.current.id), element_content(u.current), element_content(u.restored)]
+            for u in plan.elements_to_update
+        ],
+        "delete": [element(e) for e in plan.elements_to_delete],
+        "links_create": [link(r) for r in plan.relationships_to_create],
+        "links_delete": [link(r) for r in plan.relationships_to_delete],
+        "cascaded": plan.cascaded_relationships,
+        "boxes": [box(b) for b in plan.boxes_to_restore],
+        "documents_lost": plan.documents_lost,
+        "boxes_lost": plan.boxes_lost,
+        "warnings": list(plan.warnings),
+        "blocked": [str(e.id) for e in plan.blocked],
+    }
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
 
 
 def _element_order(element: Element) -> tuple[str, str]:

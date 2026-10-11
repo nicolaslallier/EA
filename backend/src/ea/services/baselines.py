@@ -34,9 +34,10 @@ from ea.domain.baselines import (
     baseline_view,
     blocked_message,
     diff_snapshots,
+    plan_digest,
     refusal_context,
 )
-from ea.domain.errors import BaselineNotFoundError, RestoreBlockedError
+from ea.domain.errors import BaselineNotFoundError, RestoreBlockedError, RestoreConflictError
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
@@ -56,6 +57,8 @@ def _utc_now() -> datetime:
 class RestoreOutcome:
     plan: RestorePlan
     applied: bool
+    #: The fingerprint of `plan` — what a caller sends back to apply exactly that plan.
+    digest: str
 
 
 class BaselineService:
@@ -136,10 +139,14 @@ class BaselineService:
         baseline_id: UUID,
         *,
         dry_run: bool = True,
-        confirm: bool = False,
+        expected_digest: str | None = None,
         keep_new: bool | None = None,
     ) -> RestoreOutcome:
-        """Plan a restoration, and apply it only when told twice (`dry_run=False`, `confirm`).
+        """Plan a restoration, and apply it only for the plan the caller has read.
+
+        Applying needs `dry_run=False` *and* the `digest` of the dry run it read
+        (`expected_digest`): a model that moved since then gives another digest,
+        and the answer is `RestoreConflictError` — read the plan again.
 
         `keep_new` defaults to `False` for a global baseline: restoring is
         exact. A plan that touches a protected element is returned by a dry run
@@ -147,14 +154,21 @@ class BaselineService:
         protection again inside its transaction.
         """
         require_editor()
-        if not dry_run and not confirm:
-            msg = "restoring changes the catalogue: read the dry run, then pass confirm=true"
+        if not dry_run and not expected_digest:
+            msg = (
+                "restoring changes the catalogue: read the dry run, then pass its digest "
+                "as expected_digest"
+            )
             raise ValueError(msg)
         baseline = await self.get(baseline_id)
         wanted = bool(keep_new)
         plan = await self._repository.restore_plan(baseline_id, keep_new=wanted)
+        digest = plan_digest(plan)
         if dry_run:
-            return RestoreOutcome(plan, applied=False)
+            return RestoreOutcome(plan, applied=False, digest=digest)
+        if digest != expected_digest:
+            msg = "the model changed since the plan you confirmed: read the plan again"
+            raise RestoreConflictError(msg)
         if plan.is_blocked:
             logger.warning(
                 "restoration refused: protected elements",
@@ -176,7 +190,7 @@ class BaselineService:
             baseline.name,
             extra={"action": "baseline_restored", "baseline_id": str(baseline.id)},
         )
-        return RestoreOutcome(plan, applied=True)
+        return RestoreOutcome(plan, applied=True, digest=digest)
 
     def _events(self, baseline: Baseline, plan: RestorePlan, story: str) -> list[AuditEvent]:
         def about(action: AuditAction, entity_id: UUID | None, **views: object) -> AuditEvent:

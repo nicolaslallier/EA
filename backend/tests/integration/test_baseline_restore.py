@@ -358,7 +358,8 @@ async def test_the_journal_of_a_restoration_lets_one_rebuild_everything_that_dis
     (note,) = await model.documents.list_for_element(model.left.id)
     service = BaselineService(model.baselines, clock=lambda: LATER)
 
-    await service.restore(empty.id, dry_run=False, confirm=True)
+    read = await service.restore(empty.id)
+    await service.restore(empty.id, dry_run=False, expected_digest=read.digest)
 
     page = await model.trail.page(
         AuditFilter(entity_kind=EntityKind.ELEMENT, entity_id=model.left.id)

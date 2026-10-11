@@ -318,6 +318,134 @@
         "title": "AuditPageRead",
         "type": "object"
       },
+      "BaselineCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "BaselineCreate",
+        "type": "object"
+      },
+      "BaselineDiffRead": {
+        "properties": {
+          "elements_added": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Elements Added",
+            "type": "array"
+          },
+          "elements_modified": {
+            "items": {
+              "$ref": "#/components/schemas/ModifiedRead"
+            },
+            "title": "Elements Modified",
+            "type": "array"
+          },
+          "elements_removed": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Elements Removed",
+            "type": "array"
+          },
+          "relationships_added": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Relationships Added",
+            "type": "array"
+          },
+          "relationships_modified": {
+            "items": {
+              "$ref": "#/components/schemas/ModifiedRead"
+            },
+            "title": "Relationships Modified",
+            "type": "array"
+          },
+          "relationships_removed": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Relationships Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "elements_added",
+          "elements_removed",
+          "elements_modified",
+          "relationships_added",
+          "relationships_removed",
+          "relationships_modified"
+        ],
+        "title": "BaselineDiffRead",
+        "type": "object"
+      },
+      "BaselineRead": {
+        "properties": {
+          "box_count": {
+            "title": "Box Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "element_count": {
+            "title": "Element Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "relationship_count": {
+            "title": "Relationship Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_by",
+          "created_at",
+          "element_count",
+          "relationship_count",
+          "box_count"
+        ],
+        "title": "BaselineRead",
+        "type": "object"
+      },
       "Body_attach_document_elements__element_id__documents_post": {
         "properties": {
           "file": {
@@ -1190,6 +1318,35 @@
         "title": "EntityKind",
         "type": "string"
       },
+      "EntityRefRead": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "label",
+          "type"
+        ],
+        "title": "EntityRefRead",
+        "type": "object"
+      },
       "ErrorResponse": {
         "description": "The single error envelope every failing endpoint returns.",
         "properties": {
@@ -1533,6 +1690,43 @@
           "layers"
         ],
         "title": "MetamodelRead",
+        "type": "object"
+      },
+      "ModifiedRead": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/FieldChangeRead"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "label",
+          "type",
+          "changes"
+        ],
+        "title": "ModifiedRead",
         "type": "object"
       },
       "MoveElements": {
@@ -2064,6 +2258,173 @@
           "impact_follows_direction"
         ],
         "title": "RelationshipTypeRead",
+        "type": "object"
+      },
+      "RestorePlanRead": {
+        "description": "What a restoration would do. Every figure is an exact count; the lists name\nonly the first few of each kind (`PLAN_LISTED_ITEMS`).",
+        "properties": {
+          "blocked": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Blocked",
+            "type": "array"
+          },
+          "blocked_count": {
+            "title": "Blocked Count",
+            "type": "integer"
+          },
+          "boxes_lost": {
+            "title": "Boxes Lost",
+            "type": "integer"
+          },
+          "boxes_to_restore": {
+            "title": "Boxes To Restore",
+            "type": "integer"
+          },
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Created",
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "documents_lost": {
+            "title": "Documents Lost",
+            "type": "integer"
+          },
+          "elements_to_create": {
+            "title": "Elements To Create",
+            "type": "integer"
+          },
+          "elements_to_delete": {
+            "title": "Elements To Delete",
+            "type": "integer"
+          },
+          "elements_to_update": {
+            "title": "Elements To Update",
+            "type": "integer"
+          },
+          "relationships_cascaded": {
+            "title": "Relationships Cascaded",
+            "type": "integer"
+          },
+          "relationships_to_create": {
+            "title": "Relationships To Create",
+            "type": "integer"
+          },
+          "relationships_to_delete": {
+            "title": "Relationships To Delete",
+            "type": "integer"
+          },
+          "updated": {
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Updated",
+            "type": "array"
+          },
+          "warning_count": {
+            "title": "Warning Count",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "elements_to_create",
+          "elements_to_update",
+          "elements_to_delete",
+          "relationships_to_create",
+          "relationships_to_delete",
+          "relationships_cascaded",
+          "boxes_to_restore",
+          "documents_lost",
+          "boxes_lost",
+          "created",
+          "updated",
+          "deleted",
+          "warning_count",
+          "warnings",
+          "blocked_count",
+          "blocked"
+        ],
+        "title": "RestorePlanRead",
+        "type": "object"
+      },
+      "RestoreRead": {
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "Send it back as `expected_digest` to apply this very plan.",
+            "title": "Digest",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/RestorePlanRead"
+          }
+        },
+        "required": [
+          "applied",
+          "digest",
+          "plan"
+        ],
+        "title": "RestoreRead",
+        "type": "object"
+      },
+      "RestoreRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "description": "Report what would change; write nothing.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The `digest` of the dry run you read. Required to apply (dry_run false): a model that moved since is refused with `restore_conflict`.",
+            "title": "Expected Digest"
+          },
+          "keep_new": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Keep what was created since; false (exact) when omitted.",
+            "title": "Keep New"
+          }
+        },
+        "title": "RestoreRequest",
         "type": "object"
       },
       "SavedQueryCreate": {
@@ -2627,6 +2988,474 @@
         "summary": "List Audit Events",
         "tags": [
           "audit"
+        ]
+      }
+    },
+    "/baselines": {
+      "get": {
+        "operationId": "list_baselines_baselines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BaselineRead"
+                  },
+                  "title": "Response List Baselines Baselines Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Baselines",
+        "tags": [
+          "baselines"
+        ]
+      },
+      "post": {
+        "description": "Freeze a copy of the whole model under a name.",
+        "operationId": "create_baseline_baselines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BaselineCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Baseline",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}": {
+      "delete": {
+        "operationId": "delete_baseline_baselines__baseline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Baseline",
+        "tags": [
+          "baselines"
+        ]
+      },
+      "get": {
+        "operationId": "read_baseline_baselines__baseline_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Baseline",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}/diff": {
+      "get": {
+        "description": "What separates a baseline from another one, or from the model as it is now.",
+        "operationId": "read_baseline_diff_baselines__baseline_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "against",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A baseline id, or `current` for the model as it is now.",
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Against"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineDiffRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Baseline Diff",
+        "tags": [
+          "baselines"
+        ]
+      }
+    },
+    "/baselines/{baseline_id}/restore": {
+      "post": {
+        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.",
+        "operationId": "restore_baseline_baselines__baseline_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Baseline",
+        "tags": [
+          "baselines"
         ]
       }
     },

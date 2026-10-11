@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -22,7 +22,7 @@ from ea.domain.errors import (
     RestoreConflictError,
 )
 from ea.services.architecture import ArchitectureService
-from ea.services.baselines import BaselineService
+from ea.services.baselines import BaselineService, RestoreOutcome
 from ea.services.caller import acting_as
 from tests.conftest import (
     FIXED_NOW,
@@ -34,6 +34,16 @@ from tests.conftest import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+async def apply(
+    service: BaselineService, baseline_id: UUID, *, keep_new: bool | None = None
+) -> RestoreOutcome:
+    """What a careful caller does: read the plan, then apply exactly that plan."""
+    read = await service.restore(baseline_id, keep_new=keep_new)
+    return await service.restore(
+        baseline_id, dry_run=False, expected_digest=read.digest, keep_new=keep_new
+    )
 
 
 class TestCapturingAndComparing:
@@ -150,7 +160,7 @@ class TestRestoring:
         with pytest.raises(ElementNotFoundError):
             await service.get_element(gone.id)
 
-    async def test_applying_without_confirm_is_refused_and_writes_nothing(
+    async def test_applying_needs_the_plan_that_was_read_and_writes_nothing_otherwise(
         self,
         service: ArchitectureService,
         baseline_service: BaselineService,
@@ -159,12 +169,19 @@ class TestRestoring:
         gone = await service.create_element(element_type=E.NODE, name="gone")
         baseline = await baseline_service.create(name="v1")
         await service.delete_element(gone.id)
+        read = await baseline_service.restore(baseline.id)
+        # The model moves after the plan was read: the caller confirmed another plan.
+        await service.create_element(element_type=E.NODE, name="late")
         audit_log.events.clear()
 
-        with pytest.raises(ValueError, match="confirm"):
+        with pytest.raises(ValueError, match="expected_digest"):
             await baseline_service.restore(baseline.id, dry_run=False)
+        with pytest.raises(RestoreConflictError, match="read the plan again"):
+            await baseline_service.restore(baseline.id, dry_run=False, expected_digest=read.digest)
 
         assert audit_log.events == []
+        with pytest.raises(ElementNotFoundError):
+            await service.get_element(gone.id)
 
     async def test_a_restoration_puts_the_model_back_and_audits_it_as_one_story(
         self,
@@ -182,7 +199,7 @@ class TestRestoring:
 
         token = request_id.set("req-restore")
         try:
-            outcome = await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+            outcome = await apply(baseline_service, baseline.id)
         finally:
             request_id.reset(token)
 
@@ -209,7 +226,7 @@ class TestRestoring:
         baseline = await baseline_service.create(name="empty")
         fresh = await service.create_element(element_type=E.NODE, name="fresh")
 
-        await baseline_service.restore(baseline.id, dry_run=False, confirm=True, keep_new=True)
+        await apply(baseline_service, baseline.id, keep_new=True)
 
         assert (await service.get_element(fresh.id)).name == "fresh"
 
@@ -227,7 +244,7 @@ class TestRestoring:
         audit_log.events.clear()
 
         with pytest.raises(RestoreConflictError, match="h1"):
-            await baseline_service.restore(baseline.id, dry_run=False, confirm=True, keep_new=True)
+            await apply(baseline_service, baseline.id, keep_new=True)
 
         assert audit_log.events == []
         assert (await service.get_element(squatter.id)).name == "h2"
@@ -247,7 +264,7 @@ class TestRestoring:
 
         plan = (await baseline_service.restore(baseline.id)).plan
         with pytest.raises(RestoreBlockedError, match="invoicing"):
-            await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+            await apply(baseline_service, baseline.id)
 
         assert [e.id for e in plan.blocked] == [edited.id]
         assert (await service.get_element(edited.id)).name == "invoicing"
@@ -272,7 +289,7 @@ class TestRestoring:
         audit_log.events.clear()
 
         with caplog.at_level("WARNING"), pytest.raises(RestoreBlockedError):
-            await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+            await apply(baseline_service, baseline.id)
 
         (record,) = [r for r in caplog.records if getattr(r, "action", "") == "restore_blocked"]
         assert record.levelname == "WARNING"
@@ -329,7 +346,7 @@ class TestTheTrailSaysEverythingThatWentAndMoved:
         diagrams.nodes[view.id] = (DiagramNode(doomed.id, 1, 2),)
         audit_log.events.clear()
 
-        await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+        await apply(baseline_service, baseline.id)
 
         deleted = next(e for e in audit_log.events if e.action is AuditAction.ELEMENT_DELETED)
         assert deleted.before is not None
@@ -363,7 +380,7 @@ class TestTheTrailSaysEverythingThatWentAndMoved:
         diagrams.nodes[view.id] = (DiagramNode(element.id, 9, 9),)
         audit_log.events.clear()
 
-        await baseline_service.restore(baseline.id, dry_run=False, confirm=True)
+        await apply(baseline_service, baseline.id)
 
         (restored,) = audit_log.events
         assert restored.action is AuditAction.BASELINE_RESTORED
