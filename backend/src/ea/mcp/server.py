@@ -93,8 +93,10 @@ from ea.api.schemas import (
 from ea.api.schemas import BaselineDescription as BaselineDescriptionBounds
 from ea.api.schemas import BaselineName as BaselineNameBounds
 from ea.api.schemas import Cidr as PrefixBounds
+from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
 from ea.api.schemas import PlanDigest as PlanDigestBounds
 from ea.api.schemas import Vrf as VrfBounds
+from ea.domain.approval import Transition
 from ea.domain.archimate import (
     AccessType,
     ElementType,
@@ -240,7 +242,18 @@ it ALWAYS starts as a dry run (`dry_run` is true unless you say otherwise): read
 the plan, show it to the person you work for, and only after they agree call it
 again with `dry_run=false` and the plan's `digest` as `expected_digest`. If the
 model moved meanwhile you get `restore_conflict`: dry-run again and show the new
-plan.\
+plan.
+
+An element can be put through review. `transition_element` moves it: `submit`
+(any editor), then `approve`, `reject`, `reopen`, `lock` or `unlock`, which need
+the approver role of your token — a refusal says so. Approving certifies one
+revision: read the element, then pass its `revision` as `expected_revision`; if
+the element changed since you read it you are refused, and read it again. Once
+an element is approved, `update_element`, `delete_element`, its relationships
+and its documents are refused unless you are an approver (and then any change
+sends it back to review), and a locked element refuses everything until it is
+unlocked. `allowed_transitions` on the element lists exactly what your token may
+do next.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -649,6 +662,38 @@ def build_mcp_server(
         """
         await get_service().delete_element(element_id)
         return f"element {element_id} and every relationship attached to it were deleted"
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def transition_element(
+        element_id: ElementId,
+        transition: Annotated[
+            Transition,
+            Field(description="submit, approve, reject, reopen, lock or unlock."),
+        ],
+        expected_revision: Annotated[
+            ExpectedRevisionBounds | None,
+            Field(
+                description=(
+                    "The `revision` of the element as you read it. Required to approve: "
+                    "an approval certifies that revision and nothing newer."
+                )
+            ),
+        ] = None,
+    ) -> ElementRead:
+        """Move an element through review: draft, in review, approved, locked.
+
+        `submit` needs the editor role; every other transition needs the approver
+        role of the token you were given, and `approve` is also refused to
+        whoever made the last change to the element, and when it changed since
+        `expected_revision`. The answer lists `allowed_transitions`: what you may
+        do next.
+        """
+        return ElementRead.of(
+            await get_service().transition_element(
+                element_id, transition, expected_revision=expected_revision
+            )
+        )
 
     # --- Relationships ----------------------------------------------------
 

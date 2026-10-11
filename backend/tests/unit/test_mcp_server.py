@@ -20,6 +20,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.api.schemas import (
     AddressAssign,
+    ApprovalRequest,
     BaselineCreate,
     ElementCreate,
     ElementQuerySchema,
@@ -46,7 +47,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
-from tests.conftest import InMemoryAuditLog, InMemoryObjectStore, a_reader
+from tests.conftest import InMemoryAuditLog, InMemoryObjectStore, a_reader, an_approver
 
 
 @pytest.fixture
@@ -246,6 +247,81 @@ class TestTheBaselineTools:
 
 
 @pytest.mark.asyncio
+class TestTheReviewTool:
+    async def test_the_roles_of_the_token_decide(self, server: MCPServer[Any]) -> None:
+        element = await an_element(server, "node", "db-01")
+        submitted = await call(
+            server, "transition_element", element_id=element["id"], transition="submit"
+        )
+
+        with pytest.raises(ToolError, match="ea-approver"):
+            await server.call_tool(
+                "transition_element",
+                {"element_id": element["id"], "transition": "approve", "expected_revision": 1},
+            )
+        with acting_as(an_approver()):
+            approved = await call(
+                server,
+                "transition_element",
+                element_id=element["id"],
+                transition="approve",
+                expected_revision=submitted["revision"],
+            )
+
+        assert submitted["approval_state"] == "in_review"
+        assert approved["approval_state"] == "approved"
+        assert approved["allowed_transitions"] == ["reopen", "lock"]
+
+    async def test_approving_a_revision_the_agent_did_not_read_is_told_to_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "node", "db-01")
+        await call(server, "transition_element", element_id=element["id"], transition="submit")
+        await call(server, "update_element", element_id=element["id"], description="later")
+
+        with acting_as(an_approver()):
+            with pytest.raises(ToolError, match="read it again"):
+                await server.call_tool(
+                    "transition_element",
+                    {"element_id": element["id"], "transition": "approve", "expected_revision": 1},
+                )
+            with pytest.raises(ToolError, match="read it again"):
+                await server.call_tool(
+                    "transition_element", {"element_id": element["id"], "transition": "approve"}
+                )
+
+    async def test_an_approved_element_tells_the_agent_why_an_update_is_refused(
+        self, server: MCPServer[Any]
+    ) -> None:
+        element = await an_element(server, "node", "db-01")
+        await call(server, "transition_element", element_id=element["id"], transition="submit")
+        with acting_as(an_approver()):
+            await call(
+                server,
+                "transition_element",
+                element_id=element["id"],
+                transition="approve",
+                expected_revision=element["revision"],
+            )
+
+        with pytest.raises(ToolError, match="approved"):
+            await server.call_tool("update_element", {"element_id": element["id"], "name": "x"})
+        with pytest.raises(ToolError, match="approved"):
+            await server.call_tool("delete_element", {"element_id": element["id"]})
+
+    async def test_it_writes_without_destroying_and_the_instructions_explain_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "transition_element")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        for phrase in ("transition_element", "expected_revision", "allowed_transitions"):
+            assert phrase in INSTRUCTIONS, phrase
+
+
+@pytest.mark.asyncio
 class TestTheToolset:
     async def test_it_exposes_the_whole_service_and_nothing_else(
         self, server: MCPServer[Any]
@@ -304,6 +380,7 @@ class TestTheToolset:
             "create_baseline",
             "diff_baselines",
             "restore_baseline",
+            "transition_element",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -1590,6 +1667,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("create_baseline", "name", BaselineCreate, "name"),
             ("create_baseline", "description", BaselineCreate, "description"),
             ("restore_baseline", "expected_digest", RestoreRequest, "expected_digest"),
+            ("transition_element", "expected_revision", ApprovalRequest, "expected_revision"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
