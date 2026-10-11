@@ -2,6 +2,7 @@
 // Kept apart from `lib/diagramExport.ts` because it reads the metamodel's
 // colours and the relationship verbs, which `lib/` does not import.
 import { LAYER_COLOURS } from '../metamodel/useMetamodel'
+import { stereotypeLabel, stereotypeStroke } from '../../lib/stereotypeRender'
 import { verbOf } from '../relationships/labels'
 import { routeOf } from '../../lib/waypoints'
 import type { ExportObject, ExportScene } from '../../lib/diagramExport'
@@ -39,6 +40,8 @@ export function buildExportScene(
       y: box.y,
       width: box.width,
       height: box.height,
+      stereotype: stereotypeLabel(box.element.stereotypes) || undefined,
+      stroke: stereotypeStroke(box.element.stereotypes) ?? undefined,
     })),
     edges: relationships.flatMap((relationship) => {
       const source = byId.get(relationship.source_id)

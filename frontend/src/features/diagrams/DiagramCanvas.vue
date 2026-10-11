@@ -31,6 +31,7 @@ import {
   type Size,
 } from '../../lib/diagramGeometry'
 import { safeColour } from '../../lib/diagramExport'
+import { STEREOTYPE_ICONS, stereotypeLabel, stereotypeStroke } from '../../lib/stereotypeRender'
 import { MAX_WAYPOINTS, midpoints, routeOf } from '../../lib/waypoints'
 import {
   ELEMENT_DRAG_TYPE,
@@ -695,7 +696,29 @@ function onCanvasKey(event: KeyboardEvent): void {
             :height="box.height"
             rx="6"
             :fill="LAYER_COLOURS[box.element.layer]"
+            :stroke="stereotypeStroke(box.element.stereotypes) ?? undefined"
+            :stroke-width="stereotypeStroke(box.element.stereotypes) ? 2.5 : undefined"
           />
+          <text
+            v-if="box.element.stereotypes.length > 0"
+            class="canvas__stereotype"
+            :x="box.x + box.width / 2"
+            :y="box.y + 11"
+            text-anchor="middle"
+            :fill="BOX_TEXT"
+          >
+            {{ shortenToWidth(stereotypeLabel(box.element.stereotypes), box.width) }}
+          </text>
+          <g
+            v-if="box.element.stereotypes[0] && STEREOTYPE_ICONS[box.element.stereotypes[0].icon_key]"
+            class="canvas__icon"
+            :transform="`translate(${box.x + box.width - 20} ${box.y + 4}) scale(0.9)`"
+            fill="none"
+            :stroke="BOX_TEXT"
+            stroke-width="1.2"
+          >
+            <path :d="STEREOTYPE_ICONS[box.element.stereotypes[0].icon_key]" />
+          </g>
           <text
             class="canvas__name"
             :x="box.x + box.width / 2"
@@ -902,7 +925,12 @@ svg {
 .canvas__node {
   cursor: grab;
 }
-.canvas__node rect {
+.canvas__stereotype {
+  font-size: 9px;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.canvas__node rect:not([stroke]) {
   stroke: #6f6b78;
   stroke-width: 1;
 }

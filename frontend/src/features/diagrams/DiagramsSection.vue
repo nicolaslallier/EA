@@ -317,6 +317,12 @@ function onLinkContent(sourceId: string, targetId: string): void {
   onConnect(sourceId, targetId)
 }
 
+/** A stereotype or one of its values changed: the detail and the boxes drawn from it are stale. */
+function refreshAfterStereotype(): void {
+  void detail.open(selectedId.value)
+  void editor.open(diagramId.value, asOf.value)
+}
+
 function reload(): void {
   void editor.reloadAfterConflict()
 }
@@ -549,6 +555,7 @@ async function exportAs(format: ExportFormat): Promise<void> {
             :element="detail.element.value"
             :type-label="metamodel.labelOf(detail.element.value.element_type)"
             @close="deselect"
+            @changed="refreshAfterStereotype"
           />
         </template>
       </aside>

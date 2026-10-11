@@ -40,6 +40,18 @@ describe('safeColour', () => {
 })
 
 describe('serializeSvg', () => {
+  it('writes the stereotype above the label and keeps its stroke colour valid', () => {
+    const svg = serializeSvg({
+      ...SCENE,
+      boxes: [{ ...BOX, stereotype: '«database»', stroke: '#ff0000' }, { ...BOX, id: 'b', stereotype: '«<x>»', stroke: 'red" x="' }],
+    })
+
+    expect(svg).toContain('«database»')
+    expect(svg).toContain('stroke="#ff0000"')
+    expect(svg).toContain('«&lt;x&gt;»')
+    expect(svg).not.toContain('red"')
+  })
+
   it('is a standalone document with the boxes, the link and its verb', () => {
     const svg = serializeSvg(SCENE)
 

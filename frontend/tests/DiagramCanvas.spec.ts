@@ -568,3 +568,28 @@ describe('DiagramCanvas — groups, notes and bends', () => {
     expect(document.querySelector('.canvas__resize')).toBeNull()
   })
 })
+
+describe('DiagramCanvas — stereotypes', () => {
+  it('writes «name» above the label, outlines the box in the stereotype colour and draws its icon', () => {
+    const stereotyped = {
+      ...BOXES[0],
+      element: {
+        ...A,
+        stereotypes: [{ id: 's', name: 'database', colour: '#ff0000', icon_key: 'database' }],
+      },
+    }
+    draw({ boxes: [stereotyped, BOXES[1]] })
+
+    expect(screen.getByText('«database»')).toBeInTheDocument()
+    const box = screen.getByRole('button', { name: /Facturation/ })
+    expect(box.querySelector('rect')?.getAttribute('stroke')).toBe('#ff0000')
+    expect(box.querySelector('.canvas__icon')).not.toBeNull()
+  })
+
+  it('leaves a box without stereotype exactly as before', () => {
+    draw()
+
+    expect(screen.queryByText(/«/)).toBeNull()
+    expect(document.querySelector('.canvas__icon')).toBeNull()
+  })
+})

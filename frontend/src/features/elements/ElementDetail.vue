@@ -9,6 +9,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import ApprovalBanner from './ApprovalBanner.vue'
+import StereotypePanel from './StereotypePanel.vue'
 import ElementHistory from '../history/ElementHistory.vue'
 import { ASPECT_LABELS, LAYER_LABELS } from '../metamodel/useMetamodel'
 import type { ElementRead } from './useElementCatalogue'
@@ -18,7 +19,7 @@ const props = defineProps<{
   typeLabel: string
   packagePath?: string
 }>()
-defineEmits<{ close: [] }>()
+defineEmits<{ close: []; changed: [] }>()
 
 // A transition answers with the element as it is now, and a stale approval with
 // the element re-read: the sheet follows that copy rather than the prop.
@@ -108,6 +109,8 @@ function day(iso: string): string {
         </div>
       </dl>
     </section>
+
+    <StereotypePanel :element="shown" @changed="$emit('changed')" />
 
     <ElementHistory :element-id="shown.id" />
 

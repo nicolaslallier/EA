@@ -18,6 +18,8 @@ export type ExportBox = {
   y: number
   width: number
   height: number
+  stereotype?: string
+  stroke?: string
 }
 export type ExportEdge = { id: string; points: Point[]; label: string }
 export type ExportObject = {
@@ -126,7 +128,12 @@ export function serializeSvg(scene: ExportScene, theme: ExportTheme = LIGHT_THEM
   for (const box of scene.boxes) {
     const centre = box.x + box.width / 2
     out.push(
-      `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}" rx="6" fill="${safeColour(box.fill, '#e8e6ec')}" stroke="${stroke}"/>`,
+      `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}" rx="6" fill="${safeColour(box.fill, '#e8e6ec')}" stroke="${safeColour(box.stroke ?? '', stroke)}"/>`,
+      ...(box.stereotype
+        ? [
+            `<text x="${num(centre)}" y="${num(box.y + 11)}" text-anchor="middle" font-size="9" fill="${ink}">${escapeXml(shortenToWidth(box.stereotype, box.width))}</text>`,
+          ]
+        : []),
       `<text x="${num(centre)}" y="${num(box.y + box.height / 2 - 2)}" text-anchor="middle" font-weight="600" fill="${ink}">${escapeXml(shortenToWidth(box.name, box.width))}</text>`,
       `<text x="${num(centre)}" y="${num(box.y + box.height / 2 + 13)}" text-anchor="middle" font-size="10" fill="${ink}">${escapeXml(shortenToWidth(box.type, box.width))}</text>`,
     )
