@@ -522,7 +522,9 @@ def _read_definition(node: Element, reading: _Reading) -> None:
             raise _refuse(
                 f"an exchange file holds at most {MAX_EXCHANGE_ITEMS} property definitions"
             )
-        reading.definitions[identifier] = (name.text or "").strip()
+        reading.definitions[identifier] = (
+            name.text or ""
+        )  # exact: a key is never trimmed into validity
     node.clear()
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -30,6 +31,8 @@ from ea.domain.exchange import (
     Outcome,
     ReportBuilder,
     Severity,
+    accept_element,
+    accept_link,
     digest_of,
     element_type_of,
     exchange_element_of,
@@ -266,3 +269,64 @@ def test_the_report_keeps_its_first_lines_per_category(monkeypatch: pytest.Monke
     )
 
     assert [i.code for i in report.issues] == ["e", "e", "r"]  # a flood of one kind hides no other
+
+
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"name": "a\nb"}, "control_character"),
+        ({"name": "a\x07b"}, "control_character"),
+        ({"properties": {"a\n": "v"}}, "invalid_property_key"),
+        ({"properties": {"Owner name": "v"}}, "invalid_property_key"),
+        ({"properties": {SOURCE_ID: "v"}}, "reserved_property_key"),
+        ({"properties": {"ea.thing": "v"}}, "invalid_property_key"),
+        ({"identifier": "x" * 5_000}, "identifier_too_long"),
+        ({"properties": {"cidr": "10.0.0.0/99"}}, "invalid_ipam_property"),
+        ({"properties": {"ip_address": "10.0.0.300"}}, "invalid_ipam_property"),
+    ],
+)
+def test_accepting_an_element_refuses_what_the_domain_refuses_with_a_stable_code(
+    fields: dict[str, object], code: str
+) -> None:
+    item = replace(an_item(), **fields)  # type: ignore[arg-type]
+
+    with pytest.raises(RowRefusedError) as raised:
+        accept_element(item)
+
+    assert raised.value.code == code
+
+
+def test_accepting_an_element_hands_back_a_clean_copy_with_the_canonical_address() -> None:
+    item = an_item(
+        name="  srv  ",
+        description=" d ",
+        properties={"ip_address": "10.000.0.5".replace("000", "0")},
+    )
+
+    accepted = accept_element(item)
+
+    assert (accepted.name, accepted.description) == ("srv", "d")
+    assert accepted.properties["ip_address"] == "10.0.0.5"
+    assert type(accepted.properties) is not dict  # read-only: nobody edits it on the way
+
+
+def test_the_number_of_properties_is_bounded_in_the_domain_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ea.domain.exchange.MAX_PROPERTIES_PER_OBJECT", 2)
+
+    accept_element(an_item(properties={"a": "1", "b": "2"}))
+    with pytest.raises(RowRefusedError) as raised:
+        accept_element(an_item(properties={"a": "1", "b": "2", "c": "3"}))
+
+    assert raised.value.code == "too_many_properties"
+
+
+def test_accepting_a_link_refuses_a_long_identifier_and_keeps_the_matrix() -> None:
+    link = ExchangeRelationship("r" * 5_000, RelationshipType.FLOW, "a", "b")
+    with pytest.raises(RowRefusedError) as raised:
+        accept_link(link, ElementType.NODE, ElementType.NODE, same_element=False)
+    assert raised.value.code == "identifier_too_long"
+
+    ok = ExchangeRelationship("r", RelationshipType.FLOW, "a", "b", name=" n ")
+    assert accept_link(ok, ElementType.NODE, ElementType.NODE, same_element=False).name == "n"

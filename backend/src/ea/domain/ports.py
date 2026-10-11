@@ -25,7 +25,6 @@ from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
-from ea.domain.exchange import ExportScope
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
     from ea.domain.diagrams import Diagram, DiagramNode
+    from ea.domain.exchange import ExportScope
 
 
 @dataclass(slots=True)

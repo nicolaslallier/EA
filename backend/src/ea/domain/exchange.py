@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 from uuid import UUID
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType, validate_relationship
-from ea.domain.errors import IllegalRelationshipError, RowRefusedError
+from ea.domain.errors import DomainError, IllegalRelationshipError, RowRefusedError
+from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, is_property_key
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
@@ -474,14 +476,38 @@ def _check_text(value: str, what: str) -> None:
         raise RowRefusedError("nul_character", f"{what} cannot contain a NUL character")
 
 
+def _check_identifier(identifier: str) -> None:
+    """A file's identifier is stored as the `source_id` property: it is a value like any other."""
+    _check_text(identifier, "an identifier")
+    if len(identifier) > MAX_PROPERTY_VALUE_LENGTH:
+        raise RowRefusedError(
+            "identifier_too_long",
+            f"an identifier is at most {MAX_PROPERTY_VALUE_LENGTH} characters",
+        )
+
+
 def _check_properties(properties: Mapping[str, str]) -> None:
-    for value in properties.values():
+    if len(properties) > MAX_PROPERTIES_PER_OBJECT:
+        raise RowRefusedError(
+            "too_many_properties", f"an object has at most {MAX_PROPERTIES_PER_OBJECT} properties"
+        )
+    for key, value in properties.items():
+        if key == SOURCE_ID:
+            raise RowRefusedError("reserved_property_key", "'source_id' is the exchange's own")
+        if not is_property_key(key):
+            msg = "a property name is not a plain identifier"
+            raise RowRefusedError("invalid_property_key", msg)
         _check_text(value, "a property value")
         if len(value) > MAX_PROPERTY_VALUE_LENGTH:
             raise RowRefusedError(
                 "property_value_too_long",
                 f"a property value is at most {MAX_PROPERTY_VALUE_LENGTH} characters",
             )
+
+
+def _check_name(name: str) -> None:
+    if any(unicodedata.category(c) == "Cc" for c in name):
+        raise RowRefusedError("control_character", "a name cannot contain control characters")
 
 
 def validate_element(item: ExchangeElement) -> None:
@@ -501,6 +527,8 @@ def validate_element(item: ExchangeElement) -> None:
         )
     for text in (item.name, item.description, item.documentation):
         _check_text(text, "a text")
+    _check_name(item.name)
+    _check_identifier(item.identifier)
     _check_properties(item.properties)
 
 
@@ -515,6 +543,8 @@ def validate_link(
     if len(item.name.strip()) > MAX_NAME_LENGTH:
         raise RowRefusedError("name_too_long", f"a name is at most {MAX_NAME_LENGTH} characters")
     _check_text(item.name, "a name")
+    _check_name(item.name)
+    _check_identifier(item.identifier)
     _check_properties(item.properties)
     try:
         validate_relationship(
@@ -522,3 +552,37 @@ def validate_link(
         )
     except IllegalRelationshipError as refusal:
         raise RowRefusedError("relationship_not_allowed", str(refusal)) from None
+
+
+def accept_element(item: ExchangeElement) -> ExchangeElement:
+    """The only way an element of a file reaches a service: judged, then handed back clean.
+
+    Every rule the domain has applies — bounds, NUL, control characters, property names, the
+    IPAM rules of any address or prefix — and what comes back is a normalised copy (stripped
+    texts, the canonical spelling of an address, a read-only property map). A refusal is a
+    `RowRefusedError` with a stable code, whatever raised it.
+    """
+    validate_element(item)
+    try:
+        canonical = validate_ipam_properties(item.element_type, item.properties)
+    except (DomainError, ValueError) as refusal:
+        raise RowRefusedError("invalid_ipam_property", str(refusal)) from None
+    return replace(
+        item,
+        name=item.name.strip(),
+        description=item.description.strip(),
+        documentation=item.documentation.strip(),
+        properties=MappingProxyType(dict(canonical or {})),
+    )
+
+
+def accept_link(
+    item: ExchangeRelationship,
+    source_type: ElementType,
+    target_type: ElementType,
+    *,
+    same_element: bool,
+) -> ExchangeRelationship:
+    """`accept_element` for a link: the matrix and the bounds, then a clean copy."""
+    validate_link(item, source_type, target_type, same_element=same_element)
+    return replace(item, name=item.name.strip(), properties=MappingProxyType(dict(item.properties)))

@@ -814,3 +814,113 @@ class TestCompletionIsDecidedOnTheRowAsItIsNow:
         assert [i.code for i in report.issues] == ["element_gone"]
         assert report.counts[Category.ELEMENTS].rejected == 1
         assert report.counts[Category.ELEMENTS].created == 1
+
+
+class TestAHostileFile:
+    """Every value of the file is judged by the domain before a service sees it."""
+
+    def definitions(self, **keys: str) -> str:
+        rows = "".join(
+            f'<propertyDefinition identifier="{ref}" type="string"><name>{name}</name>'
+            "</propertyDefinition>"
+            for ref, name in keys.items()
+        )
+        return f"<propertyDefinitions>{rows}</propertyDefinitions>"
+
+    def prop(self, ref: str, value: str) -> str:
+        return (
+            f'<properties><property propertyDefinitionRef="{ref}"><value>{value}</value>'
+            "</property></properties>"
+        )
+
+    async def test_each_hostile_row_is_rejected_by_name_and_nothing_invalid_is_written(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        exchange_store: InMemoryExchange,
+    ) -> None:
+        await service.create_element(
+            element_type=E.NODE, name="taken", properties={"ip_address": "10.9.9.9"}
+        )
+        rows = (
+            el("long", "Node", "n" * 10_000)
+            + el("cidr", "Node", "badcidr", self.prop("c", "10.0.0.0/99"))
+            + el("dup", "Node", "dup", self.prop("i", "10.9.9.9"))
+            + el("kind", "Spaceship", "ship")
+            + el("tab", "Node", "tab&#9;name")
+            + el("good", "Node", "good", self.prop("k", "v"))
+            + '<element identifier="extra" xsi:type="Node"'
+            ' id="00000000-0000-0000-0000-000000000001"'
+            ' uuid="00000000-0000-0000-0000-000000000002"><name>extra</name></element>'
+        )
+        data = exchange_xml(rows, extra=self.definitions(c="cidr", i="ip_address", k="Owner\nname"))
+
+        report = await exchange_service.import_exchange(xml(data), REAL)
+
+        by_row = {i.source_id: i.code for i in report.issues if i.severity is Severity.ERROR}
+        assert by_row == {
+            "long": "name_too_long",
+            "cidr": "invalid_ipam_property",
+            "dup": "address_taken",
+            "kind": "unknown_type",
+            "tab": "control_character",
+        }
+        assert "invalid_property_key" in [i.code for i in report.issues]  # the key with a newline
+        stored = {e.name: e for e in repository.elements.values()}
+        assert sorted(stored) == ["extra", "good", "taken"]
+        assert (
+            "Owner\nname" not in stored["good"].properties and "k" not in stored["good"].properties
+        )
+        assert str(stored["extra"].id).startswith("00000000-0000-0000-0000-00000000000") is False
+        assert (
+            exchange_store.applied == 3
+        )  # the duplicate address, good and extra: only the rest was judged alone
+
+    async def test_a_key_with_a_trailing_newline_is_not_trimmed_into_a_valid_one(
+        self, exchange_service: ExchangeService, repository: InMemoryRepository
+    ) -> None:
+        data = exchange_xml(
+            el("a", "Node", "A", self.prop("k", "v")), extra=self.definitions(k="owner\n")
+        )
+
+        report = await exchange_service.import_exchange(xml(data), REAL)
+
+        assert "invalid_property_key" in [i.code for i in report.issues]
+        (stored,) = repository.elements.values()
+        assert set(stored.properties) == {SOURCE_ID}
+
+    async def test_a_nul_in_the_file_is_not_a_500_it_is_an_unreadable_file(
+        self, exchange_service: ExchangeService, repository: InMemoryRepository
+    ) -> None:
+        data = exchange_xml(el("a", "Node", "A\x00B"))
+
+        with pytest.raises(InvalidExchangeFileError):
+            await exchange_service.import_exchange(xml(data), REAL)
+
+        assert repository.elements == {}
+
+    async def test_the_services_receive_only_what_the_domain_handed_back(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        seen: list[dict[str, object]] = []
+        real = service.create_element
+
+        async def spy(**kwargs: object) -> object:
+            seen.append(kwargs)
+            return await real(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(service, "create_element", spy)
+        data = exchange_xml(
+            el("a", "Node", "  padded  ", self.prop("i", "2001:DB8::1")),
+            extra=self.definitions(i="ip_address"),
+        )
+
+        await exchange_service.import_exchange(xml(data), REAL)
+
+        (call,) = seen
+        assert call["name"] == "padded"  # already clean when it arrives
+        assert call["properties"] == {"ip_address": "2001:db8::1", "vrf": "default", SOURCE_ID: "a"}

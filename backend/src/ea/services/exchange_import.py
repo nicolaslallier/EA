@@ -50,10 +50,9 @@ from ea.domain.exchange import (
     ReportBuilder,
     Severity,
     Unreadable,
-    validate_element,
-    validate_link,
+    accept_element,
+    accept_link,
 )
-from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element
 
 if TYPE_CHECKING:
@@ -248,24 +247,23 @@ class ImportRun:
         ends: dict[str, tuple[ElementType, object]] = {}
         for element in model.elements:
             try:
-                validate_element(element)
-                validate_ipam_properties(element.element_type, element.properties)
-            except (DomainError, ValueError) as refusal:
+                accepted = accept_element(element)  # the only door to the services below
+            except RowRefusedError as refusal:
                 state.refused.add(element.identifier)
-                self._reject(index, Category.ELEMENTS, refusal_issue(refusal, "", None), element)
+                self._reject(index, Category.ELEMENTS, refusal_issue(refusal, ""), element)
             else:
-                ends[element.identifier] = (
-                    element.element_type,
-                    (element.element_type, element.name.strip()),
+                ends[accepted.identifier] = (
+                    accepted.element_type,
+                    (accepted.element_type, accepted.name),
                 )
-                rows.append(_Row(index, Category.ELEMENTS, element=element))
+                rows.append(_Row(index, Category.ELEMENTS, element=accepted))
             index += 1
         for link in model.relationships:
-            problem = self._judge_link(link, state, ends)
-            if problem is None:
-                rows.append(_Row(index, Category.RELATIONSHIPS, link=link))
+            judged = self._judge_link(link, state, ends)
+            if isinstance(judged, Issue):
+                self._reject(index, Category.RELATIONSHIPS, judged, link)
             else:
-                self._reject(index, Category.RELATIONSHIPS, problem, link)
+                rows.append(_Row(index, Category.RELATIONSHIPS, link=judged))
             index += 1
         return rows
 
@@ -280,8 +278,8 @@ class ImportRun:
 
     def _judge_link(
         self, link: ExchangeRelationship, state: _State, ends: dict[str, tuple[ElementType, object]]
-    ) -> Issue | None:
-        """Why this link can never be written, or `None`. Touches nothing."""
+    ) -> Issue | ExchangeRelationship:
+        """Why this link can never be written, or the link as the services may receive it."""
         if link.source in state.refused or link.target in state.refused:
             return Issue(
                 Severity.ERROR,
@@ -296,10 +294,9 @@ class ImportRun:
                 "an end of this relationship is not in the file or the catalogue",
             )
         try:
-            validate_link(link, source[0], target[0], same_element=source[1] == target[1])
+            return accept_link(link, source[0], target[0], same_element=source[1] == target[1])
         except RowRefusedError as refusal:
             return refusal_issue(refusal, "")
-        return None
 
     @staticmethod
     def _end(

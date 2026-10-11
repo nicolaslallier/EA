@@ -235,3 +235,36 @@ async def test_an_element_deleted_meanwhile_is_a_refused_row(
 
     assert [i.code for i in report.issues] == ["element_gone"]
     assert report.counts[Category.ELEMENTS].created == 1
+
+
+async def test_a_hostile_file_gets_a_code_per_row_never_a_500(
+    importer: ExchangeService, graph_service: ArchitectureService, engine_at_head: AsyncEngine
+) -> None:
+    await graph_service.create_element(
+        element_type=E.NODE, name="taken", properties={"ip_address": "10.9.9.9"}
+    )
+
+    def prop(ref: str, value: str) -> str:
+        return (
+            f'<properties><property propertyDefinitionRef="{ref}"><value>{value}</value>'
+            "</property></properties>"
+        )
+
+    data = exchange_xml(
+        el("long", "Node", "n" * 10_000)
+        + el("cidr", "Node", "badcidr", prop("c", "10.0.0.0/99"))
+        + el("dup", "Node", "dup", prop("i", "10.9.9.9"))
+        + el("good", "Node", "good"),
+        extra='<propertyDefinitions><propertyDefinition identifier="c" type="string">'
+        '<name>cidr</name></propertyDefinition><propertyDefinition identifier="i" type="string">'
+        "<name>ip_address</name></propertyDefinition></propertyDefinitions>",
+    )
+
+    report = await importer.import_exchange(content(data), REAL)
+
+    assert {i.source_id: i.code for i in report.issues} == {
+        "long": "name_too_long",
+        "cidr": "invalid_ipam_property",
+        "dup": "address_taken",
+    }
+    assert await count(engine_at_head, "elements") == 2  # "taken" and "good"
