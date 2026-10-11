@@ -15,15 +15,18 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ea.core.config import Settings
 from ea.db.models.architecture import ElementRecord
-from ea.db.postgres import create_session_factory
+from ea.db.postgres import create_api_engine, create_session_factory
 from ea.db.unit_of_work import (
     IMPORT_LOCK,
     ambient_session,
+    apply_rows,
     in_unit,
     savepoint,
     shared_transaction,
@@ -36,6 +39,7 @@ from ea.domain.errors import (
     ElementLockedError,
     IllegalRelationshipError,
     ImportInProgressError,
+    TooManyRefusedRowsError,
     WriteConflictError,
 )
 from ea.domain.ports import ElementFilter
@@ -50,6 +54,7 @@ from tests.integration.test_element_review import (
     state_of,
     wait_until_a_statement_waits_for_a_lock,
 )
+from tests.unit.test_baseline_store_pure import driver_error
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.postgres]
 
@@ -109,7 +114,8 @@ async def test_writes_in_a_committed_unit_stay_with_their_events(bench: Bench) -
 
 
 async def _duplicate(bench: Bench) -> None:
-    await bench.graph.create_element(element_type=E.NODE, name="kept")
+    await bench.graph.create_element(element_type=E.NODE, name="valid first")
+    await bench.graph.create_element(element_type=E.NODE, name="kept")  # the one refused
 
 
 async def _illegal_link(bench: Bench) -> None:
@@ -457,3 +463,197 @@ async def test_a_normal_write_waits_for_the_import_to_commit_then_goes_through(
 
     final = await writer
     assert (final.name, final.description) == ("renamed", "imported")  # neither undid the other
+
+
+# --- A call outside a batch is atomic by itself ---------------------------------
+
+
+async def test_a_call_that_fails_halfway_outside_a_batch_undoes_its_own_writes(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`work()` opens a savepoint of its own when no batch covers it."""
+
+    def failing_trail(session: Any, events: Any) -> None:
+        raise RuntimeError("the trail failed after the row was flushed")
+
+    async with bench.unit():
+        with monkeypatch.context() as patched:
+            patched.setattr(architecture_store, "write_events", failing_trail)
+            with pytest.raises(RuntimeError, match="trail failed"):
+                await bench.graph.create_element(element_type=E.NODE, name="half")
+        await bench.graph.create_element(element_type=E.NODE, name="whole")
+
+    assert await bench.names() == ["whole"]
+
+
+async def test_a_serialization_failure_outside_work_still_condemns_the_unit(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `replayable` wrapper, not `work()`, sees an error raised before the write opens."""
+
+    def conflicting(audit: Any, element: Any) -> Any:
+        raise DBAPIError("", {}, driver_error("40001"))
+
+    with pytest.raises(WriteConflictError):
+        async with bench.unit():
+            monkeypatch.setattr(architecture_store, "events_for", conflicting)
+            with pytest.raises(WriteConflictError):
+                await bench.graph.create_element(element_type=E.NODE, name="a")
+            monkeypatch.undo()
+            with pytest.raises(WriteConflictError):  # the unit is condemned, whatever follows
+                await bench.graph.create_element(element_type=E.NODE, name="b")
+
+    assert await bench.counts() == (0, 0, 0)
+
+
+# --- Batches keep PostgreSQL's sub-transaction cache from overflowing -------------
+
+
+async def subxacts(bench: Bench) -> tuple[int, bool]:
+    """(tracked sub-transactions, overflowed) of the backend running the open unit."""
+    session = ambient_session()
+    assert session is not None
+    await session.execute(text("SELECT pg_stat_clear_snapshot()"))
+    # PostgreSQL 17 takes a backend id here, not a pid: look ours up.
+    row = await session.execute(
+        text(
+            "SELECT s.subxact_count, s.subxact_overflowed "
+            "FROM pg_stat_get_backend_idset() AS id, LATERAL pg_stat_get_backend_subxact(id) s "
+            "WHERE pg_stat_get_backend_pid(id) = pg_backend_pid()"
+        )
+    )
+    count, overflowed = row.one()
+    return int(count or 0), bool(overflowed)
+
+
+async def create_named(bench: Bench, name: str) -> None:
+    await bench.graph.create_element(element_type=E.NODE, name=name)
+
+
+async def test_a_savepoint_per_row_would_overflow_the_cache_which_is_why_rows_are_batched(
+    bench: Bench,
+) -> None:
+    """The control: it shows the measurement below can fail."""
+    async with bench.unit(commit=False):
+        for i in range(100):
+            async with savepoint():
+                await create_named(bench, f"row-{i}")
+        assert await subxacts(bench) == (64, True)
+
+
+async def test_two_thousand_rows_stay_under_the_cache(bench: Bench) -> None:
+    async with bench.unit(commit=False):
+        refused = await apply_rows(
+            [f"n{i}" for i in range(2000)], lambda name: create_named(bench, name)
+        )
+        count, overflowed = await subxacts(bench)
+
+    assert refused == []
+    assert count <= 64 and not overflowed
+    assert (await bench.counts())[0] == 0  # a dry run
+
+
+async def test_six_thousand_rows_with_twenty_refused_stay_under_the_cache(bench: Bench) -> None:
+    names = [f"n{i}" for i in range(6000)]
+    wrong = list(range(150, 6000, 300))  # twenty rows that repeat the name of row 1
+    for index in wrong:
+        names[index] = "n1"
+
+    async with bench.unit():
+        refused = await apply_rows(names, lambda name: create_named(bench, name))
+        count, overflowed = await subxacts(bench)
+
+    assert [r.index for r in refused] == wrong
+    assert all(isinstance(r.error, DuplicateElementError) for r in refused)
+    assert count <= 64 and not overflowed, (count, overflowed)
+    assert (await bench.counts())[0] == 6000 - 20
+    assert (await bench.counts())[2] == 6000 - 20  # one event per row kept, none for the others
+
+
+async def test_a_hundred_consecutive_refusals_stay_under_the_cache_and_one_more_is_too_many(
+    bench: Bench,
+) -> None:
+    await bench.graph.create_element(element_type=E.NODE, name="kept")
+
+    async with bench.unit(commit=False):
+        refused = await apply_rows(["kept"] * 100 + ["new"], lambda name: create_named(bench, name))
+        count, overflowed = await subxacts(bench)
+    assert len(refused) == 100
+    assert count <= 64 and not overflowed
+
+    with pytest.raises(TooManyRefusedRowsError):
+        async with bench.unit():
+            await apply_rows(["new"] + ["kept"] * 101, lambda name: create_named(bench, name))
+    assert await bench.names() == ["kept"]  # and nothing of the rejected import
+
+
+# --- A lock wait has an end -----------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def api_bench(engine_at_head: AsyncEngine):  # type: ignore[no-untyped-def]
+    engine = create_api_engine(Settings(debug=True, postgres_enabled=True, db_lock_timeout_ms=300))
+    try:
+        yield Bench(engine)
+    finally:
+        await engine.dispose()
+
+
+async def hold_row(engine: AsyncEngine, element_id: Any) -> Any:
+    """A transaction of its own that locks the row; the caller ends it with `rollback()`."""
+    connection = await engine.connect()
+    transaction = await connection.begin()
+    await connection.execute(
+        text("SELECT 1 FROM elements WHERE id = :id FOR UPDATE"), {"id": element_id}
+    )
+    return transaction, connection
+
+
+async def test_the_api_engine_asks_postgresql_for_the_lock_timeout(api_bench: Bench) -> None:
+    async with api_bench.engine.connect() as connection:
+        assert (await connection.execute(text("SHOW lock_timeout"))).scalar_one() == "300ms"
+
+
+async def test_a_normal_write_waits_for_the_timeout_then_gets_a_replayable_conflict(
+    bench: Bench, api_bench: Bench
+) -> None:
+    element = await bench.graph.create_element(element_type=E.NODE, name="n")
+    transaction, connection = await hold_row(bench.engine, element.id)
+    try:
+        started = time.monotonic()
+        with pytest.raises(WriteConflictError, match="retry"):
+            await api_bench.graph.update_element(element.id, description="late")
+        waited = time.monotonic() - started
+    finally:
+        await transaction.rollback()
+        await connection.close()
+
+    assert 0.25 <= waited < 5
+    assert (await bench.graph.get_element(element.id)).description == ""
+
+
+async def test_an_import_survives_a_short_wait_and_is_condemned_by_a_long_one(
+    bench: Bench, api_bench: Bench
+) -> None:
+    element = await bench.graph.create_element(element_type=E.NODE, name="n")
+
+    transaction, connection = await hold_row(bench.engine, element.id)
+    release = asyncio.get_running_loop().call_later(
+        0.1, lambda: asyncio.ensure_future(transaction.rollback())
+    )
+    async with api_bench.unit():
+        await api_bench.graph.update_element(element.id, description="after a short wait")
+    release.cancel()
+    await connection.close()
+    assert (await bench.graph.get_element(element.id)).description == "after a short wait"
+
+    transaction, connection = await hold_row(bench.engine, element.id)
+    try:
+        with pytest.raises(WriteConflictError):
+            async with api_bench.unit():
+                await create_named(api_bench, "written first")
+                await api_bench.graph.update_element(element.id, description="too late")
+    finally:
+        await transaction.rollback()
+        await connection.close()
+    assert await bench.names() == ["n"]  # the whole import, not the row
