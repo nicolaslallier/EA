@@ -13,6 +13,12 @@ from ea.core.config import Settings
 from ea.domain.audit import AuditChannel
 from ea.domain.auth import SYSTEM
 from ea.domain.baselines import Baseline
+from ea.domain.errors import (
+    BaselineTooLargeError,
+    DuplicateBaselineError,
+    NotAuthenticatedError,
+    NotAuthorisedError,
+)
 from ea.services.baselines import BaselineService
 from tests.conftest import InMemoryAuditLog, InMemoryBaselines
 
@@ -98,3 +104,41 @@ class TestTheEntryPoint:
 
         assert script.main(["--name", "v1", "--description", "why"]) == 0
         assert "3 element(s), 2 relationship(s), 1 box(es)" in capsys.readouterr().out
+
+
+class TestTheRefusalsAreSaidInOneLine:
+    @staticmethod
+    def _failing(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+        async def fake_run(_: Settings, name: str, description: str) -> Baseline:
+            raise error
+
+        monkeypatch.setattr(script, "run", fake_run)
+        monkeypatch.setattr(script, "get_settings", lambda: Settings(debug=True))
+        monkeypatch.setattr(script, "configure_logging", lambda _: None)
+
+    def test_a_name_already_taken_says_how_to_choose_another(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._failing(monkeypatch, DuplicateBaselineError("name taken"))
+
+        assert script.main(["--name", "v1"]) == 1
+        err = capsys.readouterr().err
+        assert "name taken" in err
+        assert "NAME=" in err
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            BaselineTooLargeError("too many elements"),
+            NotAuthorisedError("needs ea-editor"),
+            NotAuthenticatedError("nobody"),
+            ValueError("a baseline name cannot be blank"),
+        ],
+    )
+    def test_any_other_refusal_is_a_message_and_a_failure_status(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception
+    ) -> None:
+        self._failing(monkeypatch, error)
+
+        assert script.main(["--name", "v1"]) == 1
+        assert str(error) in capsys.readouterr().err

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from collections.abc import Sequence
 
 from ea.core.config import Settings, get_settings
@@ -21,6 +22,7 @@ from ea.core.logging import configure_logging
 from ea.db.postgres import check_connectivity, create_engine, create_session_factory
 from ea.domain.auth import SYSTEM
 from ea.domain.baselines import Baseline
+from ea.domain.errors import DomainError, DuplicateBaselineError
 from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
@@ -53,7 +55,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     settings = get_settings()
     configure_logging(settings)
-    baseline = asyncio.run(run(settings, arguments.name, arguments.description))
+    try:
+        baseline = asyncio.run(run(settings, arguments.name, arguments.description))
+    except DuplicateBaselineError as error:
+        print(
+            f"refusé : {error}\nChoisis un autre nom : make baseline-capture CONFIRM=yes NAME='…'",
+            file=sys.stderr,
+        )
+        return 1
+    except (DomainError, ValueError) as error:
+        print(f"refusé : {error}", file=sys.stderr)
+        return 1
     print(
         f"baseline {baseline.name!r} captured: {baseline.element_count} element(s), "
         f"{baseline.relationship_count} relationship(s), {baseline.box_count} box(es)."
