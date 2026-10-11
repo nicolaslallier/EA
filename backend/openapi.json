@@ -2931,6 +2931,11 @@
             ],
             "title": "Next Cursor"
           },
+          "partial": {
+            "description": "True when a rule stopped at its budget (duplicates): finding nothing is not proof.",
+            "title": "Partial",
+            "type": "boolean"
+          },
           "total": {
             "description": "Findings of the whole run, before any filter.",
             "title": "Total",
@@ -2941,7 +2946,8 @@
           "total",
           "counts",
           "findings",
-          "next_cursor"
+          "next_cursor",
+          "partial"
         ],
         "title": "QualityReportRead",
         "type": "object"

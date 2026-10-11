@@ -70,6 +70,12 @@ describe('QualitySection', () => {
     await waitFor(() => expect(router.currentRoute.value.query.code).toBe('orphan'))
   })
 
+  it('warns that a rule was cut short, so a short list is not proof', async () => {
+    await open([{ path: '/quality', body: aQualityReport([ORPHAN], { partial: true }) }])
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/doublons.*partiel/i)
+  })
+
   it('says a clean model is clean', async () => {
     await open([{ path: '/quality', body: aQualityReport([]) }])
 

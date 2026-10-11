@@ -59,6 +59,11 @@ const groups = computed(() => {
     </p>
 
     <template v-if="quality.report.value">
+      <p v-if="quality.report.value.partial" class="banner" role="status">
+        Recherche des doublons partielle : le modèle est trop dense pour être comparé en entier.
+        Un résultat court ne prouve pas l'absence de doublons.
+      </p>
+
       <div class="counts" role="group" aria-label="Constats par règle">
         <button
           v-for="count in quality.report.value.counts"

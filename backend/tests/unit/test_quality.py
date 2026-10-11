@@ -10,6 +10,7 @@ import pytest
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.quality import (
+    MAX_DUPLICATE_COMPARISONS,
     QualityParams,
     QualityReport,
     RuleCode,
@@ -23,6 +24,7 @@ from ea.domain.quality import (
     check_required_properties,
     page_of,
     run_checks,
+    scan_duplicates,
 )
 from tests.support_analysis import a_link, a_stored_link, an_element
 
@@ -372,3 +374,41 @@ class TestReadableProperties:
         report = run_checks([pricey], [], QualityParams())
 
         assert RuleCode.UNREADABLE_PROPERTY in {f.rule for f in report.findings}
+
+
+class TestTheDuplicateScanIsBounded:
+    """Pairwise similarity is quadratic: past a budget of comparisons the rule stops and says so."""
+
+    def anagrams(self, count: int, length: int = 200):  # type: ignore[no-untyped-def]
+        import random
+
+        rng = random.Random(7)
+        base = list("a" + "bcdefghij" * (length // 9))
+        names = []
+        for _ in range(count):
+            rest = base[1:]
+            rng.shuffle(rest)
+            names.append("a" + "".join(rest))
+        return [an_element(E.NODE, name) for name in names]
+
+    def test_an_adversarial_block_stops_at_the_budget_and_is_flagged_partial(self) -> None:
+        scan = scan_duplicates(self.anagrams(400), 0.9)
+
+        assert scan.partial is True
+        assert scan.comparisons <= MAX_DUPLICATE_COMPARISONS
+
+    def test_a_small_model_is_scanned_completely(self) -> None:
+        scan = scan_duplicates([an_element(E.NODE, "Billing"), an_element(E.NODE, "Backup")], 0.9)
+
+        assert (scan.partial, scan.comparisons) == (False, 1)
+
+    def test_only_a_prefix_of_a_long_name_is_compared(self) -> None:
+        one = an_element(E.NODE, "a" * 500 + "x")
+        other = an_element(E.NODE, "a" * 500 + "y")
+
+        assert len(scan_duplicates([one, other], 0.9).findings) == 1
+
+    def test_the_report_says_when_the_duplicate_rule_was_cut(self) -> None:
+        report = run_checks(self.anagrams(400), [], QualityParams())
+
+        assert report.partial is True

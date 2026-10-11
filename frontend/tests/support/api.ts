@@ -587,6 +587,7 @@ export function aQualityReport(
     })),
     findings,
     next_cursor: null,
+    partial: false,
     ...overrides,
   }
 }

@@ -2445,6 +2445,11 @@ export interface components {
             /** Next Cursor */
             next_cursor: number | null;
             /**
+             * Partial
+             * @description True when a rule stopped at its budget (duplicates): finding nothing is not proof.
+             */
+            partial: boolean;
+            /**
              * Total
              * @description Findings of the whole run, before any filter.
              */

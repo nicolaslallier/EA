@@ -367,3 +367,12 @@ class TestScopedByPackageOrQuery:
 
         # The double does not file elements: the proof is that the door is open, not the filter.
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_the_report_says_whether_a_rule_was_cut_short(client: httpx.AsyncClient) -> None:
+    await an_element(client, "node", "Loner")
+
+    body = (await client.get("/quality")).json()
+
+    assert body["partial"] is False

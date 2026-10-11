@@ -1655,6 +1655,9 @@ class QualityReportRead(BaseModel):
     counts: list[RuleCountRead]
     findings: list[FindingRead]
     next_cursor: int | None
+    partial: bool = Field(
+        description="True when a rule stopped at its budget (duplicates): finding nothing is not proof."
+    )
 
     @classmethod
     def of(cls, page: QualityPage) -> QualityReportRead:
@@ -1666,6 +1669,7 @@ class QualityReportRead(BaseModel):
             ],
             findings=[FindingRead.of(finding) for finding in page.findings],
             next_cursor=page.next_cursor,
+            partial=page.report.partial,
         )
 
 

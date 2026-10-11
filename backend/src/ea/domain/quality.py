@@ -222,10 +222,17 @@ def check_readable_properties(elements: Sequence[Element]) -> list[Finding]:
     return findings
 
 
+#: Fuzzy comparisons one run may make, in all. Pairwise similarity is quadratic: 5 000 names of
+#: one type and initial are 12 million pairs, and a thread holds the GIL to the end of them.
+#: Past the budget the rule stops and the report says so (`partial`). Deterministic by design:
+#: the domain is pure, a count is reproducible where a deadline is not.
+MAX_DUPLICATE_COMPARISONS: Final = 50_000
+#: Only this many characters of a normalised name are compared fuzzily; equality is on the whole.
+MAX_COMPARED_NAME: Final = 64
+
+
 def _alike(one: str, other: str, similarity: float) -> bool:
-    if one == other:
-        return True
-    matcher = SequenceMatcher(None, one, other)
+    matcher = SequenceMatcher(None, one[:MAX_COMPARED_NAME], other[:MAX_COMPARED_NAME])
     # The two upper bounds are cheap and rule most pairs out before `ratio()`.
     return (
         matcher.real_quick_ratio() >= similarity
@@ -234,15 +241,23 @@ def _alike(one: str, other: str, similarity: float) -> bool:
     )
 
 
-def check_duplicates(elements: Sequence[Element], similarity: float) -> list[Finding]:
+@dataclass(frozen=True, slots=True)
+class DuplicateScan:
+    findings: list[Finding]
+    #: Fuzzy comparisons made (equal names cost none).
+    comparisons: int
+    #: True when the budget ran out: duplicates may exist that were not looked for.
+    partial: bool
+
+
+def scan_duplicates(elements: Sequence[Element], similarity: float) -> DuplicateScan:
     """Same type, names equal once normalised or at least `similarity` alike.
 
     Compared per (type, first normalised letter), so a thousand elements are
     not a million pairs. A typo in the *first* letter slips through — accepted:
-    this is a warning, never an error, and the threshold is a setting.
+    this is a warning, never an error, and the threshold is a setting. At most
+    `MAX_DUPLICATE_COMPARISONS` fuzzy comparisons are made: then the scan stops, `partial`.
     """
-    # ponytail: pairwise within a block, bounded by MAX_QUALITY_ELEMENTS;
-    # a MinHash/n-gram index if a block ever holds thousands of near names.
     blocks: dict[tuple[ElementType, str], list[tuple[str, Element]]] = {}
     for element in sorted(elements, key=lambda e: (e.name, str(e.id))):
         normalised = _normalise(element.name)
@@ -251,20 +266,30 @@ def check_duplicates(elements: Sequence[Element], similarity: float) -> list[Fin
                 (normalised, element)
             )
     findings: list[Finding] = []
+    comparisons = 0
     for block in blocks.values():
         for index, (normalised, later) in enumerate(block):
             for earlier_normalised, earlier in block[:index]:
-                if _alike(normalised, earlier_normalised, similarity):
-                    findings.append(
-                        _finding(
-                            RuleCode.DUPLICATE_PROBABLE,
-                            later,
-                            f"« {later.name} » ressemble à « {earlier.name} ».",
-                            earlier,
-                        )
+                if normalised != earlier_normalised:
+                    if comparisons >= MAX_DUPLICATE_COMPARISONS:
+                        return DuplicateScan(findings, comparisons, partial=True)
+                    comparisons += 1
+                    if not _alike(normalised, earlier_normalised, similarity):
+                        continue
+                findings.append(
+                    _finding(
+                        RuleCode.DUPLICATE_PROBABLE,
+                        later,
+                        f"« {later.name} » ressemble à « {earlier.name} ».",
+                        earlier,
                     )
-                    break
-    return findings
+                )
+                break
+    return DuplicateScan(findings, comparisons, partial=False)
+
+
+def check_duplicates(elements: Sequence[Element], similarity: float) -> list[Finding]:
+    return scan_duplicates(elements, similarity).findings
 
 
 #: Relationships that build the containment tree, and so must stay acyclic.
@@ -376,6 +401,8 @@ class RuleCount:
 @dataclass(frozen=True, slots=True)
 class QualityReport:
     findings: tuple[Finding, ...]
+    #: True when a rule was cut short (the duplicate scan's budget): a clean count is not proof.
+    partial: bool = False
 
     @property
     def counts(self) -> tuple[RuleCount, ...]:
@@ -393,9 +420,10 @@ def run_checks(
     params: QualityParams,
 ) -> QualityReport:
     """Every rule over the scope. `relationships` must be the links touching it."""
+    duplicates = scan_duplicates(elements, params.similarity)
     found = [
         *check_orphans(elements, relationships),
-        *check_duplicates(elements, params.similarity),
+        *duplicates.findings,
         *check_naming(elements),
         *check_required_properties(elements, params.required_properties),
         *check_descriptions(elements),
@@ -410,7 +438,7 @@ def run_checks(
             f.message,
         )
     )
-    return QualityReport(findings=tuple(found))
+    return QualityReport(findings=tuple(found), partial=duplicates.partial)
 
 
 @dataclass(frozen=True, slots=True)
