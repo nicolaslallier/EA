@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from ea.db.unit_of_work import BATCH_SIZE, MAX_REFUSED_ROWS
+from ea.domain.analytics import Dimension, RawGroup, group_elements
 from ea.domain.approval import WriteKind, guard_all, guard_element_write, is_frozen
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.audit import (
@@ -648,6 +649,20 @@ class InMemoryRepository:
             for link in self.relationships.values()
             if link.source_id in ids or link.target_id in ids
         )
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        inside = (
+            self.elements.values()
+            if scope is None
+            else [self.elements[i] for i in scope if i in self.elements]
+        )
+        return group_elements(inside, dimensions, metric_key)
 
     # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
 

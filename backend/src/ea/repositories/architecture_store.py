@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from sqlalchemy import (
     ColumnElement,
     Integer,
+    Numeric,
     Text,
     and_,
     case,
@@ -31,6 +32,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
@@ -40,6 +42,7 @@ from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.db.unit_of_work import reading, work
+from ea.domain.analytics import RAW_GROUP_CEILING, Dimension, DimensionKind, RawGroup
 from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
@@ -324,6 +327,41 @@ def _has(key: str) -> ColumnElement[bool]:
 def _text_of(key: str) -> ColumnElement[str]:
     """`properties ->> key`, the expression the two unique indexes are built on."""
     return ElementRecord.properties.op("->>", return_type=Text)(key)
+
+
+#: A read-only analysis that runs longer than this is cancelled by PostgreSQL,
+#: local to its transaction. Its cancellation surfaces as a 500 `internal_error`
+#: with the traceback in the logs (docs/adr/0058).
+ANALYSIS_TIMEOUT_MS: Final = 5000
+
+#: What `read_number` tolerates, spelt for PostgreSQL: blanks (space, U+00A0, U+202F)
+#: dropped, `,` read as `.`, then a plain decimal. Both are bound parameters.
+_BLANKS: Final = "[ \u00a0\u202f]"
+_NUMBER: Final = "^-?[0-9]+(\\.[0-9]+)?$"
+
+
+def _raw_key(dimension: Dimension) -> Any:
+    match dimension.kind:
+        case DimensionKind.ELEMENT_TYPE:
+            return ElementRecord.element_type
+        case DimensionKind.LAYER:
+            return ElementRecord.layer
+        case DimensionKind.PROPERTY:
+            return func.coalesce(_text_of(dimension.key or ""), "")
+
+
+def _number_of(key: str) -> tuple[ColumnElement[bool], ColumnElement[bool], ColumnElement[Any]]:
+    """(readable, present, the number) for a property read as a decimal.
+
+    The cast sits behind the `CASE`, so an unreadable value is counted as such
+    instead of aborting the whole query with `invalid input syntax`.
+    """
+    raw = func.coalesce(_text_of(key), "")
+    normalised = func.replace(func.regexp_replace(raw, _BLANKS, "", "g"), ",", ".")
+    readable = normalised.op("~", is_comparison=True)(_NUMBER)
+    present = func.btrim(raw) != ""
+    number = case((readable, sql_cast(normalised, Numeric)), else_=None)
+    return readable, present, number
 
 
 #: The relationships along which dependency runs source → target; every other
@@ -944,6 +982,57 @@ class PostgresArchitectureRepository:
         )
         async with reading(self._sessions) as session:
             return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        columns: list[Any] = [
+            *(_raw_key(dimension).label(f"k{index}") for index, dimension in enumerate(dimensions)),
+            func.count().label("n"),
+        ]
+        if metric_key is not None:
+            readable, present, number = _number_of(metric_key)
+            columns += [
+                func.count().filter(readable).label("valid"),
+                func.coalesce(func.sum(number), 0).label("total"),
+                func.min(number).label("low"),
+                func.max(number).label("high"),
+                func.count().filter(and_(present, not_(readable))).label("invalid"),
+            ]
+        statement = select(*columns)
+        if scope is not None:
+            statement = statement.where(ElementRecord.id.in_(list(scope)))
+        # GROUP BY by ordinal: the same bound parameter would otherwise appear
+        # twice under two numbers, and PostgreSQL then refuses the select list.
+        statement = statement.group_by(
+            *(literal_column(str(position + 1)) for position in range(len(dimensions)))
+        ).limit(RAW_GROUP_CEILING)
+        async with reading(self._sessions) as session:
+            await session.execute(
+                select(func.set_config("statement_timeout", str(ANALYSIS_TIMEOUT_MS), True))
+            )
+            rows = (await session.execute(statement)).all()
+        if len(rows) == RAW_GROUP_CEILING:
+            logger.warning(
+                "analysis grouping reached its ceiling; the result is partial",
+                extra={"action": "analysis_ceiling"},
+            )
+        return tuple(
+            RawGroup(
+                keys=tuple(str(getattr(row, f"k{index}")) for index in range(len(dimensions))),
+                count=int(row.n),
+                valid=int(row.valid) if metric_key is not None else 0,
+                total=float(row.total) if metric_key is not None else 0.0,
+                low=float(row.low) if metric_key is not None and row.low is not None else None,
+                high=float(row.high) if metric_key is not None and row.high is not None else None,
+                invalid=int(row.invalid) if metric_key is not None else 0,
+            )
+            for row in rows
+        )
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Whether `source` is already contained, at any depth, under `target`.

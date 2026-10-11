@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+from ea.domain.analytics import Dimension, RawGroup
 from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
@@ -586,6 +587,22 @@ class AnalysisRepository(Protocol):
 
     async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
         """Every link with at least one end among these ids."""
+        ...
+
+    async def grouped(
+        self,
+        dimensions: Sequence[Dimension],
+        metric_key: str | None,
+        *,
+        scope: Sequence[UUID] | None = None,
+    ) -> tuple[RawGroup, ...]:
+        """Elements grouped by the raw value of each dimension, with partial sums of `metric_key`.
+
+        Raw groups and not buckets: folding spellings together is
+        `summarise`'s job, once, so this and the in-memory reference cannot
+        disagree. `scope` narrows to those element ids; `None` is the whole
+        catalogue.
+        """
         ...
 
 

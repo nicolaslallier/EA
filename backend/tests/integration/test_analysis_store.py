@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from ea.domain.analytics import Dimension, Metric, group_elements, summarise
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.repositories.architecture_store import PostgresArchitectureRepository
@@ -56,3 +57,89 @@ async def test_links_touching_finds_a_link_by_either_end(
     assert [found.id for found in await graph_repository.links_touching([api.id])] == [link.id]
     assert [found.id for found in await graph_repository.links_touching([process.id])] == [link.id]
     assert await graph_repository.links_touching([loner.id]) == ()
+
+
+DIRTY = [
+    ("A", {"cost": "1 200,50", "risk": "Élevé", "lifecycle": "en production"}),
+    ("B", {"cost": "300", "risk": "faible", "lifecycle": "en production"}),
+    ("C", {"cost": "1 200 €", "risk": "élevé"}),
+    ("D", {}),
+    ("E", {"cost": "   ", "risk": "inconnu", "lifecycle": "retiré"}),
+    ("F", {"cost": "1 000", "risk": "Faible"}),  # noqa: RUF001
+]
+
+
+async def dirty_model(service: ArchitectureService):  # type: ignore[no-untyped-def]
+    return [
+        await service.create_element(
+            element_type=E.APPLICATION_COMPONENT, name=name, properties=props
+        )
+        for name, props in DIRTY
+    ]
+
+
+@pytest.mark.parametrize("metric", [Metric.COUNT, Metric.SUM, Metric.AVG, Metric.MIN, Metric.MAX])
+async def test_the_sql_aggregate_is_the_pure_one_on_dirty_values(
+    graph_service: ArchitectureService,
+    graph_repository: PostgresArchitectureRepository,
+    metric: Metric,
+) -> None:
+    elements = await dirty_model(graph_service)
+    key = None if metric is Metric.COUNT else "cost"
+    for text in ("property:risk", "layer", "element_type"):
+        dims = (Dimension.parse(text),)
+
+        from_sql = summarise(await graph_repository.grouped(dims, key), dims, metric, key)
+        from_python = summarise(group_elements(elements, dims, key), dims, metric, key)
+
+        assert from_sql == from_python, text
+
+
+async def test_two_dimensions_agree_too(
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+) -> None:
+    elements = await dirty_model(graph_service)
+    dims = (Dimension.parse("layer"), Dimension.parse("property:lifecycle"))
+
+    from_sql = summarise(await graph_repository.grouped(dims, "cost"), dims, Metric.SUM, "cost")
+    from_python = summarise(group_elements(elements, dims, "cost"), dims, Metric.SUM, "cost")
+
+    assert from_sql == from_python
+
+
+async def test_unreadable_costs_are_counted_not_cast(
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+) -> None:
+    """`'1 200 €'::numeric` would abort the query: the CASE keeps the cast behind the regex."""
+    await dirty_model(graph_service)
+    dims = (Dimension.parse("layer"),)
+
+    result = summarise(await graph_repository.grouped(dims, "cost"), dims, Metric.SUM, "cost")
+
+    assert result.unreadable == 1
+    assert result.buckets[0].value == 1200.5 + 300 + 1000
+
+
+async def test_a_scope_narrows_the_groups(
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+) -> None:
+    elements = await dirty_model(graph_service)
+    dims = (Dimension.parse("property:risk"),)
+
+    inside = await graph_repository.grouped(dims, None, scope=[elements[1].id, elements[5].id])
+
+    assert sum(group.count for group in inside) == 2
+
+
+async def test_a_key_is_a_bound_parameter_never_spliced_into_the_statement(
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+) -> None:
+    elements = await dirty_model(graph_service)
+    hostile = "x'; DROP TABLE elements; --"
+
+    groups = await graph_repository.grouped((Dimension.parse("layer"),), hostile)
+
+    assert sum(group.count for group in groups) == len(DIRTY)
+    assert (
+        await graph_repository.get_element(elements[0].id) is not None
+    )  # the table is still there
