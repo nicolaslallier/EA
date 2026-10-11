@@ -1247,6 +1247,17 @@ export interface components {
              * @default false
              */
             strict?: boolean;
+            /**
+             * Target Package Id
+             * @description Where new packages and new elements outside any folder are put.
+             */
+            target_package_id?: string | null;
+            /**
+             * With Views
+             * @description XML only. Recreate the views of the file (their boxes).
+             * @default true
+             */
+            with_views?: boolean;
         };
         /** Body_revise_document_documents__document_id__put */
         Body_revise_document_documents__document_id__put: {
@@ -4304,8 +4315,14 @@ export interface operations {
         parameters: {
             query?: {
                 format?: components["schemas"]["ExchangeFormat"];
-                /** @description What to export: `model` (the whole catalogue). */
+                /** @description What to export: `model` (the whole catalogue), `package` or `query`. */
                 scope?: string;
+                /** @description `scope=package`: the package to export. */
+                package_id?: string | null;
+                /** @description `scope=query`: the saved query whose elements to export. */
+                query_id?: string | null;
+                /** @description `scope=package`: the sub-packages come too. */
+                include_subpackages?: boolean;
                 with_views?: boolean;
                 /** @description CSV only. Prefix with `'` a cell a spreadsheet would run as a formula (the default). Turning it off writes the values as they are. */
                 safe_cells?: boolean;
@@ -4319,6 +4336,10 @@ export interface operations {
             /** @description The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV). */
             200: {
                 headers: {
+                    /** @description CSV only: `safe` (formulas neutralised) or `raw`. */
+                    "X-Export-Cells"?: string;
+                    /** @description Views left out: a box shows an element outside the scope. */
+                    "X-Export-Skipped-Views"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4388,6 +4409,15 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Timeout */
+            408: {
                 headers: {
                     [name: string]: unknown;
                 };

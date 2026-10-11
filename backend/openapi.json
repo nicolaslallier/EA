@@ -583,6 +583,25 @@
             "description": "If any row is refused, write nothing at all.",
             "title": "Strict",
             "type": "boolean"
+          },
+          "target_package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where new packages and new elements outside any folder are put.",
+            "title": "Target Package Id"
+          },
+          "with_views": {
+            "default": true,
+            "description": "XML only. Recreate the views of the file (their boxes).",
+            "title": "With Views",
+            "type": "boolean"
           }
         },
         "title": "Body_import_model_exchanges_imports_post",
@@ -5948,15 +5967,65 @@
             }
           },
           {
-            "description": "What to export: `model` (the whole catalogue).",
+            "description": "What to export: `model` (the whole catalogue), `package` or `query`.",
             "in": "query",
             "name": "scope",
             "required": false,
             "schema": {
               "default": "model",
-              "description": "What to export: `model` (the whole catalogue).",
+              "description": "What to export: `model` (the whole catalogue), `package` or `query`.",
               "title": "Scope",
               "type": "string"
+            }
+          },
+          {
+            "description": "`scope=package`: the package to export.",
+            "in": "query",
+            "name": "package_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`scope=package`: the package to export.",
+              "title": "Package Id"
+            }
+          },
+          {
+            "description": "`scope=query`: the saved query whose elements to export.",
+            "in": "query",
+            "name": "query_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`scope=query`: the saved query whose elements to export.",
+              "title": "Query Id"
+            }
+          },
+          {
+            "description": "`scope=package`: the sub-packages come too.",
+            "in": "query",
+            "name": "include_subpackages",
+            "required": false,
+            "schema": {
+              "default": true,
+              "description": "`scope=package`: the sub-packages come too.",
+              "title": "Include Subpackages",
+              "type": "boolean"
             }
           },
           {
@@ -5998,7 +6067,21 @@
                 }
               }
             },
-            "description": "The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV)."
+            "description": "The model as an attachment: an ArchiMate exchange file (XML), or a zip of `elements.csv`, `relations.csv` and `properties.csv` (CSV).",
+            "headers": {
+              "X-Export-Cells": {
+                "description": "CSV only: `safe` (formulas neutralised) or `raw`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Export-Skipped-Views": {
+                "description": "Views left out: a box shows an element outside the scope.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -6085,6 +6168,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Timeout"
           },
           "409": {
             "content": {

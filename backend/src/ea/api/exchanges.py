@@ -54,6 +54,16 @@ def _scope_of(name: str) -> ScopeKind:
                 "application/xml": {"schema": {"type": "string", "format": "binary"}},
                 "application/zip": {"schema": {"type": "string", "format": "binary"}},
             },
+            "headers": {
+                "X-Export-Skipped-Views": {
+                    "description": "Views left out: a box shows an element outside the scope.",
+                    "schema": {"type": "integer"},
+                },
+                "X-Export-Cells": {
+                    "description": "CSV only: `safe` (formulas neutralised) or `raw`.",
+                    "schema": {"type": "string"},
+                },
+            },
             "description": (
                 "The model as an attachment: an ArchiMate exchange file (XML), or a zip of "
                 "`elements.csv`, `relations.csv` and `properties.csv` (CSV)."
@@ -117,6 +127,7 @@ async def export_model(
 
 IMPORT_ERRORS: dict[int | str, dict[str, type[ErrorResponse]]] = {
     **REJECTED,
+    status.HTTP_408_REQUEST_TIMEOUT: {"model": ErrorResponse},
     status.HTTP_409_CONFLICT: {"model": ErrorResponse},
     status.HTTP_413_CONTENT_TOO_LARGE: {"model": ErrorResponse},
 }
