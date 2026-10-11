@@ -24,6 +24,9 @@ type FileListingRead = components['schemas']['FileListingRead']
 type SavedQueryRead = components['schemas']['SavedQueryRead']
 type ImportReportRead = components['schemas']['ImportReportRead']
 type SavedQuerySummaryRead = components['schemas']['SavedQuerySummaryRead']
+type PlateauRead = components['schemas']['PlateauRead']
+type RoadmapRead = components['schemas']['RoadmapRead']
+type RoadmapItemRead = components['schemas']['RoadmapItemRead']
 
 /** A route the stubbed backend answers, matched on method and path. */
 export type Route = {
@@ -146,6 +149,43 @@ export function deferApi(): HeldCall[] {
   )
 
   return calls
+}
+
+/** A plateau as `/plateaus` returns it. */
+export function aPlateau(overrides: Partial<PlateauRead> = {}): PlateauRead {
+  return {
+    id: 'cccccccc-1111-4111-8111-111111111111',
+    name: 'As-Is',
+    valid_from: '2024-01-01',
+    valid_until: null,
+    member_count: 0,
+    ...overrides,
+  }
+}
+
+/** One thing on the roadmap, as `/roadmap` returns it. */
+export function aRoadmapItem(overrides: Partial<RoadmapItemRead> = {}): RoadmapItemRead {
+  return {
+    id: 'dddddddd-1111-4111-8111-111111111111',
+    name: 'Migration',
+    element_type: 'work_package',
+    valid_from: '2026-06-01',
+    valid_until: '2027-12-31',
+    dated: true,
+    plateau_ids: [],
+    ...overrides,
+  }
+}
+
+/** The roadmap as `/roadmap` returns it. */
+export function aRoadmap(overrides: Partial<RoadmapRead> = {}): RoadmapRead {
+  return {
+    items: [],
+    edges: [],
+    window_from: null,
+    window_to: null,
+    ...overrides,
+  }
 }
 
 /** An element as the API returns it, with only the interesting fields spelled out. */

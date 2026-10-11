@@ -100,6 +100,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/impact/ImpactSection.vue'),
   },
   {
+    path: '/analyse/feuille-de-route',
+    name: 'roadmap',
+    label: 'Feuille de route',
+    summary: "Plateaux, work packages et livrables dans le temps, et l'écart entre deux plateaux.",
+    group: 'analysis',
+    view: () => import('../features/roadmap/RoadmapSection.vue'),
+  },
+  {
     path: '/analyse/matrice',
     name: 'matrix',
     label: 'Matrice',
