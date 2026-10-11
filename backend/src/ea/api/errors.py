@@ -72,6 +72,9 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
+    ReportBusyError,
+    ReportFormatUnavailableError,
+    ReportTooLargeError,
     RestoreBlockedError,
     RestoreConflictError,
     RowRefusedError,
@@ -84,7 +87,9 @@ from ea.domain.errors import (
     TooManyRefusedRowsError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    UnknownReportTemplateError,
     UnknownScopeError,
+    UnsupportedReportSubjectError,
     WriteConflictError,
 )
 
@@ -196,6 +201,12 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     InvalidLifespanError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifespan"),
     InvalidTimelineError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_timeline"),
     DuplicateGapError: (status.HTTP_409_CONFLICT, "duplicate_gap"),
+    # --- Reports (docs/adr/0062) ---
+    ReportTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "report_too_large"),
+    ReportFormatUnavailableError: (status.HTTP_501_NOT_IMPLEMENTED, "format_unavailable"),
+    ReportBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "report_busy"),
+    UnknownReportTemplateError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    UnsupportedReportSubjectError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unsupported_subject"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),
