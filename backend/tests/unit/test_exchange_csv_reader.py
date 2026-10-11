@@ -76,13 +76,16 @@ class TestElements:
 
         assert "specialization_ignored" in codes(model)
 
-    def test_a_junction_is_set_aside_and_an_unknown_type_is_rejected(self) -> None:
+    def test_a_junction_is_read_and_an_unknown_type_is_rejected(self) -> None:
         model = parse_csv(
-            elements(["j", "AndJunction", "", "", ""], ["x", "Spaceship", "S", "", ""])
+            elements(["j", "OrJunction", "", "", ""], ["x", "Spaceship", "S", "", ""])
         )
 
-        assert model.elements == ()
-        assert [(u.identifier, u.ignored) for u in model.unreadable] == [("j", True), ("x", False)]
+        (junction,) = model.elements
+        assert junction.element_type is ElementType.JUNCTION
+        assert junction.properties["junction_type"] == "or"
+        assert junction.name == "Or junction j"  # a junction has no name in Exchange
+        assert [(u.identifier, u.ignored) for u in model.unreadable] == [("x", False)]
 
     def test_a_row_without_an_identifier_is_rejected_and_nothing_can_point_at_it(self) -> None:
         model = parse_csv(elements(["", "Node", "N", "", ""]))

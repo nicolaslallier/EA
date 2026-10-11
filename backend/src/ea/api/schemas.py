@@ -317,6 +317,24 @@ class RelationshipCreate(_Input):
     properties: Properties = Field(default_factory=dict)
 
 
+class RelationshipUpdate(_Input):
+    """A partial update of a link. An omitted field keeps its stored value.
+
+    The type and the two ends are absent on purpose: another type or another end is another
+    link, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,
+    replaces the whole map, as it does on an element.
+    """
+
+    name: LinkName | None = None
+    access_type: AccessType | None = Field(
+        default=None, description="Only meaningful on an access relationship."
+    )
+    directed: bool | None = Field(
+        default=None, description="Only meaningful on an association relationship."
+    )
+    properties: Properties | None = None
+
+
 class RelationshipRead(BaseModel):
     id: UUID
     relationship_type: RelationshipType

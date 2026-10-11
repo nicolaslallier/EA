@@ -18,6 +18,7 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'element.locked': 'Élément verrouillé',
   'element.unlocked': 'Élément déverrouillé',
   'relationship.created': 'Relation créée',
+  'relationship.updated': 'Relation modifiée',
   'relationship.deleted': 'Relation supprimée',
   'diagram.created': 'Diagramme créé',
   'diagram.updated': 'Diagramme renommé',

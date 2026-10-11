@@ -88,6 +88,14 @@ class ElementChange:
     after: Element
 
 
+@dataclass(frozen=True, slots=True)
+class RelationshipChange:
+    """A link as the repository found it under its lock, and as the patch left it."""
+
+    before: Relationship
+    after: Relationship
+
+
 #: A rule the repository applies to an element it holds locked, in the writing
 #: transaction; it raises to refuse. A decision taken on a copy read earlier
 #: would miss a lock put on the element in between.
@@ -275,6 +283,21 @@ class ArchitectureRepository(Protocol):
         offset: int = 0,
         as_of: date | None = None,
     ) -> tuple[Relationship, ...]: ...
+
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        """Apply `change` — pure — to the link read under its lock; `None` if it is gone.
+
+        The two elements it joins are locked first (the order every link write uses) and
+        put to `ends`. A patch that changes nothing writes nothing: no event, no review.
+        """
+        ...
 
     async def delete_relationship(
         self,

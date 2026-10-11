@@ -68,6 +68,7 @@ class AuditAction(StrEnum):
     ELEMENT_LOCKED = "element.locked"
     ELEMENT_UNLOCKED = "element.unlocked"
     RELATIONSHIP_CREATED = "relationship.created"
+    RELATIONSHIP_UPDATED = "relationship.updated"
     RELATIONSHIP_DELETED = "relationship.deleted"
     DIAGRAM_CREATED = "diagram.created"
     DIAGRAM_UPDATED = "diagram.updated"

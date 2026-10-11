@@ -59,6 +59,7 @@ from ea.domain.errors import (
     InvalidExchangeFileError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
+    InvalidJunctionError,
     InvalidLifespanError,
     InvalidQueryError,
     InvalidTimelineError,
@@ -194,6 +195,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     AnalysisTimeoutError: (status.HTTP_503_SERVICE_UNAVAILABLE, "analysis_timeout"),
     # --- Time in the model (docs/adr/0059, 0060, 0061) ---
     InvalidLifespanError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifespan"),
+    InvalidJunctionError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_junction"),
     InvalidTimelineError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_timeline"),
     DuplicateGapError: (status.HTTP_409_CONFLICT, "duplicate_gap"),
     # --- Authentication (docs/adr/0032) ---

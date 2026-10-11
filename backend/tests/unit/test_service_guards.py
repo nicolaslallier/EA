@@ -42,6 +42,7 @@ WRITES = {
         "complete_element",
         "delete_element",
         "connect",
+        "update_relationship",
         "disconnect",
     },
     DiagramService: {"create", "update", "delete", "replace_layout"},

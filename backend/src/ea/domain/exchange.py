@@ -21,6 +21,7 @@ from uuid import UUID
 from ea.domain.archimate import AccessType, ElementType, RelationshipType, validate_relationship
 from ea.domain.errors import DomainError, IllegalRelationshipError, RowRefusedError
 from ea.domain.ipam import validate_ipam_properties
+from ea.domain.junctions import validate_junction_properties
 from ea.domain.model import Element, Relationship, is_property_key
 from ea.domain.packages import MAX_PACKAGE_DEPTH, MAX_PACKAGES, name_key, validate_package_name
 from ea.domain.query import ElementQuery
@@ -66,7 +67,7 @@ SOURCE_ID: Final = "source_id"
 DESCRIPTION_KEY: Final = "ea.description"
 RESERVED_PREFIX: Final = "ea."
 MODIFIER_KEY: Final = "modifier"
-#: Exchange's two junction types. We cannot hold one (`Element.create` refuses connectors).
+#: Exchange's two junction types: one `junction` element here, the kind in `junction_type`.
 JUNCTION_NAMES: Final = frozenset({"AndJunction", "OrJunction"})
 
 _EMPTY: Mapping[str, str] = MappingProxyType({})
@@ -132,6 +133,26 @@ _RELATIONSHIPS_BY_NAME: Final = {exchange_name(t): t for t in RelationshipType}
 #: `Access`, `Read`, `Write`, `ReadWrite` — derived, never restated.
 ACCESS_NAMES: Final = {kind: pascal_case(kind.value) for kind in AccessType}
 ACCESS_BY_NAME: Final = {name: kind for kind, name in ACCESS_NAMES.items()}
+
+
+def junction_kind_of(raw: str) -> str | None:
+    """`AndJunction` → `and`, `OrJunction` → `or`; CSV also says `junction` (an `and`)."""
+    name = raw.strip()
+    if name == "AndJunction" or name.lower() == "junction":
+        return "and"
+    return "or" if name == "OrJunction" else None
+
+
+def element_exchange_name(element_type: ElementType, properties: Mapping[str, str]) -> str:
+    """The `xsi:type` of an element: a junction is written `AndJunction` or `OrJunction`."""
+    if element_type is ElementType.JUNCTION:
+        return "OrJunction" if properties.get("junction_type") == "or" else "AndJunction"
+    return exchange_name(element_type)
+
+
+def junction_name(identifier: str, kind: str) -> str:
+    """A junction has no name in Exchange; the catalogue needs one, stable across re-imports."""
+    return f"{kind.capitalize()} junction {identifier}"
 
 
 def element_type_of(name: str) -> ElementType | None:
@@ -963,6 +984,10 @@ def accept_element(item: ExchangeElement) -> ExchangeElement:
         canonical = validate_ipam_properties(item.element_type, item.properties)
     except (DomainError, ValueError) as refusal:
         raise RowRefusedError("invalid_ipam_property", str(refusal)) from None
+    try:
+        canonical = validate_junction_properties(item.element_type, canonical)
+    except DomainError as refusal:
+        raise RowRefusedError("invalid_junction", str(refusal)) from None
     return replace(
         item,
         name=item.name.strip(),

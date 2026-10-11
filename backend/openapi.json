@@ -247,6 +247,7 @@
           "element.locked",
           "element.unlocked",
           "relationship.created",
+          "relationship.updated",
           "relationship.deleted",
           "diagram.created",
           "diagram.updated",
@@ -3405,6 +3406,64 @@
           "impact_follows_direction"
         ],
         "title": "RelationshipTypeRead",
+        "type": "object"
+      },
+      "RelationshipUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update of a link. An omitted field keeps its stored value.\n\nThe type and the two ends are absent on purpose: another type or another end is another\nlink, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,\nreplaces the whole map, as it does on an element.",
+        "properties": {
+          "access_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an access relationship."
+          },
+          "directed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an association relationship.",
+            "title": "Directed"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Free-form attributes, e.g. owner or criticality.",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          }
+        },
+        "title": "RelationshipUpdate",
         "type": "object"
       },
       "RestorePlanRead": {
@@ -10913,6 +10972,103 @@
           }
         ],
         "summary": "Delete Relationship",
+        "tags": [
+          "architecture"
+        ]
+      },
+      "patch": {
+        "description": "Change what a link says: its name, its properties, its access type, its direction.\n\nNever its type or its ends. `properties` is replaced wholesale when given. Both elements\nthe link joins are reviewed: an approved one goes back to review, a locked one is a 409.",
+        "operationId": "update_relationship_relationships__relationship_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relationship_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Relationship Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationshipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Relationship",
         "tags": [
           "architecture"
         ]

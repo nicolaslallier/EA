@@ -72,6 +72,7 @@ from ea.domain.ports import (
     EndsReview,
     GraphView,
     Held,
+    RelationshipChange,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
 from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
@@ -874,6 +875,61 @@ class PostgresArchitectureRepository:
             for end in reviewed:
                 write_events(session, cast("EndsReview", ends).audit(end))
         return relationship
+
+    @replayable
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        """What a link says, changed under the locks of the link and of its two ends.
+
+        The ends are locked first and the link second, like `delete_relationship`: that is
+        the one order that cannot deadlock with a deletion. The ends of a link never change,
+        so they can be read before the lock; the link itself is read again under it, and
+        `change` is applied to *that* row. `change` is pure, so it is first run on the
+        unlocked read to find out who the writer is (the ends' reviewer) and whether
+        anything changes at all: a patch that changes nothing takes no lock and writes nothing.
+        """
+        async with work(self._sessions) as session:
+            found = await session.get(RelationshipRecord, relationship_id)
+            if found is None:
+                return None
+            glimpsed = relationship_from_row(found)
+            preview = change(glimpsed)
+            if relationship_row(preview) == relationship_row(glimpsed):
+                return glimpsed
+            reviewed = (
+                await _review_ends(
+                    session,
+                    (found.source_id, found.target_id),
+                    ends,
+                    author_of(events_for(audit, RelationshipChange(glimpsed, preview))),
+                )
+                if ends is not None
+                else []
+            )
+            row = await session.get(
+                RelationshipRecord, relationship_id, with_for_update=True, populate_existing=True
+            )
+            if row is None:
+                return None
+            before = relationship_from_row(row)
+            after = change(before)
+            wanted = relationship_row(after)
+            if wanted == relationship_row(before):
+                return before
+            events = events_for(audit, RelationshipChange(before, after))
+            for column in ("name", "access_type", "directed", "properties"):
+                setattr(row, column, wanted[column])
+            await session.flush()
+            write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
+        return after
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
         async with reading(self._sessions) as session:

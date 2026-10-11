@@ -92,6 +92,7 @@ from ea.domain.ports import (
     GraphView,
     Held,
     PackageRemoval,
+    RelationshipChange,
     RowRefusal,
     Transaction,
 )
@@ -577,6 +578,32 @@ class InMemoryRepository:
     ) -> tuple[Relationship, ...]:
         self.last_as_of = as_of
         return tuple(self.relationships.values())
+
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        before = self.relationships.get(relationship_id)
+        if before is None:
+            return None
+        after = change(before)
+        if after == before:
+            return before
+        events = events_for(audit, RelationshipChange(before, after))
+        reviewed = (
+            self._review_ends((before.source_id, before.target_id), ends, events)
+            if ends is not None
+            else []
+        )
+        self.relationships[relationship_id] = after
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
+        return after
 
     async def delete_relationship(
         self,

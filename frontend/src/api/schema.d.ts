@@ -1145,7 +1145,14 @@ export interface paths {
         delete: operations["delete_relationship_relationships__relationship_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update Relationship
+         * @description Change what a link says: its name, its properties, its access type, its direction.
+         *
+         *     Never its type or its ends. `properties` is replaced wholesale when given. Both elements
+         *     the link joins are reviewed: an approved one goes back to review, a locked one is a 409.
+         */
+        patch: operations["update_relationship_relationships__relationship_id__patch"];
         trace?: never;
     };
     "/roadmap": {
@@ -1298,7 +1305,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -2774,6 +2781,29 @@ export interface components {
              */
             strength: number;
             value: components["schemas"]["RelationshipType"];
+        };
+        /**
+         * RelationshipUpdate
+         * @description A partial update of a link. An omitted field keeps its stored value.
+         *
+         *     The type and the two ends are absent on purpose: another type or another end is another
+         *     link, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,
+         *     replaces the whole map, as it does on an element.
+         */
+        RelationshipUpdate: {
+            /** @description Only meaningful on an access relationship. */
+            access_type?: components["schemas"]["AccessType"] | null;
+            /**
+             * Directed
+             * @description Only meaningful on an association relationship.
+             */
+            directed?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Properties */
+            properties?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * RestorePlanRead
@@ -7549,6 +7579,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_relationship_relationships__relationship_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                relationship_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelationshipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

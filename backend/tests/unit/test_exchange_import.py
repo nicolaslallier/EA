@@ -111,8 +111,8 @@ class TestTheDefaultIsToWriteNothing:
         report = await exchange_service.import_exchange(content, ImportOptions())
 
         assert report.dry_run and not report.applied
-        assert report.counts[Category.ELEMENTS].created == 3
-        assert report.counts[Category.ELEMENTS].ignored == 1  # the junction
+        assert report.counts[Category.ELEMENTS].created == 4  # the junction included
+        assert report.counts[Category.ELEMENTS].ignored == 0
         assert repository.elements == {}
         assert repository.audit_log.events == []
 
@@ -299,11 +299,14 @@ class TestRelationships:
             xml((DATA / "minimal-model.xml").read_bytes()), REAL
         )
 
-        assert report.counts[Category.RELATIONSHIPS].created == 2  # the third touches the junction
-        assert report.counts[Category.RELATIONSHIPS].rejected == 1
+        assert report.counts[Category.RELATIONSHIPS].created == 3  # the third ends at the junction
+        assert report.counts[Category.RELATIONSHIPS].rejected == 0
         served = next(r for r in repository.relationships.values() if r.name == "serves")
         assert served.properties[SOURCE_ID] == "id-r2"
-        assert any(i.code == "end_rejected" and i.source_id == "id-r3" for i in report.issues)
+        to_junction = next(
+            r for r in repository.relationships.values() if r.properties[SOURCE_ID] == "id-r3"
+        )
+        assert to_junction.target_type is E.JUNCTION
 
     async def test_a_relationship_outside_the_matrix_is_reported_and_the_rest_is_written(
         self, exchange_service: ExchangeService, repository: InMemoryRepository

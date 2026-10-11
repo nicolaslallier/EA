@@ -297,8 +297,8 @@ of text: for more, narrow it to a package or a saved query, or download the file
 default**: always call it with `dry_run` left true first, read the report (counts per
 category, and every refused row with its reason), SHOW it to the person you work for, and only
 then call it again with `dry_run=false`. It creates elements and links and deletes nothing: an
-element with the same type and name is reused, not overwritten. Junctions and diagram views
-are not imported over MCP, and a file is at most 1 MB.
+element with the same type and name is reused, not overwritten. Junctions are elements like
+the others; diagram views are not imported over MCP, and a file is at most 1 MB.
 
 `get_relationship_matrix` answers "which of these elements are linked to which
 of those": a grid, rows as sources and columns as targets, listing only the
@@ -839,6 +839,33 @@ def build_mcp_server(
                 relationship_type=relationship_type,
                 source_id=source_id,
                 target_id=target_id,
+                name=name,
+                access_type=access_type,
+                directed=directed,
+                properties=properties,
+            )
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def update_relationship(
+        relationship_id: ElementId,
+        name: LinkName | None = None,
+        access_type: AccessType | None = None,
+        directed: bool | None = None,
+        properties: Properties = None,
+    ) -> RelationshipRead:
+        """Change what a link says. An omitted field keeps its stored value.
+
+        `properties` is replaced wholesale when given, not merged: read the link first
+        (`read_element_relations`) if you mean to add one attribute. The type and the two
+        ends cannot be changed — `disconnect_elements` then `connect_elements` instead, so
+        the metamodel judges the new pair. The elements at both ends are reviewed: an
+        approved one goes back to review, a locked one refuses.
+        """
+        return RelationshipRead.of(
+            await get_service().update_relationship(
+                relationship_id,
                 name=name,
                 access_type=access_type,
                 directed=directed,
@@ -1646,7 +1673,7 @@ def build_mcp_server(
         the same type and name is reused, never overwritten, and a refused row (a
         relationship the metamodel forbids, say) does not stop the others unless
         `strict` is true. New packages and new elements outside any folder go under
-        `target_package_id`. Junctions and diagram connections are not imported, and
+        `target_package_id`. Junctions are imported as elements; diagram connections are not, and
         diagram views are not imported over MCP. The text is at most 1 MB in all; a
         larger file goes through the Échanges screen of the web interface.
         """

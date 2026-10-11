@@ -66,6 +66,7 @@ def test_the_recognised_states_are_the_two_that_postgresql_asks_to_retry() -> No
                 "transition_element",
                 "delete_element",
                 "add_relationship",
+                "update_relationship",
                 "delete_relationship",
             ],
         ),

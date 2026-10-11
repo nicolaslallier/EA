@@ -18,12 +18,11 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Final
 
-from ea.domain.archimate import AccessType, RelationshipType
+from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.errors import InvalidExchangeFileError
 from ea.domain.exchange import (
     DESCRIPTION_KEY,
     ELEMENTS_FILE,
-    JUNCTION_NAMES,
     MAX_CSV_RECORD_CHARS,
     MAX_CSV_ROWS,
     MAX_EXCHANGE_ITEMS,
@@ -38,8 +37,11 @@ from ea.domain.exchange import (
     Issue,
     Severity,
     Unreadable,
+    element_exchange_name,
     exchange_name,
     fold_properties,
+    junction_kind_of,
+    junction_name,
     lookup_element_type,
     lookup_relationship_type,
 )
@@ -138,7 +140,7 @@ async def render_csv(
             _row(
                 [
                     identifier,
-                    exchange_name(item.element_type),
+                    element_exchange_name(item.element_type, item.properties),
                     guard(item.name),
                     guard(item.documentation),
                     "",
@@ -373,15 +375,8 @@ def _read_elements(data: bytes, reading: _Reading) -> list[ExchangeElement]:
             )
             continue
         reading.seen.add(identifier)
-        if kind in JUNCTION_NAMES or kind.lower() == "junction":
-            refuse(
-                "junction_not_supported",
-                "junctions cannot be stored; ignored",
-                severity=Severity.INFO,
-                ignored=True,
-            )
-            continue
-        element_type = lookup_element_type(kind)
+        junction = junction_kind_of(kind)
+        element_type = ElementType.JUNCTION if junction else lookup_element_type(kind)
         if element_type is None:
             refuse("unknown_type", "this is not an ArchiMate element type")
             continue
@@ -405,16 +400,18 @@ def _read_elements(data: bytes, reading: _Reading) -> list[ExchangeElement]:
                 identifier,
             )
         folded = fold_properties(pairs)
+        stored = {**folded.properties, "junction_type": junction} if junction else folded.properties
         for issue in folded.issues:
             reading.say(issue, ELEMENTS_FILE, line, identifier)
         found.append(
             ExchangeElement(
                 identifier=identifier,
                 element_type=element_type,
-                name=reading.unguard(row["name"]),
+                name=reading.unguard(row["name"])
+                or (junction_name(identifier, junction) if junction else ""),
                 description=folded.description,
                 documentation=reading.unguard(row.get("documentation", "")),
-                properties=folded.properties,
+                properties=stored,
                 line=line,
                 path=ELEMENTS_FILE,
             )

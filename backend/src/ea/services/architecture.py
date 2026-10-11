@@ -30,8 +30,9 @@ from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AuditAction, cascaded_view, element_view, relationship_view
 from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
+from ea.domain.junctions import validate_junction_properties
 from ea.domain.model import Element, Relationship, reject_nul
-from ea.domain.ports import ElementChange, EndsReview
+from ea.domain.ports import ElementChange, EndsReview, RelationshipChange
 from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_approver, require_caller, require_editor
@@ -128,7 +129,9 @@ class ArchitectureService:
     ) -> Element:
         require_editor()
         properties = validate_lifespan_properties(
-            validate_ipam_properties(element_type, properties)
+            validate_junction_properties(
+                element_type, validate_ipam_properties(element_type, properties)
+            )
         )
         element = Element.create(
             element_type=element_type,
@@ -196,7 +199,9 @@ class ArchitectureService:
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
         properties = validate_lifespan_properties(
-            validate_ipam_properties(current.element_type, properties)
+            validate_junction_properties(
+                current.element_type, validate_ipam_properties(current.element_type, properties)
+            )
         )
 
         def patch(stored: Element) -> Element:
@@ -501,6 +506,53 @@ class ArchitectureService:
             offset=offset,
             as_of=as_of,
         )
+
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        *,
+        name: str | None = None,
+        access_type: AccessType | None = None,
+        directed: bool | None = None,
+        properties: Mapping[str, str] | None = None,
+    ) -> Relationship:
+        """Change what a link says; never its type or its ends (docs/adr/0063).
+
+        An omitted field keeps its value; `properties` replaces the whole map. Applied to the
+        link as the repository holds it under lock; both elements it joins are locked and
+        reviewed in that transaction, so a link of an approved element sends it back to
+        review and a locked one refuses. A change that changes nothing writes nothing.
+        """
+        require_editor()
+        properties = validate_lifespan_properties(properties)
+
+        def patch(stored: Relationship) -> Relationship:
+            return stored.revised(
+                name=name, access_type=access_type, directed=directed, properties=properties
+            )
+
+        def updated(change: RelationshipChange) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.RELATIONSHIP_UPDATED,
+                    entity_id=change.after.id,
+                    before=relationship_view(change.before),
+                    after=relationship_view(change.after),
+                ),
+            )
+
+        with logged_refusal("lock_refused"):
+            stored = await self._repository.update_relationship(
+                relationship_id, patch, audit=updated, ends=self._review_of_ends()
+            )
+        if stored is None:
+            msg = f"no relationship with id {relationship_id}"
+            raise ElementNotFoundError(msg)
+        logger.info(
+            "relationship updated",
+            extra={"action": "relationship_updated", "relationship_id": str(relationship_id)},
+        )
+        return stored
 
     async def disconnect(self, relationship_id: UUID) -> None:
         require_editor()

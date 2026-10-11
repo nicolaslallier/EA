@@ -31,6 +31,7 @@ from ea.api.schemas import (
     PackageCreate,
     PackageUpdate,
     RelationshipCreate,
+    RelationshipUpdate,
     RestoreRequest,
     SavedQueryCreate,
     SubnetCreate,
@@ -356,8 +357,8 @@ class TestTheToolset:
         names = {tool.name for tool in await server.list_tools()}
 
         assert (
-            len(names) == 59
-        )  # fifty-six, and the three time tools: the plateaus, the gap, and drawing it
+            len(names) == 60
+        )  # fifty-six, the three time tools (plateaus, gap, drawing it), and update_relationship
         assert names == {
             "export_model",
             "import_model",
@@ -369,6 +370,7 @@ class TestTheToolset:
             "connect_elements",
             "list_relationships",
             "read_element_relations",
+            "update_relationship",
             "disconnect_elements",
             "neighbourhood",
             "impact_of",
@@ -657,6 +659,39 @@ class TestRelationships:
 
         assert {element["name"] for element in view["elements"]} == {"Billing", "Invoice API"}
         assert len(view["relationships"]) == 1
+
+    async def test_a_link_can_be_changed_but_not_retyped_or_moved(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+        )
+
+        updated = await call(
+            server, "update_relationship", relationship_id=link["id"], name="implements"
+        )
+
+        assert updated["name"] == "implements"
+        assert updated["source_id"] == source["id"]
+        tool = next(t for t in await server.list_tools() if t.name == "update_relationship")
+        assert set(tool.input_schema["properties"]) == {
+            "relationship_id",
+            "name",
+            "access_type",
+            "directed",
+            "properties",
+        }
+        assert tool.annotations is not None
+        assert (tool.annotations.read_only_hint, tool.annotations.destructive_hint) == (
+            False,
+            False,
+        )
 
     async def test_a_link_can_be_removed(self, server: MCPServer[Any]) -> None:
         source = await an_element(server, "application_component", "Billing")
@@ -1781,6 +1816,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("update_element", "description", ElementUpdate, "description"),
             ("update_element", "documentation", ElementUpdate, "documentation"),
             ("connect_elements", "name", RelationshipCreate, "name"),
+            ("update_relationship", "name", RelationshipUpdate, "name"),
             ("declare_ip_subnet", "name", SubnetCreate, "name"),
             ("declare_ip_subnet", "cidr", SubnetCreate, "cidr"),
             ("declare_ip_subnet", "vrf", SubnetCreate, "vrf"),
@@ -2033,7 +2069,7 @@ class TestImportModel:
         report = await call(server, "import_model", content=DATA_XML)
 
         assert report["dry_run"] is True and report["applied"] is False
-        assert report["counts"]["elements"]["created"] == 3
+        assert report["counts"]["elements"]["created"] == 4
         assert (repository.elements, repository.relationships) == ({}, {})
         assert len(audit_log.events) == events
 
@@ -2059,7 +2095,7 @@ class TestImportModel:
     ) -> None:
         report = await call(server, "import_model", content=DATA_XML, dry_run=False)
 
-        assert report["applied"] is True and len(repository.elements) == 3
+        assert report["applied"] is True and len(repository.elements) == 4
 
     async def test_csv_takes_its_three_texts(
         self, server: MCPServer[Any], repository: InMemoryRepository
