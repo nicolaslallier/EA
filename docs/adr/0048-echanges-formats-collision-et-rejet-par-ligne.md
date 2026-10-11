@@ -189,6 +189,31 @@ CORS et identifiant de requête), la place est rendue par le `finally`. Ces dél
 réception : l'analyse et l'import sont longs par nature. Le `client_body_timeout` de NGINX s'applique aussi
 devant et se cumule avec eux : c'est le plus court des deux qui coupe.
 
+## Une place est un bail, et chaque appelant a la sienne
+
+Les places (imports en vol, exports préparés ou envoyés) ne sont **pas un entier** : `Admission` garde l'ensemble des
+baux vivants, un objet par place, et tout chiffre (en vol, par appelant) est *calculé* depuis cet ensemble, jamais
+stocké. Un compteur incrémenté ici et décrémenté là dérive dès qu'un chemin oublie, et un compteur resté au maximum
+refuse tout le monde jusqu'au redémarrage. Un bail sort de l'ensemble par identité (le retirer deux fois ne fait
+rien), par l'unique gestionnaire de contexte `lease()` (`test_one_way_to_admit.py` échoue si du code hors du module
+prend ou rend une place à la main), quand le bloc finit — exception et annulation comprises — et quand le thread
+d'analyse de sa requête a réellement fini. Il **expire seul** à son échéance (`EA_EXCHANGE_IMPORT_LEASE_S` et
+`EA_EXCHANGE_EXPORT_LEASE_S`, 20 minutes par défaut, bornés de 1 à 120 minutes) : chaque demande purge les baux échus
+et les compte (`expired_leases`, `action=admission_lease_expired`) — un bail échu est la preuve d'un chemin qui fuit.
+Compromis : un import plus long que l'échéance perd sa place et peut être doublé ; l'échéance est donc choisie
+au-delà de la durée légitime maximale (réception 120 s, analyse de 20 Mo, application).
+
+Deux plafonds : le global (`MAX_IMPORTS_IN_FLIGHT` 2, `MAX_EXPORTS_IN_FLIGHT` 4) et un par appelant
+(`MAX_IMPORTS_PER_CALLER` et `MAX_EXPORTS_PER_CALLER`, 1 chacun, `EA_EXCHANGE_IMPORTS_PER_CALLER` et
+`EA_EXCHANGE_EXPORTS_PER_CALLER`, jamais au-dessus du global). La clé est le `sub` du jeton vérifié — jamais un en-tête,
+une partie de formulaire ou un argument d'outil ; le développeur local et le système ont leur clé fixe. Un appelant qui a
+déjà sa place est refusé (409 `import_in_progress` ou 429 `export_in_progress`, avec `Retry-After`) sans lecture du corps
+et sans connexion, et les autres entrent tant qu'il reste une place globale. L'outil MCP prend la même place (la même
+admission, la même clé) : un appelant qui a un import HTTP en vol ne peut pas en lancer un second par MCP.
+**Ce que cela ne résout pas** : quelqu'un qui contrôle plusieurs comptes (plusieurs `sub`) peut encore remplir le plafond
+global ; celui-ci et la limite d'octets restent la protection de dernier ressort. L'ensemble est en mémoire, par
+processus : avec plusieurs workers uvicorn les plafonds se multiplient (workers × plafond).
+
 ## Aucune connexion du pool n'est tenue pendant qu'un client lit
 
 Un export est d'abord **rendu dans un fichier temporaire** (en mémoire jusqu'à 1 Mo, sur disque au-delà), pendant que

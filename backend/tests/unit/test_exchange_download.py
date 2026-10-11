@@ -217,7 +217,7 @@ async def test_one_more_export_than_the_places_is_refused_without_opening_a_snap
 ) -> None:
     await fill(service)
     events = watch_snapshots(exchange_store, monkeypatch)
-    exchange = importer(exchange_store, service, max_exports=4)
+    exchange = importer(exchange_store, service, max_exports=4, exports_per_caller=4)
     held = [await exchange.export(ExportRequest()) for _ in range(4)]
     opened = events.count("open")
 

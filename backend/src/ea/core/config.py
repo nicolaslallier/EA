@@ -11,9 +11,14 @@ from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_va
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ea.domain.exchange import (
+    EXPORT_LEASE_SECONDS,
     EXPORT_SEND_TIMEOUT_SECONDS,
+    IMPORT_LEASE_SECONDS,
     MAX_EXCHANGE_BYTES,
     MAX_EXPORTS_IN_FLIGHT,
+    MAX_EXPORTS_PER_CALLER,
+    MAX_IMPORTS_IN_FLIGHT,
+    MAX_IMPORTS_PER_CALLER,
     MAX_NEW_FOLDERS,
 )
 from ea.domain.packages import MAX_PACKAGES
@@ -125,6 +130,14 @@ class Settings(BaseSettings):
     # holds a database connection, only a file and a place.
     exchange_max_exports: int = Field(default=MAX_EXPORTS_IN_FLIGHT, ge=1, le=64)
     exchange_send_timeout_s: float = Field(default=EXPORT_SEND_TIMEOUT_SECONDS, ge=0.01, le=3600.0)
+    # One caller's own places (the `sub` of the verified token), and when a place that was never
+    # given back is taken back (docs/adr/0048).
+    exchange_imports_per_caller: int = Field(
+        default=MAX_IMPORTS_PER_CALLER, ge=1, le=MAX_IMPORTS_IN_FLIGHT
+    )
+    exchange_exports_per_caller: int = Field(default=MAX_EXPORTS_PER_CALLER, ge=1, le=64)
+    exchange_import_lease_s: float = Field(default=IMPORT_LEASE_SECONDS, ge=60.0, le=7200.0)
+    exchange_export_lease_s: float = Field(default=EXPORT_LEASE_SECONDS, ge=60.0, le=7200.0)
     exchange_read_timeout_s: float = Field(default=15.0, ge=0.01, le=60.0)
     exchange_read_total_s: float = Field(default=120.0, ge=0.05, le=600.0)
 
@@ -297,6 +310,13 @@ class Settings(BaseSettings):
             and not self.postgres_password.get_secret_value()
         ):
             msg = "postgres_password is required when postgres_enabled is on and debug is off"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _a_caller_never_has_more_places_than_exist(self) -> "Settings":
+        if self.exchange_exports_per_caller > self.exchange_max_exports:
+            msg = "exchange_exports_per_caller cannot exceed exchange_max_exports"
             raise ValueError(msg)
         return self
 

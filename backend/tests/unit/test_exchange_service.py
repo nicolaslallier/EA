@@ -223,6 +223,7 @@ class TestCsvExport:
         raw = await exchange_service.export(
             ExportRequest(format=ExchangeFormat.CSV, safe_cells=False)
         )
+        await raw.chunks.aclose()  # type: ignore[attr-defined]  # (one place per caller)
         safe = await exchange_service.export(CSV)
 
         assert raw.filename == "ea-model-2026-09-07-raw.zip" and raw.cells == "raw"

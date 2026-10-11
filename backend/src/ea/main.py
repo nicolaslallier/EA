@@ -79,7 +79,7 @@ from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
-from ea.services.exchange_admission import ImportAdmission
+from ea.services.exchange_admission import Admission
 from ea.services.exchanges import MAX_PARSES_QUEUED, ExchangeService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
@@ -332,6 +332,9 @@ def _lifespan(
                     max_bytes=settings.exchange_max_bytes,
                     max_new_folders=settings.exchange_max_new_folders,
                     max_exports=settings.exchange_max_exports,
+                    exports_per_caller=settings.exchange_exports_per_caller,
+                    export_lease_seconds=settings.exchange_export_lease_s,
+                    imports=app.state.import_admission,
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -576,6 +579,14 @@ def create_app(
         ),
     )
     app.state.settings = settings
+    # One admission for every door an import comes through: HTTP's (in the middleware below),
+    # MCP's and a script's (in the service), so that three doors cannot hold six places.
+    admission = Admission(
+        MAX_PARSES_QUEUED,
+        per_caller=settings.exchange_imports_per_caller,
+        lease_seconds=settings.exchange_import_lease_s,
+    )
+    app.state.import_admission = admission
     if verifier is not None:
         app.state.token_verifier = verifier
     if architecture_service is not None:
@@ -606,6 +617,9 @@ def create_app(
                 max_bytes=settings.exchange_max_bytes,
                 max_new_folders=settings.exchange_max_new_folders,
                 max_exports=settings.exchange_max_exports,
+                exports_per_caller=settings.exchange_exports_per_caller,
+                export_lease_seconds=settings.exchange_export_lease_s,
+                imports=admission,
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
@@ -621,8 +635,6 @@ def create_app(
     # The ceiling on an import's body is innermost of all (docs/adr/0048): its 413 is then an
     # ordinary answer to CORS and the request id, and the disconnect it hands the route on
     # overflow never reaches the net below as an unexpected failure.
-    admission = ImportAdmission(MAX_PARSES_QUEUED)
-    app.state.import_admission = admission
     app.add_middleware(
         LimitingRequestBodies,
         path_suffix="/exchanges/imports",

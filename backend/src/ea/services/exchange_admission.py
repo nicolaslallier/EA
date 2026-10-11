@@ -1,78 +1,135 @@
-"""Places for the imports in flight, taken before their body is read (docs/adr/0048).
+"""Places for the imports and the exports in flight, kept as leases (docs/adr/0048).
 
-The parsing gate of `ExchangeService` bounds the files *analysed* at once; it is entered
-after the route has read the whole body, so N simultaneous editors would hold N bodies of
-20 MB to have two analysed. A place here is taken by the ASGI door, after the token and the
-role and before the first read, and given back when the request is over *and* the thread
-that analysed its file has really ended (a thread cannot be stopped: a client that hangs up
-leaves it running). Memory is bounded by `limit` bodies per process: with several uvicorn
-workers it is workers x limit x the ceiling.
+The parsing gate of `ExchangeService` bounds the files *analysed* at once; it is entered after the
+route has read the whole body, so N simultaneous editors would hold N bodies of 20 MB to have two
+analysed. A place is taken by the ASGI door — after the token and the role, before the first read
+— and given back when the request is over *and* the thread that analysed its file has really
+ended (a thread cannot be stopped: a client that hangs up leaves it running).
+
+**A place is a lease, not a count.** The admission keeps the set of live leases, one object per
+place, and every figure — in flight, per caller — is computed from that set, never stored. A
+counter that is incremented on one path and decremented on another drifts the day one path
+forgets, and a counter stuck at its maximum refuses everybody until the process restarts. A lease
+is removed by identity (taking it out twice does nothing), and it expires by itself at its
+deadline: the next admission purges the expired ones and counts them (`expired_leases`), which is
+the proof that some path leaked. A lease is taken and given back by one asynchronous context
+manager, `lease()`, and by nothing else.
+
+Two ceilings: the global one, and one per caller, keyed by the `sub` of the verified token and by
+nothing the request says. What this does not stop: someone with several accounts still fills the
+global places. The set is in memory, per process: with several workers the ceilings multiply.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import logging
+import time
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 from ea.domain.errors import DomainError, ImportInProgressError
 
+logger = logging.getLogger(__name__)
 
-class ImportAdmission:
-    """The imports in flight in this process. Single-threaded: no await between check and take."""
+
+@dataclass(eq=False, slots=True)
+class Lease:
+    """One place. Compared and removed by identity."""
+
+    key: str
+    acquired_at: float
+    deadline: float
+    work: list[asyncio.Future[Any]] = field(default_factory=list)
+
+    def hold(self, work: asyncio.Future[Any]) -> None:
+        """Keep the place until `work` (an analysis running in a thread) has ended."""
+        self.work.append(work)
+
+
+class Admission:
+    """The leases in flight in this process. Single-threaded: no await between check and take."""
 
     def __init__(
         self,
         limit: int,
+        *,
+        per_caller: int = 1,
+        lease_seconds: float = 1_200.0,
         refusal: Callable[[], DomainError] = lambda: ImportInProgressError(
             "other imports are being processed: try again in a moment"
         ),
+        kind: str = "import",
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.limit = limit
-        self.in_flight = 0
+        self.per_caller = per_caller
+        self.kind = kind
+        self.expired_leases = 0
+        self._lease_seconds = lease_seconds
         self._refusal = refusal
+        self._clock = clock
+        self._leases: set[Lease] = set()
 
-    def admit(self) -> Ticket:
-        if self.in_flight >= self.limit:
+    # --- What is true, computed from the leases -------------------------------------------
+
+    @property
+    def in_flight(self) -> int:
+        return len(self._leases)
+
+    @property
+    def callers(self) -> dict[str, int]:
+        found: dict[str, int] = {}
+        for lease in self._leases:
+            found[lease.key] = found.get(lease.key, 0) + 1
+        return found
+
+    # --- The one way in and out -------------------------------------------------------------
+
+    @asynccontextmanager
+    async def lease(self, key: str) -> AsyncIterator[Lease]:
+        """A place for `key`, or the refusal; gone from the set however the block ends."""
+        self._purge()
+        held = self.callers.get(key, 0)
+        if len(self._leases) >= self.limit or held >= self.per_caller:
             raise self._refusal()
-        self.in_flight += 1
-        return Ticket(self)
+        now = self._clock()
+        taken = Lease(key, now, now + self._lease_seconds)
+        self._leases.add(taken)
+        try:
+            yield taken
+        finally:
+            self._finish(taken)
 
-    def _leave(self) -> None:
-        self.in_flight -= 1
-
-
-class Ticket:
-    """One place. `release` is idempotent; it takes effect once the held work has ended."""
-
-    def __init__(self, admission: ImportAdmission) -> None:
-        self._admission = admission
-        self._work: list[asyncio.Future[Any]] = []
-        self._released = False
-        self._waiting = 0
-
-    def hold(self, work: asyncio.Future[Any]) -> None:
-        """Keep the place until `work` (an analysis running in a thread) has ended."""
-        self._work.append(work)
-
-    def release(self) -> None:
-        if self._released:
-            return
-        self._released = True
-        pending = [work for work in self._work if not work.done()]
-        self._waiting = len(pending)
+    def _finish(self, taken: Lease) -> None:
+        """Take the lease out — now, or when the thread that analysed its file has ended."""
+        pending = [work for work in taken.work if not work.done()]
         if not pending:
-            self._admission._leave()
+            self._leases.discard(taken)  # by identity: a second call finds nothing to remove
             return
         for work in pending:
-            work.add_done_callback(self._ended)
+            work.add_done_callback(lambda _: self._finish(taken))
 
-    def _ended(self, _: asyncio.Future[Any]) -> None:
-        self._waiting -= 1
-        if self._waiting == 0:
-            self._admission._leave()
+    def _purge(self) -> None:
+        """Drop what outlived its deadline: a path that never gave its place back."""
+        now = self._clock()
+        expired = [lease for lease in self._leases if lease.deadline <= now]
+        for lease in expired:
+            self._leases.discard(lease)
+        if expired:
+            self.expired_leases += len(expired)
+            logger.warning(
+                "admission leases expired",
+                extra={
+                    "action": "admission_lease_expired",
+                    "kind": self.kind,
+                    "count": len(expired),
+                },
+            )
 
 
-#: The ticket of the request being served, set by the door that admitted it.
-current_ticket: ContextVar[Ticket | None] = ContextVar("import_ticket", default=None)
+#: The lease of the request being served, set by the door that admitted it.
+current_lease: ContextVar[Lease | None] = ContextVar("exchange_lease", default=None)

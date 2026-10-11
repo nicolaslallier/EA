@@ -113,7 +113,12 @@ def build(
     **settings: Any,
 ) -> Any:
     app = create_app(
-        Settings(debug=True, auth_enabled=verifier is not None, **settings),
+        Settings(
+            debug=True,
+            auth_enabled=verifier is not None,
+            # these tests hold two places with one caller: the per-caller ceiling has its own file
+            **{"exchange_imports_per_caller": 2, **settings},
+        ),
         architecture_service=service,
         exchanges=store,  # type: ignore[arg-type]
         verifier=verifier,

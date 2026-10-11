@@ -196,7 +196,7 @@ def domain_error_response(error: Exception) -> JSONResponse:
     headers = (
         {"WWW-Authenticate": "Bearer"} if http_status == status.HTTP_401_UNAUTHORIZED else None
     )
-    if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
+    if http_status == status.HTTP_429_TOO_MANY_REQUESTS or isinstance(error, ImportInProgressError):
         headers = {"Retry-After": str(RETRY_AFTER_SECONDS)}
     return JSONResponse(
         status_code=http_status, content={"error": code, "detail": str(error)}, headers=headers

@@ -25,6 +25,7 @@ which wrap both, still stamp the answer.
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Final
 
 from fastapi.security.utils import get_authorization_scheme_param
@@ -38,7 +39,7 @@ from ea.domain.errors import (
     ExchangeFileTooLargeError,
     NotAuthorisedError,
 )
-from ea.services.exchange_admission import ImportAdmission, current_ticket
+from ea.services.exchange_admission import Admission, current_lease
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -55,7 +56,7 @@ class LimitingRequestBodies:
         *,
         path_suffix: str,
         limit: int,
-        admission: ImportAdmission | None = None,
+        admission: Admission | None = None,
         read_timeout: float = 15.0,
         total_timeout: float = 120.0,
     ) -> None:
@@ -71,8 +72,11 @@ class LimitingRequestBodies:
         return ExchangeFileTooLargeError(f"an exchange file is at most {ceiling} bytes")
 
     @staticmethod
-    async def _admit(app: FastAPI, authorization: bytes | None) -> None:
-        """Verify the bearer token and require the editor role; raise the typed refusal."""
+    async def _admit(app: FastAPI, authorization: bytes | None) -> str:
+        """Verify the bearer token and require the editor role; raise the typed refusal.
+
+        Returns the `sub` the verifier put on the caller: the key of the caller's own place.
+        It is read from the token and from nothing else the request says."""
         scheme, token = get_authorization_scheme_param(
             authorization.decode("latin-1") if authorization else None
         )
@@ -80,6 +84,7 @@ class LimitingRequestBodies:
         if not caller.can_write:
             msg = f"changing the catalogue needs the {EDITOR_ROLE} role"
             raise NotAuthorisedError(msg)
+        return caller.subject
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # `endswith`, not `==`: behind the NGINX prefix, `path` may carry `/api`.
@@ -92,7 +97,7 @@ class LimitingRequestBodies:
             return
         headers = dict(scope["headers"])
         try:
-            await self._admit(scope["app"], headers.get(b"authorization"))
+            key = await self._admit(scope["app"], headers.get(b"authorization"))
         except DomainError as refusal:  # 401, or 403: answered without touching the body
             await domain_error_response(refusal)(scope, receive, send)
             return
@@ -100,20 +105,16 @@ class LimitingRequestBodies:
         if declared.isdigit() and int(declared) > self._limit:
             await domain_error_response(self._too_large())(scope, receive, send)
             return
-        ticket = None
-        if self._admission is not None:
-            try:
-                ticket = self._admission.admit()  # a place before the first byte is read
-            except DomainError as refusal:  # 409: the body is never touched
-                await domain_error_response(refusal)(scope, receive, send)
-                return
-        marked = current_ticket.set(ticket)
-        try:
+        async with AsyncExitStack() as stack:
+            if self._admission is not None:
+                try:  # a place before the first byte is read
+                    lease = await stack.enter_async_context(self._admission.lease(key))
+                except DomainError as refusal:  # 409: the body is never touched
+                    await domain_error_response(refusal)(scope, receive, send)
+                    return
+                marked = current_lease.set(lease)
+                stack.callback(current_lease.reset, marked)
             await self._receive_and_serve(scope, receive, send)
-        finally:
-            current_ticket.reset(marked)
-            if ticket is not None:
-                ticket.release()
 
     async def _receive_and_serve(self, scope: Scope, receive: Receive, send: Send) -> None:
         seen = 0

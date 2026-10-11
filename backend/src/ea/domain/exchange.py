@@ -37,6 +37,15 @@ MAX_EXPORT_BYTES: Final = 256 * 1024 * 1024
 #: Exports prepared or being sent at once, in a process: each holds a file and, while it renders,
 #: a connection. A reader is held to them as an editor is.
 MAX_EXPORTS_IN_FLIGHT: Final = 4
+#: Imports in flight (analysed or waiting) in a process, and the places one caller may hold of
+#: the imports and of the exports: one account must not keep everybody else out.
+MAX_IMPORTS_IN_FLIGHT: Final = 2
+MAX_IMPORTS_PER_CALLER: Final = 1
+MAX_EXPORTS_PER_CALLER: Final = 1
+#: A place that is not given back by then is taken back: longer than the longest import or
+#: download that is legitimate (reception, analysis and application; preparation and sending).
+IMPORT_LEASE_SECONDS: Final = 1_200.0
+EXPORT_LEASE_SECONDS: Final = 1_200.0
 #: How long a client has to take a whole download once the file is ready.
 EXPORT_SEND_TIMEOUT_SECONDS: Final = 300.0
 EXPORT_TIMEOUT_SECONDS: Final = 300.0

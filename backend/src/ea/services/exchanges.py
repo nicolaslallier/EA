@@ -32,11 +32,14 @@ from ea.domain.errors import (
 )
 from ea.domain.exchange import (
     CSV_FILES,
+    EXPORT_LEASE_SECONDS,
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
     MAX_EXPORT_BYTES,
     MAX_EXPORTS_IN_FLIGHT,
+    MAX_EXPORTS_PER_CALLER,
+    MAX_IMPORTS_IN_FLIGHT,
     MAX_NEW_FOLDERS,
     Category,
     ExchangeBox,
@@ -64,7 +67,7 @@ from ea.domain.packages import descendants_of
 from ea.formats.archimate_xml import buffered, parse_model, render_model
 from ea.formats.csv_files import parse_csv, render_csv
 from ea.services.caller import names_in_logs, require_caller, require_editor
-from ea.services.exchange_admission import ImportAdmission, Ticket, current_ticket
+from ea.services.exchange_admission import Admission, current_lease
 from ea.services.exchange_import import ImportRun
 
 if TYPE_CHECKING:
@@ -82,7 +85,7 @@ Clock = Callable[[], datetime]
 #: Parsings allowed in the process at once, the one running included: a 20 MB file is
 #: hundreds of megabytes while it is read, so one reads and one waits, and a third is told
 #: to come back (409), never queued without end.
-MAX_PARSES_QUEUED = 2
+MAX_PARSES_QUEUED = MAX_IMPORTS_IN_FLIGHT
 
 
 @dataclass(slots=True)
@@ -142,16 +145,24 @@ class ExchangeService:
         max_new_folders: int = MAX_NEW_FOLDERS,
         max_export_bytes: int = MAX_EXPORT_BYTES,
         max_exports: int = MAX_EXPORTS_IN_FLIGHT,
+        exports_per_caller: int = MAX_EXPORTS_PER_CALLER,
+        export_lease_seconds: float = EXPORT_LEASE_SECONDS,
+        imports: Admission | None = None,
     ) -> None:
+        self._imports = imports
         self._max_new_folders = max_new_folders
         self._max_export_bytes = max_export_bytes
         # Exports prepared or being sent, apart from the imports: a download holds no
         # connection, but it holds a file and a place (docs/adr/0048).
-        self._exports = ImportAdmission(
+        self._exports = Admission(
             max_exports,
-            lambda: ExportInProgressError(
+            per_caller=exports_per_caller,
+            lease_seconds=export_lease_seconds,
+            refusal=lambda: ExportInProgressError(
                 "other exports are being prepared or sent: try again in a moment"
             ),
+            kind="export",
+            clock=monotonic,
         )
         self._queries = queries
         self._parse = parser
@@ -173,8 +184,22 @@ class ExchangeService:
         Editors only, *dry run included*: the simulation really performs the writes, then
         rolls them back — that is what makes it honest. The file is read before the
         transaction opens, so a database connection is never held while parsing.
+
+        Through HTTP the place among the imports in flight was taken by the door, before the
+        body was read. A caller that comes by another way (the MCP tool, a script) takes it
+        here, from the same admission, and gives it back when the analysis thread has ended.
         """
-        caller = require_editor()
+        caller = require_editor()  # a reader takes no place
+        async with AsyncExitStack() as stack:
+            if self._imports is not None and current_lease.get() is None:
+                lease = await stack.enter_async_context(self._imports.lease(caller.subject))
+                marked = current_lease.set(lease)
+                stack.callback(current_lease.reset, marked)
+            return await self._import(caller.subject, content, options)
+
+    async def _import(
+        self, actor: str, content: ImportContent, options: ImportOptions
+    ) -> ImportReport:
         started = self._monotonic()
         if content.size > self._max_bytes:
             msg = f"an exchange file is at most {self._max_bytes} bytes"
@@ -218,7 +243,7 @@ class ExchangeService:
             sha256=content.sha256,
             duration_ms=round((self._monotonic() - started) * 1000),
         )
-        self._log_import(caller.subject, content, built)
+        self._log_import(actor, content, built)
         return built
 
     def _read(self, content: ImportContent, options: ImportOptions) -> ExchangeModel:
@@ -242,8 +267,8 @@ class ExchangeService:
             gate.queued -= 1
             raise
         work = asyncio.ensure_future(asyncio.to_thread(read))
-        if (ticket := current_ticket.get()) is not None:
-            ticket.hold(work)  # the request's place outlives a client that hangs up
+        if (lease := current_lease.get()) is not None:
+            lease.hold(work)  # the request's place outlives a client that hangs up
 
         def finished(done: asyncio.Future[ExchangeModel]) -> None:
             # A thread cannot be stopped: the place is given back when it *ends*, even if
@@ -280,6 +305,18 @@ class ExchangeService:
         )
 
     async def export(self, request: ExportRequest) -> Export:
+        """Prepare a download (see `_prepare`)."""
+        require_caller()
+        return await self._prepare(request, text=False, ceiling=self._max_export_bytes)
+
+    async def export_text(self, request: ExportRequest, *, ceiling: int) -> Export:
+        """The export as text an agent can read: the XML, or the three CSV files one after the
+        other under `--- elements.csv ---` and so on. Refused past `ceiling` bytes while it is
+        rendered, not after: a model too big for the answer is not rendered whole to find out."""
+        require_caller()
+        return await self._prepare(request, text=True, ceiling=min(ceiling, self._max_export_bytes))
+
+    async def _prepare(self, request: ExportRequest, *, text: bool, ceiling: int) -> Export:
         """Prepare a download: the whole file is rendered into a temporary file, the snapshot is
         given back, and only the file is left to send.
 
@@ -288,8 +325,11 @@ class ExchangeService:
         request of the API. The place is taken before the snapshot is opened and given back with
         the file, whatever ends the download — or the preparation.
         """
-        require_caller()
-        ticket = self._exports.admit()  # before any connection: a refusal opens nothing
+        caller = require_caller()
+        # Before any connection: a refusal opens nothing. The lease is entered here and left by
+        # the download's `aclose` (or below if the preparation fails): one context manager.
+        places = AsyncExitStack()
+        await places.enter_async_context(self._exports.lease(caller.subject))
         files: list[Any] = []
         stack = AsyncExitStack()
         try:
@@ -311,12 +351,12 @@ class ExchangeService:
             if is_csv:
                 parts = {n: tempfile.SpooledTemporaryFile(max_size=1 << 20) for n in CSV_FILES}  # noqa: SIM115
                 files.extend(parts.values())
-                await self._render_csv(request, streams, parts)
+                await self._render_csv(request, streams, parts, ceiling)
             else:
-                await self._render_xml(request, streams, snapshot, out, dropped)
+                await self._render_xml(request, streams, snapshot, out, dropped, ceiling)
             await stack.aclose()  # the connection goes back before a byte goes out
             if is_csv:
-                await asyncio.to_thread(_zip_into, parts, out)
+                await asyncio.to_thread(_text_into if text else _zip_into, parts, out)
             size = out.tell()
             out.seek(0)
             for spare in files[1:]:
@@ -326,16 +366,17 @@ class ExchangeService:
             await stack.aclose()
             for opened in files:
                 opened.close()
-            ticket.release()
+            await places.aclose()
             raise
         raw = is_csv and not request.safe_cells
         label = "-raw" if raw else ""
+        extension = ("txt" if text else "zip") if is_csv else "xml"
+        media = ("text/plain" if text else "application/zip") if is_csv else "application/xml"
         return Export(
-            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}."
-            f"{'zip' if is_csv else 'xml'}",
+            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}.{extension}",
             cells=("raw" if raw else "safe") if is_csv else None,
-            media_type="application/zip" if is_csv else "application/xml",
-            chunks=_FileChunks(out, size, ticket),
+            media_type=media,
+            chunks=_FileChunks(out, size, places),
             skipped_views=skipped,
             size=size,
         )
@@ -397,6 +438,7 @@ class ExchangeService:
         snapshot: ExportSnapshot,
         out: Any,
         dropped: dict[str, int],
+        ceiling: int,
     ) -> None:
         streams.packages = await snapshot.packages()
         parts = render_model(
@@ -410,11 +452,11 @@ class ExchangeService:
         written = 0
         async for chunk in buffered(parts):
             written += len(chunk)
-            self._within_the_ceiling(written)
+            self._within_the_ceiling(written, ceiling)
             out.write(chunk)
 
     async def _render_csv(
-        self, request: ExportRequest, streams: _Streams, parts: dict[str, Any]
+        self, request: ExportRequest, streams: _Streams, parts: dict[str, Any], ceiling: int
     ) -> None:
         written = 0
         async for name, text in render_csv(
@@ -422,13 +464,14 @@ class ExchangeService:
         ):
             data = text.encode("utf-8")
             written += len(data)
-            self._within_the_ceiling(written)
+            self._within_the_ceiling(written, ceiling)
             parts[name].write(data)
 
-    def _within_the_ceiling(self, written: int) -> None:
-        if written > self._max_export_bytes:
+    @staticmethod
+    def _within_the_ceiling(written: int, ceiling: int) -> None:
+        if written > ceiling:
             msg = (
-                f"this export is past {self._max_export_bytes} bytes: ask for a narrower scope "
+                f"this export is past {ceiling} bytes: ask for a narrower scope "
                 "(a package, or a saved query)"
             )
             raise ExportTooLargeError(msg)
@@ -447,6 +490,14 @@ def _zip_into(parts: dict[str, Any], out: Any) -> None:
                 shutil.copyfileobj(parts[name], entry)
 
 
+def _text_into(parts: dict[str, Any], out: Any) -> None:
+    """The three files one after the other, each under its name: what an agent reads."""
+    for name in CSV_FILES:
+        out.write(f"--- {name} ---\n".encode())
+        parts[name].seek(0)
+        shutil.copyfileobj(parts[name], out)
+
+
 _SEND_CHUNK = 65_536
 
 
@@ -459,10 +510,10 @@ class _FileChunks:
     does not have).
     """
 
-    def __init__(self, source: Any, size: int, ticket: Ticket) -> None:
+    def __init__(self, source: Any, size: int, places: AsyncExitStack) -> None:
         self._source = source
         self.size = size
-        self._ticket = ticket
+        self._places = places
         self.closed = False
 
     def __aiter__(self) -> _FileChunks:
@@ -483,7 +534,7 @@ class _FileChunks:
             try:
                 self._source.close()
             finally:
-                self._ticket.release()
+                await self._places.aclose()
 
 
 class _Streams:
