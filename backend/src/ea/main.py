@@ -17,6 +17,7 @@ from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
 from ea.api.dependencies import (
     architecture_service_of,
+    audit_service_of,
     document_service_of,
     file_service_of,
     ipam_service_of,
@@ -440,6 +441,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: file_service_of(app),
         lambda: package_service_of(app),
         lambda: saved_query_service_of(app),
+        lambda: audit_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

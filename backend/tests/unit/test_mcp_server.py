@@ -36,13 +36,14 @@ from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
 from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.saved_queries import SavedQueryService
-from tests.conftest import InMemoryObjectStore, a_reader
+from tests.conftest import InMemoryAuditLog, InMemoryObjectStore, a_reader
 
 
 @pytest.fixture
@@ -53,6 +54,7 @@ def server(
     file_service: FileService,
     package_service: PackageService,
     saved_query_service: SavedQueryService,
+    audit_log: InMemoryAuditLog,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -62,6 +64,7 @@ def server(
         lambda: file_service,
         lambda: package_service,
         lambda: saved_query_service,
+        lambda: AuditService(audit_log),
     )
 
 
@@ -73,6 +76,7 @@ def server_without_an_index(
     file_service: FileService,
     package_service: PackageService,
     saved_query_service: SavedQueryService,
+    audit_log: InMemoryAuditLog,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -82,6 +86,7 @@ def server_without_an_index(
         lambda: file_service,
         lambda: package_service,
         lambda: saved_query_service,
+        lambda: AuditService(audit_log),
     )
 
 
@@ -94,6 +99,54 @@ async def call(server: MCPServer[Any], tool: str, **arguments: Any) -> Any:
 
 async def an_element(server: MCPServer[Any], element_type: str, name: str) -> Any:
     return await call(server, "create_element", element_type=element_type, name=name)
+
+
+@pytest.mark.asyncio
+class TestTheAuditTools:
+    async def test_an_agent_reads_the_history_of_an_element_it_changed(
+        self, server: MCPServer[Any]
+    ) -> None:
+        created = await an_element(server, "node", "db-01")
+        await call(server, "update_element", element_id=created["id"], name="db-02")
+
+        history = await call(server, "get_element_history", element_id=created["id"])
+        everything = await call(server, "list_audit_events", action="element.created")
+
+        assert {i["action"] for i in history["items"]} == {"element.updated", "element.created"}
+        assert {i["channel"] for i in history["items"]} == {"mcp"}
+        assert [i["entity_id"] for i in everything["items"]] == [created["id"]]
+
+    async def test_a_reader_may_read_the_trail(self, server: MCPServer[Any]) -> None:
+        await an_element(server, "node", "db-01")
+
+        with acting_as(a_reader()):
+            page = await call(server, "list_audit_events")
+
+        assert len(page["items"]) == 1
+
+    async def test_an_anonymous_agent_is_refused(
+        self, server: MCPServer[Any], nobody_calling: None
+    ) -> None:
+        with pytest.raises(ToolError):
+            await server.call_tool("list_audit_events", {})
+
+    async def test_a_forged_cursor_is_told_to_the_agent_not_hidden(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="cursor"):
+            await server.call_tool("list_audit_events", {"cursor": "garbage!"})
+
+    async def test_both_tools_only_read(self, server: MCPServer[Any]) -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+
+        for name in ("list_audit_events", "get_element_history"):
+            annotations = tools[name].annotations
+            assert annotations is not None
+            assert annotations.read_only_hint is True, name
+
+    async def test_the_instructions_point_an_agent_at_the_history(self) -> None:
+        assert "get_element_history" in INSTRUCTIONS
+        assert "list_audit_events" in INSTRUCTIONS
 
 
 @pytest.mark.asyncio
@@ -149,6 +202,8 @@ class TestTheToolset:
             "save_query",
             "run_saved_query",
             "delete_saved_query",
+            "list_audit_events",
+            "get_element_history",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -1465,6 +1520,12 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("describe_file", "key", "/files/metadata", "key"),
             ("run_saved_query", "limit", "/queries/{query_id}/elements", "limit"),
             ("run_saved_query", "offset", "/queries/{query_id}/elements", "offset"),
+            ("list_audit_events", "actor", "/audit", "actor"),
+            ("list_audit_events", "request_id", "/audit", "request_id"),
+            ("list_audit_events", "cursor", "/audit", "cursor"),
+            ("list_audit_events", "limit", "/audit", "limit"),
+            ("get_element_history", "limit", "/elements/{element_id}/history", "limit"),
+            ("get_element_history", "cursor", "/elements/{element_id}/history", "cursor"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(

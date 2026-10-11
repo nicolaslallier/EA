@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
@@ -37,9 +38,12 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from ea.api.schemas import (
+    Actor,
     Address,
     AddressLocationRead,
     AddressRead,
+    AuditPageRead,
+    CursorToken,
     Depth,
     Description,
     Documentation,
@@ -71,6 +75,7 @@ from ea.api.schemas import (
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    RequestIdFilter,
     Reserved,
     SavedQueryRead,
     SavedQuerySummaryRead,
@@ -92,6 +97,7 @@ from ea.domain.archimate import (
     # `build_mcp_server` the bare name would resolve to the tool itself.
     permitted_relationships as permitted_between,
 )
+from ea.domain.audit import DEFAULT_AUDIT_PAGE, AuditAction, AuditFilter, EntityKind, aware
 from ea.domain.documents import MAX_DOCUMENT_BYTES, MAX_FILENAME_LENGTH
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.ipam import DEFAULT_VRF
@@ -107,6 +113,7 @@ from ea.domain.query import (
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.architecture import ArchitectureService
+from ea.services.audit import AuditService
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
@@ -207,7 +214,12 @@ tags, replacing all three at once. Write one when you upload a binary a reader
 cannot open to find out what it is: `rapport-q3.pdf` says almost nothing, and a
 sentence beside it says everything. A file the bucket holds but this catalogue
 has never seen — one dropped in by the pipeline or by hand — comes back with no
-record at all; describing it is what gives it one.\
+record at all; describing it is what gives it one.
+
+Every change to the catalogue is kept in an audit trail. Before rewriting an
+element, call `get_element_history` to see who changed it, when and how; use
+`list_audit_events` to ask the trail anything else (by actor, by action, by
+period). The trail is read-only: it records what happened, it cannot be edited.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -217,6 +229,7 @@ IpamProvider = Callable[[], IpamService]
 FileProvider = Callable[[], FileService]
 PackageProvider = Callable[[], PackageService]
 QueryProvider = Callable[[], SavedQueryService]
+AuditProvider = Callable[[], AuditService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -477,12 +490,13 @@ def build_mcp_server(
     get_files: FileProvider,
     get_packages: PackageProvider,
     get_queries: QueryProvider,
+    get_audit: AuditProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the six services of the module docstring.
+    """Assemble the tool set over the seven services of the module docstring.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -493,7 +507,7 @@ def build_mcp_server(
     one of their tools is *called* — with the wiring fault `document_service_of`
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
-    `get_packages` and `get_queries` are required for the same reason.
+    `get_packages`, `get_queries` and `get_audit` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1348,5 +1362,60 @@ def build_mcp_server(
         for a single pair is `permitted_relationships`, and much smaller.
         """
         return RelationshipMatrixRead.for_source(source)
+
+    # --- The audit trail (docs/adr/0044) ----------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_audit_events(
+        entity_kind: EntityKind | None = None,
+        entity_id: ElementId | None = None,
+        actor: Actor | None = None,
+        action: AuditAction | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        request_id: RequestIdFilter | None = None,
+        cursor: CursorToken | None = None,
+        limit: Limit = DEFAULT_AUDIT_PAGE,
+    ) -> AuditPageRead:
+        """Who changed what, and when — newest first, a page at a time.
+
+        `actor` matches a user name or a Keycloak subject. `since` is inclusive,
+        `until` exclusive; a moment without a zone is read as UTC. Each event
+        carries `changes`, the field-by-field diff. Pass `next_cursor` back as
+        `cursor` to read the next page.
+        """
+        page = await get_audit().list_events(
+            AuditFilter(
+                entity_kind=entity_kind,
+                entity_id=entity_id,
+                actor=actor,
+                action=action,
+                since=aware(since),
+                until=aware(until),
+                request_id=request_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        )
+        return AuditPageRead.of(page)
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_element_history(
+        element_id: ElementId,
+        cursor: CursorToken | None = None,
+        limit: Limit = DEFAULT_AUDIT_PAGE,
+    ) -> AuditPageRead:
+        """The trail of one element, newest first — readable after it is deleted.
+
+        Read this before rewriting an element: it says who last changed it and what.
+        """
+        page = await get_audit().list_events(
+            AuditFilter(
+                entity_kind=EntityKind.ELEMENT, entity_id=element_id, cursor=cursor, limit=limit
+            )
+        )
+        return AuditPageRead.of(page)
 
     return server
