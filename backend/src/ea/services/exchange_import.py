@@ -141,6 +141,10 @@ class _Ledger:
         self._row = row
         self._high = max(self._high, row)
 
+    def abandon(self, row: int) -> None:
+        """Undo what the row that just failed had recorded."""
+        self._rewind(row)
+
     def put[K, V](self, mapping: MutableMapping[K, V], key: K, value: V) -> None:
         self._undo.append((self._row, mapping, key, mapping.get(key, _MISSING)))
         mapping[key] = value
@@ -500,6 +504,9 @@ class ImportRun:
                 await self._file(row.item.created, row.item.package)
                 result = _Result(row.category, Outcome.REUSED)
         except Exception as error:
+            # Whatever the row learned before it failed goes with it: the first row of a batch
+            # has no replay to rewind its entries.
+            self._ledger.abandon(row.index)
             if isinstance(row.item, ExchangeElement):
                 state.refused.add(row.item.identifier)
             if isinstance(error, ValueError):  # a pure check, raised before any write
@@ -872,7 +879,14 @@ class ImportRun:
         package = state.packages.get(folder.path)
         outcome = Outcome.REUSED
         if package is None:
-            parent = state.packages.get(folder.parent) if folder.parent else None
+            if folder.parent and folder.parent not in state.packages:
+                # The folder above was refused by the database (a lost race, a collision): this
+                # one has nowhere to go, and creating it at the root would file its elements
+                # under a path the file never said. Deduced in memory from the parent's refusal,
+                # so it is no refusal of the database and spends nothing of the budget; the
+                # parent's own line in the report says why.
+                return _Result(row.category, Outcome.REJECTED)
+            parent = state.packages[folder.parent] if folder.parent else None
             package = (await packages.create(name=folder.name, parent_id=parent)).package.id
             self._ledger.put(state.packages, folder.path, package)
             outcome = Outcome.CREATED

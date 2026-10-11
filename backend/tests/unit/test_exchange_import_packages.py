@@ -332,3 +332,59 @@ async def test_folders_are_ignored_and_said_when_packages_are_not_available(
 
     assert "packages_not_available" in {i.code for i in report.issues}
     assert report.counts[Category.ELEMENTS].created == 3
+
+
+async def test_a_package_the_database_refuses_takes_its_subtree_with_it_and_files_nothing_wrongly(
+    importer: ExchangeService,
+    package_service: PackageService,
+    repository: InMemoryRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = package_service.create
+
+    async def refusing(**kwargs: object):  # type: ignore[no-untyped-def]
+        if kwargs["name"] == "Bad":
+            raise DuplicatePackageError("a concurrent creation took it")
+        return await real(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(package_service, "create", refusing)
+    # One refusal is all the budget allows: the children of "Bad" are deduced from it, in
+    # memory, and must not be counted as refusals of the database.
+    monkeypatch.setattr("ea.services.exchange_import.MAX_REFUSED_ROWS", 1)
+    content = organized(
+        folder("Bad", folder("Child", folder("Grandchild", refs=("c",)), refs=("b",)), refs=("a",)),
+        folder("Good"),
+    )
+
+    report = await importer.import_exchange(content, REAL)
+
+    assert sorted(await names(package_service)) == ["Good"]  # nothing created at the root
+    assert packaged(repository) == {"A": None, "B": None, "C": None}
+    assert report.counts[Category.PACKAGES].rejected == 3  # Bad, Child, Grandchild
+    assert report.counts[Category.PACKAGES].created == 1
+    errors = [i.code for i in report.issues if i.severity.value == "error"]
+    assert errors == ["duplicate_package"]  # one line for the folder that was refused
+    assert "parent_rejected" not in errors
+
+
+async def test_a_refused_package_leaves_no_trace_in_the_paths_of_the_import(
+    importer: ExchangeService,
+    package_service: PackageService,
+    repository: InMemoryRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first row of a batch has no replay to rewind its entry: the entry must go anyway."""
+    real = package_service.move_elements
+
+    async def refusing(element_ids, package_id):  # type: ignore[no-untyped-def]
+        raise PackageNotFoundError("the package vanished")
+
+    monkeypatch.setattr(package_service, "move_elements", refusing)
+    content = organized(folder("First", folder("Below", refs=("b",)), refs=("a",)))
+
+    report = await importer.import_exchange(content, REAL)
+
+    assert await names(package_service) == {}
+    assert packaged(repository) == {"A": None, "B": None, "C": None}
+    assert report.counts[Category.PACKAGES].rejected == 2
+    assert real  # (the real one is not called: the first filing fails)
