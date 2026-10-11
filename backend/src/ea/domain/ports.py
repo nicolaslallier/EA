@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from ea.domain.archimate import ElementType, Layer, RelationshipType
+from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
@@ -259,6 +260,16 @@ class DiagramRepository(Protocol):
         self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
     ) -> bool:
         """Replace every node of a diagram in one transaction; `False` if it is gone."""
+        ...
+
+
+class AuditRepository(Protocol):
+    """Reads the audit trail. Writing is not here: an event is inserted by the
+    repository that makes the write it describes, in the same transaction
+    (docs/adr/0044)."""
+
+    async def page(self, criteria: AuditFilter) -> AuditPage:
+        """Newest first (`at`, then `id`), at most `criteria.limit` events and a cursor."""
         ...
 
 
