@@ -122,4 +122,15 @@ describe('GapPanel', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be compared with itself')
   })
+
+  it('says so when the list of plateaus is refused, instead of an empty selector', async () => {
+    const refused: Route = {
+      path: '/plateaus',
+      status: 422,
+      body: { error: 'scope_too_large', detail: 'the catalogue holds more than 500 plateaus' },
+    }
+    await open('', [refused])
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('more than 500 plateaus')
+  })
 })

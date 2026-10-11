@@ -61,6 +61,10 @@ const groups = computed<{ id: string; title: string; items: ElementRead[] }[]>((
       <p class="hint">Ce qui sort, ce qui arrive et ce qui reste entre deux états du SI.</p>
     </header>
 
+    <p v-if="gap.plateausStatus.value === 'error'" class="banner banner--error" role="alert">
+      {{ gap.plateausError.value }}
+    </p>
+
     <div class="controls">
       <div class="field">
         <label for="gap-a">Plateau de départ</label>
