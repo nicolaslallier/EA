@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tracemalloc
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -91,3 +92,76 @@ def test_a_very_deep_document_is_refused_without_recursion() -> None:
 
     with pytest.raises(InvalidExchangeFileError, match="nested"):
         parse_model(xml)
+
+
+class TestAmplification:
+    """Small inputs that would become huge trees: each is cut by a bound, none by a big file."""
+
+    def test_the_descendants_of_one_item_are_counted_while_they_stream(
+        self, monkeypatch: pytest.MonkeyPatch, spy: Spy
+    ) -> None:
+        monkeypatch.setattr(reader, "MAX_NODES_PER_ITEM", 10)
+        xml = exchange_xml(
+            '<element identifier="a" xsi:type="Node">' + "<x/>" * 5_000 + "</element>"
+        )
+
+        with pytest.raises(InvalidExchangeFileError, match="too many"):
+            parse_model(xml)
+
+        assert spy.events < 100  # stopped at the 11th, not after the 5 000
+
+    def test_an_item_within_the_bound_is_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(reader, "MAX_NODES_PER_ITEM", 10)
+        xml = exchange_xml('<element identifier="a" xsi:type="Node">' + "<x/>" * 10 + "</element>")
+
+        assert len(parse_model(xml).elements) == 1
+
+    def test_attributes_per_node_are_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(reader, "MAX_ATTRIBUTES_PER_NODE", 3)
+        crowded = " ".join(f'a{i}="v"' for i in range(4))
+        xml = exchange_xml(f'<element identifier="a" xsi:type="Node" {crowded}/>')
+
+        with pytest.raises(InvalidExchangeFileError, match="attributes"):
+            parse_model(xml)
+
+    def test_a_token_that_never_ends_is_refused_before_it_is_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(reader, "MAX_SILENT_BYTES", 20_000)
+        crowded = " ".join(f'a{i}="v"' for i in range(20_000))  # one tag of 200 KB
+        xml = exchange_xml(f'<element identifier="a" xsi:type="Node" {crowded}/>')
+
+        with pytest.raises(InvalidExchangeFileError, match="single token"):
+            parse_model(xml)
+
+    def test_a_file_of_ordinary_tokens_is_not_taken_for_a_silent_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(reader, "MAX_SILENT_BYTES", 20_000)
+
+        assert len(parse_model(many(2_000)).elements) == 2_000  # 200 KB, thousands of events
+
+    def test_nodes_piling_up_outside_any_item_are_bounded_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(reader, "MAX_LIVE_NODES", 50)
+        xml = exchange_xml(extra="<views><view>" + "<x/>" * 500 + "</view></views>")
+
+        with pytest.raises(InvalidExchangeFileError, match="too many"):
+            parse_model(xml)
+
+    def test_the_memory_of_a_refused_fan_out_does_not_depend_on_its_size(self) -> None:
+        peaks = {}
+        for children in (10_000, 40_000):
+            xml = exchange_xml(
+                '<element identifier="a" xsi:type="Node">' + "<x/>" * children + "</element>"
+            )
+            tracemalloc.start()
+            with pytest.raises(InvalidExchangeFileError):
+                parse_model(xml)
+            peaks[children] = tracemalloc.get_traced_memory()[1]
+            tracemalloc.stop()
+            del xml
+
+        assert peaks[40_000] / peaks[10_000] < 2.5  # linear growth would be 4 (and the real
+        # peaks are dominated by the input string itself, which the caller already holds)

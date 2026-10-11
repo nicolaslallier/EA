@@ -35,9 +35,13 @@ from ea.domain.exchange import (
     DESCRIPTION_KEY,
     EXPORT_LANGUAGE,
     JUNCTION_NAMES,
+    MAX_ATTRIBUTES_PER_NODE,
     MAX_EXCHANGE_ITEMS,
+    MAX_LIVE_NODES,
     MAX_NESTING_DEPTH,
+    MAX_NODES_PER_ITEM,
     MAX_PROPERTIES_PER_OBJECT,
+    MAX_SILENT_BYTES,
     MODEL_IDENTIFIER,
     MODIFIER_KEY,
     NAMESPACE,
@@ -452,10 +456,35 @@ def _too_many_properties(slot: _Slot, category: Category) -> _Slot:
     )
 
 
-def _events(data: bytes) -> Iterator[tuple[str, Element]]:
+class _Metered:
+    """The source `iterparse` reads, which notices a token that never ends.
+
+    `iterparse` feeds the parser 16 KB at a time and hands back the events each chunk
+    completed. A chunk that completes none means a tag or a text still open; when that
+    goes on past `MAX_SILENT_BYTES`, the parser is holding a token of that size (a tag
+    with a million attributes is 18 MB of file and 600 MB of tree): refuse before the next
+    chunk, not after the token is built.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._source = BytesIO(data)
+        self.silent = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if self.silent > MAX_SILENT_BYTES:
+            raise _refuse("a single token of the file is far too long to be an exchange file")
+        chunk = self._source.read(size)
+        self.silent += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self._source.close()
+
+
+def _events(source: _Metered) -> Iterator[tuple[str, Element]]:
     try:
         yield from iterparse(
-            BytesIO(data),
+            source,
             events=("start", "end", "pi"),
             forbid_dtd=True,
             forbid_entities=True,
@@ -473,12 +502,21 @@ def _events(data: bytes) -> Iterator[tuple[str, Element]]:
         raise _refuse("the file cannot be decoded as XML") from None
 
 
+_ITEM_SECTIONS: Final = frozenset(
+    _q(name) for name in ("elements", "relationships", "propertyDefinitions")
+)
+
+
 def _read(data: bytes) -> _Reading:
     reading = _Reading()
     tags: list[str] = []
     nodes: list[Element] = []
     counts = {"element": 0, "relationship": 0}
-    for event, node in _events(data):
+    source = _Metered(data)
+    live = 0  # nodes started since the last time what had been handled was let go
+    in_item = 0  # nodes started below the element or relationship being read
+    for event, node in _events(source):
+        source.silent = 0
         if event == "pi":
             raise _refuse("processing instructions are not allowed")
         if event == "start":
@@ -488,6 +526,17 @@ def _read(data: bytes) -> _Reading:
             nodes.append(node)
             if len(nodes) > MAX_NESTING_DEPTH:
                 raise _refuse(f"elements are nested more than {MAX_NESTING_DEPTH} levels deep")
+            if len(node.attrib) > MAX_ATTRIBUTES_PER_NODE:
+                raise _refuse(f"a node has more than {MAX_ATTRIBUTES_PER_NODE} attributes")
+            live += 1
+            if len(nodes) == 3:
+                in_item = 0
+            elif len(nodes) > 3 and tags[1] in _ITEM_SECTIONS:
+                in_item += 1
+                if in_item > MAX_NODES_PER_ITEM:
+                    raise _refuse(f"too many nodes in one object (at most {MAX_NODES_PER_ITEM})")
+            if live > MAX_LIVE_NODES:
+                raise _refuse(f"too many nodes held at once (at most {MAX_LIVE_NODES})")
             continue
         depth = len(nodes)
         if depth == 3:
@@ -507,8 +556,10 @@ def _read(data: bytes) -> _Reading:
                 tags.pop(), nodes.pop()
                 continue  # the siblings of a definition are the other definitions: keep them
             nodes[1].clear()  # forget what has been handled: memory stays flat
+            live = 0
         elif depth == 2:
             nodes[0].clear()
+            live = 0
         tags.pop()
         nodes.pop()
     return reading

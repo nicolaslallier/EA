@@ -237,6 +237,15 @@ MAX_EXCHANGE_ITEMS: Final = 50_000
 MAX_NESTING_DEPTH: Final = 250
 MAX_PROPERTIES_PER_OBJECT: Final = 100
 MAX_PROPERTY_VALUE_LENGTH: Final = 2_000
+#: Amplification: small inputs that become big trees. Nodes under one element or relationship
+#: (its texts, its properties and their values, with room to spare).
+MAX_NODES_PER_ITEM: Final = 4 * MAX_PROPERTIES_PER_OBJECT + 64
+MAX_ATTRIBUTES_PER_NODE: Final = 100
+#: Nodes started since the reader last let go of what it had handled, wherever they are.
+MAX_LIVE_NODES: Final = 100_000
+#: Bytes read without one start or end tag completing: a tag (or a text) this long is not an
+#: exchange file, and the parser would build it whole before telling us.
+MAX_SILENT_BYTES: Final = 1024 * 1024
 
 
 class Severity(StrEnum):

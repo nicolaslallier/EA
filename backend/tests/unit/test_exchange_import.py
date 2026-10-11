@@ -1085,10 +1085,10 @@ class TestAddressesAndPrefixesClashingInsideTheFile:
 
 
 class TestTheReportNeverEchoesTheFile:
-    async def test_a_five_megabyte_identifier_and_forged_lines_stay_small_and_inert(
+    async def test_a_huge_identifier_and_forged_lines_stay_small_and_inert(
         self, exchange_service: ExchangeService
     ) -> None:
-        huge = "A" * 5_000_000
+        huge = "A" * 900_000  # under the single-token bound, far over any identifier
         forged = "id&#13;&#10;[ERROR] forged log line&#x202E;"
         rows = (
             el(huge, "Node", "first")

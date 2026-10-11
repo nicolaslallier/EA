@@ -11,19 +11,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import weakref
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.errors import ExchangeFileTooLargeError, UnknownScopeError
+from ea.domain.errors import ExchangeFileTooLargeError, ImportInProgressError, UnknownScopeError
 from ea.domain.exchange import (
     EXPORT_PAGE_SIZE,
     EXPORT_TIMEOUT_SECONDS,
     MAX_EXCHANGE_BYTES,
     Category,
     ExchangeElement,
+    ExchangeModel,
     ExchangeRelationship,
     ExportRequest,
     IdentifierRegistry,
@@ -47,6 +49,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
+#: Parsings allowed in the process at once, the one running included: a 20 MB file is
+#: hundreds of megabytes while it is read, so one reads and one waits, and a third is told
+#: to come back (409), never queued without end.
+MAX_PARSES_QUEUED = 2
+
+
+@dataclass(slots=True)
+class _Gate:
+    slot: asyncio.Semaphore
+    queued: int = 0
+
+
+#: One gate per event loop (a semaphore belongs to the loop that first waits on it).
+_gates: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _Gate] = weakref.WeakKeyDictionary()
+
+
+def _gate() -> _Gate:
+    loop = asyncio.get_running_loop()
+    if loop not in _gates:
+        _gates[loop] = _Gate(asyncio.Semaphore(1))
+    return _gates[loop]
+
+
 #: How many object identifiers a warning names: enough to find the culprits, not a dump.
 WARNED_IDENTIFIERS = 20
 
@@ -76,7 +101,9 @@ class ExchangeService:
         max_bytes: int = MAX_EXCHANGE_BYTES,
         clock: Clock = _utc_now,
         monotonic: Callable[[], float] = time.monotonic,
+        parser: Callable[[bytes], ExchangeModel] = parse_model,
     ) -> None:
+        self._parse = parser
         self._repository = repository
         self._architecture = architecture
         self._max_bytes = max_bytes
@@ -98,8 +125,7 @@ class ExchangeService:
         if content.size > self._max_bytes:
             msg = f"an exchange file is at most {self._max_bytes} bytes"
             raise ExchangeFileTooLargeError(msg)
-        # A thread, not the event loop: parsing 20 MB is seconds of pure CPU.
-        model = await asyncio.to_thread(parse_model, content.main)
+        model = await self._parsed(content.main)
         report = ReportBuilder()
         for issue in model.issues:
             report.add(
@@ -132,6 +158,19 @@ class ExchangeService:
         )
         self._log_import(caller.subject, content, built)
         return built
+
+    async def _parsed(self, data: bytes) -> ExchangeModel:
+        """Parse in a thread (seconds of pure CPU), one file at a time, with a short queue."""
+        gate = _gate()
+        if gate.queued >= MAX_PARSES_QUEUED:
+            msg = "other files are being read: try again in a moment"
+            raise ImportInProgressError(msg)
+        gate.queued += 1
+        try:
+            async with gate.slot:
+                return await asyncio.to_thread(self._parse, data)
+        finally:
+            gate.queued -= 1
 
     @staticmethod
     def _log_import(actor: str, content: ImportContent, report: ImportReport) -> None:
