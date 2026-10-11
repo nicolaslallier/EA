@@ -399,3 +399,72 @@ export function anAuditEvent(overrides: Partial<AuditEventRead> = {}): AuditEven
     ...overrides,
   }
 }
+
+type BaselineRead = components['schemas']['BaselineRead']
+type BaselineDiffRead = components['schemas']['BaselineDiffRead']
+type RestoreRead = components['schemas']['RestoreRead']
+type RestorePlanRead = components['schemas']['RestorePlanRead']
+
+/** A baseline, as `GET /baselines` returns it. */
+export function aBaseline(overrides: Partial<BaselineRead> = {}): BaselineRead {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Avant migration',
+    description: '',
+    created_by: 'editor',
+    created_at: '2026-10-10T12:00:00Z',
+    element_count: 12,
+    relationship_count: 20,
+    box_count: 5,
+    ...overrides,
+  }
+}
+
+/** What separates a baseline from the model: nothing, unless a spec says. */
+export function aDiff(overrides: Partial<BaselineDiffRead> = {}): BaselineDiffRead {
+  return {
+    elements_added: [],
+    elements_removed: [],
+    elements_modified: [],
+    relationships_added: [],
+    relationships_removed: [],
+    relationships_modified: [],
+    ...overrides,
+  }
+}
+
+/** A restoration plan that changes nothing, unless a spec says. */
+export function aRestorePlan(overrides: Partial<RestorePlanRead> = {}): RestorePlanRead {
+  return {
+    elements_to_create: 0,
+    elements_to_update: 0,
+    elements_to_delete: 0,
+    relationships_to_create: 0,
+    relationships_to_delete: 0,
+    relationships_cascaded: 0,
+    boxes_to_restore: 0,
+    documents_lost: 0,
+    boxes_lost: 0,
+    created: [],
+    updated: [],
+    deleted: [],
+    warning_count: 0,
+    warnings: [],
+    blocked_count: 0,
+    blocked: [],
+    ...overrides,
+  }
+}
+
+/** The answer to `POST /baselines/{id}/restore`. */
+export function aRestore(
+  plan: Partial<RestorePlanRead> = {},
+  overrides: Partial<RestoreRead> = {},
+): RestoreRead {
+  return {
+    applied: false,
+    digest: 'a'.repeat(64),
+    plan: aRestorePlan(plan),
+    ...overrides,
+  }
+}

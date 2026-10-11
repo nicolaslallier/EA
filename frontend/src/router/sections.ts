@@ -115,6 +115,14 @@ export const SECTIONS: readonly Section[] = [
     group: 'governance',
     view: () => import('../features/history/HistorySection.vue'),
   },
+  {
+    path: '/baselines',
+    name: 'baselines',
+    label: 'Baselines',
+    summary: 'Figer le modèle, comparer deux états, restaurer.',
+    group: 'governance',
+    view: () => import('../features/baselines/BaselinesSection.vue'),
+  },
 ]
 
 /** A section that really has a screen — the only kind the router mounts. */
