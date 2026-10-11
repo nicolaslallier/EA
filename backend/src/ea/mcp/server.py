@@ -1674,7 +1674,8 @@ def build_mcp_server(
         behind. Each finding names an element, says why, and carries a `fix_hint`
         route. `counts` describe the whole catalogue; `severity` (`error`,
         `warning`, `info`) and `code` (`orphan`, `duplicate_probable`, `naming`,
-        `missing_property`, `no_description`, `inconsistent_relationship`) narrow
+        `missing_property`, `no_description`, `inconsistent_relationship`,
+        `unreadable_property`) narrow
         only the findings listed, and `next_cursor` pages through them. It reads
         and stores nothing: every call recomputes.
         """

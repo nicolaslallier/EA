@@ -13,6 +13,7 @@ export const RULE_LABELS: Record<RuleCode, string> = {
   missing_property: 'Propriété manquante',
   no_description: 'Sans description',
   inconsistent_relationship: 'Relation incohérente',
+  unreadable_property: 'Valeur illisible',
 }
 
 export const SEVERITY_LABELS: Record<Severity, string> = {

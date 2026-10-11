@@ -3390,7 +3390,8 @@
           "naming",
           "missing_property",
           "no_description",
-          "inconsistent_relationship"
+          "inconsistent_relationship",
+          "unreadable_property"
         ],
         "title": "RuleCode",
         "type": "string"

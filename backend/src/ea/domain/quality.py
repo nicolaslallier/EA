@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Final
 from uuid import UUID
 
+from ea.domain.analytics import ANALYTIC_PROPERTIES, ReadingKind, read_number, read_rank
 from ea.domain.archimate import ElementType, RelationshipType, permits
 from ea.domain.exchange import Severity as Severity  # one gravity scale for the domain
 from ea.domain.model import PROPERTY_KEY, Element, Relationship
@@ -42,6 +43,7 @@ class RuleCode(StrEnum):
     MISSING_PROPERTY = "missing_property"
     NO_DESCRIPTION = "no_description"
     INCONSISTENT_RELATIONSHIP = "inconsistent_relationship"
+    UNREADABLE_PROPERTY = "unreadable_property"
 
 
 SEVERITY_OF: Final[Mapping[RuleCode, Severity]] = {
@@ -51,6 +53,7 @@ SEVERITY_OF: Final[Mapping[RuleCode, Severity]] = {
     RuleCode.MISSING_PROPERTY: Severity.WARNING,
     RuleCode.NO_DESCRIPTION: Severity.INFO,
     RuleCode.INCONSISTENT_RELATIONSHIP: Severity.ERROR,
+    RuleCode.UNREADABLE_PROPERTY: Severity.INFO,
 }
 
 #: Containers are not expected to be linked to anything.
@@ -180,6 +183,37 @@ def check_required_properties(
                         RuleCode.MISSING_PROPERTY,
                         element,
                         f"« {element.name} » n'a pas de valeur pour « {key} ».",
+                    )
+                )
+    return findings
+
+
+def check_readable_properties(elements: Sequence[Element]) -> list[Finding]:
+    """Values of the keys the dashboards read that they cannot read.
+
+    The dashboards count such a value as `unreadable` instead of using it; this
+    rule says *which* element carries it, so it can be fixed at the source.
+    Writing the value is never refused: validating on write is a later project.
+    """
+    findings: list[Finding] = []
+    for element in elements:
+        for key, reading in ANALYTIC_PROPERTIES.items():
+            raw = element.properties.get(key, "")
+            if not raw.strip(" "):
+                continue
+            if reading.kind is ReadingKind.NUMBER:
+                readable = read_number(raw) is not None
+                expected = "un nombre (ex. 1200 ou 1 200,50)"
+            else:
+                readable = read_rank(key, raw) is not None
+                expected = f"l'une de : {', '.join(reading.order)}"
+            if not readable:
+                findings.append(
+                    _finding(
+                        RuleCode.UNREADABLE_PROPERTY,
+                        element,
+                        f"« {element.name} » : la valeur « {raw.strip()} » de « {key} » "
+                        f"n'est pas lisible ; attendu : {expected}.",
                     )
                 )
     return findings
@@ -362,6 +396,7 @@ def run_checks(
         *check_naming(elements),
         *check_required_properties(elements, params.required_properties),
         *check_descriptions(elements),
+        *check_readable_properties(elements),
         *check_relationships(elements, relationships),
     ]
     found.sort(

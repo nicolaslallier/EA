@@ -574,8 +574,8 @@ export function aQualityReport(
   findings: FindingRead[] = [aFinding()],
   overrides: Partial<QualityReportRead> = {},
 ): QualityReportRead {
-  const rules = ['orphan', 'duplicate_probable', 'naming', 'missing_property', 'no_description', 'inconsistent_relationship'] as const
-  const severity = { orphan: 'warning', duplicate_probable: 'warning', naming: 'info', missing_property: 'warning', no_description: 'info', inconsistent_relationship: 'error' } as const
+  const rules = ['orphan', 'duplicate_probable', 'naming', 'missing_property', 'no_description', 'inconsistent_relationship', 'unreadable_property'] as const
+  const severity = { orphan: 'warning', duplicate_probable: 'warning', naming: 'info', missing_property: 'warning', no_description: 'info', inconsistent_relationship: 'error', unreadable_property: 'info' } as const
   return {
     total: findings.length,
     counts: rules.map((rule) => ({

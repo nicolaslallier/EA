@@ -2680,7 +2680,7 @@ export interface components {
          * RuleCode
          * @enum {string}
          */
-        RuleCode: "orphan" | "duplicate_probable" | "naming" | "missing_property" | "no_description" | "inconsistent_relationship";
+        RuleCode: "orphan" | "duplicate_probable" | "naming" | "missing_property" | "no_description" | "inconsistent_relationship" | "unreadable_property";
         /** RuleCountRead */
         RuleCountRead: {
             /** Count */

@@ -18,6 +18,7 @@ from ea.domain.quality import (
     check_duplicates,
     check_naming,
     check_orphans,
+    check_readable_properties,
     check_relationships,
     check_required_properties,
     page_of,
@@ -332,3 +333,42 @@ class TestPaging:
         page = page_of(self.report(), cursor=999)
 
         assert (page.findings, page.next_cursor) == ((), None)
+
+
+class TestReadableProperties:
+    def test_a_cost_that_is_not_a_number_is_flagged_as_information(self) -> None:
+        pricey = an_element(E.NODE, "srv", properties={"cost": "1 200 €"})
+
+        findings = check_readable_properties([pricey])
+
+        assert [(f.rule, f.severity, f.element_id) for f in findings] == [
+            (RuleCode.UNREADABLE_PROPERTY, Severity.INFO, pricey.id)
+        ]
+        assert "cost" in findings[0].message and "1 200 €" in findings[0].message
+
+    def test_a_tolerated_spelling_is_not_flagged(self) -> None:
+        ok = an_element(E.NODE, "srv", properties={"cost": "1 200,50"})
+
+        assert check_readable_properties([ok]) == []
+
+    def test_a_risk_outside_the_enumeration_is_flagged(self) -> None:
+        odd = an_element(E.NODE, "srv", properties={"risk": "inconnu"})
+
+        assert len(check_readable_properties([odd])) == 1
+
+    def test_an_absent_or_blank_value_is_not_unreadable(self) -> None:
+        elements = [an_element(E.NODE, "a"), an_element(E.NODE, "b", properties={"cost": "  "})]
+
+        assert check_readable_properties(elements) == []
+
+    def test_a_key_the_catalogue_does_not_read_is_left_alone(self) -> None:
+        assert (
+            check_readable_properties([an_element(E.NODE, "a", properties={"owner": "???"})]) == []
+        )
+
+    def test_the_run_includes_it(self) -> None:
+        pricey = an_element(E.NODE, "srv", properties={"cost": "n/a"}, description="d")
+
+        report = run_checks([pricey], [], QualityParams())
+
+        assert RuleCode.UNREADABLE_PROPERTY in {f.rule for f in report.findings}
