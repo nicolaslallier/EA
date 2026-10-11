@@ -553,6 +553,10 @@ class TestCsvOverHttp:
         safe = await client.get("/exchanges/export", params={"format": "csv"})
         raw = await client.get("/exchanges/export", params={"format": "csv", "safe_cells": "false"})
 
+        assert safe.headers["x-export-cells"] == "safe"
+        assert raw.headers["x-export-cells"] == "raw"
+        assert raw.headers["content-disposition"].endswith("-raw.zip")
+        assert "raw" not in safe.headers["content-disposition"]
         assert "'=1+1" in zipfile.ZipFile(io.BytesIO(safe.content)).read("elements.csv").decode()
         assert '"=1+1"' in zipfile.ZipFile(io.BytesIO(raw.content)).read("elements.csv").decode()
 

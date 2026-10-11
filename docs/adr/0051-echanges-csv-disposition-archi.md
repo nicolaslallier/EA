@@ -58,6 +58,9 @@ a en plus deux dangers que le XML n'a pas : un tableur exécute comme une formul
   nom de fichier `ea-<périmètre>-<date>.zip` fabriqué par le serveur, octets déterministes (date `1980-01-01`
   dans l'archive). Les trois fichiers sont écrits dans des fichiers temporaires en mémoire puis sur disque
   au-delà de 1 Mo, puis assemblés (limite connue : l'écriture du zip est synchrone sur la boucle).
+- **Export sans garde** : `safe_cells=false` est étiqueté, dans le nom (`ea-<périmètre>-<date>-raw.zip`) et dans
+  l'en-tête `X-Export-Cells: raw` (`safe` sinon). Tout appelant authentifié peut le demander : c'est son
+  téléchargement, et le fichier ne lui donne rien qu'il ne lise déjà.
 - **Import** : `POST /exchanges/imports` avec `format=csv` et trois parties `elements` (obligatoire),
   `relations`, `properties`. **Aucune archive n'est jamais ouverte** à l'import : la surface d'une bombe zip, d'un
   chemin `../` ou d'un lien symbolique n'existe pas. Chaque format n'accepte que ses parties (`file` pour le

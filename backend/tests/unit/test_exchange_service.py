@@ -210,6 +210,19 @@ class TestCsvExport:
         rows = archive.read("elements.csv").decode("utf-8")
         assert '"app-1","ApplicationComponent","Billing"' in rows
 
+    async def test_an_export_without_the_guard_is_labelled_raw_in_its_name_and_its_header(
+        self, exchange_service: ExchangeService
+    ) -> None:
+        raw = await exchange_service.export(
+            ExportRequest(format=ExchangeFormat.CSV, safe_cells=False)
+        )
+        safe = await exchange_service.export(CSV)
+
+        assert raw.filename == "ea-model-2026-09-07-raw.zip" and raw.cells == "raw"
+        assert safe.filename == "ea-model-2026-09-07.zip" and safe.cells == "safe"
+        await raw.chunks.aclose()  # type: ignore[attr-defined]
+        await safe.chunks.aclose()  # type: ignore[attr-defined]
+
     async def test_two_exports_are_byte_identical_including_the_archive(
         self, service: ArchitectureService, exchange_service: ExchangeService
     ) -> None:

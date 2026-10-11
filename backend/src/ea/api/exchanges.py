@@ -93,6 +93,7 @@ async def export_model(
         headers={
             "Content-Disposition": attachment(export.filename),
             "X-Content-Type-Options": "nosniff",
+            **({"X-Export-Cells": export.cells} if export.cells else {}),
         },
     )
 

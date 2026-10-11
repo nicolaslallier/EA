@@ -95,6 +95,8 @@ class Export:
     media_type: str
     chunks: AsyncIterator[bytes]
     skipped_views: int = 0
+    #: CSV only: `safe` (formulas neutralised) or `raw`; None for the XML.
+    cells: str | None = None
 
 
 class ExchangeService:
@@ -233,8 +235,11 @@ class ExchangeService:
             raise UnknownScopeError(msg)
         is_csv = request.format is ExchangeFormat.CSV
         extension = "zip" if is_csv else "xml"
+        raw = is_csv and not request.safe_cells
+        label = "-raw" if raw else ""
         return Export(
-            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}.{extension}",
+            filename=f"ea-{request.scope.label}-{self._now():%Y-%m-%d}{label}.{extension}",
+            cells=("raw" if raw else "safe") if is_csv else None,
             media_type="application/zip" if is_csv else "application/xml",
             chunks=self._csv(request) if is_csv else self._xml(request),
         )
