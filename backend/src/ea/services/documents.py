@@ -93,10 +93,17 @@ class DocumentService:
             now=self._now(),
         )
         passages = await self._passages_of(document)
-        event = self._trail.event(
-            AuditAction.DOCUMENT_ATTACHED, entity_id=document.id, after=document_view(document)
-        )
-        stored = await self._repository.add(document, passages, audit=(event,))
+
+        def created(stored: Document) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DOCUMENT_ATTACHED,
+                    entity_id=stored.id,
+                    after=document_view(stored),
+                ),
+            )
+
+        stored = await self._repository.add(document, passages, audit=created)
         logger.info(
             "document %r attached (%d bytes, %d passage(s))",
             stored.filename,

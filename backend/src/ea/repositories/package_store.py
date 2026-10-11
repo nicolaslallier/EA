@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
 
 #: Key of the transaction-scoped advisory lock every write to the tree takes
 #: (docs/adr/0042). A constant, not a hash of something: one tree, one lock.
@@ -136,7 +136,7 @@ class PostgresPackageRepository:
             row = await session.get(PackageRecord, package_id)
             return _to_package(row) if row is not None else None
 
-    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
+    async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         async with self._sessions.begin() as session:
             tree = await _locked_tree(session)
             if len(tree) >= MAX_PACKAGES:
@@ -163,7 +163,7 @@ class PostgresPackageRepository:
                 if refusal is None:
                     raise
                 raise refusal from error
-            write_events(session, audit)
+            write_events(session, events_for(audit, package))
         return package
 
     async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:

@@ -80,10 +80,17 @@ class SavedQueryService:
             description=description,
             now=self._now(),
         )
-        event = self._trail.event(
-            AuditAction.SAVED_QUERY_CREATED, entity_id=saved.id, after=saved_query_view(saved)
-        )
-        stored = await self._repository.add(saved, audit=(event,))
+
+        def created(stored: SavedQuery) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.SAVED_QUERY_CREATED,
+                    entity_id=stored.id,
+                    after=saved_query_view(stored),
+                ),
+            )
+
+        stored = await self._repository.add(saved, audit=created)
         self._audit("query saved: %r", stored, "query_saved")
         return stored
 

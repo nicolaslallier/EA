@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
 
 
 def _rows_affected(result: object) -> int:
@@ -101,7 +101,7 @@ class PostgresDocumentRepository:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent],
+        audit: AuditOf[Document],
     ) -> Document:
         """Store a new document and its passages, in one transaction.
 
@@ -138,7 +138,7 @@ class PostgresDocumentRepository:
                 msg = f"{document.filename!r} is already attached to this element"
                 raise DuplicateDocumentError(msg) from error
             session.add_all(_chunk_rows(document, chunks))
-            write_events(session, audit)
+            write_events(session, events_for(audit, document))
         return document
 
     async def get(self, document_id: UUID) -> Document | None:

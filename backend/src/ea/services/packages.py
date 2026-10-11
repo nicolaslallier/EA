@@ -112,10 +112,15 @@ class PackageService:
             name=name, description=description, parent_id=parent_id, now=self._now()
         )
         check_tree({**packages, package.id: package})
-        event = self._trail.event(
-            AuditAction.PACKAGE_CREATED, entity_id=package.id, after=package_view(package)
-        )
-        stored = await self._repository.add(package, audit=(event,))
+
+        def created(stored: Package) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_CREATED, entity_id=stored.id, after=package_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add(package, audit=created)
         self._audit("package created: %r", stored, "package_created")
         return await self.get(stored.id)
 

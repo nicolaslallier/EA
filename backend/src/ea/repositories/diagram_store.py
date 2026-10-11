@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
 
 
 def _summaries() -> Select[tuple[DiagramRecord, int]]:
@@ -111,7 +111,7 @@ class PostgresDiagramRepository:
                 for row in rows
             )
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """The unique constraint refuses a taken name — race-free, unlike a lookup."""
         async with self._sessions.begin() as session:
             session.add(
@@ -128,7 +128,7 @@ class PostgresDiagramRepository:
                 await session.flush()
             except IntegrityError as error:
                 raise _refused(error, diagram) from error
-            write_events(session, audit)
+            write_events(session, events_for(audit, diagram))
         return diagram
 
     async def save(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:

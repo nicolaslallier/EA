@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from sqlalchemy.sql.selectable import CTE
 
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
 
 logger = logging.getLogger(__name__)
 
@@ -429,11 +429,11 @@ class PostgresArchitectureRepository:
 
     # --- Elements ---------------------------------------------------------
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         async with self._sessions.begin() as session:
             session.add(ElementRecord(**element_row(element)))
             await _flush_refusing(session, element)
-            write_events(session, audit)
+            write_events(session, events_for(audit, element))
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -507,7 +507,7 @@ class PostgresArchitectureRepository:
     # --- Relationships ----------------------------------------------------
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
+        self, relationship: Relationship, *, audit: AuditOf[Relationship]
     ) -> Relationship:
         async with self._sessions.begin() as session:
             session.add(RelationshipRecord(**relationship_row(relationship)))
@@ -521,7 +521,7 @@ class PostgresArchitectureRepository:
                     "one of them does not exist"
                 )
                 raise ElementNotFoundError(msg) from error
-            write_events(session, audit)
+            write_events(session, events_for(audit, relationship))
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:

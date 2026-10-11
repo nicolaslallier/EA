@@ -193,3 +193,27 @@ async def test_a_deleted_hub_costs_a_bounded_event_and_an_exact_count(
     (removal,) = seen
     assert removal.relationship_count == AUDIT_LISTED_IDS + 20
     assert len(removal.relationships) == AUDIT_LISTED_IDS
+
+
+async def test_paging_the_trail_of_concurrent_creations_loses_and_repeats_nothing(
+    engine_at_head: AsyncEngine,
+) -> None:
+    sessions = create_session_factory(engine_at_head)
+    service = ArchitectureService(PostgresArchitectureRepository(sessions), clock=a_ticking_clock())
+    trail = PostgresAuditRepository(sessions)
+
+    await asyncio.gather(
+        *(service.create_element(element_type=E.NODE, name=f"n{i}") for i in range(25))
+    )
+
+    seen = []
+    cursor = None
+    while True:
+        page = await trail.page(AuditFilter(limit=7, cursor=cursor))
+        seen.extend(page.events)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert len(seen) == len({e.id for e in seen}) == 25
+    moments = [(e.at, e.id.int) for e in seen]
+    assert moments == sorted(moments, reverse=True)

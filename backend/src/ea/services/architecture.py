@@ -82,10 +82,16 @@ class ArchitectureService:
             properties=properties,
             now=self._now(),
         )
-        event = self._trail.event(
-            AuditAction.ELEMENT_CREATED, entity_id=element.id, after=element_view(element)
-        )
-        stored = await self._repository.add_element(element, audit=(event,))
+
+        def created(stored: Element) -> tuple[AuditEvent, ...]:
+            # Built by the repository inside the write, so the moment is the write's.
+            return (
+                self._trail.event(
+                    AuditAction.ELEMENT_CREATED, entity_id=stored.id, after=element_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add_element(element, audit=created)
         logger.info(
             "element created: %s %r",
             stored.element_type.value,
@@ -275,12 +281,16 @@ class ArchitectureService:
             )
             raise CyclicContainmentError(msg)
 
-        event = self._trail.event(
-            AuditAction.RELATIONSHIP_CREATED,
-            entity_id=relationship.id,
-            after=relationship_view(relationship),
-        )
-        stored = await self._repository.add_relationship(relationship, audit=(event,))
+        def created(stored: Relationship) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.RELATIONSHIP_CREATED,
+                    entity_id=stored.id,
+                    after=relationship_view(stored),
+                ),
+            )
+
+        stored = await self._repository.add_relationship(relationship, audit=created)
         logger.info(
             "%r --%s--> %r",
             source.name,

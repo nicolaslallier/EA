@@ -347,10 +347,10 @@ class InMemoryRepository:
         self.elements: dict[UUID, Element] = {}
         self.relationships: dict[UUID, Relationship] = {}
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         self._refuse_a_taken_address(element)
         self.elements[element.id] = element
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, element))
         return element
 
     async def get_element(self, element_id: UUID) -> Element | None:
@@ -425,10 +425,10 @@ class InMemoryRepository:
         return True
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
+        self, relationship: Relationship, *, audit: AuditOf[Relationship]
     ) -> Relationship:
         self.relationships[relationship.id] = relationship
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, relationship))
         return relationship
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
@@ -560,7 +560,7 @@ class InMemoryDocuments:
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent],
+        audit: AuditOf[Document],
     ) -> Document:
         taken = any(
             stored.element_id == document.element_id and stored.filename == document.filename
@@ -571,7 +571,7 @@ class InMemoryDocuments:
             raise DuplicateDocumentError(msg)
         self.documents[document.id] = document
         self.chunks[document.id] = tuple(chunks)
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, document))
         return document
 
     async def get(self, document_id: UUID) -> Document | None:
@@ -682,10 +682,10 @@ class InMemoryDiagrams:
         ]
         return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         self._refuse_a_taken_name(diagram)
         self.diagrams[diagram.id] = diagram
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, diagram))
         return diagram
 
     async def get(self, diagram_id: UUID) -> Diagram | None:
@@ -778,11 +778,11 @@ class InMemoryPackages:
     async def get(self, package_id: UUID) -> Package | None:
         return self.packages.get(package_id)
 
-    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
+    async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         self._require_parent(package)
         self._refuse_a_taken_name(package)
         self.packages[package.id] = package
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, package))
         return package
 
     async def save(self, package: Package, *, audit: AuditOf[Package]) -> Package:
@@ -888,10 +888,10 @@ class InMemorySavedQueries:
             raise InvalidQueryError(msg)
         return self.queries.get(query_id)
 
-    async def add(self, saved: SavedQuery, *, audit: Sequence[AuditEvent]) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
         self._refuse_a_taken_name(saved)
         self.queries[saved.id] = saved
-        self.audit_log.append(audit)
+        self.audit_log.append(events_for(audit, saved))
         return saved
 
     async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:

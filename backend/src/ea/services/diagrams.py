@@ -100,10 +100,15 @@ class DiagramService:
         diagram = Diagram.create(
             name=name, description=description, now=self._now(), package_id=package_id
         )
-        event = self._trail.event(
-            AuditAction.DIAGRAM_CREATED, entity_id=diagram.id, after=diagram_view(diagram)
-        )
-        stored = await self._repository.add(diagram, audit=(event,))
+
+        def created(stored: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_CREATED, entity_id=stored.id, after=diagram_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add(diagram, audit=created)
         self._audit("diagram created: %r", stored, "diagram_created")
         return stored
 

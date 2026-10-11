@@ -25,7 +25,7 @@ from ea.domain.search import DEFAULT_SEARCH_LIMIT, EmbeddedChunk, Passage
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
     from ea.domain.diagrams import Diagram, DiagramNode
 
 
@@ -134,7 +134,7 @@ class ArchitectureRepository(Protocol):
     have to declare `async def`.
     """
 
-    async def add_element(self, element: Element, *, audit: Sequence[AuditEvent]) -> Element:
+    async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         """Store a new element; `audit` is inserted in the same transaction."""
         ...
 
@@ -169,7 +169,7 @@ class ArchitectureRepository(Protocol):
         ...
 
     async def add_relationship(
-        self, relationship: Relationship, *, audit: Sequence[AuditEvent]
+        self, relationship: Relationship, *, audit: AuditOf[Relationship]
     ) -> Relationship: ...
 
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None: ...
@@ -259,7 +259,7 @@ class DocumentRepository(Protocol):
         document: Document,
         chunks: Sequence[EmbeddedChunk] = (),
         *,
-        audit: Sequence[AuditEvent],
+        audit: AuditOf[Document],
     ) -> Document:
         """Store a new document and its passages, or refuse a name already taken."""
         ...
@@ -320,7 +320,7 @@ class DiagramRepository(Protocol):
         """
         ...
 
-    async def add(self, diagram: Diagram, *, audit: Sequence[AuditEvent]) -> Diagram:
+    async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
         """Store a new diagram, or refuse a name already taken."""
         ...
 
@@ -529,7 +529,7 @@ class PackageRepository(Protocol):
 
     async def get(self, package_id: UUID) -> Package | None: ...
 
-    async def add(self, package: Package, *, audit: Sequence[AuditEvent]) -> Package:
+    async def add(self, package: Package, *, audit: AuditOf[Package]) -> Package:
         """Store a new package, or refuse a sibling name already taken."""
         ...
 
@@ -591,7 +591,7 @@ class SavedQueryRepository(Protocol):
         """One saved query; raises `InvalidQueryError` when its stored JSON cannot be read."""
         ...
 
-    async def add(self, saved: SavedQuery, *, audit: Sequence[AuditEvent]) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
         """Store a new saved query, or refuse a name already taken."""
         ...
 

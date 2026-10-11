@@ -21,12 +21,12 @@ from ea.repositories.architecture_store import constraint_of
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from ea.domain.audit import AuditEvent, AuditOf
+    from ea.domain.audit import AuditOf
 
 NAME_TAKEN: Final = "uq_saved_queries_name"
 
@@ -79,7 +79,7 @@ class PostgresSavedQueryRepository:
                 updated_at=row.updated_at,
             )
 
-    async def add(self, saved: SavedQuery, *, audit: Sequence[AuditEvent]) -> SavedQuery:
+    async def add(self, saved: SavedQuery, *, audit: AuditOf[SavedQuery]) -> SavedQuery:
         async with self._sessions.begin() as session:
             session.add(
                 SavedQueryRecord(
@@ -98,7 +98,7 @@ class PostgresSavedQueryRepository:
                 if constraint_of(error) != NAME_TAKEN:
                     raise
                 raise _taken(saved) from error
-            write_events(session, audit)
+            write_events(session, events_for(audit, saved))
         return saved
 
     async def save(self, saved: SavedQuery, *, audit: AuditOf[Mapping[str, Any]]) -> SavedQuery:
