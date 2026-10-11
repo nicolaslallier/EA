@@ -6,11 +6,13 @@ from uuid import uuid4
 
 import pytest
 
+from ea.domain.analytics import Dimension, Metric
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.errors import (
     AnalysisBusyError,
     ElementNotFoundError,
+    InvalidAnalysisError,
     MatrixAxisTooLargeError,
     NotAuthenticatedError,
     ScopeTooLargeError,
@@ -303,3 +305,102 @@ class TestTheRunStaysOffTheEventLoop:
         release.set()
         await run
         assert busy.in_flight == 0
+
+
+@pytest.mark.asyncio
+class TestTheAggregates:
+    async def a_model(self, service: ArchitectureService) -> None:
+        await service.create_element(
+            element_type=E.APPLICATION_COMPONENT,
+            name="Billing",
+            properties={"cost": "1 200,50", "lifecycle": "en production"},
+        )
+        await service.create_element(
+            element_type=E.APPLICATION_COMPONENT,
+            name="CRM",
+            properties={"cost": "300", "lifecycle": "retiré"},
+        )
+        await service.create_element(
+            element_type=E.BUSINESS_PROCESS, name="Order", properties={"cost": "1 200 €"}
+        )
+
+    async def test_counting_by_layer(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await self.a_model(service)
+
+        result = await analysis.aggregate(Dimension.parse("layer"), Metric.COUNT)
+
+        assert {b.keys: b.count for b in result.buckets} == {("application",): 2, ("business",): 1}
+
+    async def test_summing_a_property_reports_what_it_could_not_read(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await self.a_model(service)
+
+        result = await analysis.aggregate(Dimension.parse("layer"), Metric.SUM, "cost")
+
+        assert {b.keys: b.value for b in result.buckets} == {
+            ("application",): 1500.5,
+            ("business",): None,
+        }
+        assert result.unreadable == 1
+
+    async def test_a_heat_map_crosses_two_dimensions(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await self.a_model(service)
+
+        result = await analysis.heatmap(
+            Dimension.parse("layer"), Dimension.parse("property:lifecycle"), Metric.COUNT
+        )
+
+        assert {b.keys: b.count for b in result.buckets} == {
+            ("application", "en production"): 1,
+            ("application", "retiré"): 1,
+            ("business", "__unset__"): 1,
+        }
+
+    async def test_a_sum_without_a_property_is_a_refused_question(
+        self, analysis: AnalysisService
+    ) -> None:
+        with pytest.raises(InvalidAnalysisError, match="sum"):
+            await analysis.aggregate(Dimension.parse("layer"), Metric.SUM)
+
+    async def test_a_reader_may_ask(
+        self, analysis: AnalysisService, service: ArchitectureService
+    ) -> None:
+        await self.a_model(service)
+
+        with acting_as(a_reader()):
+            result = await analysis.aggregate(Dimension.parse("layer"), Metric.COUNT)
+
+        assert result.total == 3
+
+    async def test_an_empty_catalogue_is_an_empty_answer(self, analysis: AnalysisService) -> None:
+        result = await analysis.aggregate(Dimension.parse("layer"), Metric.COUNT)
+
+        assert (result.buckets, result.total) == ((), 0)
+
+    async def test_nobody_asks_nothing(
+        self, analysis: AnalysisService, nobody_calling: None
+    ) -> None:
+        with pytest.raises(NotAuthenticatedError):
+            await analysis.aggregate(Dimension.parse("layer"), Metric.COUNT)
+
+
+@pytest.mark.asyncio
+class TestTheAggregatesAreAdmitted:
+    async def test_an_aggregate_beyond_the_ceiling_is_refused(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        busy = analysis_admission(limit=1)
+        guarded = AnalysisService(service, repository, admission=busy)
+
+        async with busy.lease("somebody else"):
+            with pytest.raises(AnalysisBusyError):
+                await guarded.aggregate(Dimension.parse("layer"), Metric.COUNT)
+            with pytest.raises(AnalysisBusyError):
+                await guarded.heatmap(
+                    Dimension.parse("layer"), Dimension.parse("element_type"), Metric.COUNT
+                )

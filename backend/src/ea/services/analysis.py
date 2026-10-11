@@ -14,12 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from time import perf_counter
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.analytics import Aggregate, Dimension, Metric, summarise, validate_question
 from ea.domain.errors import (
     AnalysisBusyError,
     ElementNotFoundError,
@@ -176,6 +177,39 @@ class AnalysisService:
             },
         )
         return page_of(report, severity=severity, code=code, limit=limit, cursor=cursor)
+
+    # --- Aggregates and heat maps -------------------------------------------
+
+    async def aggregate(
+        self, by: Dimension, metric: Metric, property_key: str | None = None
+    ) -> Aggregate:
+        """Elements grouped by one dimension, with a metric and a colour level per bucket."""
+        caller = require_caller()
+        return await self._summary(caller.subject, (by,), metric, property_key)
+
+    async def heatmap(
+        self,
+        rows: Dimension,
+        cols: Dimension,
+        metric: Metric,
+        property_key: str | None = None,
+    ) -> Aggregate:
+        """The same, grouped by two dimensions — the cells of a heat map."""
+        caller = require_caller()
+        return await self._summary(caller.subject, (rows, cols), metric, property_key)
+
+    async def _summary(
+        self,
+        subject: str,
+        dimensions: Sequence[Dimension],
+        metric: Metric,
+        property_key: str | None,
+    ) -> Aggregate:
+        key = validate_question(metric, property_key)
+        async with self._place(subject) as lease:
+            groups = await self._repository.grouped(dimensions, key)
+            # Folding up to RAW_GROUP_CEILING groups is CPU: off the loop, place held to its end.
+            return await _off_the_loop(lease, summarise, groups, dimensions, metric, key)
 
     def _place(self, key: str) -> AbstractAsyncContextManager[Lease | None]:
         """A place among the analyses reading the whole model, or no limit where none is set."""
