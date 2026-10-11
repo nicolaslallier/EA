@@ -76,6 +76,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/ipam/IpamSection.vue'),
   },
   {
+    path: '/echanges',
+    name: 'exchanges',
+    label: 'Échanges',
+    summary: 'Ouvrir et échanger le modèle avec Sparx EA et Archi : XML ArchiMate Exchange et CSV.',
+    group: 'model',
+    view: () => import('../features/exchanges/ExchangesScreen.vue'),
+  },
+  {
     path: '/analyse/voisinage',
     name: 'neighbourhood',
     label: 'Voisinage',
