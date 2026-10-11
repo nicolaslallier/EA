@@ -278,6 +278,10 @@ class PostgresPackageRepository:
     ) -> None:
         wanted = tuple(dict.fromkeys(element_ids))
         async with self._sessions.begin() as session:
+            # The tree's lock first, like every other write that names a package: a
+            # deletion or a re-parenting of the destination cannot interleave
+            # between the origins read below and the update that follows.
+            await session.execute(select(func.pg_advisory_xact_lock(TREE_LOCK)))
             # `FOR UPDATE`: the origins the event names are the ones this move leaves.
             rows = await session.execute(
                 select(ElementRecord.id, ElementRecord.package_id)

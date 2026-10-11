@@ -158,3 +158,52 @@ async def test_saved_query_writes_refusals_and_a_stale_row(engine_at_head: Async
     ]
     assert events[1].before is not None and events[1].before["query"]["text"] == "db"
     assert events[3].before is not None and events[3].before["query"] == {"version": 99}
+
+
+async def test_two_concurrent_reparentings_chain_their_snapshots(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    package = await world.packages.create(name="P")
+    one = await world.packages.create(name="One")
+    two = await world.packages.create(name="Two")
+
+    await asyncio.gather(
+        world.packages.update(package.package.id, parent_id=one.package.id),
+        world.packages.update(package.package.id, parent_id=two.package.id),
+    )
+
+    updates = [
+        e for e in await world.events(EntityKind.PACKAGE) if e.action is AuditAction.PACKAGE_UPDATED
+    ]
+    first, second = updates
+    assert first.before is not None and first.after is not None and second.before is not None
+    assert first.before["parent_id"] is None
+    assert second.before["parent_id"] == first.after["parent_id"]
+
+
+async def test_a_move_and_a_deletion_racing_tell_one_consistent_story(
+    engine_at_head: AsyncEngine,
+) -> None:
+    world = World(engine_at_head)
+    holder = await world.packages.create(name="Holder")
+    target = await world.packages.create(name="Target")
+    element = await world.graph.create_element(element_type=E.NODE, name="n")
+    await world.packages.move_elements([element.id], holder.package.id)
+
+    await asyncio.gather(
+        world.packages.delete(holder.package.id, move_contents_to=None),
+        world.packages.move_elements([element.id], target.package.id),
+        return_exceptions=True,
+    )
+
+    events = await world.events(EntityKind.PACKAGE)
+    deleted = next(e for e in events if e.action is AuditAction.PACKAGE_DELETED)
+    last_move = [e for e in events if e.action is AuditAction.PACKAGE_ELEMENTS_MOVED][-1]
+    assert deleted.before is not None and last_move.before is not None
+    took = deleted.before["cascaded"]["elements"]["count"]
+    origin = last_move.before["origins"]
+    if took == 1:  # the deletion ran first: it sent the element to the root
+        assert origin == {"root": [str(element.id)]}
+    else:  # the move ran first: the deletion found nothing to carry
+        assert origin == {str(holder.package.id): [str(element.id)]}
