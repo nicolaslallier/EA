@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import zipfile
+from typing import NoReturn
 
 import pytest
 
@@ -19,10 +20,10 @@ from ea.domain.reports import (
     Table,
 )
 from ea.repositories.report_renderers import (
+    RefusingFetcher,
     available_renderers,
     docx_renderer,
     pdf_renderer,
-    refuse_every_url,
 )
 from tests.unit.test_diagram_render import a_detail, an_element
 
@@ -51,7 +52,7 @@ class TestTheClosedFetcher:
     )
     def test_nothing_is_ever_fetched(self, url: str) -> None:
         with pytest.raises(ValueError, match="refused"):
-            refuse_every_url(url)
+            RefusingFetcher().fetch(url)
 
 
 class TestThePdf:
@@ -174,3 +175,44 @@ class TestTheDocx:
 
 def test_docx_is_offered_with_the_pdf_engine_when_it_loads() -> None:
     assert "docx" in available_renderers()
+
+
+class SpyFetcher(RefusingFetcher):
+    """Records every URL the engine asked for; the parent refuses all of them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked: list[str] = []
+
+    def fetch(self, url: str, headers: object = None) -> NoReturn:
+        self.asked.append(url)
+        super().fetch(url, headers)
+
+
+class TestTheEngineNeverFetches:
+    def test_every_kind_of_reference_is_asked_for_and_refused_and_the_pdf_is_made(self) -> None:
+        a_pdf_engine()
+        from weasyprint import HTML
+
+        spy = SpyFetcher()
+        html = (
+            "<html><head><link rel=stylesheet href='http://127.0.0.1:9/a.css'>"
+            "<style>@import url('http://127.0.0.1:9/b.css');"
+            "@font-face{font-family:x;src:url('file:///etc/passwd')}</style></head>"
+            "<body><img src='file:///etc/passwd'><img src='http://127.0.0.1:9/p.png'>"
+            "<p>texte</p></body></html>"
+        )
+
+        pdf = HTML(string=html, url_fetcher=spy).write_pdf()
+
+        assert pdf is not None
+        assert bytes(pdf).startswith(b"%PDF")
+        assert spy.asked, "the spy saw nothing: the test proves nothing"
+        assert all(u.startswith(("http://127.0.0.1", "file://")) for u in spy.asked)
+
+    def test_the_real_renderer_survives_references_in_the_model(self) -> None:
+        engine = a_pdf_engine()
+
+        pdf = engine(model(Paragraph("<img src='http://127.0.0.1:9/x.png'>")))
+
+        assert pdf.startswith(b"%PDF")

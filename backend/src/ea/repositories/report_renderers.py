@@ -28,15 +28,25 @@ from ea.domain.reports import (
 logger = logging.getLogger(__name__)
 
 
-def refuse_every_url(url: str, *args: object, **kwargs: object) -> NoReturn:
+class RefusingFetcher:
     """WeasyPrint's URL fetcher, closed: a report is self-contained.
 
-    Neither the network (SSRF toward the Infra's hosts or a metadata endpoint)
-    nor the local disk (`file:///etc/passwd` through an `<img>`) is ever read,
-    and `data:` is refused too: the HTML this engine receives has none.
+    WeasyPrint 70 reads attributes of its fetcher (`_fail_on_errors`), so a bare function is not
+    enough. This one inherits the interface lazily (the import loads Pango) and refuses every
+    URL with a `ValueError`, which WeasyPrint catches and logs: the resource is ignored and the
+    PDF is still made. Neither the network (SSRF toward the Infra's hosts or a metadata
+    endpoint) nor the local disk (`file:///etc/passwd` through an `<img>`) is ever read, and
+    `data:` is refused too: the HTML this engine receives has none.
     """
-    msg = f"fetching {url!r} is refused: a report is self-contained"
-    raise ValueError(msg)
+
+    _fail_on_errors = False
+
+    def fetch(self, url: str, headers: object = None) -> NoReturn:
+        msg = f"fetching {url!r} is refused: a report is self-contained"
+        raise ValueError(msg)
+
+    def __call__(self, url: str, *args: object, **kwargs: object) -> NoReturn:
+        self.fetch(url)
 
 
 def pdf_renderer() -> Renderer:
@@ -44,7 +54,7 @@ def pdf_renderer() -> Renderer:
     from weasyprint import HTML
 
     def render(model: ReportModel) -> bytes:
-        pdf = HTML(string=to_html(model), url_fetcher=refuse_every_url).write_pdf()
+        pdf = HTML(string=to_html(model), url_fetcher=RefusingFetcher()).write_pdf()
         if pdf is None:  # only when a `target` is given, never here
             msg = "WeasyPrint returned no bytes"
             raise RuntimeError(msg)
