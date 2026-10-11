@@ -8,7 +8,7 @@ and carries values between a file and the service (docs/adr/0048).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -16,7 +16,7 @@ from typing import Final
 from uuid import UUID
 
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
-from ea.domain.model import Element, Relationship
+from ea.domain.model import Element, Relationship, is_property_key
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
 EXPORT_PAGE_SIZE: Final = 1_000
@@ -224,3 +224,109 @@ def exchange_relationship_of(
         directed=relationship.directed,
         properties=_without_source_id(relationship.properties),
     )
+
+
+# --- What reading a file yields ----------------------------------------------
+
+MAX_EXCHANGE_ITEMS: Final = 50_000
+#: Elements nested in one another, `organizations` folders included (200) plus the frame.
+MAX_NESTING_DEPTH: Final = 250
+MAX_PROPERTIES_PER_OBJECT: Final = 100
+MAX_PROPERTY_VALUE_LENGTH: Final = 2_000
+
+
+class Severity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+class Category(StrEnum):
+    ELEMENTS = "elements"
+    RELATIONSHIPS = "relationships"
+    PACKAGES = "packages"
+    VIEWS = "views"
+
+
+@dataclass(frozen=True, slots=True)
+class Issue:
+    """One line of the import report. `path` locates it in an XML file, `line` in a CSV."""
+
+    severity: Severity
+    code: str
+    message: str
+    source_id: str | None = None
+    line: int | None = None
+    path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Unreadable:
+    """A row the reader could not turn into an element or link, set aside for the report.
+
+    `ignored` marks what is deliberately not imported (a junction) as opposed to
+    refused. `cascade` is false for a repeated identifier: refusing the second
+    must not refuse the first, which is the row everything points at.
+    """
+
+    category: Category
+    identifier: str
+    ignored: bool = False
+    cascade: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeModel:
+    elements: tuple[ExchangeElement, ...] = ()
+    relationships: tuple[ExchangeRelationship, ...] = ()
+    unreadable: tuple[Unreadable, ...] = ()
+    issues: tuple[Issue, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FoldedProperties:
+    properties: Mapping[str, str]
+    description: str
+    issues: tuple[Issue, ...]
+
+
+def fold_properties(pairs: Iterable[tuple[str, str]]) -> FoldedProperties:
+    """Sort a file's properties into what is stored, the description, and what is reported.
+
+    `ea.description` is the description; any other `ea.*` and `source_id` belong
+    to the exchange itself; a key the model would refuse is dropped, never
+    renamed (two keys could collide); the last of a repeated key wins.
+    """
+    properties: dict[str, str] = {}
+    description = ""
+    issues: list[Issue] = []
+    for key, value in pairs:
+        if key == DESCRIPTION_KEY:
+            description = value
+        elif key.startswith(RESERVED_PREFIX) or key == SOURCE_ID:
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "reserved_property_dropped",
+                    "a property named like one of the exchange's own is not stored",
+                )
+            )
+        elif not is_property_key(key):
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "invalid_property_key",
+                    "a property whose name is not a plain identifier was dropped",
+                )
+            )
+        else:
+            if key in properties:
+                issues.append(
+                    Issue(
+                        Severity.WARNING,
+                        "duplicate_property",
+                        f"property {key!r} appears twice; the last value wins",
+                    )
+                )
+            properties[key] = value
+    return FoldedProperties(MappingProxyType(properties), description, tuple(issues))
