@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from ea.domain.archimate import validate_relationship
 from ea.domain.audit import FieldChange, diff_fields
 from ea.domain.errors import IllegalRelationshipError
+from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
@@ -343,13 +344,34 @@ def _link_order(link: Relationship) -> tuple[str, str]:
     return (link.relationship_type.value, str(link.id))
 
 
+def _claims(element: Element) -> set[tuple[str, ...]]:
+    """What an element holds that is unique: its (type, name), its address, its prefix."""
+    vrf = read_vrf(element.properties)
+    claims: set[tuple[str, ...]] = {("name", element.element_type.value, element.name)}
+    for key, kind in ((ADDRESS_PROPERTY, "address"), (PREFIX_PROPERTY, "prefix")):
+        if element.properties.get(key):
+            claims.add((kind, vrf, element.properties[key]))
+    return claims
+
+
+def _taken_by(written: Sequence[Element], protected: Sequence[Element]) -> set[UUID]:
+    """The protected elements whose unique claims one of the `written` elements would take."""
+    held = {claim: element.id for element in protected for claim in _claims(element)}
+    return {
+        held[claim]
+        for element in written
+        for claim in _claims(element)
+        if claim in held and held[claim] != element.id
+    }
+
+
 def plan_restore(
     snapshot: ModelSnapshot,
     current: ModelSnapshot,
     *,
     keep_new: bool,
     packages_present: frozenset[UUID],
-    locked: frozenset[UUID] = frozenset(),
+    protected_ids: frozenset[UUID] = frozenset(),
     diagrams_present: frozenset[UUID] = frozenset(),
 ) -> RestorePlan:
     """Make `current` equal `snapshot` — over the elements the snapshot knows.
@@ -357,8 +379,14 @@ def plan_restore(
     `keep_new` keeps what was created since the baseline (and every link that
     touches it); otherwise it is deleted, and its links go with it by the
     foreign keys — counted in `cascaded_relationships`, not listed. A link the
-    metamodel no longer allows is a warning and is skipped. An element in
-    `locked` that the plan would change, delete or link blocks it.
+    metamodel no longer allows is a warning and is skipped.
+
+    **A protected element is touched by nothing.** `protected_ids` (the locked
+    elements) blocks the plan whenever the restoration would: change its fields
+    or its package; delete it (and so its documents, boxes and links); delete,
+    replace or cascade away a link it holds; or write an element that would take
+    its (type, name), its address or its prefix. The caller re-reads the set
+    inside the transaction that applies the plan.
 
     `packages_present` is the set of packages that exist *now*: an element whose
     package is gone is restored at the root, and the plan says so — a package is
@@ -465,17 +493,27 @@ def plan_restore(
             "documents are not part of a baseline"
         )
 
+    cascaded_links = [
+        link
+        for identifier, link in cur_rel.items()
+        if identifier not in deleting
+        and (link.source_id in deleted_ids or link.target_id in deleted_ids)
+    ]
+    to_write = [*to_create, *(u.restored for u in updates)]
     touched = (
         {u.current.id for u in updates}
         | deleted_ids
         | {
             end
-            for link in (*links_to_delete, *links_to_create)
+            for link in (*links_to_delete, *links_to_create, *cascaded_links)
             for end in (link.source_id, link.target_id)
         }
+        | _taken_by(to_write, [cur_el[i] for i in protected_ids if i in cur_el])
     )
     blocked = tuple(
-        sorted((cur_el[i] for i in touched if i in locked and i in cur_el), key=_element_order)
+        sorted(
+            (cur_el[i] for i in touched if i in protected_ids and i in cur_el), key=_element_order
+        )
     )
 
     return RestorePlan(
