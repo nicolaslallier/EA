@@ -1,0 +1,188 @@
+"""Quality rules over the model: orphans, duplicates, naming, missing data.
+
+Pure functions of the elements and links they are given, each identified by a
+stable `RuleCode` — a client, a pipeline and the SPA all branch on the code, so
+a code is never renamed (docs/adr/0057). Nothing is stored: a stored
+result would be a second truth that every edit of an element made stale.
+
+A rule is a judgement about *this* model, not a fact of ArchiMate: what the
+metamodel forbids is refused at write time, what it merely makes suspicious is
+reported here. Messages name elements in French, since a person reads them.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Final
+from uuid import UUID
+
+from ea.domain.archimate import ElementType
+from ea.domain.model import PROPERTY_KEY, Element, Relationship
+
+#: Declared here and imported by `api/schemas.py` (a service cannot import the API).
+MAX_FINDINGS: Final = 1000
+#: How many elements one run takes; beyond it the scope is "too large" (422).
+MAX_QUALITY_ELEMENTS: Final = 5000
+DEFAULT_SIMILARITY: Final = 0.9
+#: Fewer letters than this is an acronym ("CRM", "SAP"), not shouting.
+_MIN_SHOUTING_LETTERS: Final = 4
+
+
+class Severity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+
+
+class RuleCode(StrEnum):
+    ORPHAN = "orphan"
+    DUPLICATE_PROBABLE = "duplicate_probable"
+    NAMING = "naming"
+    MISSING_PROPERTY = "missing_property"
+    NO_DESCRIPTION = "no_description"
+    INCONSISTENT_RELATIONSHIP = "inconsistent_relationship"
+
+
+SEVERITY_OF: Final[Mapping[RuleCode, Severity]] = {
+    RuleCode.ORPHAN: Severity.WARNING,
+    RuleCode.DUPLICATE_PROBABLE: Severity.WARNING,
+    RuleCode.NAMING: Severity.INFO,
+    RuleCode.MISSING_PROPERTY: Severity.WARNING,
+    RuleCode.NO_DESCRIPTION: Severity.INFO,
+    RuleCode.INCONSISTENT_RELATIONSHIP: Severity.ERROR,
+}
+
+#: Containers are not expected to be linked to anything.
+_EXEMPT_FROM_ORPHAN: Final = frozenset(
+    {ElementType.GROUPING, ElementType.LOCATION, ElementType.PLATEAU}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    rule: RuleCode
+    severity: Severity
+    element_id: UUID
+    element_name: str
+    message: str
+    related_id: UUID | None = None
+    related_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QualityParams:
+    """The two knobs: how alike two names must be, and which properties a type must carry."""
+
+    similarity: float = DEFAULT_SIMILARITY
+    required_properties: Mapping[ElementType, frozenset[str]] = field(default_factory=dict)
+    max_elements: int = MAX_QUALITY_ELEMENTS
+
+    @classmethod
+    def from_settings(
+        cls, similarity: float, required: Mapping[str, Sequence[str]]
+    ) -> QualityParams:
+        """Validate the environment's values; raises `ValueError` so boot fails loudly."""
+        if not 0.0 <= similarity <= 1.0:
+            msg = f"EA_QUALITY_SIMILARITY: similarity must be between 0 and 1, not {similarity}"
+            raise ValueError(msg)
+        parsed: dict[ElementType, frozenset[str]] = {}
+        for type_name, keys in required.items():
+            try:
+                element_type = ElementType(type_name)
+            except ValueError:
+                msg = f"EA_QUALITY_REQUIRED names an unknown element type {type_name!r}"
+                raise ValueError(msg) from None
+            for key in keys:
+                if not PROPERTY_KEY.match(key):
+                    msg = f"EA_QUALITY_REQUIRED: {key!r} is not a plain property name"
+                    raise ValueError(msg)
+            parsed[element_type] = frozenset(keys)
+        return cls(similarity=similarity, required_properties=parsed)
+
+
+def _finding(
+    rule: RuleCode, element: Element, message: str, related: Element | None = None
+) -> Finding:
+    return Finding(
+        rule=rule,
+        severity=SEVERITY_OF[rule],
+        element_id=element.id,
+        element_name=element.name,
+        message=message,
+        related_id=related.id if related else None,
+        related_name=related.name if related else None,
+    )
+
+
+def _normalise(text: str) -> str:
+    """Case, accents and punctuation folded away: `Café-API` and `cafe api` agree."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    bare = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", bare.casefold()).split())
+
+
+def check_orphans(
+    elements: Sequence[Element], relationships: Sequence[Relationship]
+) -> list[Finding]:
+    """Elements with no link at all, in or out. `relationships` must touch the scope."""
+    linked = {end for link in relationships for end in (link.source_id, link.target_id)}
+    return [
+        _finding(RuleCode.ORPHAN, element, f"« {element.name} » n'est relié à aucun élément.")
+        for element in elements
+        if element.element_type not in _EXEMPT_FROM_ORPHAN and element.id not in linked
+    ]
+
+
+def check_descriptions(elements: Sequence[Element]) -> list[Finding]:
+    return [
+        _finding(RuleCode.NO_DESCRIPTION, element, f"« {element.name} » n'a pas de description.")
+        for element in elements
+        if not element.description.strip()
+    ]
+
+
+def check_naming(elements: Sequence[Element]) -> list[Finding]:
+    """One finding per element, listing every problem its name has."""
+    findings: list[Finding] = []
+    for element in elements:
+        name = element.name
+        problems: list[str] = []
+        if not name.strip():
+            problems.append("le nom est vide")
+        if "  " in name:
+            problems.append("le nom contient des espaces doubles")
+        letters = [c for c in name if c.isalpha()]
+        if len(letters) >= _MIN_SHOUTING_LETTERS and name == name.upper():
+            problems.append("le nom est tout en capitales")
+        type_names = {
+            _normalise(element.element_type.label),
+            _normalise(element.element_type.value),
+        }
+        if name.strip() and _normalise(name) in type_names:
+            problems.append("le nom répète le type de l'élément")
+        if problems:
+            findings.append(
+                _finding(RuleCode.NAMING, element, f"« {name.strip()} » : {' ; '.join(problems)}.")
+            )
+    return findings
+
+
+def check_required_properties(
+    elements: Sequence[Element], required: Mapping[ElementType, frozenset[str]]
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for element in elements:
+        for key in sorted(required.get(element.element_type, ())):
+            if not element.properties.get(key, "").strip():
+                findings.append(
+                    _finding(
+                        RuleCode.MISSING_PROPERTY,
+                        element,
+                        f"« {element.name} » n'a pas de valeur pour « {key} ».",
+                    )
+                )
+    return findings
