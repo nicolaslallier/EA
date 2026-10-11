@@ -104,6 +104,26 @@ class TestRefusedOutright:
         with pytest.raises(InvalidExchangeFileError, match="at most 2"):
             parse_model(xml)
 
+    def test_relationships_count_in_the_same_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_EXCHANGE_ITEMS", 2)
+        xml = exchange_xml(el("a", "Node", "A") + el("b", "Node", "B"), rel("r1", "Flow", "a", "b"))
+
+        with pytest.raises(InvalidExchangeFileError, match="at most 2"):
+            parse_model(xml)
+
+    def test_property_definitions_are_bounded_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("ea.formats.archimate_xml.MAX_EXCHANGE_ITEMS", 2)
+        definitions = "".join(
+            f'<propertyDefinition identifier="d{i}" type="string"><name>k{i}</name>'
+            "</propertyDefinition>"
+            for i in range(3)
+        )
+
+        with pytest.raises(InvalidExchangeFileError, match="at most 2"):
+            parse_model(
+                exchange_xml(extra=f"<propertyDefinitions>{definitions}</propertyDefinitions>")
+            )
+
     def test_nesting_beyond_the_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("ea.formats.archimate_xml.MAX_NESTING_DEPTH", 10)
         xml = exchange_xml(

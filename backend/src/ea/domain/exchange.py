@@ -7,6 +7,7 @@ and carries values between a file and the service (docs/adr/0048).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -15,7 +16,8 @@ from types import MappingProxyType
 from typing import Final
 from uuid import UUID
 
-from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.archimate import AccessType, ElementType, RelationshipType, validate_relationship
+from ea.domain.errors import IllegalRelationshipError, RowRefusedError
 from ea.domain.model import Element, Relationship, is_property_key
 
 MAX_EXCHANGE_BYTES: Final = 20 * 1024 * 1024
@@ -330,3 +332,193 @@ def fold_properties(pairs: Iterable[tuple[str, str]]) -> FoldedProperties:
                 )
             properties[key] = value
     return FoldedProperties(MappingProxyType(properties), description, tuple(issues))
+
+
+# --- Importing -----------------------------------------------------------------
+
+#: Lines of the report kept per category; the counts stay exact whatever is cut.
+MAX_REPORT_ISSUES: Final = 1_000
+#: The HTTP schema's bounds (`api/schemas.py`), restated here because the domain may not
+#: import it; `test_the_limits_are_the_ones_the_http_schema_declares` ties the two together.
+MAX_NAME_LENGTH: Final = 200
+MAX_DESCRIPTION_LENGTH: Final = 2_000
+MAX_DOCUMENTATION_LENGTH: Final = 20_000
+
+
+class ConflictPolicy(StrEnum):
+    REUSE = "reuse"
+    FAIL = "fail"
+
+
+class Outcome(StrEnum):
+    CREATED = "created"
+    REUSED = "reused"
+    REJECTED = "rejected"
+    IGNORED = "ignored"
+
+
+@dataclass(frozen=True, slots=True)
+class ImportOptions:
+    dry_run: bool = True
+    on_conflict: ConflictPolicy = ConflictPolicy.REUSE
+    strict: bool = False
+
+
+def digest_of(*parts: bytes) -> str:
+    """SHA-256 of one file as `shasum` would print it; several files, length-prefixed."""
+    if len(parts) == 1:
+        return hashlib.sha256(parts[0]).hexdigest()
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(len(part).to_bytes(8, "big"))
+        digest.update(part)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ImportContent:
+    """The bytes received: one XML file, or `elements.csv` with its companions."""
+
+    format: ExchangeFormat
+    main: bytes
+    relations: bytes | None = None
+    properties: bytes | None = None
+
+    @property
+    def parts(self) -> tuple[bytes, ...]:
+        return tuple(p for p in (self.main, self.relations, self.properties) if p is not None)
+
+    @property
+    def size(self) -> int:
+        return sum(len(part) for part in self.parts)
+
+    @property
+    def sha256(self) -> str:
+        return digest_of(*self.parts)
+
+
+@dataclass(frozen=True, slots=True)
+class Counts:
+    created: int = 0
+    reused: int = 0
+    rejected: int = 0
+    ignored: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ImportReport:
+    dry_run: bool
+    #: True only when the transaction was committed: a dry run and a refused
+    #: `strict` import both leave it False, and both wrote nothing.
+    applied: bool
+    format: ExchangeFormat
+    sha256: str
+    counts: Mapping[Category, Counts]
+    issues: tuple[Issue, ...]
+    #: True when `issues` is shorter than `issue_count`: the counts above stay exact.
+    truncated: bool
+    #: Every line the import produced, kept or not.
+    issue_count: int = 0
+
+
+class ReportBuilder:
+    """Counts every row, keeps the first `MAX_REPORT_ISSUES` lines of each category."""
+
+    def __init__(self) -> None:
+        self._counts = {category: dict.fromkeys(Outcome, 0) for category in Category}
+        self._issues: list[Issue] = []
+        self._kept = dict.fromkeys(Category, 0)
+        self._total = 0
+
+    def count(self, category: Category, outcome: Outcome) -> None:
+        self._counts[category][outcome] += 1
+
+    def add(
+        self, issue: Issue, category: Category = Category.ELEMENTS, *, always: bool = False
+    ) -> None:
+        self._total += 1
+        if self._kept[category] >= MAX_REPORT_ISSUES and not always:
+            return
+        self._kept[category] += 1
+        self._issues.append(issue)
+
+    def has_rejections(self) -> bool:
+        return any(by[Outcome.REJECTED] for by in self._counts.values())
+
+    def build(
+        self,
+        *,
+        dry_run: bool,
+        applied: bool,
+        format: ExchangeFormat,  # noqa: A002
+        sha256: str,
+    ) -> ImportReport:
+        counts = {
+            category: Counts(**{outcome.value: n for outcome, n in by.items()})
+            for category, by in self._counts.items()
+        }
+        return ImportReport(
+            dry_run,
+            applied,
+            format,
+            sha256,
+            counts,
+            tuple(self._issues),
+            truncated=len(self._issues) < self._total,
+            issue_count=self._total,
+        )
+
+
+def _check_text(value: str, what: str) -> None:
+    if "\x00" in value:
+        raise RowRefusedError("nul_character", f"{what} cannot contain a NUL character")
+
+
+def _check_properties(properties: Mapping[str, str]) -> None:
+    for value in properties.values():
+        _check_text(value, "a property value")
+        if len(value) > MAX_PROPERTY_VALUE_LENGTH:
+            raise RowRefusedError(
+                "property_value_too_long",
+                f"a property value is at most {MAX_PROPERTY_VALUE_LENGTH} characters",
+            )
+
+
+def validate_element(item: ExchangeElement) -> None:
+    """Refuse an element the HTTP schema would refuse (same bounds, tested equal)."""
+    if not item.name.strip():
+        raise RowRefusedError("blank_name", "an element name cannot be blank")
+    if len(item.name.strip()) > MAX_NAME_LENGTH:
+        raise RowRefusedError("name_too_long", f"a name is at most {MAX_NAME_LENGTH} characters")
+    if len(item.description.strip()) > MAX_DESCRIPTION_LENGTH:
+        raise RowRefusedError(
+            "description_too_long", f"a description is at most {MAX_DESCRIPTION_LENGTH} characters"
+        )
+    if len(item.documentation.strip()) > MAX_DOCUMENTATION_LENGTH:
+        raise RowRefusedError(
+            "documentation_too_long",
+            f"documentation is at most {MAX_DOCUMENTATION_LENGTH} characters",
+        )
+    for text in (item.name, item.description, item.documentation):
+        _check_text(text, "a text")
+    _check_properties(item.properties)
+
+
+def validate_link(
+    item: ExchangeRelationship,
+    source_type: ElementType,
+    target_type: ElementType,
+    *,
+    same_element: bool,
+) -> None:
+    """Refuse, without touching the database, what the metamodel or a bound forbids."""
+    if len(item.name.strip()) > MAX_NAME_LENGTH:
+        raise RowRefusedError("name_too_long", f"a name is at most {MAX_NAME_LENGTH} characters")
+    _check_text(item.name, "a name")
+    _check_properties(item.properties)
+    try:
+        validate_relationship(
+            item.relationship_type, source_type, target_type, same_element=same_element
+        )
+    except IllegalRelationshipError as refusal:
+        raise RowRefusedError("relationship_not_allowed", str(refusal)) from None

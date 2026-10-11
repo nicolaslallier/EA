@@ -8,14 +8,29 @@ from uuid import UUID
 
 import pytest
 
+from ea.api.schemas import ElementCreate
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
+from ea.domain.errors import RowRefusedError
 from ea.domain.exchange import (
     ACCESS_BY_NAME,
     ACCESS_NAMES,
     DESCRIPTION_KEY,
     JUNCTION_NAMES,
+    MAX_DESCRIPTION_LENGTH,
+    MAX_DOCUMENTATION_LENGTH,
+    MAX_NAME_LENGTH,
     SOURCE_ID,
+    Category,
+    Counts,
+    ExchangeElement,
+    ExchangeFormat,
+    ExchangeRelationship,
     ExportScope,
+    Issue,
+    Outcome,
+    ReportBuilder,
+    Severity,
+    digest_of,
     element_type_of,
     exchange_element_of,
     exchange_name,
@@ -23,6 +38,8 @@ from ea.domain.exchange import (
     identifier_of,
     pascal_case,
     relationship_type_of,
+    validate_element,
+    validate_link,
     xml_identifier,
 )
 from ea.domain.model import Element, Relationship, is_property_key
@@ -128,3 +145,124 @@ def test_a_property_key_is_a_plain_identifier() -> None:
     assert not is_property_key("ea.description")
     assert not is_property_key("Owner name")
     assert not is_property_key("")
+
+
+def test_the_limits_are_the_ones_the_http_schema_declares() -> None:
+    schema = ElementCreate.model_json_schema()["properties"]
+
+    assert schema["name"]["maxLength"] == MAX_NAME_LENGTH
+    assert schema["description"]["maxLength"] == MAX_DESCRIPTION_LENGTH
+    assert schema["documentation"]["maxLength"] == MAX_DOCUMENTATION_LENGTH
+
+
+def an_item(**fields: object) -> ExchangeElement:
+    return ExchangeElement("a", ElementType.NODE, **{"name": "ok", **fields})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"name": "  "}, "blank_name"),
+        ({"name": "x" * (MAX_NAME_LENGTH + 1)}, "name_too_long"),
+        ({"description": "x" * (MAX_DESCRIPTION_LENGTH + 1)}, "description_too_long"),
+        ({"documentation": "x" * (MAX_DOCUMENTATION_LENGTH + 1)}, "documentation_too_long"),
+        ({"name": "a\x00b"}, "nul_character"),
+        ({"documentation": "a\x00b"}, "nul_character"),
+        ({"properties": {"k": "a\x00b"}}, "nul_character"),
+    ],
+)
+def test_a_row_outside_the_bounds_is_refused_with_its_code(
+    fields: dict[str, object], code: str
+) -> None:
+    with pytest.raises(RowRefusedError) as raised:
+        validate_element(an_item(**fields))
+
+    assert raised.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("bound", "fields", "code"),
+    [
+        ("MAX_NAME_LENGTH", {"name": "123456"}, "name_too_long"),
+        ("MAX_DESCRIPTION_LENGTH", {"description": "123456"}, "description_too_long"),
+        ("MAX_DOCUMENTATION_LENGTH", {"documentation": "123456"}, "documentation_too_long"),
+        ("MAX_PROPERTY_VALUE_LENGTH", {"properties": {"k": "123456"}}, "property_value_too_long"),
+    ],
+)
+def test_each_length_bound_refuses_one_unit_over_it_and_accepts_the_bound_itself(
+    monkeypatch: pytest.MonkeyPatch, bound: str, fields: dict[str, object], code: str
+) -> None:
+    monkeypatch.setattr(f"ea.domain.exchange.{bound}", 5)
+    (field,) = fields
+
+    with pytest.raises(RowRefusedError) as raised:
+        validate_element(an_item(**fields))
+    assert raised.value.code == code
+
+    at_the_bound = fields[field]
+    at_the_bound = {"k": "12345"} if isinstance(at_the_bound, dict) else "12345"
+    validate_element(an_item(**{field: at_the_bound}))
+
+
+def test_a_link_is_refused_by_the_matrix_before_any_write() -> None:
+    link = ExchangeRelationship("r", RelationshipType.SPECIALIZATION, "a", "b")
+
+    with pytest.raises(RowRefusedError) as raised:
+        validate_link(link, ElementType.BUSINESS_ACTOR, ElementType.NODE, same_element=False)
+    assert raised.value.code == "relationship_not_allowed"
+
+    validate_link(link, ElementType.NODE, ElementType.NODE, same_element=False)
+    with pytest.raises(RowRefusedError):  # an element cannot specialise itself
+        validate_link(link, ElementType.NODE, ElementType.NODE, same_element=True)
+
+
+def test_a_link_name_is_bounded_like_an_element_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ea.domain.exchange.MAX_NAME_LENGTH", 5)
+    link = ExchangeRelationship("r", RelationshipType.FLOW, "a", "b", name="123456")
+
+    with pytest.raises(RowRefusedError) as raised:
+        validate_link(link, ElementType.NODE, ElementType.NODE, same_element=False)
+
+    assert raised.value.code == "name_too_long"
+
+
+def test_a_single_file_is_digested_like_shasum_and_several_are_length_prefixed() -> None:
+    import hashlib
+
+    assert digest_of(b"abc") == hashlib.sha256(b"abc").hexdigest()
+    assert digest_of(b"a", b"bc") != digest_of(b"ab", b"c")
+
+
+def test_the_report_counts_and_truncates_but_keeps_the_counts_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ea.domain.exchange.MAX_REPORT_ISSUES", 2)
+    builder = ReportBuilder()
+    for _ in range(5):
+        builder.count(Category.ELEMENTS, Outcome.REJECTED)
+        builder.add(Issue(Severity.ERROR, "x", "m"))
+    builder.add(Issue(Severity.ERROR, "strict_refused", "m"), always=True)
+
+    report = builder.build(
+        dry_run=True, applied=False, format=ExchangeFormat.ARCHIMATE_XML, sha256="0"
+    )
+
+    assert report.counts[Category.ELEMENTS] == Counts(rejected=5)
+    assert len(report.issues) == 3 and report.truncated
+    assert report.issues[-1].code == "strict_refused"
+    assert report.issue_count == 6  # exact, whatever was kept
+    assert builder.has_rejections()
+
+
+def test_the_report_keeps_its_first_lines_per_category(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ea.domain.exchange.MAX_REPORT_ISSUES", 2)
+    builder = ReportBuilder()
+    for _ in range(4):
+        builder.add(Issue(Severity.WARNING, "e", "m"), Category.ELEMENTS)
+    builder.add(Issue(Severity.ERROR, "r", "m"), Category.RELATIONSHIPS)
+
+    report = builder.build(
+        dry_run=True, applied=False, format=ExchangeFormat.ARCHIMATE_XML, sha256="0"
+    )
+
+    assert [i.code for i in report.issues] == ["e", "e", "r"]  # a flood of one kind hides no other
