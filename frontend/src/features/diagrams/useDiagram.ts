@@ -21,6 +21,7 @@ import {
   type Point,
   type Size,
 } from '../../lib/diagramGeometry'
+import { layoutByLayers, placeAdded } from '../../lib/autoLayout'
 import { createHistory } from '../../lib/diagramHistory'
 import { useLatestRequest } from '../../lib/latest'
 import { newId } from '../../lib/newId'
@@ -35,6 +36,9 @@ export type DiagramRead = components['schemas']['DiagramRead']
 export type DiagramNode = components['schemas']['DiagramNode']
 export type DiagramObject = components['schemas']['DiagramObject']
 export type DiagramEdge = components['schemas']['DiagramEdge']
+export type ViewSource = components['schemas']['ViewSource']
+export type SourceDiffRead = components['schemas']['SourceDiffRead']
+type Generation = components['schemas']['Generation']
 export type ElementRead = components['schemas']['ElementRead']
 export type RelationshipRead = components['schemas']['RelationshipRead']
 export type RelationshipCreate = components['schemas']['RelationshipCreate']
@@ -72,6 +76,12 @@ export function useDiagram() {
   const { status, error } = read
   const saving = ref(false)
   const saveError = ref('')
+  /** `null`: drawn by hand. Else a view generated from `source` (docs/adr/0065). */
+  const generation = ref<Generation | null>(null)
+  const source = ref<ViewSource | null>(null)
+  const live = computed(() => generation.value === 'live')
+  /** How a frozen view's source has moved since the freeze, once `refresh` has read it. */
+  const diff = ref<SourceDiffRead | null>(null)
   /** A save was refused because somebody saved the diagram first (a 409): nothing is retried. */
   const conflict = ref(false)
   /** The colleague's version is loaded; mine is kept aside until it is pasted back or given up. */
@@ -213,6 +223,9 @@ export function useDiagram() {
 
   /** Save the layout once the edits pause. */
   function persist(): void {
+    if (live.value) {
+      return // a live view stores nothing: it is recomputed at every opening
+    }
     pending = true
     autosave.call()
   }
@@ -221,6 +234,40 @@ export function useDiagram() {
   function flush(): Promise<void> {
     autosave.cancel()
     return saveNow()
+  }
+
+  /** Replace everything on screen with what the server answered (a read, a freeze, a thaw). */
+  function applyAnswer(answer: DiagramRead): void {
+    diagram.value = answer
+    nodes.value = answer.nodes
+    elements.value = answer.elements
+    relationships.value = answer.relationships
+    objects.value = answer.objects
+    edges.value = answer.edges
+    revision.value = answer.revision
+    revisions.set(answer.id, answer.revision)
+    inactiveIds.value = answer.inactive_element_ids ?? []
+    generation.value = answer.generation ?? null
+    source.value = answer.source ?? null
+    diff.value = null
+    gestureBefore = null
+    grabbed.clear()
+    history.clear()
+    if (answer.generation === 'live') {
+      // A live view stores no box: the layout is computed here, the same way every time
+      // for the same elements (lib/autoLayout.ts).
+      const positions = layoutByLayers({
+        elements: answer.elements.map((e) => ({ id: e.id, name: e.name, layer: e.layer })),
+        relationships: answer.relationships,
+      })
+      nodes.value = answer.elements.map((e) => ({
+        element_id: e.id,
+        ...(positions.get(e.id) ?? { x: 24, y: 24 }),
+        ...DEFAULT_BOX,
+        parent_object_id: null,
+        z: 0,
+      }))
+    }
   }
 
   async function open(id: string, asOf?: string): Promise<void> {
@@ -238,18 +285,7 @@ export function useDiagram() {
         // loaded: whatever was changed there goes to *that* diagram before its
         // boxes are replaced. `saveNow` snapshots synchronously, so it does.
         void flush()
-        diagram.value = answer
-        nodes.value = answer.nodes
-        elements.value = answer.elements
-        relationships.value = answer.relationships
-        objects.value = answer.objects
-        edges.value = answer.edges
-        revision.value = answer.revision
-        revisions.set(answer.id, answer.revision)
-        inactiveIds.value = answer.inactive_element_ids ?? []
-        gestureBefore = null
-        grabbed.clear()
-        history.clear()
+        applyAnswer(answer)
       },
       () => {
         diagram.value = null
@@ -275,6 +311,9 @@ export function useDiagram() {
     conflict.value = false
     reloaded.value = false
     mine = null
+    generation.value = null
+    source.value = null
+    diff.value = null
   }
 
   function place(element: ElementRead, at: Point): void {
@@ -613,6 +652,99 @@ export function useDiagram() {
     saveError.value = ''
   }
 
+  // --- Generated views (docs/adr/0065) -----------------------------------
+
+  /** Store the layout computed here and make the live view an editable diagram. */
+  async function freeze(): Promise<void> {
+    const current = diagram.value
+    if (!current || !live.value) {
+      return
+    }
+    applyAnswer(
+      unwrap(
+        await api.POST('/diagrams/{diagram_id}/freeze', {
+          params: { path: { diagram_id: current.id } },
+          body: { revision: revision.value, nodes: nodes.value.map((node) => ({ ...node })) },
+        }),
+      ),
+    )
+  }
+
+  /**
+   * Back to a live view. A view that carries notes, groups or routes is refused
+   * (`has_annotations`): the error is thrown so the screen can ask, then call again
+   * with `discard`. What is waiting for its pause is saved first, so the revision sent
+   * is the one these edits produced.
+   */
+  async function unfreeze(discard = false): Promise<void> {
+    const current = diagram.value
+    if (!current) {
+      return
+    }
+    await flush()
+    applyAnswer(
+      unwrap(
+        await api.POST('/diagrams/{diagram_id}/unfreeze', {
+          params: { path: { diagram_id: current.id } },
+          body: { revision: revision.value, discard_annotations: discard },
+        }),
+      ),
+    )
+  }
+
+  /** Read how the source moved since the freeze. Writes nothing. */
+  async function refresh(): Promise<void> {
+    const current = diagram.value
+    if (current) {
+      diff.value = unwrap(
+        await api.GET('/diagrams/{diagram_id}/source-diff', {
+          params: { path: { diagram_id: current.id } },
+        }),
+      )
+    }
+  }
+
+  /** Follow the source: the added are placed below what is there, the gone leave if asked. */
+  async function applyDiff(options: { removeGone: boolean }): Promise<void> {
+    const gap = diff.value
+    const current = diagram.value
+    if (!gap || !current) {
+      return
+    }
+    const gone = new Set(options.removeGone ? gap.removed : [])
+    const survivors = nodes.value.filter((node) => !gone.has(node.element_id))
+    const fresh = gap.added.filter(
+      (element) => !survivors.some((node) => node.element_id === element.id),
+    )
+    const positions = placeAdded(
+      {
+        elements: fresh.map((e) => ({ id: e.id, name: e.name, layer: e.layer })),
+        relationships: relationships.value,
+      },
+      survivors,
+    )
+    nodes.value = [
+      ...survivors,
+      ...fresh.map((e) => ({
+        element_id: e.id,
+        ...(positions.get(e.id) ?? { x: 24, y: 24 }),
+        ...DEFAULT_BOX,
+        parent_object_id: null,
+        z: 0,
+      })),
+    ]
+    for (const element of fresh) {
+      if (!byId.value.has(element.id)) {
+        elements.value.push(element)
+      }
+    }
+    prune()
+    diff.value = null
+    persist()
+    await flush()
+    await open(current.id) // the links between the new boxes and the old ones come back with the read
+  }
+
   /**
    * Create a relationship and draw it.
    *
@@ -651,6 +783,14 @@ export function useDiagram() {
     objects,
     edges,
     revision,
+    generation,
+    source,
+    live,
+    diff,
+    freeze,
+    unfreeze,
+    refresh,
+    applyDiff,
     conflict,
     reloaded,
     reloadAfterConflict,

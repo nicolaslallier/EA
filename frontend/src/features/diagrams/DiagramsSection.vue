@@ -8,7 +8,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { messageOf } from '../../lib/api'
+import { ApiError, api, messageOf, unwrap } from '../../lib/api'
 import { useMe } from '../../lib/me'
 import { download, exportSize, rasterize, serializeSvg, type ExportFormat } from '../../lib/diagramExport'
 import type { AlignMode, DistributeAxis, Point } from '../../lib/diagramGeometry'
@@ -20,6 +20,7 @@ import PackageTree from '../packages/PackageTree.vue'
 import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
 import { useAsOf } from '../../lib/asof'
+import { useSavedQueries } from '../search/useSavedQueries'
 import { verbOf } from '../relationships/labels'
 import AnnotationPalette from './AnnotationPalette.vue'
 import DiagramCanvas from './DiagramCanvas.vue'
@@ -29,7 +30,8 @@ import { buildExportScene } from './exportScene'
 import { useSelection } from './useSelection'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
-import { useDiagram, useElementPalette, type ElementRead } from './useDiagram'
+import NewViewForm from './NewViewForm.vue'
+import { useDiagram, useElementPalette, type ElementRead, type ViewSource } from './useDiagram'
 import { useDiagrams, type DiagramSummaryRead } from './useDiagrams'
 
 const route = useRoute()
@@ -66,6 +68,11 @@ const childrenOfSelectedGroup = computed(() =>
 )
 const anchorChoices = computed(() => editor.boxes.value.map((box) => ({ id: box.element.id, name: box.element.name })))
 const packages = usePackages()
+const savedQueries = useSavedQueries()
+const creatingView = ref(false)
+const removeGone = ref(false)
+const confirmingThaw = ref(false)
+const viewFailure = ref('')
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
 const { canWrite } = useMe()
@@ -124,7 +131,7 @@ const saveState = computed(() => {
 
 onMounted(async () => {
   window.addEventListener('keydown', onShortcut)
-  await Promise.all([metamodel.load(), packages.load()])
+  await Promise.all([metamodel.load(), packages.load(), canWrite.value ? savedQueries.load() : undefined])
 })
 
 onBeforeUnmount(() => {
@@ -133,7 +140,7 @@ onBeforeUnmount(() => {
 
 /** Ctrl/Cmd+Z undoes, +Shift or Y redoes — never while typing in a field, never for a reader. */
 function onShortcut(event: KeyboardEvent): void {
-  if (!canWrite.value || !(event.ctrlKey || event.metaKey)) {
+  if (!canWrite.value || editor.live.value || !(event.ctrlKey || event.metaKey)) {
     return
   }
   const target = event.target as HTMLElement | null
@@ -323,6 +330,61 @@ function refreshAfterStereotype(): void {
   void editor.open(diagramId.value, asOf.value)
 }
 
+async function createView(payload: { name: string; source: ViewSource; frozen: boolean }): Promise<void> {
+  viewFailure.value = ''
+  try {
+    const created = unwrap(await api.POST('/diagrams/generate', { body: { name: payload.name, source: payload.source } }))
+    if (payload.frozen) {
+      await editor.open(created.id)
+      await editor.freeze()
+    }
+    creatingView.value = false
+    await router.push({ query: { diagram: created.id } })
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function thaw(discard: boolean): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await editor.unfreeze(discard)
+    confirmingThaw.value = false
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.code === 'has_annotations') {
+      confirmingThaw.value = true
+    } else {
+      viewFailure.value = messageOf(caught)
+    }
+  }
+}
+
+async function follow(): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await editor.applyDiff({ removeGone: removeGone.value })
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function guarded(action: () => Promise<void>): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await action()
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+function freezeView(): void {
+  void guarded(() => editor.freeze())
+}
+
+function refreshView(): void {
+  void guarded(() => editor.refresh())
+}
+
 function reload(): void {
   void editor.reloadAfterConflict()
 }
@@ -384,6 +446,17 @@ async function exportAs(format: ExportFormat): Promise<void> {
         <button type="submit" :disabled="busy || !newName.trim()">Créer</button>
       </form>
 
+      <button v-if="canWrite" type="button" @click="creatingView = !creatingView">
+        Nouvelle vue
+      </button>
+      <NewViewForm
+        v-if="creatingView && canWrite"
+        :queries="savedQueries.queries.value.map((q) => ({ id: q.id, name: q.name }))"
+        :packages="packages.packages.value.map((p) => ({ id: p.id, path: p.path }))"
+        @create="createView"
+      />
+      <p v-if="viewFailure" class="banner banner--error" role="alert">{{ viewFailure }}</p>
+
       <p v-if="listFailure" class="banner banner--error" role="alert">{{ listFailure }}</p>
       <p v-if="list.status.value === 'error'" class="banner banner--error" role="alert">
         {{ list.error.value }}
@@ -402,6 +475,9 @@ async function exportAs(format: ExportFormat): Promise<void> {
       <ul class="list">
         <li v-for="diagram in list.diagrams.value" :key="diagram.id">
           <RouterLink :to="{ query: { diagram: diagram.id } }">{{ diagram.name }}</RouterLink>
+          <span v-if="diagram.generation" class="hint">
+            {{ diagram.generation === 'live' ? 'vue vivante' : 'vue figée' }}
+          </span>
           <span class="hint">
             {{ diagram.node_count }} élément{{ diagram.node_count > 1 ? 's' : '' }}
           </span>
@@ -451,13 +527,38 @@ async function exportAs(format: ExportFormat): Promise<void> {
       <button type="button" @click="editor.pasteMine()">Recoller mes modifications</button>
       <button type="button" class="secondary" @click="editor.discardMine()">Les abandonner</button>
     </p>
+    <p v-if="editor.live.value" class="banner" role="status">
+      Vue vivante : recalculée à chaque ouverture depuis sa source, en lecture seule.
+      <button v-if="canWrite" type="button" @click="freezeView">Figer</button>
+    </p>
+    <p v-else-if="editor.generation.value === 'frozen'" class="banner" role="status">
+      Vue figée depuis sa source.
+      <template v-if="canWrite">
+        <button type="button" @click="refreshView">Rafraîchir</button>
+        <button type="button" class="secondary" @click="thaw(false)">Dégeler</button>
+      </template>
+    </p>
+    <p v-if="confirmingThaw" class="banner banner--confirm" role="alert">
+      Dégeler supprimera les notes, les groupes et les tracés dessinés sur cette vue.
+      <button type="button" @click="thaw(true)">Dégeler quand même</button>
+      <button type="button" class="secondary" @click="confirmingThaw = false">Renoncer</button>
+    </p>
+    <p v-if="editor.diff.value" class="banner" role="status">
+      {{ editor.diff.value.added.length }} à ajouter, {{ editor.diff.value.removed.length }}
+      disparu{{ editor.diff.value.removed.length > 1 ? 's' : '' }}.
+      <label v-if="editor.diff.value.removed.length > 0">
+        <input v-model="removeGone" type="checkbox" /> Retirer ceux qui ont disparu
+      </label>
+      <button type="button" @click="follow">Appliquer</button>
+    </p>
+    <p v-if="viewFailure" class="banner banner--error" role="alert">{{ viewFailure }}</p>
 
     <div
       v-if="editor.diagram.value"
       class="editor diagram-editor"
       :class="{ 'editor--reading': !canWrite }"
     >
-      <div v-if="canWrite" class="editor__left">
+      <div v-if="canWrite && !editor.live.value" class="editor__left">
         <ElementPalette
           :items="palette.items.value"
           :total="palette.total.value"
@@ -481,7 +582,7 @@ async function exportAs(format: ExportFormat): Promise<void> {
           @cancel="link = null"
         />
         <DiagramToolbar
-          :can-write="canWrite"
+          :can-write="canWrite && !editor.live.value"
           :can-undo="editor.canUndo.value"
           :can-redo="editor.canRedo.value"
           :selection-count="selection.ids.value.length"
@@ -497,7 +598,7 @@ async function exportAs(format: ExportFormat): Promise<void> {
           :relationships="editor.relationships.value"
           :selected-id="selectedId"
           :type-label="metamodel.labelOf"
-          :readonly="!canWrite"
+          :readonly="!canWrite || editor.live.value"
           :inactive-ids="editor.inactiveIds.value"
           :selection="selection.ids.value"
           :objects="editor.objects.value"

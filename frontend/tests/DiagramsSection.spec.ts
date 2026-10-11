@@ -55,6 +55,15 @@ const PACKAGES: Route = { path: '/packages', body: [FINANCE] }
 
 const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES]
 
+function asAReader(): void {
+  vi.mocked(useMe).mockReturnValueOnce({
+    me: ref({ username: 'reader', can_write: false, can_approve: false }),
+    canWrite: computed(() => false),
+    error: ref(null),
+    load: vi.fn(() => Promise.resolve()),
+  })
+}
+
 async function open(query = ''): Promise<Router> {
   const router = createAppRouter(createMemoryHistory())
   await router.push(`/diagrammes${query}`)
@@ -264,15 +273,6 @@ describe('DiagramsSection — the toolbar', () => {
 })
 
 describe('DiagramsSection — a reader', () => {
-  function asAReader(): void {
-    vi.mocked(useMe).mockReturnValueOnce({
-      me: ref({ username: 'reader', can_write: false, can_approve: false }),
-      canWrite: computed(() => false),
-      error: ref(null),
-      load: vi.fn(() => Promise.resolve()),
-    })
-  }
-
   it('lists and opens the diagrams, but is offered no way to create or delete one', async () => {
     stubApi(ROUTES)
     asAReader()
@@ -400,5 +400,61 @@ describe('DiagramsSection — the package tree', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Paquet introuvable.')
     expect(select).toHaveValue('root')
+  })
+})
+
+describe('DiagramsSection — generated views', () => {
+  const VIEW_ID = 'vvvvvvvv-0000-4000-8000-000000000000'
+  const SRC = { query_id: 'qqqqqqqq-0000-4000-8000-000000000000', package_id: null, recursive: false }
+  const viewRead = (generation: 'live' | 'frozen') => ({
+    ...SUMMARY, id: VIEW_ID, name: 'Périmètre', generation, source: SRC, revision: generation === 'frozen' ? 1 : 0,
+    objects: [], edges: [],
+    nodes: generation === 'frozen' ? [{ element_id: A.id, x: 24, y: 24, width: 132, height: 46, parent_object_id: null, z: 0 }] : [],
+    elements: [A], relationships: [],
+  })
+  const VIEW = (generation: 'live' | 'frozen'): Route => ({ path: `/diagrams/${VIEW_ID}`, body: viewRead(generation) })
+
+  it('says a live view is live, locks the canvas and offers to freeze it', async () => {
+    const calls = stubApi([VIEW('live'), PALETTE, METAMODEL_ROUTE, LIST,
+      { method: 'POST', path: `/diagrams/${VIEW_ID}/freeze`, body: viewRead('frozen') }])
+    await open(`?diagram=${VIEW_ID}`)
+
+    expect(await screen.findByText(/vue vivante/i)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /palette/i })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Figer' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.pathname.endsWith('/freeze'))).toBe(true))
+    expect(await screen.findByText(/vue figée/i)).toBeInTheDocument()
+  })
+
+  it('asks before thawing a view that carries annotations, then discards them on request', async () => {
+    const calls = stubApi([
+      VIEW('frozen'), PALETTE, METAMODEL_ROUTE, LIST,
+      { method: 'POST', path: `/diagrams/${VIEW_ID}/unfreeze`, status: 409,
+        body: { error: 'has_annotations', detail: 'would delete notes' } },
+    ])
+    await open(`?diagram=${VIEW_ID}`)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Dégeler' }))
+
+    const confirmation = await screen.findByText(/supprimera les notes/i)
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    await fireEvent.click(within(confirmation.closest('p') as HTMLElement).getByRole('button', { name: 'Dégeler quand même' }))
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2))
+    expect(calls.filter((c) => c.method === 'POST')[1].body).toEqual({
+      revision: 1,
+      discard_annotations: true,
+    })
+  })
+
+  it('shows a reader the banner and none of the buttons', async () => {
+    stubApi([VIEW('frozen'), PALETTE, METAMODEL_ROUTE, LIST])
+    asAReader()
+    await open(`?diagram=${VIEW_ID}`)
+
+    expect(await screen.findByText(/vue figée/i)).toBeInTheDocument()
+    for (const name of ['Figer', 'Rafraîchir', 'Dégeler']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
   })
 })
