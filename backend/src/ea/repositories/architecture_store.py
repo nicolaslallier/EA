@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `ArchitectureRepository` and `IpamRepository`.
+"""The PostgreSQL implementation of `ArchitectureRepository`, `IpamRepository` and `AnalysisRepository`.
 
 The graph is two tables (docs/adr/0033): an element is a row of `elements`, a
 relationship a row of `relationships` whose two ends are foreign keys, so
@@ -901,6 +901,49 @@ class PostgresArchitectureRepository:
             elements = tuple(element_from_row(row) for row in found)
             links = await _links_within(session, [element.id for element in elements], ())
         return GraphView(elements=elements, relationships=links)
+
+    # --- Analysis: the reads behind the matrix and the checks ---------------
+
+    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
+        if not element_ids:
+            return ()
+        async with reading(self._sessions) as session:
+            found = await session.scalars(
+                select(ElementRecord)
+                .where(ElementRecord.id.in_(list(element_ids)))
+                .order_by(ElementRecord.name, ElementRecord.id)
+            )
+            return tuple(element_from_row(row) for row in found)
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+    ) -> tuple[Relationship, ...]:
+        if not source_ids or not target_ids:
+            return ()
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                RelationshipRecord.source_id.in_(list(source_ids)),
+                RelationshipRecord.target_id.in_(list(target_ids)),
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
+
+    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
+        if not element_ids:
+            return ()
+        ids = list(element_ids)
+        statement = (
+            select(RelationshipRecord)
+            .where(
+                or_(RelationshipRecord.source_id.in_(ids), RelationshipRecord.target_id.in_(ids))
+            )
+            .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+        )
+        async with reading(self._sessions) as session:
+            return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Whether `source` is already contained, at any depth, under `target`.

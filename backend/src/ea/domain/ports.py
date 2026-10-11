@@ -565,6 +565,30 @@ class IpamRepository(Protocol):
         ...
 
 
+class AnalysisRepository(Protocol):
+    """The reads the matrix, the quality checks and the dashboards need.
+
+    A fifth port, declared apart from `ArchitectureRepository` for the reason
+    `IpamRepository` is: it is a different use case, satisfied by the same
+    PostgreSQL class. Nothing here writes — an analysis computes, it does not
+    store (docs/adr/0056).
+    """
+
+    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
+        """The elements among these ids that exist, by name. Absent ids are missing, not errors."""
+        ...
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+    ) -> tuple[Relationship, ...]:
+        """Every link running from one of `source_ids` to one of `target_ids`."""
+        ...
+
+    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
+        """Every link with at least one end among these ids."""
+        ...
+
+
 class AccessTokenVerifier(Protocol):
     """Whatever proves who a bearer token belongs to — Keycloak's JWKS in production."""
 

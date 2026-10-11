@@ -624,6 +624,30 @@ class InMemoryRepository:
             ),
         )
 
+    # --- Analysis: the reads behind the matrix and the checks ---
+
+    async def elements_by_ids(self, element_ids: Sequence[UUID]) -> tuple[Element, ...]:
+        found = [self.elements[i] for i in dict.fromkeys(element_ids) if i in self.elements]
+        return tuple(sorted(found, key=lambda element: (element.name, str(element.id))))
+
+    async def links_between(
+        self, source_ids: Sequence[UUID], target_ids: Sequence[UUID]
+    ) -> tuple[Relationship, ...]:
+        sources, targets = set(source_ids), set(target_ids)
+        return tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in sources and link.target_id in targets
+        )
+
+    async def links_touching(self, element_ids: Sequence[UUID]) -> tuple[Relationship, ...]:
+        ids = set(element_ids)
+        return tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in ids or link.target_id in ids
+        )
+
     # --- IPAM: the queries `ElementFilter` cannot express (docs/adr/0020) ---
 
     async def networks(self) -> tuple[Element, ...]:
