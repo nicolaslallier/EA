@@ -1,0 +1,13 @@
+{
+  "exceptions": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "range": "<=3.0.3",
+      "reason": "chaîne de développement uniquement: @vue/eslint-config-typescript → fast-glob → micromatch → braces; aucun correctif amont, braces 3.0.3, micromatch 4.0.8 et fast-glob 3.3.3 sont les dernières versions; la rétrogradation exigerait ESLint 10→9",
+      "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      "added": "2026-10-11",
+      "expires": "2027-01-09"
+    }
+  ]
+}

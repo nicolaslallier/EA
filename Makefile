@@ -592,7 +592,9 @@ typecheck-fe: | $(FRONTEND)/node_modules ## vue-tsc sur le frontend
 # [tool.bandit] dans pyproject.toml (tests exclus) ; un faux positif se tait à
 # la ligne, par `# nosec BXXX` et sa raison. pip-audit audite le venv tel qu'il
 # est installé — `ea` lui-même, éditable, n'est pas sur PyPI. npm audit bloque
-# à partir de `high`. Les trois ont besoin du réseau. Voir docs/adr/0026.
+# à partir de `high` : la production sans aucune exception, le développement
+# sauf les avis nommés et non expirés de frontend/audit-exceptions.json
+# (scripts/npm_audit.py, docs/audit-exceptions.md). Les trois ont besoin du réseau. Voir docs/adr/0026.
 audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audit (high)
 	@status=0; \
 	printf "$(GREEN)bandit$(NC)\n"; \
@@ -600,7 +602,9 @@ audit: | $(VENV_STAMP) $(FRONTEND)/node_modules ## bandit, pip-audit et npm audi
 	printf "$(GREEN)pip-audit$(NC)\n"; \
 	(cd $(BACKEND) && uv run pip-audit --skip-editable) || status=1; \
 	printf "$(GREEN)npm audit$(NC)\n"; \
-	(cd $(FRONTEND) && npm audit --audit-level=high) || status=1; \
+	(cd $(FRONTEND) && npm audit --omit=dev --audit-level=high) || status=1; \
+	printf "$(GREEN)npm audit (développement, exceptions nommées)$(NC)\n"; \
+	python3 scripts/npm_audit.py $(FRONTEND) $(FRONTEND)/audit-exceptions.json || status=1; \
 	test $$status -eq 0 || printf "$(RED)Au moins un scanner a échoué — voir ci-dessus.$(NC)\n"; \
 	exit $$status
 
