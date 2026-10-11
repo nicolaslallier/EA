@@ -64,6 +64,8 @@ export function useDiagram() {
   const revision = ref(0)
   /** The same, per diagram: a save asked for one diagram must not use another's. */
   const revisions = new Map<string, number>()
+  /** What the server answered to our own saves: the only revision a queued save may inherit. */
+  const savedRevisions = new Map<string, number>()
   /** Boxes whose element is out of period on the day asked: greyed, never removed (docs/adr/0060). */
   const inactiveIds = ref<string[]>([])
   const read = useLatestRequest()
@@ -163,11 +165,13 @@ export function useDiagram() {
         waypoints: edge.waypoints.map((point) => ({ ...point })),
       })),
     }
+    // The token is the one the edits were made on: read now, with the content. A save
+    // queued behind another may inherit what *that save* was answered (its content is a
+    // superset of the earlier one) - never a revision a later read brought in, which
+    // would let a stale scene overwrite a colleague's (the server then answers 409).
+    const asked = revisions.get(current.id) ?? revision.value
     queue = queue.then(async () => {
-      // The content is frozen when the save is *asked*; the revision when it
-      // *leaves*, so a second save asked before the first ends goes out on the
-      // revision the first has just received.
-      const body = { revision: revisions.get(current.id) ?? revision.value, ...snapshot }
+      const body = { revision: Math.max(asked, savedRevisions.get(current.id) ?? 0), ...snapshot }
       saving.value = true
       try {
         const result = await api.PUT('/diagrams/{diagram_id}/layout', {
@@ -179,9 +183,10 @@ export function useDiagram() {
         // CORS `expose_headers`), else one more than the revision just sent.
         const answered = Number(result.response.headers.get('X-Diagram-Revision'))
         const next = Number.isInteger(answered) && answered > 0 ? answered : body.revision + 1
-        revisions.set(current.id, next)
+        savedRevisions.set(current.id, next)
+        revisions.set(current.id, Math.max(revisions.get(current.id) ?? 0, next))
         if (diagram.value?.id === current.id) {
-          revision.value = next
+          revision.value = Math.max(revision.value, next)
         }
         saveError.value = ''
       } catch (caught) {

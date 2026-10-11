@@ -30,7 +30,15 @@ import {
   type Point,
   type Size,
 } from '../../lib/diagramGeometry'
-import { ELEMENT_DRAG_TYPE, type Box, type RelationshipRead } from './useDiagram'
+import { safeColour } from '../../lib/diagramExport'
+import { MAX_WAYPOINTS, midpoints, routeOf } from '../../lib/waypoints'
+import {
+  ELEMENT_DRAG_TYPE,
+  type Box,
+  type DiagramEdge,
+  type DiagramObject,
+  type RelationshipRead,
+} from './useDiagram'
 
 const props = defineProps<{
   boxes: Box[]
@@ -44,6 +52,11 @@ const props = defineProps<{
   readonly?: boolean
   /** Elements out of period on the day read: their boxes are greyed, not removed. */
   inactiveIds?: string[]
+  objects?: DiagramObject[]
+  /** The links that have bends; every other link is drawn straight. */
+  routed?: DiagramEdge[]
+  selectedObjectId?: string
+  selectedEdgeId?: string
 }>()
 
 const inactive = computed(() => new Set(props.inactiveIds ?? []))
@@ -60,6 +73,14 @@ const emit = defineEmits<{
   remove: [elementId: string]
   'remove-many': [elementIds: string[]]
   connect: [sourceId: string, targetId: string]
+  'select-object': [id: string]
+  'move-object': [id: string, to: Point]
+  'resize-object': [id: string, size: Size]
+  'remove-object': [id: string]
+  'select-edge': [relationshipId: string]
+  'bend-add': [relationshipId: string, segment: number, at: Point]
+  'bend-move': [relationshipId: string, index: number, to: Point]
+  'bend-remove': [relationshipId: string, index: number]
 }>()
 
 /** A band shorter than this is a click on the background, not a selection. */
@@ -83,6 +104,9 @@ type Gesture =
   | { kind: 'link'; sourceId: string; to: Point }
   | { kind: 'band'; from: Point; to: Point }
   | { kind: 'pan'; start: Point; origin: Point }
+  | { kind: 'object-move'; id: string; offset: Point; moved: boolean }
+  | { kind: 'object-resize'; id: string; offset: Point; moved: boolean }
+  | { kind: 'bend'; relationshipId: string; index: number; moved: boolean }
 const gesture = ref<Gesture | null>(null)
 
 const chosen = computed(
@@ -96,15 +120,60 @@ const byId = computed(() => new Map(props.boxes.map((box) => [box.element.id, bo
 const selected = computed(() => (several.value ? undefined : byId.value.get(props.selectedId)))
 const rectOf = (box: Box) => ({ id: box.element.id, x: box.x, y: box.y, width: box.width, height: box.height })
 
-/** Links whose two ends are drawn; overlapping boxes have no sensible stroke. */
+const routes = computed(
+  () => new Map((props.routed ?? []).map((edge) => [edge.relationship_id, edge.waypoints])),
+)
+
+/** Links whose two ends are drawn, with their stroke, their bends and the handles to add one. */
 const edges = computed(() =>
   props.relationships.flatMap((relationship) => {
     const source = byId.value.get(relationship.source_id)
     const target = byId.value.get(relationship.target_id)
-    const segment = source && target ? edgeSegment(source, target) : null
-    return segment ? [{ relationship, ...segment }] : []
+    const waypoints = routes.value.get(relationship.id) ?? []
+    const route = source && target ? routeOf(source, target, waypoints) : null
+    if (!route) {
+      return []
+    }
+    const middle = Math.floor((route.length - 1) / 2)
+    return [
+      {
+        relationship,
+        route,
+        waypoints,
+        points: route.map((point) => `${point.x},${point.y}`).join(' '),
+        label: {
+          x: (route[middle].x + route[middle + 1].x) / 2,
+          y: (route[middle].y + route[middle + 1].y) / 2 - 4,
+        },
+        handles: waypoints.length < MAX_WAYPOINTS ? midpoints(route) : [],
+      },
+    ]
   }),
 )
+
+const objectsOf = (kind: 'group' | 'note') =>
+  [...(props.objects ?? [])].filter((item) => item.kind === kind).sort((a, b) => a.z - b.z)
+const groups = computed(() => objectsOf('group'))
+const notes = computed(() => objectsOf('note'))
+const objectById = computed(() => new Map((props.objects ?? []).map((item) => [item.id, item])))
+const selectedObject = computed(() => objectById.value.get(props.selectedObjectId ?? ''))
+
+/** The dotted line from a note to the element it is anchored on — drawing, not a relationship. */
+const anchors = computed(() =>
+  notes.value.flatMap((note) => {
+    const box = note.anchor_element_id ? byId.value.get(note.anchor_element_id) : undefined
+    const segment = box ? edgeSegment(note, box) : null
+    return segment ? [{ id: note.id, ...segment }] : []
+  }),
+)
+
+const fillOf = (item: DiagramObject, fallback: string) => safeColour(item.colour ?? '', fallback)
+
+/** The lines of a note that fit its height, each cut to its width. */
+function noteLines(item: DiagramObject): string[] {
+  const rows = Math.max(1, Math.floor((item.height - 12) / 14))
+  return item.text.split('\n').slice(0, rows).map((line) => shortenToWidth(line, item.width - 16))
+}
 
 const summary = computed(() => {
   const boxes = props.boxes.length
@@ -250,44 +319,69 @@ function drag(event: PointerEvent): void {
     return
   }
   const pointer = at(event)
-  if (current.kind === 'link') {
-    current.to = pointer
-    return
-  }
-  if (current.kind === 'band') {
-    current.to = pointer
-    return
-  }
-  current.moved = true
-  if (current.kind === 'resize') {
-    const box = byId.value.get(current.elementId)
-    if (box) {
-      const corner = { x: pointer.x - current.offset.x, y: pointer.y - current.offset.y }
-      emit('resize', current.elementId, resizedTo(box, corner))
+  switch (current.kind) {
+    case 'link':
+    case 'band':
+      current.to = pointer
+      return
+    case 'bend':
+      current.moved = true
+      emit('bend-move', current.relationshipId, current.index, pointer)
+      return
+    case 'object-move':
+      current.moved = true
+      emit('move-object', current.id, {
+        x: Math.max(0, pointer.x - current.offset.x),
+        y: Math.max(0, pointer.y - current.offset.y),
+      })
+      return
+    case 'object-resize': {
+      const item = objectById.value.get(current.id)
+      current.moved = true
+      if (item) {
+        emit(
+          'resize-object',
+          current.id,
+          resizedTo(item, { x: pointer.x - current.offset.x, y: pointer.y - current.offset.y }),
+        )
+      }
+      return
     }
-    return
-  }
-  for (const held of current.grabs) {
-    // ponytail: each box is clamped to the canvas on its own, so a group
-    // dragged against the left edge squeezes together; clamp the group's
-    // bounding box instead if that is ever noticed.
-    emit('move', held.elementId, {
-      x: Math.max(0, pointer.x - held.offset.x),
-      y: Math.max(0, pointer.y - held.offset.y),
-    })
+    case 'resize': {
+      const box = byId.value.get(current.elementId)
+      current.moved = true
+      if (box) {
+        emit(
+          'resize',
+          current.elementId,
+          resizedTo(box, { x: pointer.x - current.offset.x, y: pointer.y - current.offset.y }),
+        )
+      }
+      return
+    }
+    case 'move':
+      current.moved = true
+      for (const held of current.grabs) {
+        // ponytail: each box is clamped to the canvas on its own, so a group
+        // dragged against the left edge squeezes together; clamp the group's
+        // bounding box instead if that is ever noticed.
+        emit('move', held.elementId, {
+          x: Math.max(0, pointer.x - held.offset.x),
+          y: Math.max(0, pointer.y - held.offset.y),
+        })
+      }
   }
 }
 
 /**
  * The system took the pointer away mid-gesture — a touch cancelled, a window
  * losing focus. A move already on screen is still reported, so it is saved; a
- * link is never asked for, since nobody chose where it ends. A resize is a move. After a normal
- * `pointerup`, `release` has already cleared the gesture and this does nothing.
+ * link or a band is never asked for, since nobody chose where it ends.
  */
 function interrupt(): void {
   const current = gesture.value
   gesture.value = null
-  if (current && current.kind !== 'link' && current.kind !== 'band' && current.kind !== 'pan' && current.moved) {
+  if (current && 'moved' in current && current.moved) {
     emit('moved')
   }
 }
@@ -295,22 +389,16 @@ function interrupt(): void {
 function release(event: PointerEvent): void {
   const current = gesture.value
   gesture.value = null
-  if (current?.kind === 'pan') {
+  if (!current || current.kind === 'pan') {
     return
   }
-  if (current?.kind === 'band') {
+  if (current.kind === 'band') {
     const band = rubberBand(current.from, current.to)
     const hits = band.width + band.height < BAND_SLOP ? [] : boxesIn(band, props.boxes.map(rectOf))
     emit('select-many', hits)
     return
   }
-  if (current && current.kind !== 'link') {
-    if (current.moved) {
-      emit('moved')
-    }
-    return
-  }
-  if (current?.kind === 'link') {
+  if (current.kind === 'link') {
     const pointer = at(event)
     // The topmost box under the pointer: the last one drawn.
     const target = [...props.boxes].reverse().find(
@@ -323,7 +411,84 @@ function release(event: PointerEvent): void {
     if (target && target.element.id !== current.sourceId) {
       emit('connect', current.sourceId, target.element.id)
     }
+    return
   }
+  if (current.moved) {
+    emit('moved')
+  }
+}
+
+function grabObject(event: PointerEvent, item: DiagramObject): void {
+  if (event.button !== 0 || props.readonly || spaceHeld.value) {
+    return
+  }
+  capture(event)
+  const pointer = at(event)
+  gesture.value = {
+    kind: 'object-move',
+    id: item.id,
+    offset: { x: pointer.x - item.x, y: pointer.y - item.y },
+    moved: false,
+  }
+}
+
+function startObjectResize(event: PointerEvent): void {
+  const item = selectedObject.value
+  if (event.button !== 0 || !item || props.readonly) {
+    return
+  }
+  capture(event)
+  const pointer = at(event)
+  gesture.value = {
+    kind: 'object-resize',
+    id: item.id,
+    offset: { x: pointer.x - (item.x + item.width), y: pointer.y - (item.y + item.height) },
+    moved: false,
+  }
+}
+
+/** Start a bend on a segment: it exists the moment it is grabbed, and follows the pointer. */
+function startBend(event: PointerEvent, relationshipId: string, segment: number): void {
+  if (event.button !== 0 || props.readonly) {
+    return
+  }
+  capture(event)
+  emit('bend-add', relationshipId, segment, at(event))
+  gesture.value = { kind: 'bend', relationshipId, index: segment, moved: true }
+}
+
+function grabBend(event: PointerEvent, relationshipId: string, index: number): void {
+  if (event.button !== 0 || props.readonly) {
+    return
+  }
+  capture(event)
+  gesture.value = { kind: 'bend', relationshipId, index, moved: false }
+}
+
+function removeObjectIfSelected(item: DiagramObject): void {
+  if (item.id === props.selectedObjectId && !props.readonly) {
+    emit('remove-object', item.id)
+  }
+}
+
+function onObjectKey(event: KeyboardEvent, item: DiagramObject): void {
+  const delta = nudgeDelta(event.key, event.shiftKey)
+  if (!delta || props.readonly) {
+    return
+  }
+  event.preventDefault()
+  if (event.altKey) {
+    emit('resize-object', item.id, {
+      width: Math.max(MIN_BOX.width, item.width + delta.x),
+      height: Math.max(MIN_BOX.height, item.height + delta.y),
+    })
+  } else {
+    emit('move-object', item.id, {
+      x: Math.max(0, item.x + delta.x),
+      y: Math.max(0, item.y + delta.y),
+    })
+  }
+  emit('moved', 'keyboard')
 }
 
 function removeIfSelected(box: Box): void {
@@ -435,21 +600,71 @@ function onCanvasKey(event: KeyboardEvent): void {
           </marker>
         </defs>
 
-        <g v-for="edge in edges" :key="edge.relationship.id" class="canvas__edge">
-          <line
-            :x1="edge.from.x"
-            :y1="edge.from.y"
-            :x2="edge.to.x"
-            :y2="edge.to.y"
-            marker-end="url(#ea-diagram-arrow)"
+        <g
+          v-for="item in groups"
+          :key="item.id"
+          class="canvas__object canvas__object--group"
+          :class="{ 'canvas__object--selected': item.id === selectedObjectId }"
+          role="button"
+          tabindex="0"
+          :aria-pressed="item.id === selectedObjectId"
+          :aria-label="`Groupe « ${item.text} »`"
+          @pointerdown="grabObject($event, item)"
+          @click="emit('select-object', item.id)"
+          @keydown="onObjectKey($event, item)"
+          @keydown.delete.prevent="removeObjectIfSelected(item)"
+        >
+          <title>{{ item.text }}</title>
+          <rect
+            :x="item.x"
+            :y="item.y"
+            :width="item.width"
+            :height="item.height"
+            rx="8"
+            :fill="fillOf(item, '#efeaf8')"
+            fill-opacity="0.55"
           />
-          <text
-            :x="(edge.from.x + edge.to.x) / 2"
-            :y="(edge.from.y + edge.to.y) / 2 - 4"
-            text-anchor="middle"
-          >
+          <text :x="item.x + 10" :y="item.y + 18" class="canvas__group-title">
+            {{ shortenToWidth(item.text, item.width - 20) }}
+          </text>
+        </g>
+
+        <g v-for="edge in edges" :key="edge.relationship.id" class="canvas__edge"
+           :class="{ 'canvas__edge--selected': edge.relationship.id === selectedEdgeId }">
+          <polyline
+            :points="edge.points"
+            fill="none"
+            marker-end="url(#ea-diagram-arrow)"
+            @click="emit('select-edge', edge.relationship.id)"
+          />
+          <text :x="edge.label.x" :y="edge.label.y" text-anchor="middle">
             {{ verbOf(edge.relationship.relationship_type, edge.relationship.access_type) }}
           </text>
+          <template v-if="!readonly">
+            <circle
+              v-for="(handle, segment) in edge.handles"
+              :key="`add-${segment}`"
+              class="canvas__bend canvas__bend--add"
+              :cx="handle.x"
+              :cy="handle.y"
+              r="4"
+              @pointerdown.stop="startBend($event, edge.relationship.id, segment)"
+            >
+              <title>Glisse pour ajouter un coude au lien</title>
+            </circle>
+            <circle
+              v-for="(bend, index) in edge.waypoints"
+              :key="`bend-${index}`"
+              class="canvas__bend"
+              :cx="bend.x"
+              :cy="bend.y"
+              r="5"
+              @pointerdown.stop="grabBend($event, edge.relationship.id, index)"
+              @dblclick.stop="emit('bend-remove', edge.relationship.id, index)"
+            >
+              <title>Glisse pour déplacer le coude ; double-clic pour le supprimer</title>
+            </circle>
+          </template>
         </g>
 
         <g
@@ -511,6 +726,50 @@ function onCanvasKey(event: KeyboardEvent): void {
         />
 
         <line
+          v-for="anchor in anchors"
+          :key="`anchor-${anchor.id}`"
+          class="canvas__anchor"
+          :x1="anchor.from.x"
+          :y1="anchor.from.y"
+          :x2="anchor.to.x"
+          :y2="anchor.to.y"
+        />
+
+        <g
+          v-for="item in notes"
+          :key="item.id"
+          class="canvas__object canvas__object--note"
+          :class="{ 'canvas__object--selected': item.id === selectedObjectId }"
+          role="button"
+          tabindex="0"
+          :aria-pressed="item.id === selectedObjectId"
+          :aria-label="`Note : ${item.text.slice(0, 60)}`"
+          @pointerdown="grabObject($event, item)"
+          @click="emit('select-object', item.id)"
+          @keydown="onObjectKey($event, item)"
+          @keydown.delete.prevent="removeObjectIfSelected(item)"
+        >
+          <title>{{ item.text }}</title>
+          <rect
+            :x="item.x"
+            :y="item.y"
+            :width="item.width"
+            :height="item.height"
+            rx="3"
+            :fill="fillOf(item, '#fff4b0')"
+          />
+          <text
+            v-for="(line, index) in noteLines(item)"
+            :key="index"
+            class="canvas__note-text"
+            :x="item.x + 8"
+            :y="item.y + 18 + index * 14"
+          >
+            {{ line }}
+          </text>
+        </g>
+
+        <line
           v-if="gesture?.kind === 'link' && selected"
           class="canvas__band"
           :x1="centreOf(selected).x"
@@ -542,6 +801,18 @@ function onCanvasKey(event: KeyboardEvent): void {
           @pointerdown.stop="startResize"
         >
           <title>Glisse pour agrandir ou réduire la boîte</title>
+        </rect>
+        <rect
+          v-if="selectedObject && !readonly"
+          class="canvas__resize"
+          :x="selectedObject.x + selectedObject.width - 5"
+          :y="selectedObject.y + selectedObject.height - 5"
+          width="10"
+          height="10"
+          :aria-label="`Redimensionner « ${selectedObject.text} »`"
+          @pointerdown.stop="startObjectResize"
+        >
+          <title>Glisse pour agrandir ou réduire</title>
         </rect>
       </svg>
     </div>
@@ -611,7 +882,7 @@ svg {
   /* A drag on the canvas moves a box, never the page. */
   touch-action: none;
 }
-.canvas__edge line {
+.canvas__edge polyline {
   stroke: var(--text);
   stroke-width: 1.2;
   opacity: 0.55;
@@ -675,6 +946,58 @@ svg {
   fill: color-mix(in srgb, var(--accent, #6b4fbb) 14%, transparent);
   stroke: var(--accent, #6b4fbb);
   stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+.canvas__edge polyline {
+  cursor: pointer;
+}
+.canvas__edge--selected polyline {
+  stroke-width: 2.4;
+  opacity: 0.9;
+}
+.canvas__bend {
+  fill: var(--bg);
+  stroke: var(--text);
+  stroke-width: 1.5;
+  cursor: move;
+}
+.canvas__bend--add {
+  opacity: 0.35;
+}
+.canvas__bend--add:hover {
+  opacity: 1;
+}
+.canvas__object {
+  cursor: grab;
+}
+.canvas__object rect {
+  stroke: #6f6b78;
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+}
+.canvas__object--note rect {
+  stroke-dasharray: none;
+}
+.canvas__object:focus-visible rect,
+.canvas__object--selected rect {
+  stroke: var(--text);
+  stroke-width: 2.2;
+}
+.canvas__group-title,
+.canvas__note-text {
+  font-size: 11px;
+  fill: #24202b;
+  pointer-events: none;
+  user-select: none;
+}
+.canvas__group-title {
+  font-weight: 600;
+}
+.canvas__anchor {
+  stroke: var(--text);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.6;
   pointer-events: none;
 }
 .canvas__band {

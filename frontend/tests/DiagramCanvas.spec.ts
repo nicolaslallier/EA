@@ -434,3 +434,137 @@ describe('DiagramCanvas — zoom and pan', () => {
     expect(at.y).toBeCloseTo(200 - 23, 6)
   })
 })
+
+describe('DiagramCanvas — groups, notes and bends', () => {
+  const LINK = 'rrrrrrrr-0000-4000-8000-000000000000'
+  const link = aRelationship({ id: LINK, source_id: A.id, target_id: B.id })
+  const aGroup = {
+    id: 'gggggggg-0000-4000-8000-000000000000',
+    kind: 'group' as const,
+    x: 0,
+    y: 100,
+    width: 320,
+    height: 200,
+    text: 'Domaine Paiement',
+    colour: null,
+    z: -1,
+    parent_id: null,
+    anchor_element_id: null,
+  }
+  const aNote = {
+    ...aGroup,
+    id: 'nnnnnnnn-0000-4000-8000-000000000000',
+    kind: 'note' as const,
+    x: 500,
+    y: 100,
+    width: 180,
+    height: 90,
+    text: 'À revoir <b>vite</b>',
+    z: 1,
+    anchor_element_id: B.id,
+  }
+  const drawn = (props: Record<string, unknown> = {}) =>
+    draw({ relationships: [link], objects: [aGroup, aNote], ...props })
+
+  it('draws a group by its title and a note by its text — as text, never as markup', () => {
+    drawn()
+
+    expect(screen.getByRole('button', { name: /Groupe « Domaine Paiement »/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Note/ })).toBeInTheDocument()
+    // Once in the <title>, once drawn: both are text nodes.
+    expect(screen.getAllByText(/À revoir <b>vite<\/b>/).length).toBeGreaterThan(0)
+    expect(document.querySelector('b')).toBeNull()
+  })
+
+  it('joins a note to the element it is anchored on with a dotted line', () => {
+    drawn()
+
+    expect(document.querySelector('.canvas__anchor')).not.toBeNull()
+    drawn({ objects: [{ ...aNote, anchor_element_id: null }] })
+  })
+
+  it('drags a group and reports where it ends', async () => {
+    const rendered = drawn()
+
+    await fireEvent(
+      screen.getByRole('button', { name: /Groupe « Domaine Paiement »/ }),
+      pointer('pointerdown', 10, 110),
+    )
+    await fireEvent(svg(), pointer('pointermove', 60, 160))
+    await fireEvent(svg(), pointer('pointerup', 60, 160))
+
+    expect(rendered.emitted()['move-object']).toEqual([[aGroup.id, { x: 50, y: 150 }]])
+    expect(rendered.emitted().moved).toHaveLength(1)
+  })
+
+  it('selects an object on click and removes it on Delete only when selected', async () => {
+    const rendered = drawn({ selectedObjectId: aNote.id })
+    const note = screen.getByRole('button', { name: /Note/ })
+
+    await fireEvent.click(note)
+    await fireEvent.keyDown(note, { key: 'Delete' })
+
+    expect(rendered.emitted()['select-object']).toEqual([[aNote.id]])
+    expect(rendered.emitted()['remove-object']).toEqual([[aNote.id]])
+  })
+
+  it('nudges a selected note with the arrows', async () => {
+    const rendered = drawn({ selectedObjectId: aNote.id })
+
+    await fireEvent.keyDown(screen.getByRole('button', { name: /Note/ }), {
+      key: 'ArrowDown',
+      shiftKey: true,
+    })
+
+    expect(rendered.emitted()['move-object']).toEqual([[aNote.id, { x: 500, y: 110 }]])
+    expect(rendered.emitted().moved).toEqual([['keyboard']])
+  })
+
+  it('offers a handle in the middle of each segment and starts a bend by dragging it', async () => {
+    const rendered = drawn()
+    const handles = document.querySelectorAll('.canvas__bend--add')
+    expect(handles).toHaveLength(1)
+
+    await fireEvent(handles[0], pointer('pointerdown', 250, 150))
+    await fireEvent(svg(), pointer('pointermove', 260, 170))
+    await fireEvent(svg(), pointer('pointerup', 260, 170))
+
+    expect(rendered.emitted()['bend-add']).toEqual([[LINK, 0, { x: 250, y: 150 }]])
+    expect(rendered.emitted()['bend-move']).toEqual([[LINK, 0, { x: 260, y: 170 }]])
+    expect(rendered.emitted().moved).toHaveLength(1)
+  })
+
+  it('draws a routed link through its bends, drags a bend and removes it on double click', async () => {
+    const rendered = drawn({ routed: [{ relationship_id: LINK, waypoints: [{ x: 250, y: 200 }] }] })
+    const line = document.querySelector('.canvas__edge polyline') as SVGPolylineElement
+    expect(line.getAttribute('points')!.split(' ')).toHaveLength(3)
+    const bend = document.querySelector('.canvas__bend:not(.canvas__bend--add)') as SVGCircleElement
+
+    await fireEvent(bend, pointer('pointerdown', 250, 200))
+    await fireEvent(svg(), pointer('pointermove', 255, 205))
+    await fireEvent(svg(), pointer('pointerup', 255, 205))
+    await fireEvent.dblClick(bend)
+
+    expect(rendered.emitted()['bend-move']).toEqual([[LINK, 0, { x: 255, y: 205 }]])
+    expect(rendered.emitted()['bend-remove']).toEqual([[LINK, 0]])
+  })
+
+  it('selects a link by clicking its stroke', async () => {
+    const rendered = drawn()
+
+    await fireEvent.click(document.querySelector('.canvas__edge polyline')!)
+
+    expect(rendered.emitted()['select-edge']).toEqual([[LINK]])
+  })
+
+  it('gives a reader no handle to bend, resize or link', () => {
+    drawn({
+      readonly: true,
+      selectedObjectId: aNote.id,
+      routed: [{ relationship_id: LINK, waypoints: [{ x: 250, y: 200 }] }],
+    })
+
+    expect(document.querySelector('.canvas__bend')).toBeNull()
+    expect(document.querySelector('.canvas__resize')).toBeNull()
+  })
+})

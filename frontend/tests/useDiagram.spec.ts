@@ -222,6 +222,50 @@ describe('useDiagram', () => {
     expect(editor.revision.value).toBe(1)
   })
 
+  it('never presents a revision read after the edit: a reload that lands mid-edit does not lend its token', async () => {
+    let release: (response: Response) => void = () => undefined
+    const puts: { revision: number }[] = []
+    let gets = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init)
+        if (request.method === 'PUT') {
+          puts.push((await request.clone().json()) as { revision: number })
+          return new Response(null, { status: 409, headers: {} })
+        }
+        gets += 1
+        if (gets === 1) {
+          return new Response(JSON.stringify(aDiagram()), {
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      }),
+    )
+    const editor = useDiagram()
+    await editor.open(DIAGRAM_ID)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    // A second read is in flight (an `as_of` change); the user edits meanwhile, on revision 0.
+    const reading = editor.open(DIAGRAM_ID, '2028-01-01')
+    await vi.waitFor(() => expect(gets).toBe(2))
+    editor.place(B, { x: 300, y: 100 })
+    // A colleague saved in the meantime: the answer is revision 5.
+    release(
+      new Response(JSON.stringify(aDiagram({ revision: 5 })), {
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    await reading
+    await vi.waitFor(() => expect(puts).toHaveLength(1))
+
+    // The edit was made on revision 0 and must say so: the server then answers 409.
+    expect(puts[0].revision).toBe(0)
+  })
+
   it('keeps a refused save on screen', async () => {
     const { editor } = await opened([
       READ,
