@@ -15,6 +15,7 @@ from ea.domain.exchange import (
     ImportContent,
     ImportOptions,
 )
+from ea.domain.model import Element
 from ea.repositories.exchange_store import PostgresExchangeRepository
 from ea.services.architecture import ArchitectureService
 from ea.services.exchanges import ExchangeService
@@ -153,3 +154,84 @@ async def test_a_link_to_a_locked_element_is_a_refused_row(
     assert [i.code for i in report.issues] == ["element_locked"]
     assert report.counts[Category.ELEMENTS].created == 1
     assert await count(engine_at_head, "relationships") == 0
+
+
+class Barrier(PostgresExchangeRepository):
+    """Lets another transaction commit right after the catalogue is read, as a rival would."""
+
+    def __init__(self, engine: AsyncEngine, rival: str) -> None:
+        super().__init__(create_session_factory(engine))
+        self._engine = engine
+        self._rival = rival
+
+    async def known_elements(self) -> tuple[Element, ...]:
+        loaded = await super().known_elements()
+        async with self._engine.begin() as other:  # another connection, committed at once
+            await other.execute(text(self._rival))
+        return loaded
+
+
+def with_a_rival(engine: AsyncEngine, graph: ArchitectureService, rival: str) -> ExchangeService:
+    return ExchangeService(Barrier(engine, rival), graph)
+
+
+DESCRIBED = (
+    '<properties><property propertyDefinitionRef="d"><value>from the file</value></property>'
+    "</properties>"
+)
+DESCRIPTION_KEY = (
+    '<propertyDefinitions><propertyDefinition identifier="d" type="string">'
+    "<name>ea.description</name></propertyDefinition></propertyDefinitions>"
+)
+
+
+async def test_a_description_written_by_another_transaction_meanwhile_is_kept(
+    graph_service: ArchitectureService, engine_at_head: AsyncEngine
+) -> None:
+    existing = await graph_service.create_element(element_type=E.NODE, name="srv")
+    importer = with_a_rival(
+        engine_at_head,
+        graph_service,
+        f"UPDATE elements SET description = 'theirs' WHERE id = '{existing.id}'",
+    )
+    data = exchange_xml(el("s", "Node", "srv", DESCRIBED), extra=DESCRIPTION_KEY)
+
+    report = await importer.import_exchange(content(data), REAL)
+
+    assert report.applied and report.counts[Category.ELEMENTS].reused == 1
+    stored = await graph_service.get_element(existing.id)
+    assert stored.description == "theirs" and stored.properties[SOURCE_ID] == "s"
+
+
+async def test_an_element_approved_meanwhile_refuses_the_completion_and_the_import_goes_on(
+    graph_service: ArchitectureService, engine_at_head: AsyncEngine
+) -> None:
+    existing = await graph_service.create_element(element_type=E.NODE, name="srv")
+    importer = with_a_rival(
+        engine_at_head,
+        graph_service,
+        f"UPDATE elements SET approval_state = 'approved', approved_by_sub = 'a', "
+        f"approved_at = now() WHERE id = '{existing.id}'",
+    )
+    data = exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))
+
+    report = await importer.import_exchange(content(data), REAL)
+
+    assert [i.code for i in report.issues] == ["completion_not_applied"]
+    assert report.counts[Category.ELEMENTS].created == 1
+    assert SOURCE_ID not in (await graph_service.get_element(existing.id)).properties
+
+
+async def test_an_element_deleted_meanwhile_is_a_refused_row(
+    graph_service: ArchitectureService, engine_at_head: AsyncEngine
+) -> None:
+    existing = await graph_service.create_element(element_type=E.NODE, name="srv")
+    importer = with_a_rival(
+        engine_at_head, graph_service, f"DELETE FROM elements WHERE id = '{existing.id}'"
+    )
+    data = exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))
+
+    report = await importer.import_exchange(content(data), REAL)
+
+    assert [i.code for i in report.issues] == ["element_gone"]
+    assert report.counts[Category.ELEMENTS].created == 1

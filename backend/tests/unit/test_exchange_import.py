@@ -688,3 +688,129 @@ class TestTheLocksTakenBeforeTheFirstWrite:
         await exchange_service.import_exchange(content, REAL)
 
         assert exchange_store.locked == sorted([one.id, two.id])
+
+
+class TestCompletionIsDecidedOnTheRowAsItIsNow:
+    """The catalogue is read once, at the start; the decision to fill a blank is not."""
+
+    def after_the_catalogue_is_read(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        exchange_store: InMemoryExchange,
+        change: object,
+    ) -> None:
+        original = exchange_store.known_elements
+
+        async def stale() -> tuple[object, ...]:
+            loaded = await original()
+            change()  # type: ignore[operator] - another person writes, the copy above is stale
+            return loaded
+
+        monkeypatch.setattr(exchange_store, "known_elements", stale)
+
+    async def test_a_description_written_meanwhile_is_not_overwritten(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        existing = await service.create_element(element_type=E.NODE, name="srv")
+
+        def theirs() -> None:
+            repository.elements[existing.id] = replace(
+                repository.elements[existing.id], description="theirs"
+            )
+
+        self.after_the_catalogue_is_read(monkeypatch, exchange_store, theirs)
+        described = (
+            '<properties><property propertyDefinitionRef="d"><value>from the file</value>'
+            "</property></properties>"
+        )
+        data = exchange_xml(
+            el("s", "Node", "srv", described),
+            extra='<propertyDefinitions><propertyDefinition identifier="d" type="string">'
+            "<name>ea.description</name></propertyDefinition></propertyDefinitions>",
+        )
+
+        await exchange_service.import_exchange(xml(data), REAL)
+
+        stored = repository.elements[existing.id]
+        assert stored.description == "theirs"
+        assert stored.properties[SOURCE_ID] == "s"  # the blank that was still blank is filled
+
+    async def test_a_source_id_written_meanwhile_is_not_overwritten_and_nothing_is_written(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        existing = await service.create_element(element_type=E.NODE, name="srv")
+
+        def theirs() -> None:
+            stored = repository.elements[existing.id]
+            repository.elements[existing.id] = replace(stored, properties={SOURCE_ID: "theirs"})
+
+        self.after_the_catalogue_is_read(monkeypatch, exchange_store, theirs)
+        events = len(repository.audit_log.events)
+        before = repository.elements[existing.id].revision
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(el("s", "Node", "srv"))), REAL
+        )
+
+        assert report.counts[Category.ELEMENTS].reused == 1
+        assert repository.elements[existing.id].properties[SOURCE_ID] == "theirs"
+        assert repository.elements[existing.id].revision == before
+        assert len(repository.audit_log.events) == events  # nothing to fill: no event, no revision
+
+    async def test_an_element_approved_meanwhile_refuses_the_completion_and_the_import_goes_on(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        existing = await service.create_element(element_type=E.NODE, name="srv")
+
+        def approved() -> None:
+            stored = repository.elements[existing.id]
+            repository.elements[existing.id] = replace(
+                stored, approval_state=ApprovalState.APPROVED
+            )
+
+        self.after_the_catalogue_is_read(monkeypatch, exchange_store, approved)
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))), REAL
+        )
+
+        assert [i.code for i in report.issues] == ["completion_not_applied"]
+        assert report.counts[Category.ELEMENTS].reused == 1
+        assert report.counts[Category.ELEMENTS].created == 1
+        assert SOURCE_ID not in repository.elements[existing.id].properties
+
+    async def test_an_element_deleted_meanwhile_is_a_refused_row_not_a_failure(
+        self,
+        exchange_service: ExchangeService,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        exchange_store: InMemoryExchange,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        existing = await service.create_element(element_type=E.NODE, name="srv")
+        self.after_the_catalogue_is_read(
+            monkeypatch, exchange_store, lambda: repository.elements.pop(existing.id)
+        )
+
+        report = await exchange_service.import_exchange(
+            xml(exchange_xml(el("s", "Node", "srv") + el("n", "Node", "new"))), REAL
+        )
+
+        assert [i.code for i in report.issues] == ["element_gone"]
+        assert report.counts[Category.ELEMENTS].rejected == 1
+        assert report.counts[Category.ELEMENTS].created == 1

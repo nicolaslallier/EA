@@ -36,6 +36,7 @@ WRITES = {
     ArchitectureService: {
         "create_element",
         "update_element",
+        "complete_element",
         "delete_element",
         "connect",
         "disconnect",

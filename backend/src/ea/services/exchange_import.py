@@ -418,14 +418,18 @@ class ImportRun:
         This *is* a write to an existing element, so the approval guard may refuse it: that is
         a warning, not a failure, and never a way round the guard.
         """
-        description = item.description if item.description and not match.description else None
-        needs_source = SOURCE_ID not in match.properties
-        if description is None and not needs_source:
+        # The copy of the catalogue read at the start only decides which rows *try*. Whether
+        # a field is still blank is decided by the service on the row it holds locked:
+        # what somebody wrote in between is kept (`complete_element`).
+        description = item.description if item.description and not match.description else ""
+        missing_source = not match.properties.get(SOURCE_ID)
+        if not description and not missing_source:
             return match
-        properties = {**match.properties, SOURCE_ID: item.identifier} if needs_source else None
         try:
-            updated = await self._architecture.update_element(
-                match.id, description=description, properties=properties
+            updated = await self._architecture.complete_element(
+                match.id,
+                description=description,
+                properties={SOURCE_ID: item.identifier} if missing_source else None,
             )
         except ElementLockedError as refusal:
             issues.append(
@@ -439,7 +443,10 @@ class ImportRun:
                 )
             )
             return match
-        if match.id in state.approved:
+        except ElementNotFoundError:
+            msg = "this element was deleted while the file was being imported"
+            raise RowRefusedError("element_gone", msg) from None
+        if match.id in state.approved and reviewed_after_change(updated) is updated:
             self._ledger.discard(state.approved, match.id)
             issues.append(self._reopened(item))
         return updated
