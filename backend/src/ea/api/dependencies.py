@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -248,3 +249,24 @@ def get_saved_query_service(request: Request) -> SavedQueryService:
 
 
 SavedQueries = Annotated[SavedQueryService, Depends(get_saved_query_service)]
+
+
+def analysis_service_of(app: FastAPI) -> AnalysisService:
+    """The analysis use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled with a doubled architecture service and
+    no `AnalysisRepository` behind it: a wiring fault and a 500, never an empty
+    answer a client could not tell from a model with nothing to report.
+    """
+    service: AnalysisService | None = getattr(app.state, "analysis_service", None)
+    if service is None:
+        msg = "no analysis service on the application — was it assembled without a graph?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_analysis_service(request: Request) -> AnalysisService:
+    return analysis_service_of(request.app)
+
+
+Analysis = Annotated[AnalysisService, Depends(get_analysis_service)]

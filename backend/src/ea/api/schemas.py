@@ -72,6 +72,7 @@ from ea.domain.ipam import (
     Subnet,
     SubnetDetail,
 )
+from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
@@ -1473,4 +1474,122 @@ class ImportReportRead(BaseModel):
             truncated=report.truncated,
             issue_count=report.issue_count,
             duration_ms=report.duration_ms,
+        )
+
+
+# --- Model analysis (docs/adr/0056) ---------------------------------
+
+#: How many ids one axis may *submit*. The service refuses more than
+#: `MAX_MATRIX_AXIS` with its own typed error; this only stops a runaway body.
+MAX_SUBMITTED_AXIS_IDS: Final = 10 * MAX_MATRIX_AXIS
+
+
+class AxisSelect(_Input):
+    """What one axis of the matrix is made of. Nothing set means the whole catalogue."""
+
+    element_ids: list[UUID] = Field(
+        default_factory=list,
+        max_length=MAX_SUBMITTED_AXIS_IDS,
+        description=f"Named elements; more than {MAX_MATRIX_AXIS} is refused.",
+    )
+    element_types: list[ElementType] = Field(default_factory=list)
+    layers: list[Layer] = Field(default_factory=list)
+    search: Search | None = None
+
+    def selection(self) -> AxisSelection:
+        return AxisSelection(
+            element_ids=tuple(self.element_ids),
+            element_types=tuple(self.element_types),
+            layers=tuple(self.layers),
+            search=self.search,
+        )
+
+
+class MatrixQuery(_Input):
+    """Both axes. A POST only because they travel in a body: nothing is written."""
+
+    rows: AxisSelect
+    cols: AxisSelect
+
+
+class ElementBrief(BaseModel):
+    """An element abridged to what a header needs."""
+
+    id: UUID
+    name: str
+    element_type: ElementType
+    layer: Layer
+
+    @classmethod
+    def of(cls, element: Element) -> ElementBrief:
+        return cls(
+            id=element.id,
+            name=element.name,
+            element_type=element.element_type,
+            layer=element.element_type.layer,
+        )
+
+
+class MatrixCellRead(BaseModel):
+    """A cell holding at least one link: row = source, column = target."""
+
+    source_id: UUID
+    target_id: UUID
+    links: list[RelationshipRead]
+
+
+class BlockedCellRead(BaseModel):
+    source_id: UUID
+    target_id: UUID
+
+
+class MatrixRead(BaseModel):
+    """The grid: two axes and the cells that hold links."""
+
+    rows: list[ElementBrief]
+    cols: list[ElementBrief]
+    rows_total: int
+    cols_total: int
+    truncated: bool
+    cells: list[MatrixCellRead]
+    blocked: list[BlockedCellRead]
+
+    @classmethod
+    def of(cls, matrix: Matrix) -> MatrixRead:
+        return cls(
+            rows=[ElementBrief.of(element) for element in matrix.rows.elements],
+            cols=[ElementBrief.of(element) for element in matrix.cols.elements],
+            rows_total=matrix.rows.total,
+            cols_total=matrix.cols.total,
+            truncated=matrix.rows.truncated or matrix.cols.truncated,
+            cells=[
+                MatrixCellRead(
+                    source_id=cell.source_id,
+                    target_id=cell.target_id,
+                    links=[RelationshipRead.of(link) for link in cell.links],
+                )
+                for cell in matrix.cells
+            ],
+            blocked=[
+                BlockedCellRead(source_id=source, target_id=target)
+                for source, target in matrix.blocked
+            ],
+        )
+
+
+class MatrixCellDetailRead(BaseModel):
+    """One ordered pair: its links, and the relationships ArchiMate would still allow."""
+
+    source_id: UUID
+    target_id: UUID
+    links: list[RelationshipRead]
+    allowed: list[RelationshipType]
+
+    @classmethod
+    def of(cls, cell: MatrixCell) -> MatrixCellDetailRead:
+        return cls(
+            source_id=cell.source_id,
+            target_id=cell.target_id,
+            links=[RelationshipRead.of(link) for link in cell.links],
+            allowed=list(cell.allowed),
         )

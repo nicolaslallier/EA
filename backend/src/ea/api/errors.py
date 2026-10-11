@@ -57,6 +57,7 @@ from ea.domain.errors import (
     InvalidFileMetadataError,
     InvalidQueryError,
     InvalidTransitionError,
+    MatrixAxisTooLargeError,
     NetworkExhaustedError,
     NotAddressableError,
     NotASubnetError,
@@ -178,6 +179,8 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     # Never sent: a refused row is a line of the import report. The row exists
     # because every `DomainError` needs one (tests/unit/test_error_statuses.py).
     RowRefusedError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_row"),
+    # --- Model analysis (docs/adr/0056) ---
+    MatrixAxisTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "matrix_axis_too_large"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
+from ea.api.analysis import router as analysis_router
 from ea.api.architecture import router as architecture_router
 from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
@@ -48,6 +49,7 @@ from ea.db.postgres import create_api_engine, create_session_factory
 from ea.domain.auth import Caller
 from ea.domain.ports import (
     AccessTokenVerifier,
+    AnalysisRepository,
     AuditRepository,
     BaselineRepository,
     DiagramRepository,
@@ -75,6 +77,7 @@ from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
+from ea.services.analysis import AnalysisService
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
@@ -290,6 +293,9 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    app.state.analysis_service = AnalysisService(
+                        app.state.architecture_service, repository
+                    )
                     exchange_store = exchanges or PostgresExchangeRepository(app.state.db_sessions)
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
@@ -518,6 +524,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    analysis: AnalysisRepository | None = None,
     diagrams: DiagramRepository | None = None,
     packages: PackageRepository | None = None,
     queries: SavedQueryRepository | None = None,
@@ -599,6 +606,8 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if analysis is not None:
+            app.state.analysis_service = AnalysisService(architecture_service, analysis)
         if packages is not None:
             app.state.package_service = PackageService(packages)
         if queries is not None:
@@ -676,6 +685,7 @@ def create_app(
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

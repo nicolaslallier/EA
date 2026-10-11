@@ -748,6 +748,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Matrix
+         * @description The grid of two axes, with the links between them.
+         *
+         *     Row = source, column = target: a link lives in exactly one cell. An axis
+         *     given as criteria is cut at the first 50 by name and `truncated` says so;
+         *     an axis given as more than 50 element ids is refused.
+         */
+        post: operations["read_matrix_matrix_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/matrix/cell": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Matrix Cell
+         * @description One pair: the links that exist and the relationships still permitted.
+         */
+        get: operations["read_matrix_cell_matrix_cell_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -1149,6 +1193,23 @@ export interface components {
              */
             next_cursor: string | null;
         };
+        /**
+         * AxisSelect
+         * @description What one axis of the matrix is made of. Nothing set means the whole catalogue.
+         */
+        AxisSelect: {
+            /**
+             * Element Ids
+             * @description Named elements; more than 50 is refused.
+             */
+            element_ids?: string[];
+            /** Element Types */
+            element_types?: components["schemas"]["ElementType"][];
+            /** Layers */
+            layers?: components["schemas"]["Layer"][];
+            /** Search */
+            search?: string | null;
+        };
         /** BaselineCreate */
         BaselineCreate: {
             /**
@@ -1198,6 +1259,19 @@ export interface components {
             name: string;
             /** Relationship Count */
             relationship_count: number;
+        };
+        /** BlockedCellRead */
+        BlockedCellRead: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
         };
         /** Body_attach_document_elements__element_id__documents_post */
         Body_attach_document_elements__element_id__documents_post: {
@@ -1519,6 +1593,21 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ElementBrief
+         * @description An element abridged to what a header needs.
+         */
+        ElementBrief: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            layer: components["schemas"]["Layer"];
+            /** Name */
+            name: string;
         };
         /**
          * ElementCreate
@@ -1949,6 +2038,72 @@ export interface components {
          * @enum {string}
          */
         Layer: "motivation" | "strategy" | "business" | "application" | "technology" | "physical" | "implementation_migration" | "other";
+        /**
+         * MatrixCellDetailRead
+         * @description One ordered pair: its links, and the relationships ArchiMate would still allow.
+         */
+        MatrixCellDetailRead: {
+            /** Allowed */
+            allowed: components["schemas"]["RelationshipType"][];
+            /** Links */
+            links: components["schemas"]["RelationshipRead"][];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /**
+         * MatrixCellRead
+         * @description A cell holding at least one link: row = source, column = target.
+         */
+        MatrixCellRead: {
+            /** Links */
+            links: components["schemas"]["RelationshipRead"][];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /**
+         * MatrixQuery
+         * @description Both axes. A POST only because they travel in a body: nothing is written.
+         */
+        MatrixQuery: {
+            cols: components["schemas"]["AxisSelect"];
+            rows: components["schemas"]["AxisSelect"];
+        };
+        /**
+         * MatrixRead
+         * @description The grid: two axes and the cells that hold links.
+         */
+        MatrixRead: {
+            /** Blocked */
+            blocked: components["schemas"]["BlockedCellRead"][];
+            /** Cells */
+            cells: components["schemas"]["MatrixCellRead"][];
+            /** Cols */
+            cols: components["schemas"]["ElementBrief"][];
+            /** Cols Total */
+            cols_total: number;
+            /** Rows */
+            rows: components["schemas"]["ElementBrief"][];
+            /** Rows Total */
+            rows_total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
         /**
          * MeRead
          * @description The caller, as far as the SPA needs to know it.
@@ -5459,6 +5614,127 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_matrix_matrix_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatrixQuery"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_matrix_cell_matrix_cell_get: {
+        parameters: {
+            query: {
+                /** @description The element of the row. */
+                source: string;
+                /** @description The element of the column. */
+                target: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatrixCellDetailRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
