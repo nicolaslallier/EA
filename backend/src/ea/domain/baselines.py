@@ -405,23 +405,35 @@ def refusal_context(baseline_id: UUID, blocked: Sequence[Element] = ()) -> dict[
     }
 
 
-def _cascade_of(
-    element: Element, links: Iterable[Relationship], boxes: Iterable[BoxSnapshot]
-) -> Cascade:
-    touching = sorted(
-        (link for link in links if element.id in (link.source_id, link.target_id)),
-        key=lambda link: (link.created_at, str(link.id)),
-    )
-    diagrams = sorted(box.diagram_id for box in boxes if box.element_id == element.id)
-    return Cascade(
-        element_id=element.id,
-        relationship_count=len(touching),
-        relationships=tuple(
-            (link.id, link.relationship_type.value) for link in touching[:AUDIT_LISTED_IDS]
-        ),
-        box_count=len(diagrams),
-        diagram_ids=tuple(diagrams[:AUDIT_LISTED_IDS]),
-    )
+def _cascades_of(
+    deleted: Sequence[Element], links: Iterable[Relationship], boxes: Iterable[BoxSnapshot]
+) -> tuple[Cascade, ...]:
+    """What each deleted element takes along — from indexes built once, never a scan per element."""
+    wanted = {e.id for e in deleted}
+    incident: dict[UUID, list[Relationship]] = {i: [] for i in wanted}
+    for link in links:
+        for end in {link.source_id, link.target_id} & wanted:
+            incident[end].append(link)
+    on_diagrams: dict[UUID, list[UUID]] = {i: [] for i in wanted}
+    for box in boxes:
+        if box.element_id in wanted:
+            on_diagrams[box.element_id].append(box.diagram_id)
+    cascades = []
+    for element in deleted:
+        touching = sorted(incident[element.id], key=lambda link: (link.created_at, str(link.id)))
+        diagrams = sorted(on_diagrams[element.id])
+        cascades.append(
+            Cascade(
+                element_id=element.id,
+                relationship_count=len(touching),
+                relationships=tuple(
+                    (link.id, link.relationship_type.value) for link in touching[:AUDIT_LISTED_IDS]
+                ),
+                box_count=len(diagrams),
+                diagram_ids=tuple(diagrams[:AUDIT_LISTED_IDS]),
+            )
+        )
+    return tuple(cascades)
 
 
 def _claims(element: Element) -> set[tuple[str, ...]]:
@@ -561,7 +573,7 @@ def plan_restore(
         for b in boxes
         if (b.diagram_id, b.element_id) in current_boxes
     )
-    cascades = tuple(_cascade_of(element, cur_rel.values(), current.boxes) for element in to_delete)
+    cascades = _cascades_of(to_delete, cur_rel.values(), current.boxes)
 
     # Only for what the plan really writes: an element already at the root is not news.
     asked_for = {e.id: e.package_id for e in snapshot.elements}
