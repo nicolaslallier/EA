@@ -19,6 +19,7 @@ from ea.api.baselines import router as baselines_router
 from ea.api.dependencies import (
     architecture_service_of,
     audit_service_of,
+    baseline_service_of,
     document_service_of,
     file_service_of,
     ipam_service_of,
@@ -452,6 +453,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: package_service_of(app),
         lambda: saved_query_service_of(app),
         lambda: audit_service_of(app),
+        lambda: baseline_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,

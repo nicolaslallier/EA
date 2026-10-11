@@ -25,7 +25,14 @@ from ea.main import create_app
 from ea.mcp import MCP_PATH
 from ea.services.architecture import ArchitectureService
 from ea.services.indexing import DocumentIndexer
-from tests.conftest import FakeEmbedder, InMemoryDocuments, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    FakeEmbedder,
+    InMemoryBaselines,
+    InMemoryDocuments,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+)
 
 #: The transport turns on DNS-rebinding protection when it is served on a
 #: loopback host, which checks the `Host` header against `127.0.0.1:*` and
@@ -134,6 +141,21 @@ class TestTheEndpoint:
             )
 
         assert read.structured_content["name"] == "Billing"
+
+    async def test_the_baseline_tools_reach_the_service_the_application_wired(
+        self, service: ArchitectureService, baseline_store: InMemoryBaselines
+    ) -> None:
+        app = create_app(
+            Settings(debug=True, postgres_enabled=False, auth_enabled=False),
+            architecture_service=service,
+            baselines=baseline_store,
+        )
+        async with agent_over(app) as session:
+            made = await session.call_tool("create_baseline", {"name": "v1"})
+            listed = await session.call_tool("list_baselines", {})
+
+        assert not made.is_error, made.content
+        assert [b["name"] for b in listed.structured_content["result"]] == ["v1"]
 
     async def test_a_refused_call_comes_back_readable_rather_than_as_a_crash(
         self, service: ArchitectureService

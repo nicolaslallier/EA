@@ -20,6 +20,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ea.api.schemas import (
     AddressAssign,
+    BaselineCreate,
     ElementCreate,
     ElementQuerySchema,
     ElementUpdate,
@@ -28,6 +29,7 @@ from ea.api.schemas import (
     PackageCreate,
     PackageUpdate,
     RelationshipCreate,
+    RestoreRequest,
     SavedQueryCreate,
     SubnetCreate,
 )
@@ -37,6 +39,7 @@ from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
+from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
 from ea.services.documents import DocumentService
 from ea.services.files import FileService
@@ -55,6 +58,7 @@ def server(
     package_service: PackageService,
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
+    baseline_service: BaselineService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -65,6 +69,7 @@ def server(
         lambda: package_service,
         lambda: saved_query_service,
         lambda: AuditService(audit_log),
+        lambda: baseline_service,
     )
 
 
@@ -77,6 +82,7 @@ def server_without_an_index(
     package_service: PackageService,
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
+    baseline_service: BaselineService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -87,6 +93,7 @@ def server_without_an_index(
         lambda: package_service,
         lambda: saved_query_service,
         lambda: AuditService(audit_log),
+        lambda: baseline_service,
     )
 
 
@@ -150,6 +157,95 @@ class TestTheAuditTools:
 
 
 @pytest.mark.asyncio
+class TestTheBaselineTools:
+    async def test_restoring_is_a_dry_run_until_the_agent_says_otherwise(
+        self, server: MCPServer[Any]
+    ) -> None:
+        gone = await an_element(server, "node", "gone")
+        baseline = await call(server, "create_baseline", name="v1")
+        await call(server, "delete_element", element_id=gone["id"])
+
+        planned = await call(server, "restore_baseline", baseline_id=baseline["id"])
+        with pytest.raises(ToolError):
+            await server.call_tool("get_element", {"element_id": gone["id"]})
+        applied = await call(
+            server,
+            "restore_baseline",
+            baseline_id=baseline["id"],
+            dry_run=False,
+            expected_digest=planned["digest"],
+        )
+        back = await call(server, "get_element", element_id=gone["id"])
+
+        assert planned["applied"] is False and planned["plan"]["elements_to_create"] == 1
+        assert applied["applied"] is True
+        assert back["name"] == "gone"
+
+    async def test_applying_without_the_plan_that_was_read_writes_nothing(
+        self, server: MCPServer[Any]
+    ) -> None:
+        gone = await an_element(server, "node", "gone")
+        baseline = await call(server, "create_baseline", name="v1")
+        await call(server, "delete_element", element_id=gone["id"])
+        planned = await call(server, "restore_baseline", baseline_id=baseline["id"])
+
+        with pytest.raises(ToolError, match="expected_digest"):
+            await server.call_tool(
+                "restore_baseline", {"baseline_id": baseline["id"], "dry_run": False}
+            )
+        await an_element(server, "node", "late")
+        with pytest.raises(ToolError, match="read the plan again"):
+            await server.call_tool(
+                "restore_baseline",
+                {
+                    "baseline_id": baseline["id"],
+                    "dry_run": False,
+                    "expected_digest": planned["digest"],
+                },
+            )
+        with pytest.raises(ToolError):
+            await server.call_tool("get_element", {"element_id": gone["id"]})
+
+    async def test_the_destructive_tool_says_so_to_the_client(self, server: MCPServer[Any]) -> None:
+        tools = {t.name: t for t in await server.list_tools()}
+
+        restore = tools["restore_baseline"]
+        assert restore.annotations is not None and restore.annotations.destructive_hint is True
+        assert restore.annotations.read_only_hint is False
+        assert "dry_run" in (restore.description or "")
+        for name in ("list_baselines", "diff_baselines"):
+            assert tools[name].annotations is not None
+            assert tools[name].annotations.read_only_hint is True  # type: ignore[union-attr]
+        create = tools["create_baseline"].annotations
+        assert create is not None and create.read_only_hint is False
+        assert create.destructive_hint is False
+
+    async def test_listing_and_diffing(self, server: MCPServer[Any]) -> None:
+        baseline = await call(server, "create_baseline", name="v1")
+        await an_element(server, "node", "new")
+
+        listed = await call(server, "list_baselines")
+        diff = await call(server, "diff_baselines", baseline_id=baseline["id"])
+
+        assert [b["name"] for b in listed["result"]] == ["v1"]
+        assert [e["label"] for e in diff["elements_added"]] == ["new"]
+
+    async def test_a_reader_may_read_and_not_write(self, server: MCPServer[Any]) -> None:
+        baseline = await call(server, "create_baseline", name="v1")
+
+        with acting_as(a_reader()):
+            assert (await server.call_tool("list_baselines", {})).is_error is False
+            with pytest.raises(ToolError):
+                await server.call_tool("create_baseline", {"name": "x"})
+            with pytest.raises(ToolError):
+                await server.call_tool("restore_baseline", {"baseline_id": baseline["id"]})
+
+    async def test_the_instructions_make_a_dry_run_the_first_step(self) -> None:
+        for phrase in ("create_baseline", "diff_baselines", "dry_run", "expected_digest"):
+            assert phrase in INSTRUCTIONS, phrase
+
+
+@pytest.mark.asyncio
 class TestTheToolset:
     async def test_it_exposes_the_whole_service_and_nothing_else(
         self, server: MCPServer[Any]
@@ -204,6 +300,10 @@ class TestTheToolset:
             "delete_saved_query",
             "list_audit_events",
             "get_element_history",
+            "list_baselines",
+            "create_baseline",
+            "diff_baselines",
+            "restore_baseline",
         }
 
     async def test_every_tool_says_whether_it_writes(self, server: MCPServer[Any]) -> None:
@@ -1487,6 +1587,9 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("save_query", "text", ElementQuerySchema, "text"),
             ("save_query", "properties", ElementQuerySchema, "properties"),
             ("save_query", "relations", ElementQuerySchema, "relations"),
+            ("create_baseline", "name", BaselineCreate, "name"),
+            ("create_baseline", "description", BaselineCreate, "description"),
+            ("restore_baseline", "expected_digest", RestoreRequest, "expected_digest"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
@@ -1526,6 +1629,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("list_audit_events", "limit", "/audit", "limit"),
             ("get_element_history", "limit", "/elements/{element_id}/history", "limit"),
             ("get_element_history", "cursor", "/elements/{element_id}/history", "cursor"),
+            ("diff_baselines", "against", "/baselines/{baseline_id}/diff", "against"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
