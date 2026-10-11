@@ -506,12 +506,18 @@ files-reconcile: | $(VENV_STAMP) ## Rapproche le catalogue des fichiers du conte
 # est exigé, comme pour graph-import et pg-restore. Le nom doit être unique.
 # Un doublon (`409`) n'écrit rien. Sa rétention : docs/audit-retention.md.
 BASELINE_NAME ?= Avant mise en service $(shell date +%Y-%m-%d)
+# Le nom et la description sont des DONNÉES : ils passent par l'environnement
+# (`$(value …)` les prend sans les développer), jamais recopiés dans la ligne de
+# commande que le shell relit — un guillemet, un `$` ou un point-virgule y serait
+# du code.
+baseline-capture: export BASELINE_NAME_IN := $(or $(value NAME),$(BASELINE_NAME))
+baseline-capture: export BASELINE_DESCRIPTION_IN := $(value DESCRIPTION)
 baseline-capture: | $(VENV_STAMP) ## Capture une baseline du modèle (CONFIRM=yes ; NAME='…' DESCRIPTION='…' facultatifs)
 	@printf "$(RED)Cible : $(POSTGRES_HOST)/$(POSTGRES_DB), la base PARTAGÉE.$(NC)\n"
 	@test "$(CONFIRM)" = "yes" || { \
-		printf "$(RED)Écrit une baseline dans la base PARTAGÉE (nom : %s).$(NC)\n" "$(or $(NAME),$(BASELINE_NAME))"; \
+		printf "$(RED)Écrit une baseline dans la base PARTAGÉE (nom : %s).$(NC)\n" "$$BASELINE_NAME_IN"; \
 		printf "Relance avec : make baseline-capture CONFIRM=yes [NAME='…'] [DESCRIPTION='…']\n"; exit 1; }
-	cd $(BACKEND) && uv run python -m ea.baseline_capture --name "$(or $(NAME),$(BASELINE_NAME))" --description "$(DESCRIPTION)"
+	cd $(BACKEND) && uv run python -m ea.baseline_capture --name "$$BASELINE_NAME_IN" --description "$$BASELINE_DESCRIPTION_IN"
 
 ## --- Contrat front/back ---------------------------------------------------
 #
