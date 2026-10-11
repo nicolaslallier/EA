@@ -93,4 +93,11 @@ describe('ElementDetail', () => {
 
     expect(screen.getByText('Rangé dans un paquet')).toBeInTheDocument()
   })
+
+  it('carries the approval banner of the element it is given', async () => {
+    await show(anElement({ approval_state: 'in_review', allowed_transitions: ['approve'] }))
+
+    expect(screen.getByRole('region', { name: "État d'approbation" })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approuver' })).toBeInTheDocument()
+  })
 })
