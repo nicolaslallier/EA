@@ -330,3 +330,22 @@ def test_accepting_a_link_refuses_a_long_identifier_and_keeps_the_matrix() -> No
 
     ok = ExchangeRelationship("r", RelationshipType.FLOW, "a", "b", name=" n ")
     assert accept_link(ok, ElementType.NODE, ElementType.NODE, same_element=False).name == "n"
+
+
+def test_a_csv_type_is_accepted_in_both_spellings() -> None:
+    from ea.domain.exchange import lookup_element_type, lookup_relationship_type
+
+    assert lookup_element_type("BusinessActor") is ElementType.BUSINESS_ACTOR
+    assert lookup_element_type("business_actor") is ElementType.BUSINESS_ACTOR
+    assert lookup_element_type("AndJunction") is None
+    assert lookup_element_type("junction") is None  # a connector cannot be stored
+    assert lookup_relationship_type("CompositionRelationship") is RelationshipType.COMPOSITION
+    assert lookup_relationship_type("Composition") is RelationshipType.COMPOSITION
+    assert lookup_relationship_type("composition") is RelationshipType.COMPOSITION
+    assert lookup_relationship_type("Telepathy") is None
+
+
+def test_the_three_files_are_named_in_a_fixed_order() -> None:
+    from ea.domain.exchange import CSV_FILES
+
+    assert CSV_FILES == ("elements.csv", "relations.csv", "properties.csv")

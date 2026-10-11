@@ -51,6 +51,7 @@ _NOT_NCNAME = re.compile(r"[^A-Za-z0-9_.-]")
 
 class ExchangeFormat(StrEnum):
     ARCHIMATE_XML = "archimate-xml"
+    CSV = "csv"
 
 
 class ScopeKind(StrEnum):
@@ -74,6 +75,8 @@ class ExportRequest:
     format: ExchangeFormat = ExchangeFormat.ARCHIMATE_XML
     scope: ExportScope = field(default_factory=ExportScope)
     with_views: bool = True
+    #: CSV only: prefix with `'` a cell a spreadsheet would run as a formula (docs/adr/0051).
+    safe_cells: bool = True
 
 
 # --- Names ---------------------------------------------------------------
@@ -102,6 +105,40 @@ def element_type_of(name: str) -> ElementType | None:
 
 def relationship_type_of(name: str) -> RelationshipType | None:
     return _RELATIONSHIPS_BY_NAME.get(name)
+
+
+# --- The three CSV files ---------------------------------------------------
+
+ELEMENTS_FILE: Final = "elements.csv"
+RELATIONS_FILE: Final = "relations.csv"
+PROPERTIES_FILE: Final = "properties.csv"
+CSV_FILES: Final = (ELEMENTS_FILE, RELATIONS_FILE, PROPERTIES_FILE)
+
+_RELATIONSHIP_SUFFIX: Final = "Relationship"
+
+
+def lookup_element_type(raw: str) -> ElementType | None:
+    """`BusinessActor` or `business_actor` — Archi writes the first, people the second."""
+    found = _ELEMENTS_BY_NAME.get(raw.strip())
+    if found is not None:
+        return found
+    try:
+        candidate = ElementType(raw.strip())
+    except ValueError:
+        return None
+    return None if candidate.is_connector else candidate
+
+
+def lookup_relationship_type(raw: str) -> RelationshipType | None:
+    """`CompositionRelationship`, `Composition` or `composition`."""
+    name = raw.strip().removesuffix(_RELATIONSHIP_SUFFIX)
+    found = _RELATIONSHIPS_BY_NAME.get(name)
+    if found is not None:
+        return found
+    try:
+        return RelationshipType(name)
+    except ValueError:
+        return None
 
 
 # --- Identifiers ---------------------------------------------------------
@@ -373,6 +410,8 @@ class ImportOptions:
     dry_run: bool = True
     on_conflict: ConflictPolicy = ConflictPolicy.REUSE
     strict: bool = False
+    #: CSV only: give back a cell the export had prefixed with `'` (docs/adr/0051).
+    safe_cells: bool = True
 
 
 def digest_of(*parts: bytes) -> str:
