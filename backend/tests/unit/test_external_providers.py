@@ -528,6 +528,26 @@ class TestOpeningAnIssue:
         with pytest.raises(ExternalWriteFailedError, match="check"):
             await provider.create_issue("acme/billing", self.DRAFT)
 
+    async def test_a_provider_not_declared_writable_refuses_before_any_request(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(201, json={"number": 1})
+
+        readonly = GithubIssues(
+            "ro",
+            web_url="https://github.test",
+            allow=("acme/billing",),
+            writable=False,
+            egress=egress(handler, "https://api.github.test"),
+        )
+
+        with pytest.raises(ExternalWriteFailedError, match="writable"):
+            await readonly.create_issue("acme/billing", self.DRAFT)
+
+        assert seen == []
+
     async def test_a_kind_without_a_writer_says_so(self) -> None:
         with pytest.raises(ExternalWriteFailedError):
             await jira(lambda r: httpx.Response(201)).create_issue("PROJ", self.DRAFT)

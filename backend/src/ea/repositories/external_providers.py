@@ -150,6 +150,9 @@ class _Provider:
         if response.status != 200:
             raise self._unavailable(f"status {response.status}", status=response.status)
 
+    def allows(self, scope: str) -> bool:
+        return scope in self._allow
+
     def _scope(self, kind_scope: str, what: str) -> None:
         """Refuse an object outside the allow-list before any request."""
         if kind_scope not in self._allow:
@@ -197,6 +200,9 @@ class GithubIssues(_Provider):
         self._expect_ok(await self._ask("/rate_limit"))
 
     async def create_issue(self, scope: str, draft: IssueDraft) -> str:
+        if self._writable is not True:  # defence in depth: the service's gate comes first
+            msg = "this target is not writable"
+            raise ExternalWriteFailedError(msg)
         self._scope(scope, "that repository")
         try:
             response = await self._egress.post(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import logging
@@ -55,9 +56,12 @@ from ea.domain.errors import (
     DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
+    DuplicateExternalReferenceError,
     DuplicatePackageError,
     DuplicateSavedQueryError,
     ElementNotFoundError,
+    ExternalBusyError,
+    ExternalRefusedError,
     ImportInProgressError,
     InvalidQueryError,
     NotAuthenticatedError,
@@ -78,6 +82,14 @@ from ea.domain.exchange import (
     ExportScope,
     PackageNode,
     identifier_of,
+)
+from ea.domain.external import (
+    RESOLVED_KINDS,
+    ExternalKind,
+    ExternalReference,
+    ExternalSnapshot,
+    ExternalStatus,
+    IssueDraft,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
@@ -110,7 +122,9 @@ from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as, current_caller
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.exchange_admission import Admission
 from ea.services.exchanges import ExchangeService
+from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -2076,3 +2090,176 @@ def file_service(
 ) -> FileService:
     """The bucket and the catalogue beside it, on one frozen clock."""
     return FileService(files_store, metadata=files_metadata, clock=lambda: FIXED_NOW)
+
+
+class InMemoryExternalReferences:
+    """A dictionary pretending to be the `external_references` table.
+
+    It reproduces the one rule the table enforces with a constraint — an element cites an
+    external object once per target — so a service test sees the same refusal a real insert
+    gets. It does not cascade on element deletion (the foreign key does that:
+    `tests/integration/test_external_store.py`).
+    """
+
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        self.rows: dict[UUID, ExternalReference] = {}
+
+    async def add(
+        self, reference: ExternalReference, *, audit: AuditOf[ExternalReference]
+    ) -> ExternalReference:
+        taken = any(
+            row.element_id == reference.element_id
+            and row.target == reference.target
+            and row.external_id == reference.external_id
+            for row in self.rows.values()
+        )
+        if taken:
+            raise DuplicateExternalReferenceError(f"{reference.external_id} is already cited")
+        self.rows[reference.id] = reference
+        self.audit_log.append(events_for(audit, reference))
+        return reference
+
+    async def list_for(self, element_id: UUID) -> tuple[ExternalReference, ...]:
+        return tuple(
+            sorted(
+                (row for row in self.rows.values() if row.element_id == element_id),
+                key=lambda row: (row.created_at, str(row.id)),
+            )
+        )
+
+    async def list_stale(self, *, before: datetime, limit: int) -> tuple[ExternalReference, ...]:
+        old = [
+            row
+            for row in self.rows.values()
+            if row.kind in RESOLVED_KINDS and (row.synced_at is None or row.synced_at < before)
+        ]
+        old.sort(key=lambda row: (row.synced_at or datetime.min.replace(tzinfo=UTC), str(row.id)))
+        return tuple(old[:limit])
+
+    async def get(self, reference_id: UUID) -> ExternalReference | None:
+        return self.rows.get(reference_id)
+
+    async def delete(self, reference_id: UUID, *, audit: AuditOf[ExternalReference]) -> bool:
+        row = self.rows.pop(reference_id, None)
+        if row is None:
+            return False
+        self.audit_log.append(events_for(audit, row))
+        return True
+
+    async def update_snapshot(
+        self,
+        reference_id: UUID,
+        snapshot: ExternalSnapshot,
+        *,
+        now: datetime,
+        audit: AuditOf[ExternalReference],
+    ) -> ExternalReference | None:
+        row = self.rows.get(reference_id)
+        if row is None:
+            return None
+        self.rows[reference_id] = row.with_snapshot(snapshot, now=now)
+        self.audit_log.append(events_for(audit, row))
+        return self.rows[reference_id]
+
+
+class FakeExternalSystem:
+    """A provider that answers from a dictionary and remembers what it was asked.
+
+    `calls` is the point: a test about « no outbound call » asserts it is empty. `failure`,
+    when set, is raised by every `resolve` — an unreachable provider. `gate`, when set, holds
+    every `resolve` until it is released — a slow one.
+    """
+
+    def __init__(
+        self,
+        name: str = "main",
+        *,
+        kind: ExternalKind = ExternalKind.GITHUB_ISSUE,
+        writable: bool = True,
+    ) -> None:
+        self._name = name
+        self._kind = kind
+        self._writable = writable
+        self.snapshots: dict[str, ExternalSnapshot] = {
+            "acme/billing#12": ExternalSnapshot("Fix invoice rounding", ExternalStatus.OPEN),
+            "acme/billing#13": ExternalSnapshot("Another one", ExternalStatus.OPEN),
+        }
+        self.calls: list[str] = []
+        self.failure: Exception | None = None
+        self.gate: asyncio.Event | None = None
+        self.created: list[tuple[str, str, str]] = []
+        self.create_attempts = 0
+        self.write_failure: Exception | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def kind(self) -> ExternalKind:
+        return self._kind
+
+    @property
+    def web_url(self) -> str:
+        return "https://github.test"
+
+    @property
+    def writable(self) -> bool:
+        return self._writable
+
+    def allows(self, scope: str) -> bool:
+        return scope == "acme/billing"
+
+    async def resolve(self, external_id: str) -> ExternalSnapshot:
+        self.calls.append(external_id)
+        if self.gate is not None:
+            await self.gate.wait()
+        if self.failure is not None:
+            raise self.failure
+        try:
+            return self.snapshots[external_id]
+        except KeyError:
+            raise ExternalRefusedError(f"{external_id} was not found") from None
+
+    async def probe(self) -> None:
+        return None
+
+    async def create_issue(self, scope: str, draft: IssueDraft) -> str:
+        self.create_attempts += 1
+        if self.write_failure is not None:
+            raise self.write_failure
+        self.created.append((scope, draft.title, draft.body))
+        return f"{scope}#{100 + len(self.created)}"
+
+
+@pytest.fixture
+def external_references(audit_log: InMemoryAuditLog) -> InMemoryExternalReferences:
+    return InMemoryExternalReferences(audit_log)
+
+
+@pytest.fixture
+def external_system() -> FakeExternalSystem:
+    return FakeExternalSystem()
+
+
+@pytest.fixture
+def external_service(
+    external_references: InMemoryExternalReferences,
+    external_system: FakeExternalSystem,
+    service: ArchitectureService,
+) -> ExternalReferenceService:
+    """One active GitHub target `main`, one declared-but-inactive Jira target, one place each."""
+    return ExternalReferenceService(
+        external_references,
+        service,
+        {"main": external_system},
+        inactive={"offline": ExternalKind.JIRA_ISSUE},
+        admission=Admission(
+            4,
+            per_caller=1,
+            kind="external",
+            refusal=lambda: ExternalBusyError("calls to third parties are all in flight"),
+        ),
+        clock=lambda: FIXED_NOW,
+    )

@@ -425,3 +425,27 @@ class IssueDraft:
                 f"a ticket text is at most {MAX_ISSUE_BODY_LENGTH} characters"
             )
         return cls(title=cleaned, body=text)
+
+
+def clean_scope(kind: ExternalKind, scope: str) -> str:
+    """The scope a ticket is opened in, in the spelling an allow-list compares in."""
+    found = scope.strip().lower()
+    if (
+        kind is ExternalKind.GITHUB_ISSUE
+        and re.fullmatch(GITHUB_REPO_PATTERN, found)
+        and _repo_is_sane(found)
+    ):
+        return found
+    raise InvalidExternalReferenceError("a repository is written owner/repo")
+
+
+@dataclass(frozen=True, slots=True)
+class IssuePlan:
+    """What opening a ticket does (``dry_run``) or did: where, with which words, and the link."""
+
+    dry_run: bool
+    target: str
+    scope: str
+    title: str
+    body: str
+    view: ExternalView | None

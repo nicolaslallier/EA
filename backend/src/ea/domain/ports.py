@@ -973,6 +973,10 @@ class ExternalSystem(Protocol):
     @property
     def writable(self) -> bool: ...
 
+    def allows(self, scope: str) -> bool:
+        """Whether the target may read — and open tickets in — this scope (a repository...)."""
+        ...
+
     async def resolve(self, external_id: str) -> ExternalSnapshot: ...
 
     async def probe(self) -> None:

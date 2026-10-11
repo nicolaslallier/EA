@@ -82,6 +82,12 @@ class ExternalTargetSettings(BaseModel):
             raise ValueError(msg)
         return value
 
+    @field_validator("writable", mode="before")
+    @classmethod
+    def _writable_only_when_really_true(cls, value: object) -> bool:
+        """Fail closed: a string, a number or anything else that is not `true` is read-only."""
+        return value is True
+
     @field_validator("ports", mode="after")
     @classmethod
     def _ports_are_ports(cls, value: list[int]) -> list[int]:

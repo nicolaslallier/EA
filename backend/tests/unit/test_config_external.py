@@ -141,6 +141,18 @@ class TestWhatCannotBeDeclared:
         with pytest.raises(ValueError, match="writable"):
             settings({"jira": jira}, {"jira": "t"})
 
+    @pytest.mark.parametrize(
+        "value", ["false", "False", "", "yes", "1", "true", 0, 1, None, "oui", [], {}]
+    )
+    def test_anything_but_a_real_true_leaves_the_target_read_only(self, value: object) -> None:
+        config = settings({"main": github(writable=value)})
+
+        assert config.external_targets["main"].writable is False
+
+    def test_a_missing_flag_is_read_only_and_a_real_true_is_writable(self) -> None:
+        assert settings().external_targets["main"].writable is False
+        assert settings({"main": github(writable=True)}).external_targets["main"].writable is True
+
     def test_a_url_target_does_not_exist_a_link_has_no_connector(self) -> None:
         with pytest.raises(ValueError):
             settings({"main": github(kind="url")})
