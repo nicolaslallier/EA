@@ -68,6 +68,22 @@ d'un « doublon »).
 11. **Trace** : une ligne `action=quality_run` avec `duration_ms` et le nombre de
    constats ; jamais de valeur de propriété.
 
+12. **Le rapprochement des doublons a un budget.** Au plus 50 000 comparaisons floues par
+   exécution (`MAX_DUPLICATE_COMPARISONS`), sur un préfixe de 64 caractères du nom normalisé ;
+   deux noms normalisés égaux ne coûtent rien. Le budget est un compte, pas un délai : le
+   domaine reste pur et le résultat reproductible. Épuisé, la règle s'arrête et le rapport porte
+   `partial: true` (API, outil MCP, bandeau du SPA) : un résultat court ne prouve pas l'absence
+   de doublons. Mesuré avant : 5 000 noms de 20 caractères en 35 s, 1 500 anagrammes de 200
+   caractères en 78 s.
+13. **Les lectures sont bornées dans la requête** (catalogue : `LIMIT` plafond + 1 ; liens :
+   50 000 au plus pour une exécution, 10 000 pour la matrice), jamais après chargement.
+
+## Limites connues
+
+- Faux positifs : « v1 » et « v2 » se ressemblent assez pour être signalés ; le seuil est le seul
+  remède, il n'y a pas de liste d'exceptions.
+- Une faute sur la première lettre d'un nom échappe au rapprochement (blocs par type et initiale).
+
 ## Alternatives envisagées et écartées
 
 | Option | Pour | Contre | Verdict |

@@ -58,11 +58,23 @@ de graphiques pour une grille de rectangles ajouterait une dépendance
    la main sur un module de géométrie pur (`lib/heatmapLayout.ts`), comme le
    voisinage (`adr/0010`). Un diagramme à barres n'est pas fourni : un tableau
    trié suffit.
-6. **Garde-fous** : un délai (`statement_timeout`, 5 s, local à la transaction)
-   borne une requête coûteuse ; un plafond de 5 000 groupes bruts coupe un cardinal
-   absurde en le journalisant. Le dépassement du délai n'est pas traduit en erreur
-   de domaine (aucun motif de traduction par message n'existe ici) : il sort en
-   `internal_error` 500, la trace dans les logs.
+6. **Garde-fous** : un délai (`statement_timeout`, 5 s, local à la transaction) borne une
+   requête coûteuse ; son dépassement (SQLSTATE 57014) devient une erreur de domaine, 503
+   `analysis_timeout`. Plus de 5 000 groupes distincts sont refusés (422 `scope_too_large`),
+   jamais coupés : des sommes sur une partie se liraient comme le tout. Un nombre est lisible
+   jusqu'à 30 chiffres de chaque côté de la virgule et 64 caractères bruts, le même motif en SQL
+   et en Python : un `9` répété 400 fois ne devient ni `inf` ni un dépassement de `numeric`.
+   Un périmètre (paquet, requête) au-delà de 5 000 éléments est refusé de la même façon,
+   à un seul endroit (`AnalysisService._scope`), pour la matrice, les contrôles et les agrégats.
+
+## Limites connues
+
+- La carte de chaleur est un SVG : les cases sont des liens et portent un `<title>`, mais la
+  navigation au clavier d'une grille de rectangles reste à faire.
+- Une case dont la dimension est `property:<clé>` ne descend pas vers le catalogue (il ne filtre
+  que sur la couche et le type).
+- `lifecycle` et `risk` sont comparés par casse et accents repliés ; une graphie hors de la liste
+  est comptée `__invalid__`.
 
 ## Alternatives envisagées et écartées
 
