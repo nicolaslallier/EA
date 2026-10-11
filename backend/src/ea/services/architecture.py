@@ -32,6 +32,7 @@ from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.model import Element, Relationship, reject_nul
 from ea.domain.ports import ElementChange, EndsReview
+from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_approver, require_caller, require_editor
 from ea.services.refusals import logged_refusal
@@ -126,7 +127,9 @@ class ArchitectureService:
         properties: Mapping[str, str] | None = None,
     ) -> Element:
         require_editor()
-        properties = validate_ipam_properties(element_type, properties)
+        properties = validate_lifespan_properties(
+            validate_ipam_properties(element_type, properties)
+        )
         element = Element.create(
             element_type=element_type,
             name=name,
@@ -192,7 +195,9 @@ class ArchitectureService:
         caller = require_editor()
         # Only to refuse a missing element and to know its (immutable) type.
         current = await self.get_element(element_id)
-        properties = validate_ipam_properties(current.element_type, properties)
+        properties = validate_lifespan_properties(
+            validate_ipam_properties(current.element_type, properties)
+        )
 
         def patch(stored: Element) -> Element:
             """Pure; the repository applies it to the row it holds under lock.
@@ -252,6 +257,10 @@ class ArchitectureService:
         def patch(stored: Element) -> Element:
             """Pure; applied to the row under lock. Returns `stored` itself if all is filled."""
             fill = {k: v for k, v in filling.items() if not stored.properties.get(k)}
+            if fill:
+                # Judged on the row under lock, and stored in its canonical spelling.
+                merged = validate_lifespan_properties({**stored.properties, **fill}) or {}
+                fill = {k: merged[k] for k in fill if k in merged}
             wants_description = bool(description.strip()) and not stored.description
             if not fill and not wants_description:
                 return stored
@@ -413,6 +422,7 @@ class ArchitectureService:
     ) -> Relationship:
         """Link two elements, refusing anything the metamodel or the graph forbids."""
         require_editor()
+        properties = validate_lifespan_properties(properties)
         source = await self.get_element(source_id)
         target = await self.get_element(target_id)
 

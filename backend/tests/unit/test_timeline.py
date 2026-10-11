@@ -96,7 +96,7 @@ class TestValidation:
         assert stored == {VALID_FROM: "2027-01-01", VALID_UNTIL: "2027-01-01"}
 
     def test_a_blank_date_is_removed_not_stored(self) -> None:
-        """A stored blank end (`"" >= '2027-01-01'` is false) would hide the element from dated reads."""
+        """A stored blank end would hide the element from every dated read."""
         stored = validate_lifespan_properties({VALID_FROM: "", VALID_UNTIL: "  ", "owner": "x"})
 
         assert stored == {"owner": "x"}
