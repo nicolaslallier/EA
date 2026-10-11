@@ -16,6 +16,7 @@ from ea.api.architecture import router as architecture_router
 from ea.api.audit import router as audit_router
 from ea.api.auth import Authenticated, verifier_of
 from ea.api.baselines import router as baselines_router
+from ea.api.body_limit import BODY_ENVELOPE_MARGIN, LimitingRequestBodies
 from ea.api.dependencies import (
     architecture_service_of,
     audit_service_of,
@@ -289,6 +290,7 @@ def _lifespan(
                     app.state.exchange_service = ExchangeService(
                         exchanges or PostgresExchangeRepository(app.state.db_sessions),
                         app.state.architecture_service,
+                        max_bytes=settings.exchange_max_bytes,
                     )
             # The index is a table beside the documents, so an embedding client
             # is opened only where there are documents to index: a deployment
@@ -582,7 +584,9 @@ def create_app(
                 queries, packages, architecture_service
             )
         if exchanges is not None:
-            app.state.exchange_service = ExchangeService(exchanges, architecture_service)
+            app.state.exchange_service = ExchangeService(
+                exchanges, architecture_service, max_bytes=settings.exchange_max_bytes
+            )
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
                 diagrams, architecture_service, packages=packages
@@ -598,6 +602,14 @@ def create_app(
     # unhandled failure then passes back out through CORS and the request id,
     # like every other answer. Starlette's own `Exception` handler sits outside
     # both and stays only as a last resort — see `api/errors.py`.
+    # The ceiling on an import's body is innermost of all (docs/adr/0048): its 413 is then an
+    # ordinary answer to CORS and the request id, and the disconnect it hands the route on
+    # overflow never reaches the net below as an unexpected failure.
+    app.add_middleware(
+        LimitingRequestBodies,
+        path_suffix="/exchanges/imports",
+        limit=settings.exchange_max_bytes + BODY_ENVELOPE_MARGIN,
+    )
     app.add_middleware(AnsweringUnexpectedFailures)
     app.add_middleware(
         CORSMiddleware,

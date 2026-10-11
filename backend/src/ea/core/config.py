@@ -10,6 +10,8 @@ from typing import Annotated
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from ea.domain.exchange import MAX_EXCHANGE_BYTES
+
 
 class Settings(BaseSettings):
     """Runtime configuration, populated from the environment or a local `.env`."""
@@ -99,6 +101,13 @@ class Settings(BaseSettings):
     # and end in a 504 for a write that goes through later. 0 turns it off.
     # Only the API's engine asks for it (`create_api_engine`) — docs/adr/0050.
     db_lock_timeout_ms: int = Field(default=10_000, ge=0)
+
+    # --- Exchange files (docs/adr/0048) ------------------------------------
+    # The largest exchange file an import accepts, cut while it is received. A setting
+    # because a deployment sits behind a proxy with its own ceiling; read once, at boot.
+    # The upper bound is the point at which a file is read in a thread for minutes and
+    # holds hundreds of megabytes: past it, split the file.
+    exchange_max_bytes: int = Field(default=MAX_EXCHANGE_BYTES, ge=1024, le=100 * 1024 * 1024)
 
     # --- The embedding service, behind the document search — docs/adr/0019 --
     # Ollama on the cluster, beside the graph, serving an OpenAI-compatible

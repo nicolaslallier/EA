@@ -504,6 +504,41 @@
         "title": "Body_attach_document_elements__element_id__documents_post",
         "type": "object"
       },
+      "Body_import_model_exchanges_imports_post": {
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "description": "Simulate and roll back. Writing needs `false`, said outright.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "An ArchiMate exchange file (XML).",
+            "title": "File",
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/ExchangeFormat",
+            "default": "archimate-xml"
+          },
+          "on_conflict": {
+            "$ref": "#/components/schemas/ConflictPolicy",
+            "default": "reuse"
+          },
+          "strict": {
+            "default": false,
+            "description": "If any row is refused, write nothing at all.",
+            "title": "Strict",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_model_exchanges_imports_post",
+        "type": "object"
+      },
       "Body_revise_document_documents__document_id__put": {
         "properties": {
           "file": {
@@ -565,6 +600,42 @@
           "file"
         ],
         "title": "Body_upload_file_files_post",
+        "type": "object"
+      },
+      "ConflictPolicy": {
+        "enum": [
+          "reuse",
+          "fail"
+        ],
+        "title": "ConflictPolicy",
+        "type": "string"
+      },
+      "CountsRead": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "ignored": {
+            "title": "Ignored",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "reused": {
+            "title": "Reused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "reused",
+          "rejected",
+          "ignored"
+        ],
+        "title": "CountsRead",
         "type": "object"
       },
       "DiagramCreate": {
@@ -1725,6 +1796,149 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "ImportCountsRead": {
+        "properties": {
+          "elements": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "packages": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "relationships": {
+            "$ref": "#/components/schemas/CountsRead"
+          },
+          "views": {
+            "$ref": "#/components/schemas/CountsRead"
+          }
+        },
+        "required": [
+          "elements",
+          "relationships",
+          "packages",
+          "views"
+        ],
+        "title": "ImportCountsRead",
+        "type": "object"
+      },
+      "ImportReportRead": {
+        "description": "What an import did, or would do: counts that are always exact, lines that may be cut.",
+        "properties": {
+          "applied": {
+            "description": "True only if the transaction was committed.",
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportCountsRead"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "description": "How long the import took, in milliseconds.",
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "format": {
+            "$ref": "#/components/schemas/ExchangeFormat"
+          },
+          "issue_count": {
+            "description": "Every line the import produced, kept or not.",
+            "title": "Issue Count",
+            "type": "integer"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/IssueRead"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "sha256": {
+            "description": "Digest of the received file: a confirmation re-sends it.",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when `issues` was cut at the report ceiling.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dry_run",
+          "applied",
+          "format",
+          "sha256",
+          "counts",
+          "issues",
+          "truncated",
+          "issue_count",
+          "duration_ms"
+        ],
+        "title": "ImportReportRead",
+        "type": "object"
+      },
+      "IssueRead": {
+        "description": "One line of an import report. Texts are cut and cleaned: they never carry the file.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          }
+        },
+        "required": [
+          "severity",
+          "code",
+          "message",
+          "source_id",
+          "line",
+          "path"
+        ],
+        "title": "IssueRead",
+        "type": "object"
+      },
       "Layer": {
         "description": "The layers of ArchiMate 3.2, plus the cross-layer `OTHER` grouping.",
         "enum": [
@@ -2686,6 +2900,15 @@
         },
         "title": "SavedQueryUpdate",
         "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
       },
       "SubnetCreate": {
         "additionalProperties": false,
@@ -5746,6 +5969,93 @@
           }
         ],
         "summary": "Export Model",
+        "tags": [
+          "exchanges"
+        ]
+      }
+    },
+    "/exchanges/imports": {
+      "post": {
+        "description": "Simulate (the default) or apply an exchange file; editors only, simulation included.\n\nWriting needs `dry_run=false`, said outright: a client that forgets destroys nothing.\nTo confirm, send the same file again with `dry_run=false`; the report's `sha256` says it\nis the file that was simulated. The import is idempotent (an existing element or link is\nreused), so a client whose connection was cut can send it again.\nNeither the file's name nor its declared type is read.",
+        "operationId": "import_model_exchanges_imports_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_model_exchanges_imports_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Model",
         "tags": [
           "exchanges"
         ]

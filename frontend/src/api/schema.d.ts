@@ -463,6 +463,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/exchanges/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Model
+         * @description Simulate (the default) or apply an exchange file; editors only, simulation included.
+         *
+         *     Writing needs `dry_run=false`, said outright: a client that forgets destroys nothing.
+         *     To confirm, send the same file again with `dry_run=false`; the report's `sha256` says it
+         *     is the file that was simulated. The import is idempotent (an existing element or link is
+         *     reused), so a client whose connection was cut can send it again.
+         *     Neither the file's name nor its declared type is read.
+         */
+        post: operations["import_model_exchanges_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files": {
         parameters: {
             query?: never;
@@ -1176,6 +1202,30 @@ export interface components {
              */
             file: string;
         };
+        /** Body_import_model_exchanges_imports_post */
+        Body_import_model_exchanges_imports_post: {
+            /**
+             * Dry Run
+             * @description Simulate and roll back. Writing needs `false`, said outright.
+             * @default true
+             */
+            dry_run?: boolean;
+            /**
+             * File
+             * @description An ArchiMate exchange file (XML).
+             */
+            file: string;
+            /** @default archimate-xml */
+            format?: components["schemas"]["ExchangeFormat"];
+            /** @default reuse */
+            on_conflict?: components["schemas"]["ConflictPolicy"];
+            /**
+             * Strict
+             * @description If any row is refused, write nothing at all.
+             * @default false
+             */
+            strict?: boolean;
+        };
         /** Body_revise_document_documents__document_id__put */
         Body_revise_document_documents__document_id__put: {
             /**
@@ -1216,6 +1266,22 @@ export interface components {
              * @default
              */
             title?: string;
+        };
+        /**
+         * ConflictPolicy
+         * @enum {string}
+         */
+        ConflictPolicy: "reuse" | "fail";
+        /** CountsRead */
+        CountsRead: {
+            /** Created */
+            created: number;
+            /** Ignored */
+            ignored: number;
+            /** Rejected */
+            rejected: number;
+            /** Reused */
+            reused: number;
         };
         /** DiagramCreate */
         DiagramCreate: {
@@ -1779,6 +1845,67 @@ export interface components {
              */
             status: "ok" | "degraded";
         };
+        /** ImportCountsRead */
+        ImportCountsRead: {
+            elements: components["schemas"]["CountsRead"];
+            packages: components["schemas"]["CountsRead"];
+            relationships: components["schemas"]["CountsRead"];
+            views: components["schemas"]["CountsRead"];
+        };
+        /**
+         * ImportReportRead
+         * @description What an import did, or would do: counts that are always exact, lines that may be cut.
+         */
+        ImportReportRead: {
+            /**
+             * Applied
+             * @description True only if the transaction was committed.
+             */
+            applied: boolean;
+            counts: components["schemas"]["ImportCountsRead"];
+            /** Dry Run */
+            dry_run: boolean;
+            /**
+             * Duration Ms
+             * @description How long the import took, in milliseconds.
+             */
+            duration_ms: number;
+            format: components["schemas"]["ExchangeFormat"];
+            /**
+             * Issue Count
+             * @description Every line the import produced, kept or not.
+             */
+            issue_count: number;
+            /** Issues */
+            issues: components["schemas"]["IssueRead"][];
+            /**
+             * Sha256
+             * @description Digest of the received file: a confirmation re-sends it.
+             */
+            sha256: string;
+            /**
+             * Truncated
+             * @description True when `issues` was cut at the report ceiling.
+             */
+            truncated: boolean;
+        };
+        /**
+         * IssueRead
+         * @description One line of an import report. Texts are cut and cleaned: they never carry the file.
+         */
+        IssueRead: {
+            /** Code */
+            code: string;
+            /** Line */
+            line: number | null;
+            /** Message */
+            message: string;
+            /** Path */
+            path: string | null;
+            severity: components["schemas"]["Severity"];
+            /** Source Id */
+            source_id: string | null;
+        };
         /**
          * Layer
          * @description The layers of ArchiMate 3.2, plus the cross-layer `OTHER` grouping.
@@ -2238,6 +2365,11 @@ export interface components {
             name?: string | null;
             query?: components["schemas"]["ElementQuerySchema"] | null;
         };
+        /**
+         * Severity
+         * @enum {string}
+         */
+        Severity: "error" | "warning" | "info";
         /**
          * SubnetCreate
          * @description A new subnet: a `communication_network` element carrying a prefix.
@@ -4180,6 +4312,75 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    import_model_exchanges_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_model_exchanges_imports_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportReportRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

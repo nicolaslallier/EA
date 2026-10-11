@@ -180,6 +180,11 @@ _FALLBACK: Final = (status.HTTP_400_BAD_REQUEST, "invalid_request")
 
 
 async def _handle_domain_error(_: Request, error: Exception) -> JSONResponse:
+    return domain_error_response(error)
+
+
+def domain_error_response(error: Exception) -> JSONResponse:
+    """The envelope of a domain failure: for a handler, and for a middleware that answers alone."""
     http_status, code = _STATUS.get(type(error), _FALLBACK)
     headers = (
         {"WWW-Authenticate": "Bearer"} if http_status == status.HTTP_401_UNAUTHORIZED else None

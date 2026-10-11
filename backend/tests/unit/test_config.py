@@ -263,3 +263,17 @@ def test_the_lock_timeout_of_the_application_is_ten_seconds_and_zero_turns_it_of
     assert Settings(db_lock_timeout_ms=0).db_lock_timeout_ms == 0
     with pytest.raises(ValidationError):
         Settings(db_lock_timeout_ms=-1)
+
+
+class TestExchangeCeiling:
+    def test_it_defaults_to_twenty_megabytes(self) -> None:
+        assert Settings(debug=True).exchange_max_bytes == 20 * 1024 * 1024
+
+    @pytest.mark.parametrize("value", [0, 1023, 101 * 1024 * 1024])
+    def test_a_ceiling_outside_the_bounds_is_refused_at_boot(self, value: int) -> None:
+        with pytest.raises(ValidationError):
+            Settings(debug=True, exchange_max_bytes=value)
+
+    @pytest.mark.parametrize("value", [1024, 100 * 1024 * 1024])
+    def test_the_bounds_themselves_are_accepted(self, value: int) -> None:
+        assert Settings(debug=True, exchange_max_bytes=value).exchange_max_bytes == value

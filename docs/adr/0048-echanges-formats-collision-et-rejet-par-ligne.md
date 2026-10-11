@@ -122,6 +122,40 @@ avec `strict` ; plafond de 20 Mo coupé pendant la réception.
 - Une valeur de `modifier` qui n'est pas un modificateur Exchange valide est exportée telle quelle.
 - L'export ne verrouille rien : il n'empêche pas une écriture concurrente, il l'ignore.
 
+## L'import est synchrone : délai du proxy, déconnexion, rejeu
+
+`POST /exchanges/imports` répond quand l'import est fini, sans tâche de fond. Un fichier de 50 000 lignes dure
+plusieurs minutes, au-delà du `proxy_read_timeout` de 60 s du NGINX de l'Infra : le client reçoit alors un **504**
+alors que l'import continue. C'est supportable parce que l'import est **idempotent par construction** : un élément
+de même (type, nom) est réutilisé, une relation de même (type, source, cible) aussi. Rejouer le même fichier ne
+crée aucun doublon, et le rapport du rejeu (`created: 0`, `reused: n`) dit que le premier est passé.
+
+- **Quand le client se déconnecte, l'import continue et valide.** Mesuré contre un uvicorn réel
+  (`tests/unit/test_exchange_disconnect.py`) : le client coupe la connexion pendant que le serveur lit le fichier,
+  la tâche de la requête n'est pas annulée, l'import va à son terme et sa transaction est validée. Il n'y a pas
+  de retour arrière à la déconnexion ; seule une erreur (verrou perdu, 409 rejouable) annule tout. Un client qui a
+  reçu un 504 ne sait donc pas si l'import est passé : il rejoue, ou il ouvre le journal d'audit.
+- **Estimer d'abord** : `dry_run=true`, la valeur par défaut, exécute les mêmes écritures puis annule ; sa durée
+  (`duration_ms` du rapport) est celle de l'import réel, à la contention près. C'est le chemin recommandé avant
+  d'écrire. Le rapport, lui, est borné (1 000 lignes par catégorie, comptes exacts, `issue_count`).
+- **À faire hors de ce repo** (Infra, `nginx/conf.d/ea.conf`), rien n'est créé ici : pour
+  `location = /api/exchanges/imports`, `proxy_read_timeout 600s;` et `client_max_body_size 21m;` (20 Mo de fichier
+  et l'enveloppe multipart ; la `location /api/` porte déjà `51m`, que cette ligne resserre). Aucun fichier de ce
+  dépôt ne définit `client_max_body_size` ni `proxy_read_timeout`.
+- **Le plafond d'octets est coupé pendant la réception** (`api/body_limit.py`), avant que Starlette ne mette le
+  corps multipart en tampon : un `Content-Length` annoncé trop grand est refusé sans lire un octet, un corps
+  `chunked` est compté au fil de l'eau. `EA_EXCHANGE_MAX_BYTES` (1 Kio à 100 Mo, 20 Mo par défaut) est lu une fois
+  par `Settings` ; le middleware n'est posé que sur cette route et est le plus intérieur de la pile, de sorte que
+  son 413 porte les en-têtes CORS et `X-Request-Id`.
+- **Un seul fichier est analysé à la fois** par processus, avec une file d'attente d'un (un troisième reçoit 409
+  `import_in_progress`) : un fichier de 20 Mo coûte quelques centaines de Mo pendant l'analyse. Le lecteur est
+  un flux borné en mémoire (nœuds par objet, attributs par nœud, jetons sans fin) ; l'analyse dans son thread
+  n'est pas annulable, au plus quelques secondes.
+- **Limites connues** : le catalogue entier est chargé en mémoire au début de l'import (ordre de grandeur : le
+  nombre d'éléments, quelques centaines de Mo au pire pour des centaines de milliers d'éléments) ; une adresse
+  ou un préfixe en doublon dans le fichier est refusé au plan, et si le premier porteur est ensuite refusé par la
+  base, ses suivants restent refusés (conservateur).
+
 ## Références
 
 - ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0017](0017-documents-markdown-attaches-aux-elements.md), [0031](0031-diagrammes-enregistres.md), [0033](0033-postgresql-seul-pour-le-graphe.md), [0036](0036-fichiers-dans-minio.md), [0044](0044-journal-d-audit-append-only.md), [0046](0046-approbation-et-verrouillage-des-elements.md), [0049](0049-defusedxml-et-validation-xsd.md)

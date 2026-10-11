@@ -269,6 +269,8 @@ class TestTheLog:
         (line,) = [r for r in caplog.records if getattr(r, "action", None) == "imported"]
         assert line.dry_run is False and line.rows_created == 1  # type: ignore[attr-defined]
         assert line.actor == "editor-1"  # type: ignore[attr-defined]
+        assert isinstance(line.duration_ms, int)  # type: ignore[attr-defined]
+        assert len(line.sha256) == 64  # type: ignore[attr-defined]
         assert "Secret" not in caplog.text
 
 

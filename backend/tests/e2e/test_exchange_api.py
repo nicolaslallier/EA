@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncIterator
 
 import httpx
@@ -12,7 +13,14 @@ from ea.core.config import Settings
 from ea.domain.archimate import ElementType as E
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryExchange, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    InMemoryExchange,
+    InMemoryRepository,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+)
+from tests.exchange_files import DATA, el, exchange_xml
 
 pytestmark = pytest.mark.asyncio
 
@@ -86,3 +94,288 @@ class TestAuthentication:
                 "/exchanges/export", headers={"Authorization": "Bearer reader"}
             )
             assert reader.status_code == 200
+
+
+def upload(data: bytes, **form: str) -> dict[str, object]:
+    return {"files": {"file": ("model.xml", data, "application/xml")}, "data": form}
+
+
+async def app_client(
+    service: ArchitectureService, exchange_store: InMemoryExchange, **settings: object
+) -> httpx.AsyncClient:
+    app = create_app(
+        Settings(debug=True, auth_enabled=False, **settings),  # type: ignore[arg-type]
+        architecture_service=service,
+        exchanges=exchange_store,  # type: ignore[arg-type]
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+class TestImport:
+    async def test_the_default_is_a_dry_run_that_writes_nothing(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        data = (DATA / "minimal-model.xml").read_bytes()
+
+        response = await client.post("/exchanges/imports", **upload(data))
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["dry_run"] is True and body["applied"] is False
+        assert body["counts"]["elements"] == {
+            "created": 3,
+            "reused": 0,
+            "rejected": 0,
+            "ignored": 1,
+        }
+        assert body["sha256"] == hashlib.sha256(data).hexdigest()
+        assert isinstance(body["duration_ms"], int) and body["duration_ms"] >= 0
+        assert body["issue_count"] == len(body["issues"]) and body["truncated"] is False
+        assert repository.elements == {}
+
+    async def test_dry_run_false_applies_and_the_same_file_again_creates_nothing(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        data = (DATA / "minimal-model.xml").read_bytes()
+
+        first = await client.post("/exchanges/imports", **upload(data, dry_run="false"))
+        again = await client.post("/exchanges/imports", **upload(data, dry_run="false"))
+
+        assert first.json()["applied"] is True and len(repository.elements) == 3
+        assert again.json()["counts"]["elements"]["created"] == 0
+        assert again.json()["counts"]["relationships"]["created"] == 0
+        assert len(repository.elements) == 3 and len(repository.relationships) == 2
+
+    async def test_strict_with_a_refused_row_writes_nothing_and_says_so(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        data = (DATA / "refused-relations.xml").read_bytes()
+
+        response = await client.post(
+            "/exchanges/imports", **upload(data, dry_run="false", strict="true")
+        )
+
+        body = response.json()
+        assert response.status_code == 200 and body["applied"] is False
+        assert body["issues"][-1]["code"] == "strict_refused"
+        assert repository.elements == {} and repository.relationships == {}
+
+    async def test_a_malformed_file_is_a_typed_422_without_echoing_it(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        response = await client.post("/exchanges/imports", **upload(b"<model><leaky-name>"))
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "invalid_exchange_file"
+        assert "leaky-name" not in response.text
+
+    @pytest.mark.parametrize("name", ["billion-laughs.xml", "xxe-file.xml"])
+    async def test_an_entity_bomb_or_xxe_is_a_422(
+        self, client: httpx.AsyncClient, name: str
+    ) -> None:
+        response = await client.post("/exchanges/imports", **upload((DATA / name).read_bytes()))
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "invalid_exchange_file"
+        assert "lol" not in response.text and "hostname" not in response.text
+
+    async def test_an_empty_file_is_a_422(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/exchanges/imports", **upload(b""))
+
+        assert response.status_code == 422
+
+    async def test_a_held_lock_is_a_409(
+        self, client: httpx.AsyncClient, exchange_store: InMemoryExchange
+    ) -> None:
+        exchange_store.lock_held = True
+
+        response = await client.post(
+            "/exchanges/imports", **upload(exchange_xml(el("a", "Node", "A")))
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "import_in_progress"
+
+    async def test_the_report_is_bounded_whatever_the_file_refuses(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        rows = "".join(el(f"e{i}", "Node", " ") for i in range(1_200))  # all blank names
+
+        response = await client.post("/exchanges/imports", **upload(exchange_xml(rows)))
+
+        body = response.json()
+        assert body["counts"]["elements"]["rejected"] == 1_200  # exact
+        assert len(body["issues"]) == 1_000 and body["truncated"] is True  # cut
+        assert body["issue_count"] == 1_200
+
+
+class TestAHostileMultipart:
+    """Whatever arrives, the answer is typed: never a 500, never an echo."""
+
+    async def test_no_file_at_all(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/exchanges/imports", data={"dry_run": "true"})
+
+        assert response.status_code == 422
+
+    async def test_a_field_nobody_declared(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports", **upload(exchange_xml(), on_conflict_now="overwrite")
+        )
+
+        assert response.status_code == 422
+
+    async def test_an_unknown_option_value(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports", **upload(exchange_xml(), on_conflict="overwrite")
+        )
+
+        assert response.status_code == 422
+
+    async def test_two_files_under_the_expected_name(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports",
+            files=[
+                ("file", ("a.xml", exchange_xml(), "application/xml")),
+                ("file", ("b.xml", exchange_xml(), "application/xml")),
+            ],
+        )
+
+        assert response.status_code == 422
+
+    async def test_a_second_file_under_another_name(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports",
+            files=[
+                ("file", ("a.xml", exchange_xml(), "application/xml")),
+                ("other", ("b.xml", exchange_xml(), "application/xml")),
+            ],
+        )
+
+        assert response.status_code == 422
+
+    async def test_the_file_name_is_neither_used_nor_echoed(
+        self, client: httpx.AsyncClient, repository: InMemoryRepository
+    ) -> None:
+        evil = "../../etc/passwd\r\n[ERROR] forged\x00.xml"
+
+        response = await client.post(
+            "/exchanges/imports",
+            files={"file": (evil, exchange_xml(el("a", "Node", "A")), "text/x-wrong")},
+            data={"dry_run": "false"},
+        )
+
+        assert response.status_code == 200  # the content type and the name decide nothing
+        assert "passwd" not in response.text and "forged" not in response.text
+        assert len(repository.elements) == 1
+
+    async def test_a_file_sent_as_a_plain_text_field(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/exchanges/imports", data={"file": "<model/>"})
+
+        assert response.status_code == 422
+
+    async def test_a_body_that_is_not_multipart(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/exchanges/imports", content=b"<model/>", headers={"content-type": "application/xml"}
+        )
+
+        assert response.status_code == 422
+
+
+class TestTheCeiling:
+    async def test_a_file_over_the_ceiling_is_a_413_cut_during_reception(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        async with await app_client(service, exchange_store, exchange_max_bytes=2048) as client:
+            response = await client.post(
+                "/exchanges/imports", **upload(b"<model>" + b"x" * 200_000)
+            )
+
+        assert response.status_code == 413
+        assert response.json()["error"] == "file_too_large"
+        assert "2048" in response.json()["detail"]
+
+    async def test_the_413_carries_the_request_id_and_the_cors_headers(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        async with await app_client(service, exchange_store, exchange_max_bytes=2048) as client:
+            response = await client.post(
+                "/exchanges/imports",
+                headers={"Origin": "http://localhost:5173"},
+                **upload(b"x" * 200_000),
+            )
+
+        assert response.status_code == 413
+        assert response.headers["x-request-id"]
+        assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+    async def test_a_body_sent_in_chunks_with_no_length_is_cut_too(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        async def chunks() -> AsyncIterator[bytes]:
+            yield (
+                b'--x\r\nContent-Disposition: form-data; name="file"; filename="a.xml"\r\n'
+                b"Content-Type: application/xml\r\n\r\n"
+            )
+            for _ in range(200):
+                yield b" " * 1024
+
+        async with await app_client(service, exchange_store, exchange_max_bytes=2048) as client:
+            response = await client.post(
+                "/exchanges/imports",
+                content=chunks(),
+                headers={"content-type": "multipart/form-data; boundary=x"},
+            )
+
+        assert response.status_code == 413
+
+    async def test_the_ceiling_is_the_setting_not_a_copy_of_it(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        base = exchange_xml(el("a", "Node", "A"))
+        small = base + b" " * (
+            1024 - len(base)
+        )  # exactly the smallest ceiling a deployment can set
+        async with await app_client(service, exchange_store, exchange_max_bytes=1024) as client:
+            exact = await client.post("/exchanges/imports", **upload(small))
+            over = await client.post("/exchanges/imports", **upload(small + b" "))
+
+        assert exact.status_code == 200
+        assert over.status_code == 413  # by the service's own check, whatever the envelope allows
+
+
+class TestWhoMayImport:
+    async def test_401_403_and_200(
+        self, service: ArchitectureService, exchange_store: InMemoryExchange
+    ) -> None:
+        app = create_app(
+            Settings(debug=True, auth_enabled=True),
+            architecture_service=service,
+            exchanges=exchange_store,  # type: ignore[arg-type]
+            verifier=StaticVerifier({"reader": a_reader(), "editor": an_editor()}),
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            data = exchange_xml()
+            assert (await client.post("/exchanges/imports", **upload(data))).status_code == 401
+            as_reader = await client.post(
+                "/exchanges/imports", headers={"Authorization": "Bearer reader"}, **upload(data)
+            )
+            assert as_reader.status_code == 403  # even a dry run
+            as_editor = await client.post(
+                "/exchanges/imports", headers={"Authorization": "Bearer editor"}, **upload(data)
+            )
+            assert as_editor.status_code == 200
+
+
+async def test_the_parts_the_form_accepts_are_the_ones_the_contract_declares(
+    client: httpx.AsyncClient,
+) -> None:
+    from ea.api.exchanges import IMPORT_FIELDS
+
+    schema = (await client.get("/openapi.json")).json()
+    body = schema["paths"]["/exchanges/imports"]["post"]["requestBody"]["content"][
+        "multipart/form-data"
+    ]["schema"]
+    name = body["$ref"].rsplit("/", 1)[1]
+
+    assert set(schema["components"]["schemas"][name]["properties"]) == IMPORT_FIELDS

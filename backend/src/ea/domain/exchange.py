@@ -430,6 +430,8 @@ class ImportReport:
     truncated: bool
     #: Every line the import produced, kept or not.
     issue_count: int = 0
+    #: How long the import took, so that a person can tell a simulation's cost from a minute's.
+    duration_ms: int = 0
 
 
 #: What a line of the report may show of the file: the report is read by people and by
@@ -483,6 +485,7 @@ class ReportBuilder:
         applied: bool,
         format: ExchangeFormat,  # noqa: A002
         sha256: str,
+        duration_ms: int = 0,
     ) -> ImportReport:
         counts = {
             category: Counts(**{outcome.value: n for outcome, n in by.items()})
@@ -497,6 +500,7 @@ class ReportBuilder:
             tuple(self._issues),
             truncated=len(self._issues) < self._total,
             issue_count=self._total,
+            duration_ms=duration_ms,
         )
 
 

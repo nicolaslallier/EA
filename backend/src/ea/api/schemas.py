@@ -45,6 +45,13 @@ from ea.domain.baselines import (
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.exchange import (
+    Category,
+    ExchangeFormat,
+    ImportReport,
+    Issue,
+    Severity,
+)
 from ea.domain.files import (
     MAX_FILE_DESCRIPTION_LENGTH,
     MAX_FILE_TAGS,
@@ -1388,4 +1395,82 @@ class RestoreRead(BaseModel):
                 blocked_count=len(plan.blocked),
                 blocked=named(plan.blocked),
             ),
+        )
+
+
+class IssueRead(BaseModel):
+    """One line of an import report. Texts are cut and cleaned: they never carry the file."""
+
+    severity: Severity
+    code: str
+    message: str
+    source_id: str | None
+    line: int | None
+    path: str | None
+
+    @classmethod
+    def of(cls, issue: Issue) -> IssueRead:
+        return cls(
+            severity=issue.severity,
+            code=issue.code,
+            message=issue.message,
+            source_id=issue.source_id,
+            line=issue.line,
+            path=issue.path,
+        )
+
+
+class CountsRead(BaseModel):
+    created: int
+    reused: int
+    rejected: int
+    ignored: int
+
+
+class ImportCountsRead(BaseModel):
+    elements: CountsRead
+    relationships: CountsRead
+    packages: CountsRead
+    views: CountsRead
+
+
+class ImportReportRead(BaseModel):
+    """What an import did, or would do: counts that are always exact, lines that may be cut."""
+
+    dry_run: bool
+    applied: bool = Field(description="True only if the transaction was committed.")
+    format: ExchangeFormat
+    sha256: str = Field(description="Digest of the received file: a confirmation re-sends it.")
+    counts: ImportCountsRead
+    issues: list[IssueRead]
+    truncated: bool = Field(description="True when `issues` was cut at the report ceiling.")
+    issue_count: int = Field(description="Every line the import produced, kept or not.")
+    duration_ms: int = Field(description="How long the import took, in milliseconds.")
+
+    @classmethod
+    def of(cls, report: ImportReport) -> ImportReportRead:
+        def counts(category: Category) -> CountsRead:
+            found = report.counts[category]
+            return CountsRead(
+                created=found.created,
+                reused=found.reused,
+                rejected=found.rejected,
+                ignored=found.ignored,
+            )
+
+        return cls(
+            dry_run=report.dry_run,
+            applied=report.applied,
+            format=report.format,
+            sha256=report.sha256,
+            counts=ImportCountsRead(
+                elements=counts(Category.ELEMENTS),
+                relationships=counts(Category.RELATIONSHIPS),
+                packages=counts(Category.PACKAGES),
+                views=counts(Category.VIEWS),
+            ),
+            issues=[IssueRead.of(issue) for issue in report.issues],
+            truncated=report.truncated,
+            issue_count=report.issue_count,
+            duration_ms=report.duration_ms,
         )

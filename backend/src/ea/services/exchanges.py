@@ -122,6 +122,7 @@ class ExchangeService:
         transaction opens, so a database connection is never held while parsing.
         """
         caller = require_editor()
+        started = self._monotonic()
         if content.size > self._max_bytes:
             msg = f"an exchange file is at most {self._max_bytes} bytes"
             raise ExchangeFileTooLargeError(msg)
@@ -155,6 +156,7 @@ class ExchangeService:
             applied=transaction.commit and not options.dry_run,
             format=content.format,
             sha256=content.sha256,
+            duration_ms=round((self._monotonic() - started) * 1000),
         )
         self._log_import(caller.subject, content, built)
         return built
@@ -189,6 +191,7 @@ class ExchangeService:
                 "format": report.format.value,
                 "size_bytes": content.size,
                 "sha256": report.sha256,
+                "duration_ms": report.duration_ms,
                 "actor": actor,
                 **totals,
             },
