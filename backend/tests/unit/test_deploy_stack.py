@@ -157,16 +157,17 @@ def test_the_spa_image_is_built_for_the_realm() -> None:
     assert re.search(r"^\s+VITE_AUTH_CLIENT_ID: \S", args.group(1), re.M), args.group(1)
 
 
-def test_the_deployed_api_keeps_its_files_in_the_infra_minio_on_infra_net() -> None:
-    """Inside `infra-net` MinIO is the service `minio`, in plain HTTP like `postgres`.
+def test_the_deployed_api_keeps_its_files_in_the_infra_seaweedfs_on_infra_net() -> None:
+    """Inside `infra-net` the object store is the service `s3` (SeaweedFS), in plain HTTP.
 
-    `minio.famillelallier.net` has no alias there (only Keycloak's name does),
-    so the public name would not resolve from the container. See docs/adr/0036.
+    No public name has an alias there (only Keycloak's does), so
+    `minio.famillelallier.net` would not resolve from the container.
+    See docs/adr/0036 and docs/adr/0056.
     """
     env = api_environment()
 
     assert env["EA_S3_ENABLED"] == "true"
-    assert env["EA_S3_ENDPOINT"] == "${EA_S3_ENDPOINT:-minio:9000}"
+    assert env["EA_S3_ENDPOINT"] == "${EA_S3_ENDPOINT:-s3:8333}"
     assert env["EA_S3_SECURE"] == "false"
     assert env["EA_S3_BUCKET"] == "${EA_S3_BUCKET:-ea-catalogue}"
     assert env["EA_S3_ACCESS_KEY"].startswith("${EA_S3_ACCESS_KEY:?")
