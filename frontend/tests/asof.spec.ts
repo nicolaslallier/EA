@@ -1,12 +1,28 @@
 import { render } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
+import type { Router } from 'vue-router'
 import { createMemoryHistory } from 'vue-router'
 
 import { parseAsOf, useAsOf } from '../src/lib/asof'
 import { createAppRouter } from '../src/router'
 
 const allowed = { accessToken: () => Promise.resolve('token'), signIn: () => Promise.resolve() }
+
+function mountUseAsOf(router: Router): ReturnType<typeof useAsOf> {
+  let api: ReturnType<typeof useAsOf> | undefined
+  render(
+    defineComponent({
+      setup() {
+        api = useAsOf()
+        return () => h('div')
+      },
+    }),
+    { global: { plugins: [router] } },
+  )
+  if (!api) throw new Error('the composable did not run')
+  return api
+}
 
 function aRouter() {
   return createAppRouter(createMemoryHistory(), allowed)
@@ -66,18 +82,9 @@ describe('the asof query parameter', () => {
     const router = aRouter()
     await router.push('/elements?asof=2028-01-01')
     await router.isReady()
-    let api: ReturnType<typeof useAsOf> | undefined
-    render(
-      defineComponent({
-        setup() {
-          api = useAsOf()
-          return () => h('div')
-        },
-      }),
-      { global: { plugins: [router] } },
-    )
+    const api = mountUseAsOf(router)
 
-    api?.setAsOf('')
+    api.setAsOf('')
     await new Promise((resolve) => setTimeout(resolve))
 
     expect(router.currentRoute.value.query.asof).toBeUndefined()
@@ -87,19 +94,10 @@ describe('the asof query parameter', () => {
     const router = aRouter()
     await router.push('/elements?asof=2028-01-01&element=abc')
     await router.isReady()
-    let api: ReturnType<typeof useAsOf> | undefined
-    render(
-      defineComponent({
-        setup() {
-          api = useAsOf()
-          return () => h('div')
-        },
-      }),
-      { global: { plugins: [router] } },
-    )
-    expect(api?.asOf.value).toBe('2028-01-01')
+    const api = mountUseAsOf(router)
+    expect(api.asOf.value).toBe('2028-01-01')
 
-    api?.setAsOf('2030-02-02')
+    api.setAsOf('2030-02-02')
     await new Promise((resolve) => setTimeout(resolve))
 
     expect(router.currentRoute.value.query).toEqual({ asof: '2030-02-02', element: 'abc' })
