@@ -36,7 +36,12 @@ LEVELS: Final = 5
 DIMENSION_PATTERN: Final = r"^(element_type|layer|package|property:[A-Za-z][A-Za-z0-9_]{0,62})$"
 
 _BLANKS: Final = " \u00a0\u202f"
-_NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+#: A figure of up to 30 digits either side of the point: finite as a float, exact as a PostgreSQL
+#: numeric. The same pattern is bound in SQL (`architecture_store`), so the two cannot disagree.
+NUMBER_PATTERN: Final = r"^-?[0-9]{1,30}(\.[0-9]{1,30})?$"
+#: Characters read of a raw value before it is judged: a longer one is unreadable, unread.
+MAX_NUMBER_INPUT: Final = 64
+_NUMBER = re.compile(NUMBER_PATTERN)
 
 
 class ReadingKind(StrEnum):
@@ -73,6 +78,8 @@ def read_number(raw: str) -> float | None:
     a currency sign, `1.200,50`, an exponent — is unreadable: guessing a
     spelling would turn a typo into a wrong total.
     """
+    if len(raw) > MAX_NUMBER_INPUT:
+        return None
     text = raw.translate(str.maketrans("", "", _BLANKS)).replace(",", ".")
     return float(text) if _NUMBER.fullmatch(text) else None
 

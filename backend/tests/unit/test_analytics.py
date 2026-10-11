@@ -48,6 +48,23 @@ class TestReadingANumber:
         assert read_number(raw) is None
 
 
+class TestAnAbsurdNumberIsUnreadable:
+    @pytest.mark.parametrize("raw", ["9" * 400, "9" * 31, "1." + "9" * 31, " " * 80 + "1"])
+    def test_a_number_too_long_to_be_a_figure_is_unreadable_never_infinite(self, raw: str) -> None:
+        assert read_number(raw) is None
+
+    def test_the_longest_accepted_figure_is_finite(self) -> None:
+        assert read_number("9" * 30) == float("9" * 30)
+
+    def test_it_counts_as_unreadable_in_a_sum(self) -> None:
+        dims = (Dimension.parse("layer"),)
+        elements = [node("a", cost="9" * 400), node("b", cost="5")]
+
+        result = summarise(group_elements(elements, dims, "cost"), dims, Metric.SUM, "cost")
+
+        assert (result.buckets[0].value, result.unreadable) == (5.0, 1)
+
+
 class TestReadingARank:
     def test_the_declared_order_ignores_case(self) -> None:
         assert [read_rank("risk", v) for v in ("faible", "Moyen", "ÉLEVÉ", "critique")] == [

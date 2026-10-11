@@ -42,7 +42,14 @@ from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.package import PackageRecord
 from ea.db.unit_of_work import reading, work
-from ea.domain.analytics import RAW_GROUP_CEILING, Dimension, DimensionKind, RawGroup
+from ea.domain.analytics import (
+    MAX_NUMBER_INPUT,
+    NUMBER_PATTERN,
+    RAW_GROUP_CEILING,
+    Dimension,
+    DimensionKind,
+    RawGroup,
+)
 from ea.domain.approval import ApprovalState
 from ea.domain.archimate import AccessType, ElementType, RelationshipType
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
@@ -337,7 +344,7 @@ ANALYSIS_TIMEOUT_MS: Final = 5000
 #: What `read_number` tolerates, spelt for PostgreSQL: blanks (space, U+00A0, U+202F)
 #: dropped, `,` read as `.`, then a plain decimal. Both are bound parameters.
 _BLANKS: Final = "[ \u00a0\u202f]"
-_NUMBER: Final = "^-?[0-9]+(\\.[0-9]+)?$"
+_NUMBER: Final = NUMBER_PATTERN
 
 
 def _raw_key(dimension: Dimension) -> Any:
@@ -360,7 +367,11 @@ def _number_of(key: str) -> tuple[ColumnElement[bool], ColumnElement[bool], Colu
     """
     raw = func.coalesce(_text_of(key), "")
     normalised = func.replace(func.regexp_replace(raw, _BLANKS, "", "g"), ",", ".")
-    readable = normalised.op("~", is_comparison=True)(_NUMBER)
+    # Judged on what the python reference judges: a bounded length, then a bounded figure.
+    readable = and_(
+        func.length(raw) <= MAX_NUMBER_INPUT,
+        normalised.op("~", is_comparison=True)(_NUMBER),
+    )
     present = func.btrim(raw) != ""
     number = case((readable, sql_cast(normalised, Numeric)), else_=None)
     return readable, present, number

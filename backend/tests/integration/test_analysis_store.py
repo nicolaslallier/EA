@@ -143,3 +143,22 @@ async def test_a_key_is_a_bound_parameter_never_spliced_into_the_statement(
     assert (
         await graph_repository.get_element(elements[0].id) is not None
     )  # the table is still there
+
+
+async def test_an_absurd_number_is_unreadable_in_sql_as_in_python(
+    graph_service: ArchitectureService, graph_repository: PostgresArchitectureRepository
+) -> None:
+    """Cast behind a bounded pattern: 131 072 digits must not reach `numeric`'s overflow."""
+    elements = [
+        await graph_service.create_element(
+            element_type=E.NODE, name=name, properties={"cost": cost}
+        )
+        for name, cost in (("big", "9" * 131_072), ("huge", "9" * 400), ("fine", "5"))
+    ]
+    dims = (Dimension.parse("layer"),)
+
+    from_sql = summarise(await graph_repository.grouped(dims, "cost"), dims, Metric.SUM, "cost")
+    from_python = summarise(group_elements(elements, dims, "cost"), dims, Metric.SUM, "cost")
+
+    assert from_sql == from_python
+    assert (from_sql.buckets[0].value, from_sql.unreadable) == (5.0, 2)
