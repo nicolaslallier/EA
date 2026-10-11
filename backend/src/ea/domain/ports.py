@@ -6,8 +6,8 @@ the arrow `services -> domain <- repositories` from `CLAUDE.md`, made explicit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
@@ -80,6 +80,20 @@ class EndsReview:
 
     change: Callable[[Element], Element]
     audit: Callable[[ElementChange], Sequence[AuditEvent]]
+
+    def apply(self, ends: Iterable[Element]) -> list[ElementChange]:
+        """The elements this review really changes, in id order, once each.
+
+        `ends` are the elements as read under their locks; one that `change`
+        leaves as it is (a draft, say) is not in the answer. Each change is a new
+        revision of its element. `change` raising refuses the whole link.
+        """
+        changes: list[ElementChange] = []
+        for before in sorted({e.id: e for e in ends}.values(), key=lambda e: e.id):
+            after = self.change(before)
+            if after != before:
+                changes.append(ElementChange(before, replace(after, revision=before.revision + 1)))
+        return changes
 
 
 @dataclass(frozen=True, slots=True)

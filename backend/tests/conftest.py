@@ -426,22 +426,6 @@ class InMemoryRepository:
         self.audit_log.append(events)
         return after
 
-    def _review_ends(self, end_ids: Sequence[UUID], ends: EndsReview) -> list[ElementChange]:
-        """What the repository does to the elements at the ends of a link, in its transaction."""
-        changes: list[ElementChange] = []
-        staged: dict[UUID, Element] = {}
-        for end_id in sorted(set(end_ids)):
-            if end_id not in self.elements:
-                raise ElementNotFoundError(str(end_id))
-            before = self.elements[end_id]
-            after = ends.change(before)
-            if after != before:
-                after = replace(after, revision=before.revision + 1)
-                staged[end_id] = after
-                changes.append(ElementChange(before, after))
-        self.elements.update(staged)
-        return changes
-
     def _refuse_a_taken_address(self, element: Element) -> None:
         """Stand in for the `(vrf, ip_address)` partial unique index.
 
@@ -467,6 +451,16 @@ class InMemoryRepository:
         if clash is not None:
             msg = f"{address} is already assigned to {clash.name!r} in VRF {scope!r}"
             raise AddressAlreadyAssignedError(msg)
+
+    def _review_ends(self, end_ids: Sequence[UUID], ends: EndsReview) -> list[ElementChange]:
+        """What the repository does to the elements at the ends of a link, in its transaction."""
+        missing = [i for i in end_ids if i not in self.elements]
+        if missing:
+            raise ElementNotFoundError(str(missing[0]))
+        changes = ends.apply(self.elements[i] for i in set(end_ids))
+        for change in changes:
+            self.elements[change.after.id] = change.after
+        return changes
 
     async def delete_element(
         self,

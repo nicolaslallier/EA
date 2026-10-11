@@ -478,33 +478,33 @@ async def _last_author(session: AsyncSession, element_id: UUID) -> str | None:
 async def _review_ends(
     session: AsyncSession, end_ids: Sequence[UUID], ends: EndsReview
 ) -> list[ElementChange]:
-    """Lock the elements at the ends of a link, apply the review to each, write what changed.
+    """Lock the elements at the ends of a link, review them, write what changed.
 
     Locked in id order (two writers cannot wait on each other) and with
     `FOR NO KEY UPDATE`: a link insert only needs the key of its ends. A missing
     end is the refusal an insert would have given.
     """
-    changes: list[ElementChange] = []
+    rows = {}
     for end_id in sorted(set(end_ids)):
-        row = await session.get(
+        found = await session.get(
             ElementRecord, end_id, with_for_update={"key_share": True}, populate_existing=True
         )
-        if row is None:
+        if found is None:
             msg = f"cannot link: the element {end_id} does not exist"
             raise ElementNotFoundError(msg)
-        before = element_from_row(row)
-        after = ends.change(before)
-        if after == before:
-            continue
-        after = replace(after, revision=before.revision + 1)
-        row.approval_state = after.approval_state.value
-        row.approved_by_sub = after.approved_by_sub
-        row.approved_at = after.approved_at
-        row.locked = after.locked
-        row.revision = after.revision
-        changes.append(ElementChange(before, after))
+        rows[end_id] = found
+    changes = ends.apply(element_from_row(row) for row in rows.values())
+    for change in changes:
+        _write_review(rows[change.after.id], change.after)
     await session.flush()
     return changes
+
+
+def _write_review(row: ElementRecord, after: Element) -> None:
+    """The columns a review changes — and nothing the element says about itself."""
+    wanted = element_row(after)
+    for column in ("approval_state", "locked", "approved_by_sub", "approved_at", "revision"):
+        setattr(row, column, wanted[column])
 
 
 # --------------------------------------------------------------------------
@@ -598,10 +598,7 @@ class PostgresArchitectureRepository:
                 raise ElementNotFoundError(msg)
             before = element_from_row(row)
             after = change(before, await _last_author(session, element_id))
-            row.approval_state = after.approval_state.value
-            row.locked = after.locked
-            row.approved_by_sub = after.approved_by_sub
-            row.approved_at = after.approved_at
+            _write_review(row, after)
             await session.flush()
             write_events(session, events_for(audit, ElementChange(before, after)))
         return after
