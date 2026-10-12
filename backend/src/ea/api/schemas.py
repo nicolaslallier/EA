@@ -15,7 +15,7 @@ from itertools import islice
 from typing import Annotated, Any, Final, Literal, Self, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Strict, model_validator
 
 from ea.domain.analytics import DIMENSION_PATTERN, MAX_BUCKETS, Aggregate, Metric
 from ea.domain.approval import ApprovalState, Transition, allowed_transitions
@@ -2317,7 +2317,7 @@ class ExternalIssueOpen(_Input):
     scope: IssueScope = Field(description="Where to open it, e.g. `owner/repo`.")
     title: IssueTitle
     body: IssueBody = ""
-    dry_run: bool = Field(
+    dry_run: Annotated[bool, Strict()] = Field(
         default=True,
         description="True by default: shows what would be sent and sends nothing. "
         "Pass false to open the ticket, once.",

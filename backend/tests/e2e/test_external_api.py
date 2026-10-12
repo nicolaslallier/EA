@@ -280,3 +280,19 @@ async def test_a_read_only_target_refuses_an_issue_even_with_dry_run_false(
 
     assert (response.status_code, response.json()["error"]) == (422, "unknown_external_target")
     assert readonly.create_attempts == 0
+
+
+@pytest.mark.parametrize("value", ["no", "false", "off", "n", 0, "0", None, "", [], "False"])
+async def test_dry_run_is_a_strict_boolean_over_http_so_no_odd_value_opens_a_ticket(
+    client: httpx.AsyncClient, system: FakeExternalSystem, value: object
+) -> None:
+    element = await an_element(client)
+
+    response = await client.post(
+        f"/elements/{element}/external-issues",
+        json={"target": "main", "scope": "acme/billing", "title": "t", "dry_run": value},
+        headers=auth(),
+    )
+
+    assert response.status_code == 422
+    assert system.created == []
