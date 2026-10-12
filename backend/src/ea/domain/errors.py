@@ -562,3 +562,7 @@ class ExternalLinkFailedError(DomainError):
     The message names the ticket's identifier — never its content — and says to link it by hand:
     opening it again would create a second one.
     """
+
+
+class TooManyExternalReferencesError(DomainError):
+    """An element cites as many objects as it may (a 422): remove one before adding another."""

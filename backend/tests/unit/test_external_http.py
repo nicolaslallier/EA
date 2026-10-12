@@ -118,6 +118,11 @@ class TestWhereItConnects:
             "/a#f",
             "/a\x00",
             "/" + "a" * 3000,
+            "/a/../b",
+            "/..",
+            "/a/./b",
+            "/a%2e%2e/b",
+            "/a%2fb",
         ],
     )
     async def test_a_path_that_is_not_a_plain_path_is_refused_before_anything_happens(

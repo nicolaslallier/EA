@@ -23,6 +23,7 @@ What is decided here, and nowhere else:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -39,11 +40,14 @@ from ea.domain.errors import (
     ExternalRefusedError,
     ExternalUnavailableError,
     InvalidExternalReferenceError,
+    TooManyExternalReferencesError,
     UnknownExternalTargetError,
 )
 from ea.domain.external import (
+    MAX_REFERENCES_PER_ELEMENT,
     MAX_REFRESH_BATCH,
     MAX_STALE_PAGE,
+    REFRESH_BUDGET_SECONDS,
     STALE_AFTER,
     ExternalKind,
     ExternalReference,
@@ -101,7 +105,9 @@ class ExternalReferenceService:
         admission: Admission | None = None,
         inactive: Mapping[str, ExternalKind] | None = None,
         clock: Clock = _utc_now,
+        refresh_budget_seconds: float = REFRESH_BUDGET_SECONDS,
     ) -> None:
+        self._budget = refresh_budget_seconds
         self._repository = repository
         self._architecture = architecture
         self._systems = dict(systems)
@@ -139,7 +145,9 @@ class ExternalReferenceService:
         if not 1 <= limit <= MAX_STALE_PAGE:
             msg = f"limit is between 1 and {MAX_STALE_PAGE}"
             raise ValueError(msg)
-        rows = await self._repository.list_stale(before=self._now() - STALE_AFTER, limit=limit)
+        rows = await self._repository.list_stale(
+            before=self._now() - STALE_AFTER, limit=limit, targets=frozenset(self._systems)
+        )
         return tuple(self._view(row) for row in rows)
 
     # --- resolving a target -------------------------------------------------------------
@@ -199,8 +207,12 @@ class ExternalReferenceService:
             system = self._system_for(kind, target)
             target_name = system.name
             parsed = parse_reference(kind, reference, web_base=system.web_url)
+        existing = await self._repository.list_for(element_id)
+        if len(existing) >= MAX_REFERENCES_PER_ELEMENT:
+            msg = f"an element cites at most {MAX_REFERENCES_PER_ELEMENT} objects"
+            raise TooManyExternalReferencesError(msg)
         # The duplicate is found before the provider is asked: it costs a read, not a quota.
-        for row in await self._repository.list_for(element_id):
+        for row in existing:
             if (row.target, row.external_id) == (target_name, parsed.external_id):
                 msg = "this element already cites that object"
                 raise DuplicateExternalReferenceError(msg)
@@ -267,6 +279,7 @@ class ExternalReferenceService:
         except ExternalRefusedError:
             snapshot = ExternalSnapshot(row.title, ExternalStatus.UNKNOWN)
         except ExternalUnavailableError:
+            await self._note_attempt(row)
             return ExternalView(reference=row, stale=True)
 
         def refreshed(before: ExternalReference) -> tuple[AuditEvent, ...]:
@@ -281,12 +294,24 @@ class ExternalReferenceService:
                 ),
             )
 
-        updated = await self._repository.update_snapshot(
-            row.id, snapshot, now=self._now(), audit=refreshed
-        )
+        try:
+            updated = await self._repository.update_snapshot(
+                row.id, snapshot, now=self._now(), audit=refreshed
+            )
+        except ElementLockedError:
+            await self._note_attempt(row)  # frozen by review: back of the queue, not the front
+            raise
         if updated is None:
             raise _not_found(row.id)
         return self._view(updated)
+
+    async def _note_attempt(self, row: ExternalReference) -> None:
+        """The line stays as it was, but goes to the back of the queue of stale lines."""
+
+        def nothing_to_say(_: ExternalReference) -> tuple[AuditEvent, ...]:
+            return ()
+
+        await self._repository.note_attempt(row.id, now=self._now(), audit=nothing_to_say)
 
     async def refresh_element(self, element_id: UUID) -> tuple[ExternalView, ...]:
         """Refresh up to `MAX_REFRESH_BATCH` references of an element, the oldest first.
@@ -302,23 +327,33 @@ class ExternalReferenceService:
         )[:MAX_REFRESH_BATCH]
         down: set[str] = set()
         refreshed: dict[UUID, ExternalView] = {}
-        for row in due:
-            if row.target in down:
-                refreshed[row.id] = ExternalView(reference=row, stale=True)
-                continue
-            try:
-                view = await self._refresh(row)
-            except ElementLockedError:
-                # Review froze the element: its line keeps what it had, and the batch goes on.
-                logger.info(
-                    "a reference was not refreshed: its element is under review",
-                    extra={"action": "external_refresh_blocked", "reference_id": str(row.id)},
-                )
-                refreshed[row.id] = self._view(row)
-                continue
-            if view.reference is row:
-                down.add(row.target)
-            refreshed[row.id] = view
+        try:
+            async with asyncio.timeout(self._budget):
+                for row in due:
+                    if row.target in down:
+                        refreshed[row.id] = ExternalView(reference=row, stale=True)
+                        continue
+                    try:
+                        view = await self._refresh(row)
+                    except ElementLockedError:
+                        # Review froze the element: the line keeps what it had; the batch goes on.
+                        logger.info(
+                            "a reference was not refreshed: its element is under review",
+                            extra={
+                                "action": "external_refresh_blocked",
+                                "reference_id": str(row.id),
+                            },
+                        )
+                        refreshed[row.id] = self._view(row)
+                        continue
+                    if view.reference is row:
+                        down.add(row.target)
+                    refreshed[row.id] = view
+        except TimeoutError:
+            logger.warning(
+                "a batch refresh ran out of time: the lines left keep what they had",
+                extra={"action": "external_refresh_budget", "element_id": str(element_id)},
+            )
         return tuple(
             refreshed.get(row.id) or self._view(row)
             for row in await self._repository.list_for(element_id)

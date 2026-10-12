@@ -84,6 +84,9 @@ services:
       # deploy/ea.env, deux objets JSON — jamais dans ce fichier.
       EA_EXTERNAL_TARGETS: ${EA_EXTERNAL_TARGETS:-}
       EA_EXTERNAL_TOKENS: ${EA_EXTERNAL_TOKENS:-}
+      # Un CA de plus pour un fournisseur sur site ; l'API monte déjà celui de l'Infra :
+      # /etc/ssl/certs/infra-ca.pem. Vide = le magasin du système seul (toujours vérifié).
+      EA_EXTERNAL_CA_CERT: ${EA_EXTERNAL_CA_CERT:-}
     configs:
       # La CA publique de l'Infra vient de git (deploy/infra-ca.crt), pas d'un chemin de l'hôte.
       - source: infra-ca

@@ -263,6 +263,59 @@ class TestLinking:
             await external_service.list_for_element(uuid4())
 
 
+class TestBounds:
+    async def test_an_element_cites_at_most_so_many_objects(
+        self,
+        external_service: ExternalReferenceService,
+        service: ArchitectureService,
+    ) -> None:
+        from ea.domain.errors import TooManyExternalReferencesError
+        from ea.domain.external import MAX_REFERENCES_PER_ELEMENT
+
+        element = await an_element(service)
+        for number in range(MAX_REFERENCES_PER_ELEMENT):
+            await external_service.link(
+                element, kind=ExternalKind.URL, reference=f"https://wiki.test/{number}"
+            )
+
+        with pytest.raises(TooManyExternalReferencesError):
+            await external_service.link(
+                element, kind=ExternalKind.URL, reference="https://wiki.test/one-more"
+            )
+
+    async def test_a_batch_refresh_stops_when_its_time_budget_is_spent(
+        self,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        slow = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": external_system},
+            clock=lambda: FIXED_NOW,
+            refresh_budget_seconds=0.05,
+        )
+        element = await an_element(service)
+        for number in range(1, 6):
+            await cite(external_references, element, number, age_minutes=number)
+            external_system.snapshots[f"acme/billing#{number}"] = ExternalSnapshot.of(
+                "new", ExternalStatus.OPEN
+            )
+        original = external_system.resolve
+
+        async def slowly(external_id: str) -> ExternalSnapshot:
+            await asyncio.sleep(0.03)
+            return await original(external_id)
+
+        external_system.resolve = slowly  # type: ignore[method-assign]
+
+        views = await slow.refresh_element(element)
+
+        assert 1 <= len(external_system.calls) < 5
+        assert len(views) == 5  # every line is still reported, as it stands
+
+
 class TestListing:
     async def test_listing_makes_no_outbound_call_and_flags_what_is_old(
         self,
@@ -320,6 +373,65 @@ class TestListing:
             await external_service.list_stale(limit=0)
         with pytest.raises(ValueError, match="limit"):
             await external_service.list_stale(limit=10_000)
+
+
+class TestTheQueueOfStaleLinesTurns:
+    """Lines that stay stale (provider down, element frozen) must not starve the others."""
+
+    async def test_a_hundred_lines_that_stay_stale_do_not_hide_the_ones_behind_them(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        element = await an_element(service)
+        for number in range(1, 151):
+            await cite(external_references, element, number, age_minutes=60 * 48 + (200 - number))
+            external_system.snapshots[f"acme/billing#{number}"] = ExternalSnapshot.of(
+                "new", ExternalStatus.OPEN
+            )
+        down = {f"acme/billing#{n}" for n in range(1, 101)}  # the 100 oldest, durably failing
+        original = external_system.resolve
+
+        async def resolve(external_id: str) -> ExternalSnapshot:
+            if external_id in down:
+                raise ExternalUnavailableError("down")
+            return await original(external_id)
+
+        external_system.resolve = resolve  # type: ignore[method-assign]
+        refreshed: set[str] = set()
+
+        for _ in range(3):
+            for view in await external_service.list_stale(limit=100):
+                done = await external_service.refresh(view.reference.id)
+                if not done.stale:
+                    refreshed.add(done.reference.external_id)
+
+        assert refreshed == {f"acme/billing#{n}" for n in range(101, 151)}
+
+    async def test_a_line_of_a_target_that_is_not_active_is_never_offered(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+    ) -> None:
+        element = await an_element(service)
+        await external_references.add(
+            ExternalReference.create(
+                element_id=element,
+                kind=ExternalKind.JIRA_ISSUE,
+                target="gone",
+                external_id="PROJ-1",
+                url="https://j.test/browse/PROJ-1",
+                snapshot=None,
+                created_by="e",
+                now=FIXED_NOW - timedelta(days=9),
+            ),
+            audit=(),
+        )
+
+        assert await external_service.list_stale(limit=10) == ()
 
 
 class TestRefreshing:

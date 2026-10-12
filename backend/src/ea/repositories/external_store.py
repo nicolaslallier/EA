@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from ea.db.models.architecture import ElementRecord
@@ -35,6 +35,8 @@ from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from ea.domain.audit import AuditOf
@@ -135,15 +137,18 @@ class PostgresExternalReferenceRepository:
         async with reading(self._sessions) as session:
             return tuple(_to_reference(row) for row in (await session.scalars(statement)))
 
-    async def list_stale(self, *, before: datetime, limit: int) -> tuple[ExternalReference, ...]:
-        """Never-synced first, then the oldest sync; free links are never stale."""
+    async def list_stale(
+        self, *, before: datetime, limit: int, targets: Collection[str]
+    ) -> tuple[ExternalReference, ...]:
+        """Oldest attempt (else sync) first, never-tried first; free links are never stale."""
         statement = (
             select(Row)
             .where(
                 Row.kind.in_([kind.value for kind in RESOLVED_KINDS]),
+                Row.target.in_(list(targets)),
                 (Row.synced_at.is_(None)) | (Row.synced_at < before),
             )
-            .order_by(Row.synced_at.asc().nulls_first(), Row.id)
+            .order_by(func.coalesce(Row.attempted_at, Row.synced_at).asc().nulls_first(), Row.id)
             .limit(limit)
         )
         async with reading(self._sessions) as session:
@@ -163,6 +168,19 @@ class PostgresExternalReferenceRepository:
             await session.execute(delete(Row).where(Row.id == reference_id))
             write_events(session, events)
         return True
+
+    @replayable
+    async def note_attempt(
+        self, reference_id: UUID, *, now: datetime, audit: AuditOf[ExternalReference]
+    ) -> None:
+        """A clock for the queue, not content: no review guard, no revision."""
+        async with work(self._sessions) as session:
+            row = await session.get(Row, reference_id, with_for_update=True)
+            if row is None:
+                return
+            events = events_for(audit, _to_reference(row))
+            row.attempted_at = now
+            write_events(session, events)
 
     @replayable
     async def update_snapshot(
@@ -187,5 +205,6 @@ class PostgresExternalReferenceRepository:
             row.title = snapshot.title
             row.status = snapshot.status.value
             row.synced_at = now
+            row.attempted_at = now
             write_events(session, events)
             return _to_reference(row)

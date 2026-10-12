@@ -190,10 +190,13 @@ async def test_the_stale_ones_come_oldest_first_and_only_of_a_resolved_kind(
         audit=(),
     )
 
-    stale = await store.list_stale(before=NOW - timedelta(hours=24), limit=10)
+    stale = await store.list_stale(before=NOW - timedelta(hours=24), limit=10, targets={"main"})
 
     assert [r.id for r in stale] == [never.id, old.id]  # never-synced first
-    assert len(await store.list_stale(before=NOW - timedelta(hours=24), limit=1)) == 1
+    assert (
+        len(await store.list_stale(before=NOW - timedelta(hours=24), limit=1, targets={"main"}))
+        == 1
+    )
 
 
 async def test_a_hostile_stored_row_still_reads_back(engine_at_head: AsyncEngine) -> None:
@@ -268,3 +271,27 @@ async def test_a_reopened_element_accepts_references_again_without_a_new_revisio
     await store.add(reference(element_id), audit=())
 
     assert await revision_of(engine_at_head, element_id) == before
+
+
+async def test_a_line_that_was_tried_goes_to_the_back_and_other_targets_are_not_offered(
+    engine_at_head: AsyncEngine,
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    first = await store.add(reference(element_id, 1, now=NOW - timedelta(days=9)), audit=())
+    second = await store.add(reference(element_id, 2, now=NOW - timedelta(days=8)), audit=())
+    await store.add(
+        reference(element_id, 3, target="other", now=NOW - timedelta(days=30)), audit=()
+    )
+    before = NOW - timedelta(hours=24)
+
+    assert [r.id for r in await store.list_stale(before=before, limit=10, targets={"main"})] == [
+        first.id,
+        second.id,
+    ]
+    await store.note_attempt(first.id, now=NOW, audit=lambda row: ())
+
+    assert [r.id for r in await store.list_stale(before=before, limit=10, targets={"main"})] == [
+        second.id,
+        first.id,
+    ]
+    assert await store.list_stale(before=before, limit=10, targets=set()) == ()

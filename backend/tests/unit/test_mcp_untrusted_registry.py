@@ -21,10 +21,12 @@ from ea.mcp.server import (
     UNTRUSTED_NOTICE,
     ExternalIssueAgentRead,
     ExternalReferenceAgentRead,
+    ExternalReferencesAgentRead,
 )
 
 MODELS: tuple[type[BaseModel], ...] = (
     ExternalReferenceAgentRead,
+    ExternalReferencesAgentRead,
     ExternalIssueAgentRead,
     ExternalTargetRead,
 )

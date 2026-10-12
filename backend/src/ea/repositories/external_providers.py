@@ -298,7 +298,7 @@ class ConfluencePages(_Provider):
             or not isinstance(space, str | int)
             or str(space) not in self._allow
         ):
-            msg = "that page is not in a space this target may read"
+            msg = f"{external_id} was not found on Confluence"  # not "out of scope": no oracle
             raise ExternalRefusedError(msg)
         if state == "current":
             status = ExternalStatus.OPEN

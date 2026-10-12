@@ -237,6 +237,7 @@ WRITES = {
         WriteKind.CONTENT: "approver",
         WriteKind.LINK: "ok",
         WriteKind.DOCUMENT: "no",
+        WriteKind.EXTERNAL_REFERENCE: "no",
         WriteKind.FILING: "no",
         WriteKind.RESTORE: "no",
         WriteKind.STEREOTYPES: "no",

@@ -310,8 +310,12 @@ class TestTheWireFormats:
 
         with pytest.raises(ExternalRefusedError) as raised:
             await provider.resolve("12345")  # type: ignore[attr-defined]
+        absent, _ = answering(CASES["confluence"], httpx.Response(404))
+        with pytest.raises(ExternalRefusedError) as missing:
+            await absent.resolve("12345")  # type: ignore[attr-defined]
 
         assert "secret" not in str(raised.value)
+        assert str(raised.value) == str(missing.value)  # "not in scope" does not betray existence
 
     async def test_servicenow_builds_the_query_from_the_validated_number_only(self) -> None:
         seen: list[httpx.Request] = []
