@@ -31,7 +31,9 @@ from ea.domain.errors import (
     DomainError,
     DuplicatePackageError,
     ElementNotFoundError,
+    LiveViewInSubtreeError,
     PackageAlreadyFrozenError,
+    PackageHasVersionsError,
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageNotFrozenError,
@@ -108,6 +110,8 @@ def _refusal(error: IntegrityError, name: str, *, deleting: bool = False) -> Dom
     constraint = constraint_of(error)
     if constraint == "fk_diagrams_source_package_id_packages":
         return SourceInUseError("a generated view reads this package: delete the view first")
+    if constraint == "fk_package_versions_package_id_packages":
+        return PackageHasVersionsError("a package that was ever published cannot be deleted")
     if constraint in NAME_TAKEN:
         return DuplicatePackageError(f"a package is already named {name!r} in that place")
     if constraint in REFERENCES:
@@ -133,7 +137,8 @@ async def _locked_tree(session: AsyncSession) -> dict[UUID, Package]:
 
 
 # A publication waits for the writers in flight, and stops the new ones, so the copy and the
-# freeze see the same state. Deliberate: it may wait longer for them than the API's default.
+# freeze see the same state. Deliberate: the same bound as the API's own lock wait (10 s), set
+# here so that it does not depend on how the engine was configured.
 _WAIT_FOR_WRITERS: Final = "SET LOCAL lock_timeout = '10s'"
 # A constant statement over our own table names, nothing a caller wrote.
 _LOCK_GUARDED: Final = lock_guarded("SHARE")
@@ -479,7 +484,16 @@ class PostgresPackageRepository:
         if package_id in effective_freezes(tree, await _in_force(session)):
             msg = "this package is published, or lies under a package that is: reopen it first"
             raise PackageAlreadyFrozenError(msg)
-        return _subtree(package_id, tree)
+        scope = _subtree(package_id, tree)
+        live = await session.scalar(
+            select(func.count())
+            .select_from(DiagramRecord)
+            .where(DiagramRecord.package_id.in_(scope), DiagramRecord.generation == "live")
+        )
+        if live:
+            msg = "a generated view of this subtree is live: freeze the generated view first"
+            raise LiveViewInSubtreeError(msg)
+        return scope
 
     async def preview_publication(self, package_id: UUID, *, bump: Bump) -> PublicationPreview:
         async with reading(self._sessions) as session:
@@ -498,7 +512,7 @@ class PostgresPackageRepository:
             diagrams=size.diagrams,
         )
 
-    # `audit` is called again if the write is replayed: it builds a fresh event each time.
+    # `replayable` only turns a lock timeout or a deadlock into a 409: the caller replays.
     @replayable
     async def publish(
         self,
@@ -585,7 +599,7 @@ class PostgresPackageRepository:
             write_events(session, events)
         return stored
 
-    # `audit` is called again if the write is replayed: it builds a fresh event each time.
+    # `replayable` only turns a lock timeout or a deadlock into a 409: the caller replays.
     @replayable
     async def reopen(
         self,

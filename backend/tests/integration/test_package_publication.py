@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -14,15 +15,19 @@ from ea.db.unit_of_work import work
 from ea.domain.audit import AuditAction, AuditChannel, AuditEvent, EntityKind, package_version_view
 from ea.domain.baselines import BaselineLimits
 from ea.domain.errors import (
+    BaselineInUseError,
     BaselineTooLargeError,
+    LiveViewInSubtreeError,
     PackageAlreadyFrozenError,
     PackageFrozenError,
+    PackageHasVersionsError,
     PackageNotFoundError,
     PackageNotFrozenError,
 )
 from ea.domain.package_versions import Bump, PackageVersion, publication
+from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.package_store import PostgresPackageRepository
-from tests.integration.test_package_freeze_triggers import a_package, an_element
+from tests.integration.test_package_freeze_triggers import a_diagram, a_package, an_element
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -61,7 +66,15 @@ async def publish_it(
         by_sub="approver-1",
         by="approver",
         now=now,
-        audit=lambda stored: [an_event(AuditAction.PACKAGE_PUBLISHED, package_id, stored)],
+        audit=lambda stored: [
+            an_event(AuditAction.PACKAGE_PUBLISHED, package_id, stored),
+            # Like the service: the scoped baseline's own event rides in the same transaction.
+            replace(
+                an_event(AuditAction.BASELINE_CREATED, stored.baseline_id, stored),
+                entity_kind=EntityKind.BASELINE,
+                after={"id": str(stored.baseline_id), "scope_package_id": str(package_id)},
+            ),
+        ],
     )
 
 
@@ -285,20 +298,89 @@ async def test_a_clock_that_stepped_back_still_numbers_the_versions_in_order(
     assert [v.version for v in await repo.versions(root)] == ["v1.2.0", "v1.1.0", "v1.0.0"]
 
 
-async def test_a_baseline_pre_created_under_the_predictable_name_cannot_block_a_publication(
+async def test_the_scoped_baseline_is_named_after_its_own_random_id(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """Names are unique: a name an editor can guess is a way to refuse an approver."""
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+        for guess in (f"Finance v1.0.0 [{str(root)[:8]}]", f"Finance v1.0.0 [{root}]"):
+            await connection.execute(
+                text(
+                    "INSERT INTO baselines (id, name, description, created_by_sub, created_by,"
+                    " created_at) VALUES (:id, :name, '', 'x', 'x', :at)"
+                ),
+                {"id": uuid4(), "name": guess, "at": NOW},
+            )
+    version = await publish_it(repo, root)
+    async with engine_at_head.connect() as connection:
+        name = (
+            await connection.execute(
+                text("SELECT name FROM baselines WHERE id = :b"), {"b": version.baseline_id}
+            )
+        ).scalar_one()
+    assert str(version.baseline_id) in name
+
+
+async def test_a_subtree_holding_a_live_view_cannot_be_published(
     engine_at_head: AsyncEngine, repo: PostgresPackageRepository
 ) -> None:
     async with engine_at_head.begin() as connection:
         root = await a_package(connection, "Finance", None)
+        child = await a_package(connection, "Budget", root)
+        other = await a_package(connection, "Source", None)
+        await a_diagram(connection, "drawn", child)  # by hand: no block
+        frozen = await a_diagram(connection, "frozen", child)
+        live = await a_diagram(connection, "live", child)
+        for diagram, generation in ((frozen, "frozen"), (live, "live")):
+            await connection.execute(
+                text("UPDATE diagrams SET generation = :g, source_package_id = :s WHERE id = :id"),
+                {"g": generation, "s": other, "id": diagram},
+            )
+    with pytest.raises(LiveViewInSubtreeError):
+        await repo.preview_publication(root, bump=Bump.MINOR)
+    with pytest.raises(LiveViewInSubtreeError):
+        await publish_it(repo, root)
+    async with engine_at_head.connect() as connection:
+        written = (
+            await connection.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM baselines)"
+                    " + (SELECT count(*) FROM package_versions)"
+                )
+            )
+        ).scalar_one()
+    assert written == 0
+    async with engine_at_head.begin() as connection:
         await connection.execute(
-            text(
-                "INSERT INTO baselines (id, name, description, created_by_sub, created_by,"
-                " created_at) VALUES (:id, :name, '', 'x', 'x', :at)"
-            ),
-            {"id": uuid4(), "name": f"Finance v1.0.0 [{str(root)[:8]}]", "at": NOW},
+            text("UPDATE diagrams SET generation = 'frozen' WHERE id = :id"), {"id": live}
         )
+    assert (await publish_it(repo, root)).version == "v1.0.0"
+
+
+async def test_a_package_that_was_ever_published_cannot_be_deleted(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+    await publish_it(repo, root)
+    await reopen_it(repo, root)
+    with pytest.raises(PackageHasVersionsError):
+        await repo.delete(root, into=None, audit=())
+    assert await repo.get(root) is not None
+
+
+async def test_a_baseline_that_is_the_copy_of_a_version_cannot_be_deleted(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
     version = await publish_it(repo, root)
-    assert version.version == "v1.0.0"
+    await reopen_it(repo, root)
+    baselines = PostgresBaselineRepository(async_sessionmaker(engine_at_head))
+    with pytest.raises(BaselineInUseError):
+        await baselines.delete(version.baseline_id, audit=())
+    assert await baselines.get(version.baseline_id) is not None
 
 
 async def test_a_restore_planned_before_a_publication_cannot_write_into_the_frozen_subtree(

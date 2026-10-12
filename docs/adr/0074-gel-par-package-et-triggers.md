@@ -87,7 +87,7 @@ Repris de la spec § 10 ; chaque ligne a son test. Les lignes MCP sont celles du
 | Déplacer un élément hors d'un package gelé, ou le faire entrer | Ancien et nouveau `package_id` testés | `tests/integration/test_package_freeze_triggers.py` |
 | Rouvrir sans laisser de trace | Motif obligatoire, événement, cinq colonnes ensemble, trigger append-only | `tests/integration/test_package_freeze_security.py` (`test_reopening_always_leaves…`), `tests/integration/test_package_freeze_triggers.py` |
 | Un agent MCP gèle un sous-arbre par erreur | `dry_run=true` par défaut (HTTP aujourd'hui, MCP : plan 2) | `tests/e2e/test_package_publication_api.py`, `tests/unit/test_package_publication_service.py` |
-| Publication d'un énorme sous-arbre (déni de service) | Plafonds de baseline mesurés en octets, `scope_too_large`, avant la lecture | `tests/integration/test_package_publication.py` (plafond), `tests/integration/test_baseline_scope.py` |
+| Publication d'un énorme sous-arbre (déni de service) | Plafonds de baseline mesurés en octets, `baseline_too_large`, avant la lecture | `tests/integration/test_package_publication.py` (plafond), `tests/integration/test_baseline_scope.py` |
 | Injection par `notes`, `adr`, `reason` | Bornes de `api/schemas.py`, refus du NUL, requêtes paramétrées, texte brut | `tests/integration/test_package_freeze_security.py` (`test_a_notes_text_made_of_sql_and_markup…`), `tests/unit/test_package_versions.py` |
 | Fuite dans les logs et les erreurs | Empreintes et pas de texte dans l'audit ; ni noms ni contenu dans l'erreur ou le log de refus | `tests/integration/test_package_freeze_security.py` (`test_the_audit_trail_keeps_digests…`, `test_a_refusal_never_names…`), `tests/unit/test_package_version_audit.py` |
 | Ancêtre gelé inconnu → écriture permise | Échec fermé : une erreur du trigger annule l'écriture | `tests/integration/test_package_freeze_security.py` (`test_a_trigger_that_cannot_decide…`) |
@@ -111,12 +111,24 @@ Repris de la spec § 10 ; chaque ligne a son test. Les lignes MCP sont celles du
   transaction, survit au rollback de l'écriture refusée.
 - Un import en `dry_run` qui bute sur un sous-arbre gelé laisse des événements `package.write_refused_frozen`
   **validés** (l'enregistreur a sa propre transaction) alors que rien n'a été écrit.
-- `package_versions.version` n'a pas de CHECK sur le format `vX.Y.Z` : une ligne écrite à la main hors format
-  ferait lever les lectures. La récursion de `ea_frozen_ancestor` est bornée à 64, la profondeur de domaine à 12.
+- `package_versions.version` a un CHECK (`ck_package_versions_version_format`) sur le format `vX.Y.Z`, chaque partie
+  au plus 9999 ; `next_version` refuse d'en produire une plus grande. La récursion de `ea_frozen_ancestor` est bornée à 64, la profondeur de domaine à 12.
 - Toute nouvelle table qui référence éléments, diagrammes, packages ou relations doit recevoir son trigger, ou
   être listée avec sa raison dans le test de `test_package_freeze_security.py`. Exemptées aujourd'hui :
   `external_references` (cache d'un tiers, nommé exempt par la spec), `package_versions` (append-only par ses
   triggers) ; les autres tables de la liste du test ne référencent pas le modèle ou en sont une copie.
+- Un sous-arbre qui contient une **vue générée vivante** ne se publie pas (422 `live_view_in_subtree`) : elle ne stocke
+  aucune boîte et se recalcule à chaque ouverture, une version ne pourrait pas dire ce qu'elle montre. Il faut la
+  figer (ou la supprimer) d'abord ; les vues dessinées à la main et les vues figées ne bloquent pas.
+- Un package **déjà publié une fois ne se supprime jamais** (409 `package_has_versions`) : ses versions le référencent
+  (`RESTRICT`) et la table est append-only. On déplace son contenu et on le laisse. De même la baseline d'une version
+  ne se supprime jamais (409 `baseline_in_use`).
+- La publication écrit, dans la même transaction, l'événement `package.published` (premier : son id est le
+  `publish_audit_event_id` de la version) puis un `baseline.created` pour la baseline scopée (ids et comptes).
+- Pas d'`Admission` pour la publication, contrairement à ce que disait la spec : le verrou d'arbre sérialise les
+  publications (une seule à la fois dans toute l'instance) et suffit ; une file d'attente de plus n'ajouterait rien.
+- Une restauration de baseline prend d'abord `LOCK TABLE … IN ROW EXCLUSIVE MODE` sur les neuf tables, avant son
+  instantané : elle attend une publication en cours au lieu d'écrire dans un sous-arbre gelé entre-temps.
 - Une seule décision de procédure reste ouverte : la séparation des tâches (ci-dessus).
 
 ## Références

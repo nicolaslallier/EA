@@ -234,6 +234,10 @@ def upgrade() -> None:
             "bump in ('major', 'minor', 'patch')", name=op.f("ck_package_versions_bump_known")
         ),
         sa.CheckConstraint(
+            "version ~ '^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})$'",
+            name=op.f("ck_package_versions_version_format"),
+        ),
+        sa.CheckConstraint(
             "(reopened_at is null) = (reopened_by_sub is null) "
             "and (reopened_at is null) = (reopened_by is null) "
             "and (reopened_at is null) = (reopen_reason is null) "

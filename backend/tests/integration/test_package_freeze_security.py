@@ -145,7 +145,10 @@ async def test_no_table_that_hangs_from_the_model_is_left_unguarded(
         "audit_events": "the trail itself",
         "package_versions": "append-only by its own triggers",
         "diagram_templates": "carry no element and no package",
-        "saved_queries": "carry no element and no package",
+        "saved_queries": (
+            "a published subtree holds no live view (publication refuses it), so a query edit "
+            "cannot change what it shows; a frozen view stores its boxes"
+        ),
         "file_metadata": "files of the bucket",
     }
     async with engine_at_head.connect() as connection:

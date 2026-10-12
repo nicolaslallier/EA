@@ -97,7 +97,7 @@ from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
 from ea.mcp.transport import LoopbackClientsOnly
 from ea.repositories.architecture_store import PostgresArchitectureRepository
-from ea.repositories.audit_store import PostgresAuditRepository
+from ea.repositories.audit_store import PostgresAuditRepository, to_database
 from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
@@ -123,7 +123,7 @@ from ea.services.exchange_admission import Admission
 from ea.services.exchanges import MAX_PARSES_QUEUED, ExchangeService
 from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
-from ea.services.frozen_refusals import FrozenRefusalRecorder, to_database
+from ea.services.frozen_refusals import FrozenRefusalRecorder
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService

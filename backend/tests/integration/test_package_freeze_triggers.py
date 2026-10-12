@@ -590,3 +590,18 @@ async def test_closing_a_version_sets_the_five_columns_together(
     assert sqlstate_of(raised.value) == RESTRICT
     async with engine_at_head.begin() as connection:
         await connection.execute(text(CLOSE_ALL), {"at": AT, "e": uuid4(), "id": version_id})
+
+
+@pytest.mark.parametrize(
+    "bad", ["1.0.0", "v1.0", "v01.0.0", "v1.0.10000", "v1.0.0-rc1", "v1.0.0\n"]
+)
+async def test_a_version_that_does_not_read_as_vmajor_minor_patch_is_refused(
+    engine_at_head: AsyncEngine, bad: str
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+    with pytest.raises(DBAPIError) as raised:
+        async with engine_at_head.begin() as connection:
+            await publish(connection, root, bad)
+    assert sqlstate_of(raised.value) == CHECK
+    assert "ck_package_versions_version_format" in str(raised.value)

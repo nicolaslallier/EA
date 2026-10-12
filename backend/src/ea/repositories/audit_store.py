@@ -26,7 +26,7 @@ from ea.domain.audit import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -112,6 +112,21 @@ def _matching(criteria: AuditFilter) -> list[ColumnElement[bool]]:
             )
         )
     return clauses
+
+
+def to_database(
+    sessions: async_sessionmaker[AsyncSession],
+) -> Callable[[Sequence[AuditEvent]], Awaitable[None]]:
+    """A sink that writes events in a transaction of their own (the refusal of a frozen write).
+
+    The refused write rolled back, so its trace cannot ride in its unit.
+    """
+
+    async def write(events: Sequence[AuditEvent]) -> None:
+        async with sessions.begin() as session:
+            write_events(session, events)
+
+    return write
 
 
 class PostgresAuditRepository:

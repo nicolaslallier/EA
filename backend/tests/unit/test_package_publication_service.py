@@ -34,7 +34,7 @@ async def test_the_default_is_a_dry_run_that_changes_nothing(
     assert packages.published == []
 
 
-async def test_publishing_for_real_writes_a_version_and_one_audit_event(
+async def test_publishing_for_real_writes_a_version_and_the_events_of_it_and_of_its_baseline(
     package_service: PackageService, packages: InMemoryPackages
 ) -> None:
     root = await package_service.create(name="Finance")
@@ -46,8 +46,18 @@ async def test_publishing_for_real_writes_a_version_and_one_audit_event(
     assert outcome.published is not None
     assert outcome.published.version == "v1.0.0"
     events = packages.audit_log.events[before:]
-    assert [e.action for e in events] == [AuditAction.PACKAGE_PUBLISHED]
+    assert [e.action for e in events] == [
+        AuditAction.PACKAGE_PUBLISHED,
+        AuditAction.BASELINE_CREATED,
+    ]
     assert outcome.published.publish_audit_event_id == events[0].id
+    created = events[1]
+    assert created.entity_id == outcome.published.baseline_id
+    assert created.after is not None
+    assert created.after["scope_package_id"] == str(root.package.id)
+    assert created.after["scope_path"] == "Finance"
+    assert {"id", "elements", "relationships", "boxes"} <= set(created.after)
+    assert "Première" not in repr(created.after)
     assert events[0].actor_sub == "approver-1"
     assert "Première" not in repr(events[0].after)
 

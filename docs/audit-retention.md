@@ -97,9 +97,11 @@ l'autre, ni aucune restauration.
 - Les événements `package.write_refused_frozen` sont **bornés** à la source par
   l'enregistreur (30 par minute et par `sub`, compteur en mémoire du processus),
   mais **jamais purgés**. Ils suivent la procédure du journal ci-dessus.
-- Une baseline désignée par une version ne peut pas être supprimée : la ligne de
-  version la référence. Supprimer une telle baseline exige de rouvrir puis de
-  traiter la version, jamais de contourner la contrainte.
+- Une baseline désignée par une version ne peut **jamais** être supprimée : la ligne
+  de version la référence (`RESTRICT`) et la table est append-only, rouvrir la
+  version n'y change rien (409 `baseline_in_use`). De même un package publié une
+  fois ne peut plus être supprimé (409 `package_has_versions`). On ne contourne
+  pas la contrainte.
 
 ## Limites
 

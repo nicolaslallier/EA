@@ -528,6 +528,22 @@ class PackageAlreadyFrozenError(DomainError):
     """A publication aimed at a package that is already published, or under one that is."""
 
 
+class LiveViewInSubtreeError(DomainError):
+    """A subtree that holds a live generated view cannot be published: freeze the view first.
+
+    A live view stores no box, it is recomputed at every opening, so a version could not
+    say what it shows.
+    """
+
+
+class PackageHasVersionsError(DomainError):
+    """A package that was ever published cannot be deleted: its versions point at it."""
+
+
+class BaselineInUseError(DomainError):
+    """This baseline is the copy of a published version: it can never be deleted."""
+
+
 class PackageNotFrozenError(DomainError):
     """A reopening aimed at a package that has no version in force."""
 

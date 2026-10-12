@@ -40,3 +40,15 @@ def test_a_refusal_whose_detail_does_not_read_is_still_a_refusal() -> None:
         refusal = frozen_refusal_of(an_error("EA001", detail))
         assert refusal is not None
         assert refusal.package_id is None
+
+
+def test_the_state_and_the_detail_are_read_from_the_driver_error_itself_when_it_is_the_one() -> (
+    None
+):
+    package = uuid4()
+    orig = Exception("driver error")
+    orig.sqlstate = "EA001"  # type: ignore[attr-defined]
+    orig.detail = f"{package}|v1.0.0|elements|DELETE"  # type: ignore[attr-defined]
+    refusal = frozen_refusal_of(DBAPIError("statement", {}, orig))
+    assert refusal is not None
+    assert (refusal.package_id, refusal.operation) == (package, "DELETE")

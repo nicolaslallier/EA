@@ -92,10 +92,13 @@ def frozen_refusal_of(error: DBAPIError) -> FrozenRefusal | None:
     A detail that does not read still answers a refusal with every field empty: the
     write was refused, and an unreadable reason must not turn into a permitted one.
     """
+    # Like `is_serialization_failure`: the driver's error is the cause of the adapter's, or is it.
     cause = getattr(error.orig, "__cause__", None)
-    if getattr(cause, "sqlstate", None) != FROZEN_SQLSTATE:
+    code = getattr(cause, "sqlstate", None) or getattr(error.orig, "sqlstate", None)
+    if code != FROZEN_SQLSTATE:
         return None
-    parts = (getattr(cause, "detail", None) or "").split("|")
+    detail = getattr(cause, "detail", None) or getattr(error.orig, "detail", None)
+    parts = (detail or "").split("|")
     try:
         return FrozenRefusal(UUID(parts[0]), parts[1], parts[2], parts[3])
     except (IndexError, ValueError):

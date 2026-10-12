@@ -150,3 +150,18 @@ class TestTheLatestVersion:
     def test_an_unreadable_version_is_refused(self) -> None:
         with pytest.raises(InvalidPublicationError):
             latest_version(["v1.0.0", "nonsense"])
+
+
+class TestAPartPastTheCeiling:
+    @pytest.mark.parametrize(
+        ("last", "bump"),
+        [("v9999.0.0", Bump.MAJOR), ("v1.9999.0", Bump.MINOR), ("v1.0.9999", Bump.PATCH)],
+    )
+    def test_a_number_the_column_would_refuse_is_refused_here_first(
+        self, last: str, bump: Bump
+    ) -> None:
+        with pytest.raises(InvalidPublicationError):
+            next_version(last, bump)
+
+    def test_the_last_number_below_the_ceiling_still_goes_up(self) -> None:
+        assert next_version("v1.0.9998", Bump.PATCH) == "v1.0.9999"

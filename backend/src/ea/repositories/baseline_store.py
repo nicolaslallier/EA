@@ -50,6 +50,7 @@ from ea.domain.baselines import (
     refuse_oversize,
 )
 from ea.domain.errors import (
+    BaselineInUseError,
     BaselineNotFoundError,
     BaselineScopedError,
     DuplicateBaselineError,
@@ -592,7 +593,16 @@ class PostgresBaselineRepository:
             if row is None:
                 return False
             events = events_for(audit, _baseline(row, *await _counts(session, baseline_id)))
-            await session.execute(delete(BaselineRecord).where(BaselineRecord.id == baseline_id))
+            try:
+                await session.execute(
+                    delete(BaselineRecord).where(BaselineRecord.id == baseline_id)
+                )
+                await session.flush()
+            except IntegrityError as error:
+                if constraint_of(error) != "fk_package_versions_baseline_id_baselines":
+                    raise
+                msg = "this baseline is the copy of a published version"
+                raise BaselineInUseError(msg) from error
             write_events(session, events)
         return True
 

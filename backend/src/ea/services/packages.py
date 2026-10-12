@@ -332,7 +332,7 @@ class PackageService:
         """
         caller = require_approver()
         wanted = publication(bump=bump, notes=notes, adr=adr)
-        await self.get(package_id)
+        summary = await self.get(package_id)
         preview = await self._repository.preview_publication(package_id, bump=wanted.bump)
         if dry_run:
             logger.info(
@@ -347,11 +347,26 @@ class PackageService:
             return PublishOutcome(preview, None)
 
         def published(stored: PackageVersion) -> tuple[AuditEvent, ...]:
+            # The version's event first: the repository keeps `events[0].id` as the version's
+            # `publish_audit_event_id`. The second one is the scoped baseline that was just
+            # copied, in the same transaction (no names, no texts: ids and counts).
             return (
                 self._trail.event(
                     AuditAction.PACKAGE_PUBLISHED,
                     entity_id=package_id,
                     after=package_version_view(stored),
+                ),
+                self._trail.event(
+                    AuditAction.BASELINE_CREATED,
+                    entity_id=stored.baseline_id,
+                    after={
+                        "id": str(stored.baseline_id),
+                        "elements": stored.element_count,
+                        "relationships": stored.relationship_count,
+                        "boxes": stored.box_count,
+                        "scope_package_id": str(package_id),
+                        "scope_path": summary.path,
+                    },
                 ),
             )
 

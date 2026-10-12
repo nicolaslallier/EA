@@ -22,6 +22,10 @@ class PackageVersionRecord(Base):
     __table_args__ = (
         CheckConstraint("bump in ('major', 'minor', 'patch')", name="bump_known"),
         CheckConstraint(
+            "version ~ '^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})$'",
+            name="version_format",
+        ),
+        CheckConstraint(
             "(reopened_at is null) = (reopened_by_sub is null)"
             " and (reopened_at is null) = (reopened_by is null)"
             " and (reopened_at is null) = (reopen_reason is null)"

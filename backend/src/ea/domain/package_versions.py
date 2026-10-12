@@ -28,6 +28,7 @@ MAX_NOTES_LENGTH: Final = 4000
 MAX_ADR_LENGTH: Final = 200
 MAX_REASON_LENGTH: Final = 500
 FIRST_VERSION: Final = "v1.0.0"
+MAX_VERSION_PART: Final = 9999  # what `_VERSION` and the column's CHECK both read
 
 _VERSION: Final = re.compile(r"v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})")
 
@@ -62,10 +63,15 @@ def next_version(last: str | None, bump: Bump) -> str:
         raise InvalidPublicationError(msg)
     major, minor, patch = (int(part) for part in found.groups())
     if bump is Bump.MAJOR:
-        return f"v{major + 1}.0.0"
-    if bump is Bump.MINOR:
-        return f"v{major}.{minor + 1}.0"
-    return f"v{major}.{minor}.{patch + 1}"
+        number = (major + 1, 0, 0)
+    elif bump is Bump.MINOR:
+        number = (major, minor + 1, 0)
+    else:
+        number = (major, minor, patch + 1)
+    if max(number) > MAX_VERSION_PART:
+        msg = f"a version number part is at most {MAX_VERSION_PART}"
+        raise InvalidPublicationError(msg)
+    return "v{}.{}.{}".format(*number)
 
 
 def _clean(text: str, what: str, limit: int) -> str:

@@ -140,7 +140,7 @@ La revue n'est pas facultative : elle est une **tâche du plan** et une **condit
 | Déplacer un élément hors d'un package gelé, ou le faire entrer | `FILING` refusé aux deux extrémités |
 | Rouvrir sans laisser de trace | Motif obligatoire, événement d'audit, trigger append-only |
 | Un agent MCP gèle un sous-arbre par erreur | `dry_run=true` par défaut, annotation d'écriture, aperçu du nombre d'éléments |
-| Publication d'un énorme sous-arbre (déni de service) | Plafonds de baseline, refus `scope_too_large`, `Admission` par appelant |
+| Publication d'un énorme sous-arbre (déni de service) | Plafonds de baseline, refus `baseline_too_large`, verrou d'arbre (pas d'`Admission` : il sérialise déjà les publications) |
 | Injection par `notes`, `adr`, `reason` | Bornes de longueur dans `api/schemas.py`, refus du NUL, rendu en texte (`noVHtml.spec.ts`), valeurs hors des logs |
 | Fuite dans les logs et les erreurs | Pas de texte ni de noms dans l'audit ni dans les logs de refus ; erreurs typées génériques |
 | Ancêtre gelé inconnu → écriture permise | Échec fermé : une erreur dans le trigger annule l'écriture |

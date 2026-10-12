@@ -21,8 +21,6 @@ from ea.services.audit import AuditTrail
 from ea.services.caller import current_caller
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
     from ea.domain.audit import AuditEvent
 
 logger = logging.getLogger("ea.refusals")
@@ -32,17 +30,6 @@ Sink = Callable[[Sequence["AuditEvent"]], Awaitable[None]]
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def to_database(sessions: async_sessionmaker[AsyncSession]) -> Sink:
-    """The sink that writes the events in a transaction of their own."""
-    from ea.repositories.audit_store import write_events
-
-    async def write(events: Sequence[AuditEvent]) -> None:
-        async with sessions.begin() as session:
-            write_events(session, events)
-
-    return write
 
 
 class FrozenRefusalRecorder:
