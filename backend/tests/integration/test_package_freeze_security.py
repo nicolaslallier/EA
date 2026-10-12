@@ -85,11 +85,12 @@ async def test_a_notes_text_made_of_sql_and_markup_is_stored_as_text(
     repo = _repo(engine_at_head)
     async with engine_at_head.begin() as connection:
         root = await a_package(connection, "Finance", None)
+        await an_element(connection, "bystander", None)
     hostile = "'); DROP TABLE elements; --\n<script>alert(1)</script>${jndi:x}"
     version = await publish_it(repo, root, notes=hostile, adr=None, bump=Bump.MINOR)
     assert version.notes == hostile
     async with engine_at_head.connect() as connection:
-        assert (await connection.execute(text("SELECT count(*) FROM elements"))).scalar_one() == 0
+        assert (await connection.execute(text("SELECT count(*) FROM elements"))).scalar_one() == 1
 
 
 async def test_a_refusal_never_names_the_element_or_its_content(

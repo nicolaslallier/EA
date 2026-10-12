@@ -106,6 +106,9 @@ Repris de la spec § 10 ; chaque ligne a son test. Les lignes MCP sont celles du
   encore leur périmètre.
 - L'enregistreur garde ses compteurs par `sub` **en mémoire du processus**, sans les élaguer : un redémarrage
   remet le budget à zéro, plusieurs processus ont chacun le leur, et `suppressed` est un cumul de vie.
+- Les refus par un sous-arbre publié **dérogent à la règle de l'ADR 0046** (« une écriture refusée n'écrit aucun événement ») :
+  une écriture tentée dans un sous-arbre publié est un signal de sécurité, et l'événement, écrit dans sa propre
+  transaction, survit au rollback de l'écriture refusée.
 - Un import en `dry_run` qui bute sur un sous-arbre gelé laisse des événements `package.write_refused_frozen`
   **validés** (l'enregistreur a sa propre transaction) alors que rien n'a été écrit.
 - `package_versions.version` n'a pas de CHECK sur le format `vX.Y.Z` : une ligne écrite à la main hors format

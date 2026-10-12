@@ -25,4 +25,4 @@ GUARDED_TABLES: Final = (
 
 def lock_guarded(mode: str) -> str:
     """`LOCK TABLE` over every guarded table; `mode` is one of our own constants."""
-    return "LOCK TABLE " + ", ".join(GUARDED_TABLES) + f" IN {mode} MODE"  # nosec B608
+    return "LOCK TABLE " + ", ".join(GUARDED_TABLES) + f" IN {mode} MODE"

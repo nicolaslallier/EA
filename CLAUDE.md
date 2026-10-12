@@ -804,7 +804,7 @@ by the repository, in the same `begin()` as the write it describes: `services/`
 builds one `AuditEvent` per use case — actor from `current_caller`, never a
 parameter; time from the injected clock; the channel (`http`, `mcp`, `system`)
 from a `ContextVar` like the caller — and hands it to the repository as
-`audit=`. A refused write (404, 409, 403, 422) writes no event; it leaves a
+`audit=`. A refused write (404, 409, 403, 422) writes no event — except a write refused by a published subtree (`package.write_refused_frozen`), which does write one, in a transaction of its own, bounded to 30 per minute and per `sub` (`docs/adr/0074`); otherwise it leaves a
 structured log line instead. The row has no foreign key to the entity, so it
 outlives a deletion, and triggers refuse `UPDATE`, `DELETE` and `TRUNCATE` — the
 `INSERT, SELECT`-only database role is still owed by the Infra. Events carry
