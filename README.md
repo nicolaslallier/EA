@@ -4,6 +4,8 @@ Référentiel d'architecture d'entreprise : un backend FastAPI qui stocke un
 modèle **ArchiMate 3.2** dans **PostgreSQL**, et un
 frontend Vue 3.
 
+**Version 1.0.0.** Chaque section déclarée du menu a son écran, et l'API et `/mcp` offrent le même référentiel (voir `CLAUDE.md` pour l'état détaillé).
+
 Le modèle d'architecture est un graphe et les questions qu'on lui pose sont des
 parcours : « si ce serveur tombe, quels processus métier s'arrêtent ? ». Le
 graphe est stocké en tables et parcouru par des requêtes récursives — voir
