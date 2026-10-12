@@ -255,6 +255,25 @@ class TestResolving:
         assert (await provider.resolve("acme/billing#1")).status is ExternalStatus.UNKNOWN  # type: ignore[attr-defined]
 
 
+DEEP = b"[" * 40_000 + b"]" * 40_000
+
+
+@pytest.mark.asyncio
+class TestHostileJson:
+    @EVERY
+    async def test_an_absurdly_nested_answer_is_unavailable_not_a_crash(self, case: Case) -> None:
+        provider, _ = answering(case, httpx.Response(200, content=DEEP))
+
+        with pytest.raises(ExternalUnavailableError):
+            await provider.resolve(case.identifier)  # type: ignore[attr-defined]
+
+    async def test_after_a_201_it_is_the_check_the_provider_message_not_a_crash(self) -> None:
+        provider = github(lambda r: httpx.Response(201, content=DEEP))
+
+        with pytest.raises(ExternalWriteFailedError, match="check"):
+            await provider.create_issue("acme/billing", IssueDraft.of("t", ""))
+
+
 @pytest.mark.asyncio
 class TestTheWireFormats:
     async def test_jira_categories_translate_and_a_custom_one_is_unknown(self) -> None:

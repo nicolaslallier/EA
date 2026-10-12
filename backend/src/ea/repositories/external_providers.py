@@ -130,7 +130,7 @@ class _Provider:
         self._expect_ok(response)
         try:
             payload = json.loads(response.body)
-        except ValueError:
+        except (ValueError, RecursionError):  # a deeply nested answer is not an object either
             raise self._unavailable("the answer is not JSON") from None
         if not isinstance(payload, dict):
             raise self._unavailable("the answer is not an object")
@@ -246,7 +246,7 @@ class GithubIssues(_Provider):
 def _issue_number(body: bytes) -> int | None:
     try:
         number = json.loads(body).get("number")
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, RecursionError):
         return None
     if isinstance(number, bool) or not isinstance(number, int):
         return None
