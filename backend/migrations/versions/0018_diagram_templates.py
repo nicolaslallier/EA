@@ -5,7 +5,7 @@ Revises: 0017
 Date: 2026-10-11
 
 Un modèle est un squelette typé - des emplacements, des groupes, des notes, des liens par
-type de relation - sans aucun élément (docs/adr/0066). Son corps est un `jsonb` versionné
+type de relation - sans aucun élément (docs/adr/0072). Son corps est un `jsonb` versionné
 qu'on n'interroge jamais à l'intérieur : il est validé en domaine, relu en entier. Une table
 neuve, aucune lecture ni transformation de donnée existante : la révision ne peut pas
 échouer sur le contenu de la base.

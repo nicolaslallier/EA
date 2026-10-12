@@ -5,6 +5,8 @@ import { emptyQuery } from '../../src/features/search/queryState'
 
 type ElementRead = components['schemas']['ElementRead']
 type RelationshipRead = components['schemas']['RelationshipRead']
+type CoverageRead = components['schemas']['CoverageRead']
+type RequirementTraceRead = components['schemas']['RequirementTraceRead']
 type FindingRead = components['schemas']['FindingRead']
 type QualityReportRead = components['schemas']['QualityReportRead']
 type AggregateRead = components['schemas']['AggregateRead']
@@ -670,6 +672,43 @@ export function aHeatmap(overrides: Partial<HeatmapRead> = {}): HeatmapRead {
       { row: 'business', col: 'retiré', count: 1, value: 1, level: 0 },
       { row: 'technology', col: 'en production', count: 2, value: 2, level: 4 },
     ],
+    ...overrides,
+  }
+}
+
+
+export function aTrace(overrides: Partial<RequirementTraceRead> = {}): RequirementTraceRead {
+  return {
+    id: 'aaaaaaaa-1111-4111-8111-111111111111',
+    element_type: 'requirement',
+    name: 'Chiffrer les données',
+    identifier: 'REQ-1',
+    status: 'approved',
+    priority: 'must',
+    gap: 'design',
+    verification: 'unverified',
+    designed_by: [],
+    tested_by: [],
+    ...overrides,
+  }
+}
+
+export function aCoverage(
+  requirements: RequirementTraceRead[] = [aTrace()],
+  overrides: Partial<CoverageRead> = {},
+): CoverageRead {
+  return {
+    total: requirements.length,
+    active: requirements.length,
+    designed: 0,
+    verified: 0,
+    failing: 0,
+    unverified: 0,
+    design_rate: requirements.length === 0 ? null : 0,
+    verification_rate: requirements.length === 0 ? null : 0,
+    by_status: { proposed: 0, approved: requirements.length, implemented: 0, verified: 0, rejected: 0, unset: 0 },
+    by_priority: { must: requirements.length, should: 0, could: 0, unset: 0 },
+    requirements,
     ...overrides,
   }
 }

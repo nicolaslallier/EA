@@ -51,7 +51,7 @@ def _clean_name(name: str) -> str:
 class DiagramNode:
     """One box: an element, the top-left corner it is drawn at, and its size.
 
-    `parent_object_id` names the group (docs/adr/0063) the box is drawn inside,
+    `parent_object_id` names the group (docs/adr/0069) the box is drawn inside,
     `z` its stacking order. Both are presentation: a group is not an element and
     creates no relationship.
     """
@@ -75,9 +75,9 @@ class Diagram:
     created_at: datetime
     updated_at: datetime
     node_count: int = 0
-    #: Moves on by one at every saved scene: the optimistic-concurrency token (docs/adr/0063).
+    #: Moves on by one at every saved scene: the optimistic-concurrency token (docs/adr/0069).
     revision: int = 0
-    #: `None`: drawn by hand. Otherwise a view generated from `source` (docs/adr/0065).
+    #: `None`: drawn by hand. Otherwise a view generated from `source` (docs/adr/0071).
     generation: Generation | None = None
     source: ViewSource | None = None
     #: The package that files this view; `None` is "at the root".

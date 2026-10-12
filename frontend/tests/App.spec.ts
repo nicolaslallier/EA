@@ -29,4 +29,11 @@ describe('the application shell', () => {
     expect(screen.getByRole('navigation', { name: /sections/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /introuvable/i })).toBeInTheDocument()
   })
+
+  it('drops the editing menu in the reader mode', async () => {
+    await renderApp('/view')
+
+    expect(await screen.findByRole('navigation', { name: 'Consultation' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: /sections/i })).toBeNull()
+  })
 })

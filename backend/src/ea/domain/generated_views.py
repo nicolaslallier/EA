@@ -1,6 +1,6 @@
 """Generated views: a diagram that is "everything that answers this query".
 
-A view stays a view (docs/adr/0063) — it owns no fact. *Live*, it
+A view stays a view (docs/adr/0069) — it owns no fact. *Live*, it
 stores no box at all: who is on it is recomputed at every opening, and its
 layout is the SPA's deterministic one. *Frozen*, the layout the SPA computed
 is stored and the diagram is edited like a hand-drawn one; the reference to

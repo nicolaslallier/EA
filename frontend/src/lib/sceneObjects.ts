@@ -1,7 +1,7 @@
 
 // Where things sit inside a group, and what happens to them when it moves or goes.
 //
-// A group is "drawn together" and nothing more (docs/adr/0063): it
+// A group is "drawn together" and nothing more (docs/adr/0069): it
 // is not an element and creates no relationship, so removing one never touches
 // the graph. These functions only edit the *scene* — boxes and objects — and
 // never mutate their input. The depth limit below mirrors the API's

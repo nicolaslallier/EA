@@ -68,8 +68,10 @@ from ea.domain.errors import (
     InvalidExchangeFileError,
     InvalidFileKeyError,
     InvalidFileMetadataError,
+    InvalidJunctionError,
     InvalidLifespanError,
     InvalidQueryError,
+    InvalidRequirementError,
     InvalidTimelineError,
     InvalidTransitionError,
     MatrixAxisTooLargeError,
@@ -82,6 +84,9 @@ from ea.domain.errors import (
     PackageNotFoundError,
     PackageTooDeepError,
     ProfileNotFoundError,
+    ReportBusyError,
+    ReportFormatUnavailableError,
+    ReportTooLargeError,
     RestoreBlockedError,
     RestoreConflictError,
     RowRefusedError,
@@ -100,7 +105,9 @@ from ea.domain.errors import (
     TooManyRefusedRowsError,
     UnknownLayoutElementError,
     UnknownPackageError,
+    UnknownReportTemplateError,
     UnknownScopeError,
+    UnsupportedReportSubjectError,
     WriteConflictError,
 )
 
@@ -153,12 +160,12 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DuplicateSavedQueryError: (status.HTTP_409_CONFLICT, "duplicate"),
     UnknownLayoutElementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_element"),
     DiagramRevisionConflictError: (status.HTTP_409_CONFLICT, "diagram_revision_conflict"),
-    # --- Diagram templates (docs/adr/0066) ---
+    # --- Diagram templates (docs/adr/0072) ---
     TemplateNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateTemplateError: (status.HTTP_409_CONFLICT, "duplicate"),
     TemplateLimitError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "template_limit"),
     TemplateBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "template_busy"),
-    # --- Generated views (docs/adr/0065) ---
+    # --- Generated views (docs/adr/0071) ---
     GeneratedViewTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "generated_view_too_large"),
     GeneratedViewsUnavailableError: (
         status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -169,7 +176,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     DiagramNotGeneratedError: (status.HTTP_409_CONFLICT, "diagram_not_generated"),
     DiagramHasAnnotationsError: (status.HTTP_409_CONFLICT, "has_annotations"),
     SourceInUseError: (status.HTTP_409_CONFLICT, "source_in_use"),
-    # --- Profiles and stereotypes (docs/adr/0064) ---
+    # --- Profiles and stereotypes (docs/adr/0070) ---
     ProfileNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     StereotypeNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateProfileError: (status.HTTP_409_CONFLICT, "duplicate"),
@@ -232,8 +239,16 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     AnalysisTimeoutError: (status.HTTP_503_SERVICE_UNAVAILABLE, "analysis_timeout"),
     # --- Time in the model (docs/adr/0059, 0060, 0061) ---
     InvalidLifespanError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_lifespan"),
+    InvalidJunctionError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_junction"),
+    InvalidRequirementError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_requirement"),
     InvalidTimelineError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_timeline"),
     DuplicateGapError: (status.HTTP_409_CONFLICT, "duplicate_gap"),
+    # --- Reports (docs/adr/0062) ---
+    ReportTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "report_too_large"),
+    ReportFormatUnavailableError: (status.HTTP_501_NOT_IMPLEMENTED, "format_unavailable"),
+    ReportBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "report_busy"),
+    UnknownReportTemplateError: (status.HTTP_404_NOT_FOUND, "not_found"),
+    UnsupportedReportSubjectError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "unsupported_subject"),
     # --- Authentication (docs/adr/0032) ---
     NotAuthenticatedError: (status.HTTP_401_UNAUTHORIZED, "unauthenticated"),
     NotAuthorisedError: (status.HTTP_403_FORBIDDEN, "forbidden"),

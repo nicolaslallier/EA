@@ -4,7 +4,7 @@ A template says "an application component inside a zone, realised by a node,
 with this note beside it" — slots of an ArchiMate type, groups, notes, links
 between slots by relationship type. It holds **no element**: instantiating it
 binds each slot to an existing element of the right type, or to one to create,
-or leaves it out (docs/adr/0066). The body is a versioned
+or leaves it out (docs/adr/0072). The body is a versioned
 document validated here, against the metamodel the domain already holds — no
 list of types or relationships is restated.
 

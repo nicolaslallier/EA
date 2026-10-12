@@ -312,7 +312,7 @@ async def test_a_dry_run_reports_what_the_real_import_does_and_changes_nothing(
     real = await exchange.import_exchange(data, REAL)
 
     assert (real.counts, real.issues) == (simulated.counts, simulated.issues)
-    assert await repository.count_elements(ElementFilter()) == 3
+    assert await repository.count_elements(ElementFilter()) == 4
 
 
 async def test_a_refused_relation_leaves_the_rest_and_strict_leaves_nothing(

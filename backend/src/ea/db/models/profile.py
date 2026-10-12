@@ -1,4 +1,4 @@
-"""Profiles, stereotypes and where they are applied (docs/adr/0064).
+"""Profiles, stereotypes and where they are applied (docs/adr/0070).
 
 Reference data: a stereotype never changes the metamodel, so `base_type` is a
 plain string checked by the domain — a PostgreSQL enum would freeze ArchiMate

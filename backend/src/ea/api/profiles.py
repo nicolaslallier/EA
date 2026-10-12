@@ -1,6 +1,6 @@
 """The endpoints of profiles and stereotypes — reference data, extending no ArchiMate type.
 
-A stereotype is a label on an element of one base type (docs/adr/0064). The values
+A stereotype is a label on an element of one base type (docs/adr/0070). The values
 stay in `elements.properties`; these routes only define the labels and lay them on
 elements. Import and export are versioned documents: the import is validated by the
 very constructors a manual write uses.

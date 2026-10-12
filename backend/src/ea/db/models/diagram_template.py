@@ -1,4 +1,4 @@
-"""The table of diagram templates - see docs/adr/0066."""
+"""The table of diagram templates - see docs/adr/0072."""
 
 from __future__ import annotations
 

@@ -353,6 +353,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagrams/{diagram_id}/render.svg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render Diagram
+         * @description The one static drawing of a diagram, cacheable by content (`ETag`).
+         */
+        get: operations["render_diagram_diagrams__diagram_id__render_svg_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams/{diagram_id}/source-diff": {
         parameters: {
             query?: never;
@@ -418,6 +438,30 @@ export interface paths {
         post?: never;
         /** Discard Document */
         delete: operations["discard_document_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/html": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Document Html
+         * @description The document as a safe HTML fragment, for a reader that cannot render markdown.
+         *
+         *     Raw HTML in the document is shown as text, images are not loaded and `javascript:` / `data:`
+         *     links are not links (docs/adr/0062): the SPA inserts the result with `v-html` for exactly
+         *     that reason.
+         */
+        get: operations["read_document_html_documents__document_id__html_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1441,6 +1485,96 @@ export interface paths {
         delete: operations["delete_relationship_relationships__relationship_id__delete"];
         options?: never;
         head?: never;
+        /**
+         * Update Relationship
+         * @description Change what a link says: its name, its properties, its access type, its direction.
+         *
+         *     Never its type or its ends. `properties` is replaced wholesale when given. Both elements
+         *     the link joins are reviewed: an approved one goes back to review, a locked one is a 409.
+         */
+        patch: operations["update_relationship_relationships__relationship_id__patch"];
+        trace?: never;
+    };
+    "/report-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Report Templates
+         * @description The built-in templates, with the subjects they take and the formats served.
+         */
+        get: operations["list_report_templates_report_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Report
+         * @description Build a report and deposit it in the bucket under `reports/`. Editors only.
+         */
+        post: operations["create_report_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render Report
+         * @description Build a report and return it. Nothing is stored.
+         */
+        get: operations["render_report_reports_render_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/requirements/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Coverage
+         * @description Which requirements are realized by a design and tested, and which are not.
+         *
+         *     `status` and `priority` narrow the requirements listed and counted. The
+         *     rates leave out rejected requirements and are `null` when none is left.
+         */
+        get: operations["read_coverage_requirements_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -1645,7 +1779,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1932,6 +2066,51 @@ export interface components {
             rejected: number;
             /** Reused */
             reused: number;
+        };
+        /**
+         * CoverageRead
+         * @description The coverage of the requirements asked about.
+         *
+         *     The rates are over the *active* requirements (a rejected one needs neither
+         *     a design nor a test) and are `null` when there is none: a rate over nothing
+         *     is not 100 %.
+         */
+        CoverageRead: {
+            /** Active */
+            active: number;
+            /** By Priority */
+            by_priority: {
+                [key: string]: number;
+            };
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** Design Rate */
+            design_rate: number | null;
+            /** Designed */
+            designed: number;
+            /**
+             * Failing
+             * @description Active requirements with at least one failing test.
+             */
+            failing: number;
+            /** Requirements */
+            requirements: components["schemas"]["RequirementTraceRead"][];
+            /** Total */
+            total: number;
+            /**
+             * Unverified
+             * @description Active requirements with no passing test (none, not run).
+             */
+            unverified: number;
+            /** Verification Rate */
+            verification_rate: number | null;
+            /**
+             * Verified
+             * @description Active requirements with a passing test and no failing one.
+             */
+            verified: number;
         };
         /** CreateElementSchema */
         CreateElementSchema: {
@@ -2696,6 +2875,12 @@ export interface components {
             severity: components["schemas"]["Severity"];
         };
         /**
+         * Gap
+         * @description What is missing around a requirement, if anything.
+         * @enum {string}
+         */
+        Gap: "design" | "verification" | "none";
+        /**
          * GapCreate
          * @description Draw the gap between two plateaus.
          */
@@ -3412,6 +3597,108 @@ export interface components {
             value: components["schemas"]["RelationshipType"];
         };
         /**
+         * RelationshipUpdate
+         * @description A partial update of a link. An omitted field keeps its stored value.
+         *
+         *     The type and the two ends are absent on purpose: another type or another end is another
+         *     link, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,
+         *     replaces the whole map, as it does on an element.
+         */
+        RelationshipUpdate: {
+            /** @description Only meaningful on an access relationship. */
+            access_type?: components["schemas"]["AccessType"] | null;
+            /**
+             * Directed
+             * @description Only meaningful on an association relationship.
+             */
+            directed?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Properties */
+            properties?: {
+                [key: string]: string;
+            } | null;
+        };
+        /** ReportCreate */
+        ReportCreate: {
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "html" | "pdf" | "docx";
+            subject: components["schemas"]["ReportSubjectBody"];
+            /**
+             * Template
+             * @description A template id from GET /report-templates.
+             */
+            template: string;
+        };
+        /**
+         * ReportSubjectBody
+         * @description What the report is about: a kind and the id of one object of that kind.
+         */
+        ReportSubjectBody: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "package" | "diagram" | "query";
+        };
+        /** ReportTemplateRead */
+        ReportTemplateRead: {
+            /**
+             * Formats
+             * @description The formats this deployment can produce.
+             */
+            formats: ("html" | "pdf" | "docx")[];
+            /** Id */
+            id: string;
+            /**
+             * Subjects
+             * @description The kinds of subject the template takes.
+             */
+            subjects: ("package" | "diagram" | "query")[];
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * RequirementTraceRead
+         * @description One requirement, what realizes it, what tests it, and what is missing.
+         */
+        RequirementTraceRead: {
+            /** Designed By */
+            designed_by: components["schemas"]["TraceElementRead"][];
+            element_type: components["schemas"]["ElementType"];
+            gap: components["schemas"]["Gap"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Identifier
+             * @description The readable identifier, empty when none is recorded.
+             */
+            identifier: string;
+            /** Name */
+            name: string;
+            /** Priority */
+            priority: string;
+            /** Status */
+            status: string;
+            /** Tested By */
+            tested_by: components["schemas"]["TraceElementRead"][];
+            /** @description `verified` only if a test passed and none failed; `failing`; or `unverified`. */
+            verification: components["schemas"]["Verification"];
+        };
+        /**
          * RestorePlanRead
          * @description What a restoration would do. Every figure is an exact count; the lists name
          *     only the first few of each kind (`PLAN_LISTED_ITEMS`).
@@ -3885,6 +4172,25 @@ export interface components {
             y: number;
         };
         /**
+         * TraceElementRead
+         * @description An element on the other end of a realization of a requirement.
+         */
+        TraceElementRead: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Result
+             * @description For a test, the result it records (`passed`, `failed`…); absent otherwise.
+             */
+            result: string | null;
+        };
+        /**
          * Transition
          * @enum {string}
          */
@@ -3902,6 +4208,12 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * Verification
+         * @description What the tests of a requirement say, as a whole.
+         * @enum {string}
+         */
+        Verification: "verified" | "failing" | "unverified";
         /**
          * ViewSource
          * @description Where a generated view reads its members: a saved query, or a package.
@@ -5419,6 +5731,64 @@ export interface operations {
             };
         };
     };
+    render_diagram_diagrams__diagram_id__render_svg_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The diagram as a static SVG (docs/adr/0063). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_source_diff_diagrams__diagram_id__source_diff_get: {
         parameters: {
             query?: never;
@@ -5747,6 +6117,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_document_html_documents__document_id__html_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9703,6 +10131,324 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_relationship_relationships__relationship_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                relationship_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelationshipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_report_templates_report_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportTemplateRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_report_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    render_report_reports_render_get: {
+        parameters: {
+            query: {
+                template: string;
+                subject_kind: "package" | "diagram" | "query";
+                subject_id: string;
+                format: "html" | "pdf" | "docx";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report, as an attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
+                    "text/html; charset=utf-8": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_coverage_requirements_coverage_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                priority?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

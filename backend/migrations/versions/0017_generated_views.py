@@ -5,7 +5,7 @@ Revises: 0016
 Date: 2026-10-11
 
 Un diagramme peut être « tout ce qui répond à cette requête » ou « tout ce que
-ce paquet contient » (docs/adr/0065). Il référence sa source par clé étrangère
+ce paquet contient » (docs/adr/0071). Il référence sa source par clé étrangère
 `RESTRICT` : supprimer une requête ou un paquet lu par une vue est refusé, jamais une
 vue qui change de sens en silence.
 

@@ -7,7 +7,7 @@ Date: 2026-10-11
 Notes et groupes (`diagram_objects`, une seule table : même géométrie, même
 empilement, même imbrication), tracés de liens (`diagram_edges`), parent et
 ordre d'empilement d'une boîte, et `diagrams.revision` — le compteur qui permet
-de refuser un enregistrement fait sur une copie périmée (docs/adr/0063).
+de refuser un enregistrement fait sur une copie périmée (docs/adr/0069).
 
 Rien à convertir : tout est ajout nullable ou défaut serveur, les diagrammes existants
 gardent leurs boîtes à l'identique, aucune valeur n'est lue ni transformée - la révision

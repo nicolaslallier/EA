@@ -18,6 +18,7 @@ from ea.domain.errors import (
     CyclicContainmentError,
     ElementNotFoundError,
     IllegalRelationshipError,
+    InvalidJunctionError,
 )
 from ea.services.architecture import ArchitectureService
 from tests.conftest import InMemoryRepository
@@ -31,6 +32,59 @@ class TestElements:
         element = await service.create_element(element_type=E.APPLICATION_COMPONENT, name="Billing")
 
         assert repository.elements[element.id].name == "Billing"
+
+    @pytest.mark.asyncio
+    async def test_a_junction_is_stored_as_an_and_unless_it_says_or(
+        self, service: ArchitectureService
+    ) -> None:
+        plain = await service.create_element(element_type=E.JUNCTION, name="Gate")
+        either = await service.create_element(
+            element_type=E.JUNCTION, name="Choice", properties={"junction_type": "or"}
+        )
+
+        assert plain.properties["junction_type"] == "and"
+        assert either.properties["junction_type"] == "or"
+
+    @pytest.mark.asyncio
+    async def test_replacing_the_properties_of_an_or_junction_keeps_it_an_or(
+        self, service: ArchitectureService
+    ) -> None:
+        gate = await service.create_element(
+            element_type=E.JUNCTION, name="Choice", properties={"junction_type": "or"}
+        )
+
+        kept = await service.update_element(gate.id, properties={"owner": "me"})
+        switched = await service.update_element(
+            gate.id, properties={"junction_type": "and", "owner": "me"}
+        )
+
+        assert dict(kept.properties) == {"owner": "me", "junction_type": "or"}
+        assert switched.properties["junction_type"] == "and"
+
+    @pytest.mark.asyncio
+    async def test_a_junction_of_another_kind_is_refused_on_create_and_on_update(
+        self, service: ArchitectureService
+    ) -> None:
+        with pytest.raises(InvalidJunctionError):
+            await service.create_element(
+                element_type=E.JUNCTION, name="Gate", properties={"junction_type": "xor"}
+            )
+        gate = await service.create_element(element_type=E.JUNCTION, name="Gate")
+        with pytest.raises(InvalidJunctionError):
+            await service.update_element(gate.id, properties={"junction_type": "xor"})
+
+    @pytest.mark.asyncio
+    async def test_a_junction_wires_two_elements_together(
+        self, service: ArchitectureService, repository: InMemoryRepository
+    ) -> None:
+        a = await service.create_element(element_type=E.BUSINESS_PROCESS, name="A")
+        b = await service.create_element(element_type=E.BUSINESS_PROCESS, name="B")
+        gate = await service.create_element(element_type=E.JUNCTION, name="Gate")
+
+        await service.connect(relationship_type=R.TRIGGERING, source_id=a.id, target_id=gate.id)
+        await service.connect(relationship_type=R.TRIGGERING, source_id=gate.id, target_id=b.id)
+
+        assert len(repository.relationships) == 2
 
     @pytest.mark.asyncio
     async def test_fetching_an_unknown_element_says_which_one(

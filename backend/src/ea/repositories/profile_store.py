@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `ProfileRepository` - see docs/adr/0064.
+"""The PostgreSQL implementation of `ProfileRepository` - see docs/adr/0070.
 
 Like the diagram store it takes the session factory and opens its units of work
 through `ea.db.unit_of_work`. A profile and its stereotypes are written in one

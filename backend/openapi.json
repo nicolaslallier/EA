@@ -276,6 +276,7 @@
           "template.updated",
           "template.deleted",
           "relationship.created",
+          "relationship.updated",
           "relationship.deleted",
           "diagram.created",
           "diagram.updated",
@@ -925,6 +926,96 @@
           "ignored"
         ],
         "title": "CountsRead",
+        "type": "object"
+      },
+      "CoverageRead": {
+        "description": "The coverage of the requirements asked about.\n\nThe rates are over the *active* requirements (a rejected one needs neither\na design nor a test) and are `null` when there is none: a rate over nothing\nis not 100 %.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "by_priority": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Priority",
+            "type": "object"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "design_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Design Rate"
+          },
+          "designed": {
+            "title": "Designed",
+            "type": "integer"
+          },
+          "failing": {
+            "description": "Active requirements with at least one failing test.",
+            "title": "Failing",
+            "type": "integer"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementTraceRead"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unverified": {
+            "description": "Active requirements with no passing test (none, not run).",
+            "title": "Unverified",
+            "type": "integer"
+          },
+          "verification_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Rate"
+          },
+          "verified": {
+            "description": "Active requirements with a passing test and no failing one.",
+            "title": "Verified",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "designed",
+          "verified",
+          "failing",
+          "unverified",
+          "design_rate",
+          "verification_rate",
+          "by_status",
+          "by_priority",
+          "requirements"
+        ],
+        "title": "CoverageRead",
         "type": "object"
       },
       "CreateElementSchema": {
@@ -2651,6 +2742,16 @@
         "title": "FindingRead",
         "type": "object"
       },
+      "Gap": {
+        "description": "What is missing around a requirement, if anything.",
+        "enum": [
+          "design",
+          "verification",
+          "none"
+        ],
+        "title": "Gap",
+        "type": "string"
+      },
       "GapCreate": {
         "additionalProperties": false,
         "description": "Draw the gap between two plateaus.",
@@ -4209,6 +4310,238 @@
         "title": "RelationshipTypeRead",
         "type": "object"
       },
+      "RelationshipUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update of a link. An omitted field keeps its stored value.\n\nThe type and the two ends are absent on purpose: another type or another end is another\nlink, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,\nreplaces the whole map, as it does on an element.",
+        "properties": {
+          "access_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an access relationship."
+          },
+          "directed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an association relationship.",
+            "title": "Directed"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Free-form attributes, e.g. owner or criticality.",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          }
+        },
+        "title": "RelationshipUpdate",
+        "type": "object"
+      },
+      "ReportCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "enum": [
+              "html",
+              "pdf",
+              "docx"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReportSubjectBody"
+          },
+          "template": {
+            "description": "A template id from GET /report-templates.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "subject",
+          "format"
+        ],
+        "title": "ReportCreate",
+        "type": "object"
+      },
+      "ReportSubjectBody": {
+        "additionalProperties": false,
+        "description": "What the report is about: a kind and the id of one object of that kind.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "package",
+              "diagram",
+              "query"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "ReportSubjectBody",
+        "type": "object"
+      },
+      "ReportTemplateRead": {
+        "properties": {
+          "formats": {
+            "description": "The formats this deployment can produce.",
+            "items": {
+              "enum": [
+                "html",
+                "pdf",
+                "docx"
+              ],
+              "type": "string"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "subjects": {
+            "description": "The kinds of subject the template takes.",
+            "items": {
+              "enum": [
+                "package",
+                "diagram",
+                "query"
+              ],
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "title",
+          "subjects",
+          "formats"
+        ],
+        "title": "ReportTemplateRead",
+        "type": "object"
+      },
+      "RequirementTraceRead": {
+        "description": "One requirement, what realizes it, what tests it, and what is missing.",
+        "properties": {
+          "designed_by": {
+            "items": {
+              "$ref": "#/components/schemas/TraceElementRead"
+            },
+            "title": "Designed By",
+            "type": "array"
+          },
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "gap": {
+            "$ref": "#/components/schemas/Gap"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "The readable identifier, empty when none is recorded.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tested_by": {
+            "items": {
+              "$ref": "#/components/schemas/TraceElementRead"
+            },
+            "title": "Tested By",
+            "type": "array"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/Verification",
+            "description": "`verified` only if a test passed and none failed; `failing`; or `unverified`."
+          }
+        },
+        "required": [
+          "id",
+          "element_type",
+          "name",
+          "identifier",
+          "status",
+          "priority",
+          "gap",
+          "verification",
+          "designed_by",
+          "tested_by"
+        ],
+        "title": "RequirementTraceRead",
+        "type": "object"
+      },
       "RestorePlanRead": {
         "description": "What a restoration would do. Every figure is an exact count; the lists name\nonly the first few of each kind (`PLAN_LISTED_ITEMS`).",
         "properties": {
@@ -5440,6 +5773,43 @@
         "title": "TemplateSlotSchema",
         "type": "object"
       },
+      "TraceElementRead": {
+        "description": "An element on the other end of a realization of a requirement.",
+        "properties": {
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a test, the result it records (`passed`, `failed`\u2026); absent otherwise.",
+            "title": "Result"
+          }
+        },
+        "required": [
+          "id",
+          "element_type",
+          "name",
+          "result"
+        ],
+        "title": "TraceElementRead",
+        "type": "object"
+      },
       "Transition": {
         "enum": [
           "submit",
@@ -5491,6 +5861,16 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "Verification": {
+        "description": "What the tests of a requirement say, as a whole.",
+        "enum": [
+          "verified",
+          "failing",
+          "unverified"
+        ],
+        "title": "Verification",
+        "type": "string"
       },
       "ViewSource": {
         "additionalProperties": false,
@@ -7838,6 +8218,85 @@
         ]
       }
     },
+    "/diagrams/{diagram_id}/render.svg": {
+      "get": {
+        "description": "The one static drawing of a diagram, cacheable by content (`ETag`).",
+        "operationId": "render_diagram_diagrams__diagram_id__render_svg_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The diagram as a static SVG (docs/adr/0063)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Render Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
     "/diagrams/{diagram_id}/source-diff": {
       "get": {
         "description": "What a frozen view would gain and lose if it followed its source again. Writes nothing.",
@@ -8286,6 +8745,85 @@
           }
         ],
         "summary": "Revise Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/documents/{document_id}/html": {
+      "get": {
+        "description": "The document as a safe HTML fragment, for a reader that cannot render markdown.\n\nRaw HTML in the document is shown as text, images are not loaded and `javascript:` / `data:`\nlinks are not links (docs/adr/0062): the SPA inserts the result with `v-html` for exactly\nthat reason.",
+        "operationId": "read_document_html_documents__document_id__html_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Document Html",
         "tags": [
           "documents"
         ]
@@ -14073,6 +14611,500 @@
         "summary": "Delete Relationship",
         "tags": [
           "architecture"
+        ]
+      },
+      "patch": {
+        "description": "Change what a link says: its name, its properties, its access type, its direction.\n\nNever its type or its ends. `properties` is replaced wholesale when given. Both elements\nthe link joins are reviewed: an approved one goes back to review, a locked one is a 409.",
+        "operationId": "update_relationship_relationships__relationship_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relationship_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Relationship Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationshipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Relationship",
+        "tags": [
+          "architecture"
+        ]
+      }
+    },
+    "/report-templates": {
+      "get": {
+        "description": "The built-in templates, with the subjects they take and the formats served.",
+        "operationId": "list_report_templates_report_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportTemplateRead"
+                  },
+                  "title": "Response List Report Templates Report Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Report Templates",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports": {
+      "post": {
+        "description": "Build a report and deposit it in the bucket under `reports/`. Editors only.",
+        "operationId": "create_report_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Implemented"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Report",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/render": {
+      "get": {
+        "description": "Build a report and return it. Nothing is stored.",
+        "operationId": "render_report_reports_render_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "template",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "title": "Template",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject_kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "package",
+                "diagram",
+                "query"
+              ],
+              "title": "Subject Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "enum": [
+                "html",
+                "pdf",
+                "docx"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/html; charset=utf-8": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The report, as an attachment."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Implemented"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Render Report",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/requirements/coverage": {
+      "get": {
+        "description": "Which requirements are realized by a design and tested, and which are not.\n\n`status` and `priority` narrow the requirements listed and counted. The\nrates leave out rejected requirements and are `null` when none is left.",
+        "operationId": "read_coverage_requirements_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A value of the vocabulary, or `unset` for requirements that have none.",
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "priority",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A value of the vocabulary, or `unset` for requirements that have none.",
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Priority"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Coverage",
+        "tags": [
+          "requirements"
         ]
       }
     },

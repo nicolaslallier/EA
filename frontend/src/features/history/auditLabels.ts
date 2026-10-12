@@ -25,6 +25,7 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'template.updated': 'Modèle modifié',
   'template.deleted': 'Modèle supprimé',
   'relationship.created': 'Relation créée',
+  'relationship.updated': 'Relation modifiée',
   'relationship.deleted': 'Relation supprimée',
   'diagram.created': 'Diagramme créé',
   'diagram.updated': 'Diagramme renommé',

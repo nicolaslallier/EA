@@ -72,6 +72,6 @@ garde la référence à sa source.**
 ## Références
 
 - ADR liés : [0031](0031-diagrammes-enregistres.md), [0035](0035-taille-des-boites-de-diagramme.md),
-  [0063](0063-objets-de-vue-notes-groupes-et-trace.md)
+  [0069](0069-objets-de-vue-notes-groupes-et-trace.md)
 - Code concerné : `backend/src/ea/domain/generated_views.py`, `backend/src/ea/services/diagrams.py`,
   `backend/src/ea/services/view_sources.py`, `frontend/src/lib/autoLayout.ts`

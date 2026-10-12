@@ -1,6 +1,6 @@
 """What a diagram draws that is not an element: notes, groups, and the bends of a link.
 
-All of it is presentation (docs/adr/0063). A **group is not an
+All of it is presentation (docs/adr/0069). A **group is not an
 element of the graph and never creates a relationship**: putting three boxes in
 "Domaine Paiement" says "visually together" and nothing else. A note anchored
 to an element is a dotted line, not a relationship. A link keeps being the

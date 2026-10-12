@@ -111,10 +111,12 @@ from ea.domain.ports import (
     GraphView,
     Held,
     PackageRemoval,
+    RelationshipChange,
     RowRefusal,
     Transaction,
 )
 from ea.domain.profiles import Profile, Stereotype
+from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -136,6 +138,7 @@ from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
+from ea.services.reports import ReportService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
@@ -418,6 +421,8 @@ class InMemoryRepository:
         self.last_as_of: date | None = None
         #: The timeline reads made, so a test can show a refusal came before any of them.
         self.reads: list[str] = []
+        #: Set by `InMemoryPackages`: the tree, for a filter on a package's subtree.
+        self.package_tree: InMemoryPackages | None = None
 
     async def add_element(self, element: Element, *, audit: AuditOf[Element]) -> Element:
         events = events_for(audit, element)
@@ -439,11 +444,27 @@ class InMemoryRepository:
     async def get_element(self, element_id: UUID) -> Element | None:
         return self.elements.get(element_id)
 
+    def _in_package(self, element: Element, criteria: ElementFilter) -> bool:
+        wanted = criteria.package_id
+        if wanted is None:
+            return True
+        here = element.package_id
+        if not criteria.include_subpackages:
+            return here == wanted
+        tree = self.package_tree.packages if self.package_tree is not None else {}
+        while here is not None:  # walk up: the element is in the subtree of `wanted`
+            if here == wanted:
+                return True
+            parent = tree.get(here)
+            here = parent.parent_id if parent is not None else None
+        return False
+
     def _matching(self, criteria: ElementFilter) -> list[Element]:
         return [
             element
             for element in self.elements.values()
-            if criteria.as_of is None or Lifespan.read(element.properties).covers(criteria.as_of)
+            if self._in_package(element, criteria)
+            and (criteria.as_of is None or Lifespan.read(element.properties).covers(criteria.as_of))
         ]
 
     async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
@@ -600,6 +621,32 @@ class InMemoryRepository:
         self.last_as_of = as_of
         return tuple(self.relationships.values())
 
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        before = self.relationships.get(relationship_id)
+        if before is None:
+            return None
+        after = change(before)
+        if after == before:
+            return before
+        events = events_for(audit, RelationshipChange(before, after))
+        reviewed = (
+            self._review_ends((before.source_id, before.target_id), ends, events)
+            if ends is not None
+            else []
+        )
+        self.relationships[relationship_id] = after
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
+        return after
+
     async def delete_relationship(
         self,
         relationship_id: UUID,
@@ -662,18 +709,21 @@ class InMemoryRepository:
         self.last_as_of = as_of
         return GraphView(elements=(self.elements[element_id],), relationships=())
 
-    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+    async def view_of(
+        self, element_ids: Sequence[UUID], *, link_limit: int | None = None
+    ) -> GraphView:
         """The elements that exist among these ids, and the links between them."""
         scope = set(element_ids)
+        links = tuple(
+            link
+            for link in self.relationships.values()
+            if link.source_id in scope and link.target_id in scope
+        )
         return GraphView(
             elements=tuple(
                 self.elements[element_id] for element_id in scope & self.elements.keys()
             ),
-            relationships=tuple(
-                link
-                for link in self.relationships.values()
-                if link.source_id in scope and link.target_id in scope
-            ),
+            relationships=links if link_limit is None else links[:link_limit],
         )
 
     # --- Analysis: the reads behind the matrix and the checks ---
@@ -831,6 +881,33 @@ class InMemoryRepository:
             ),
             None,
         )
+
+    # --- Requirements (docs/adr/0067) ---
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        realizations = [
+            link for link in self.relationships.values() if link.relationship_type is R.REALIZATION
+        ]
+        links = [link for link in realizations if link.target_type in REQUIREMENT_TYPES]
+        frontier = {k.source_id for k in links if k.source_type is ElementType.JUNCTION}
+        followed: set[UUID] = set()
+        while frontier - followed:
+            now = frontier - followed
+            followed |= now
+            more = [link for link in realizations if link.target_id in now]
+            links += more
+            frontier = {k.source_id for k in more if k.source_type is ElementType.JUNCTION}
+        links = tuple(links[:link_limit])
+        wanted = {link.source_id for link in links}
+        requirements = [e for e in self.elements.values() if e.element_type in REQUIREMENT_TYPES][
+            :requirement_limit
+        ]
+        extra = [
+            e
+            for e in self.elements.values()
+            if e.id in wanted and e.element_type not in REQUIREMENT_TYPES
+        ]
+        return GraphView(elements=(*requirements, *extra), relationships=links)
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Walk the stored containment edges from target back to source."""
@@ -1608,6 +1685,7 @@ class InMemoryPackages:
         self.packages: dict[UUID, Package] = {}
         self._graph = graph
         self._diagrams = diagrams
+        graph.package_tree = self
 
     def _refuse_a_taken_name(self, package: Package) -> None:
         if any(
@@ -2461,3 +2539,23 @@ def file_service(
 ) -> FileService:
     """The bucket and the catalogue beside it, on one frozen clock."""
     return FileService(files_store, metadata=files_metadata, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def report_service(
+    diagram_service: DiagramService,
+    service: ArchitectureService,
+    document_service_without_an_index: DocumentService,
+    file_service: FileService,
+    package_service: PackageService,
+) -> ReportService:
+    """Reports over the in-memory stores, on one frozen clock and a fixed suffix."""
+    return ReportService(
+        diagram_service,
+        service,
+        document_service_without_an_index,
+        file_service,
+        packages=package_service,
+        clock=lambda: FIXED_NOW,
+        new_id=lambda: "ab12cd34",
+    )

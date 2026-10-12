@@ -40,6 +40,9 @@ export function toCanvasPoint(
   return { x: (client.x - origin.x) / zoom + pan.x, y: (client.y - origin.y) / zoom + pan.y }
 }
 
+/** Room kept past the furthest box, so there is always somewhere to drop. */
+export const CANVAS_MARGIN = 160
+
 /** The centre of a box. */
 export function centreOf(box: Rect): Point {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 }

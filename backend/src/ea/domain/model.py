@@ -107,7 +107,7 @@ class Element:
     #: never by a client. Unknown (`None`) is not "nobody": the separation of
     #: duties refuses to approve an element whose last author is unknown.
     last_modified_by_sub: str | None = None
-    #: The stereotypes laid on the element (docs/adr/0064): labels, not types. Read-only
+    #: The stereotypes laid on the element (docs/adr/0070): labels, not types. Read-only
     #: here, filled by `ArchitectureService` and never by a repository of the graph.
     stereotypes: tuple[StereotypeRef, ...] = ()
 
@@ -123,9 +123,6 @@ class Element:
         properties: Mapping[str, str] | None = None,
         element_id: UUID | None = None,
     ) -> Element:
-        if element_type.is_connector:
-            msg = "a junction is a connector, not a modelled element"
-            raise ValueError(msg)
         return cls(
             id=element_id or uuid4(),
             element_type=element_type,
@@ -210,4 +207,31 @@ class Relationship:
             access_type=access_type,
             directed=directed,
             properties=_freeze(properties),
+        )
+
+    def revised(
+        self,
+        *,
+        name: str | None = None,
+        access_type: AccessType | None = None,
+        directed: bool | None = None,
+        properties: Mapping[str, str] | None = None,
+    ) -> Relationship:
+        """What a link says, changed; what it connects (type, ends) never is (docs/adr/0066).
+
+        An omitted field keeps its value; `properties` replaces the whole map, as it does
+        on an element. `access_type` only means something on an access relationship.
+        """
+        if access_type is not None and self.relationship_type is not RelationshipType.ACCESS:
+            msg = (
+                "access_type is only meaningful on an access relationship, "
+                f"not {self.relationship_type.value}"
+            )
+            raise ValueError(msg)
+        return replace(
+            self,
+            name=self.name if name is None else reject_nul(name, "a name").strip(),
+            access_type=self.access_type if access_type is None else access_type,
+            directed=self.directed if directed is None else directed,
+            properties=self.properties if properties is None else _freeze(properties),
         )

@@ -77,6 +77,6 @@ donnée de référence. Aucune expression régulière d'un utilisateur n'est jam
 
 - ADR liés : [0005](0005-archimate-3-2-comme-metamodele.md), [0020](0020-adressage-ip-en-proprietes-du-graphe.md),
   [0033](0033-postgresql-seul-pour-le-graphe.md), [0046](0046-journal-d-audit-append-only.md),
-  [0063](0063-objets-de-vue-notes-groupes-et-trace.md)
+  [0069](0069-objets-de-vue-notes-groupes-et-trace.md)
 - Code concerné : `backend/src/ea/domain/profiles.py`, `backend/src/ea/services/profiles.py`,
   `backend/migrations/versions/0016_profiles.py`, `frontend/src/features/profiles/`

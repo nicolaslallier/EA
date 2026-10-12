@@ -320,3 +320,23 @@ def test_build_organization_roots_the_packages_whose_parent_is_not_listed() -> N
     top_folder = root.children[1]
     assert top_folder.items == ("a", "b")
     assert [(f.label, f.items) for f in top_folder.children] == [("Sub", ("c",))]
+
+
+async def test_an_or_junction_is_written_as_one_and_read_back_with_its_kind() -> None:
+    from ea.formats.archimate_xml import parse_model
+
+    junction = ExchangeElement(
+        "j-1", ElementType.JUNCTION, "Gate", properties={"junction_type": "or"}
+    )
+    link = ExchangeRelationship("r", RelationshipType.FLOW, "a-1", "j-1")
+    text = await render([actor(), junction], [link])
+
+    assert 'type="OrJunction"' in text
+    model = parse_model(text.encode())
+    back = next(e for e in model.elements if e.identifier == "j-1")
+    assert (back.element_type, back.name, back.properties["junction_type"]) == (
+        ElementType.JUNCTION,
+        "Gate",
+        "or",
+    )
+    assert [r.target for r in model.relationships] == ["j-1"]

@@ -29,6 +29,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
@@ -75,6 +76,8 @@ def mcp_over(
         lambda: diagram_service,
         lambda: profile_service,
         lambda: template_service,
+        lambda: RequirementService(InMemoryRepository()),
+        lambda: app.state.report_service,
     )
 
 

@@ -4,7 +4,7 @@
 // It shows the rules it is given and applies none: an enumeration is a list,
 // a template a hint, a required property a star. A value that breaks the
 // declared format comes back as the API's refusal. The values live in the
-// element's own `properties` (docs/adr/0064), and the API's
+// element's own `properties` (docs/adr/0070), and the API's
 // PATCH replaces that whole map — so a save sends all of it.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 

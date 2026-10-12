@@ -18,6 +18,7 @@ import {
   zoomAt,
   type View,
   boxesIn,
+  CANVAS_MARGIN,
   canvasExtent,
   centreOf,
   edgeSegment,
@@ -89,8 +90,6 @@ const BAND_SLOP = 4
 
 const ZOOM_STEP = 0.25
 const WHEEL_STEP = 1.1
-/** Room kept past the furthest box, so there is always somewhere to drop. */
-const MARGIN = 160
 
 const svg = useTemplateRef<SVGSVGElement>('svg')
 const view = ref<View>({ zoom: 1, pan: { x: 0, y: 0 } })
@@ -115,7 +114,7 @@ const chosen = computed(
 )
 const several = computed(() => chosen.value.size > 1)
 
-const extent = computed(() => canvasExtent(props.boxes, MARGIN))
+const extent = computed(() => canvasExtent(props.boxes, CANVAS_MARGIN))
 const byId = computed(() => new Map(props.boxes.map((box) => [box.element.id, box])))
 /** The link and resize handles belong to a lone selected box, never to a set. */
 const selected = computed(() => (several.value ? undefined : byId.value.get(props.selectedId)))

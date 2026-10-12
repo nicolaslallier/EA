@@ -206,7 +206,7 @@ def revision_without_author(source: str) -> set[str]:
     """Functions that write `revision` and not `last_modified_by_sub`, or the reverse.
 
     The `revision` of an element is the one that names an author. A diagram has a
-    counter of the same name (docs/adr/0063) that only guards a concurrent save, so a
+    counter of the same name (docs/adr/0069) that only guards a concurrent save, so a
     function that handles a `DiagramRecord` is not about an element's revision.
     """
     return {

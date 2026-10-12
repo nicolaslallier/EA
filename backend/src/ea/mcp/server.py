@@ -51,6 +51,8 @@ from ea.api.schemas import (
     AxisSelect,
     BaselineDiffRead,
     BaselineRead,
+    CoverageFilter,
+    CoverageRead,
     Cursor,
     CursorToken,
     Depth,
@@ -96,6 +98,8 @@ from ea.api.schemas import (
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    ReportTemplateId,
+    ReportTemplateRead,
     RequestIdFilter,
     Reserved,
     RestoreRead,
@@ -151,6 +155,7 @@ from ea.domain.query import (
     PropertyOp,
     QueryOrder,
 )
+from ea.domain.reports import ReportFormat, ReportRequest, ReportSubject, SubjectKind
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.analysis import AnalysisService
@@ -165,6 +170,8 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.profiles import ProfileService
+from ea.services.reports import ReportService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
@@ -253,6 +260,14 @@ and no serving link" is one call. `list_saved_queries` shows the filters the
 team already named; reuse one with `run_saved_query` rather than rebuilding it,
 and `save_query` keeps a good filter for the others.
 
+Requirements live in the catalogue too: a `requirement` or `constraint` element whose
+`req_status` (`proposed`, `approved`, `implemented`, `verified`, `rejected`) and
+`req_priority` (`must`, `should`, `could`) are properties. A design element or a test (a
+`deliverable` or `artifact` carrying `test_result`) is linked to the requirement by
+`realization`, source to target. `get_coverage` answers "is this requirement realized, and
+tested?" and lists the gaps; `impact_of` is not that question - it follows what a requirement
+realizes, not what realizes it.
+
 The server also keeps files of any kind — PDFs, spreadsheets, notes — in one
 bucket organised in folders. `list_files` browses a folder, `read_file` reads a
 text file, `upload_file` stores one (base64 for anything that is not text, at
@@ -306,8 +321,8 @@ of text: for more, narrow it to a package or a saved query, or download the file
 default**: always call it with `dry_run` left true first, read the report (counts per
 category, and every refused row with its reason), SHOW it to the person you work for, and only
 then call it again with `dry_run=false`. It creates elements and links and deletes nothing: an
-element with the same type and name is reused, not overwritten. Junctions and diagram views
-are not imported over MCP, and a file is at most 1 MB.
+element with the same type and name is reused, not overwritten. Junctions are elements like
+the others; diagram views are not imported over MCP, and a file is at most 1 MB.
 
 `get_relationship_matrix` answers "which of these elements are linked to which
 of those": a grid, rows as sources and columns as targets, listing only the
@@ -346,7 +361,17 @@ element's type or what it may be linked to.
 
 For a recurring schema (an application, its host and its database),
 `list_diagram_templates` then `instantiate_diagram_template`: it binds typed slots to
-elements and creates no relationship unless you ask.\
+elements and creates no relationship unless you ask.
+
+Reports are dated documents built from the catalogue. `list_report_templates`
+names the templates, the kind of subject each takes (a diagram or a package) and
+the formats this server can produce (html is always there; pdf and docx only
+where the server carries the engine). `generate_report` builds one, stores it in
+the bucket under `reports/` and answers with its path and record, never its
+bytes: read an html report with `read_file`, or give the path to the person. A
+report is a snapshot and writes a file, so ask first; it is refused past 500
+elements, 20 diagrams, 2 MiB of attached documents or 30 seconds — narrow the
+scope when it is.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -364,6 +389,8 @@ TimelineProvider = Callable[[], TimelineService]
 DiagramProvider = Callable[[], DiagramService]
 ProfileProvider = Callable[[], ProfileService]
 TemplateProvider = Callable[[], TemplateService]
+RequirementProvider = Callable[[], RequirementService]
+ReportProvider = Callable[[], ReportService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -372,6 +399,12 @@ TemplateProvider = Callable[[], TemplateService]
 # its own sentence, a `Field(description=...)` is laid over the shared type and
 # the bounds come through untouched. What is declared below is what only an
 # agent is offered: a document as text, a search, an id described for a model.
+ReportTemplateArgument = Annotated[
+    ReportTemplateId, Field(description="A template id, as `list_report_templates` reports it.")
+]
+SubjectIdArgument = Annotated[
+    UUID, Field(description="The id of the diagram or the package the report is about.")
+]
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
 ]
@@ -481,6 +514,14 @@ FileTagsArgument = Annotated[
 #: Base64 carries three bytes in four characters; `upload_file` still decides
 #: on the decoded size against `MAX_MCP_UPLOAD_BYTES`, this only stops a
 #: runaway argument before it is built into a request.
+CoverageStatus = Annotated[
+    CoverageFilter,
+    Field(description="Only the requirements with this status (e.g. `approved`), or `unset`."),
+]
+CoveragePriority = Annotated[
+    CoverageFilter,
+    Field(description="Only the requirements with this priority (`must`, `should`, `could`)."),
+]
 FileContent = Annotated[
     str,
     Field(
@@ -673,16 +714,18 @@ def build_mcp_server(
     get_diagrams: DiagramProvider,
     get_profiles: ProfileProvider,
     get_templates: TemplateProvider,
+    get_requirements: RequirementProvider,
+    get_reports: ReportProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the fourteen services.
+    """Assemble the tool set over the seventeen services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
     queries, the audit trail, the baselines, the exchanges, the analyses, the time, the
-    diagrams, the profiles and the diagram templates.
+    diagrams, the profiles, the diagram templates, the requirements and the reports.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -694,8 +737,8 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis`, `get_timeline`, `get_diagrams`, `get_profiles` and `get_templates` are
-    required for the same reason.
+    `get_analysis`, `get_timeline`, `get_diagrams`, `get_profiles`, `get_templates` and
+    `get_requirements` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -878,6 +921,35 @@ def build_mcp_server(
                 relationship_type=relationship_type,
                 source_id=source_id,
                 target_id=target_id,
+                name=name,
+                access_type=access_type,
+                directed=directed,
+                properties=properties,
+            )
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def update_relationship(
+        relationship_id: ElementId,
+        # Not `| None`: an omitted argument keeps its value, an explicit null is refused, as
+        # `PATCH /relationships` refuses it (the default is the "omitted" of the service).
+        name: LinkName = None,  # type: ignore[assignment]
+        access_type: AccessType = None,  # type: ignore[assignment]
+        directed: bool = None,  # type: ignore[assignment]  # noqa: RUF013
+        properties: dict[str, str] = None,  # type: ignore[assignment]  # noqa: RUF013
+    ) -> RelationshipRead:
+        """Change what a link says. An omitted field keeps its stored value.
+
+        `properties` is replaced wholesale when given, not merged: read the link first
+        (`read_element_relations`) if you mean to add one attribute. The type and the two
+        ends cannot be changed — `disconnect_elements` then `connect_elements` instead, so
+        the metamodel judges the new pair. The elements at both ends are reviewed: an
+        approved one goes back to review, a locked one refuses.
+        """
+        return RelationshipRead.of(
+            await get_service().update_relationship(
+                relationship_id,
                 name=name,
                 access_type=access_type,
                 directed=directed,
@@ -1165,6 +1237,27 @@ def build_mcp_server(
             already = True
         comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
+
+    # --- Requirements (docs/adr/0067) ---------------------------------------
+    # A requirement is an element and a test or a design realizes it; this tool only reads.
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_coverage(
+        status: CoverageStatus | None = None,
+        priority: CoveragePriority | None = None,
+    ) -> CoverageRead:
+        """Which requirements are realized by a design, and tested by a test.
+
+        Call it before you claim a requirement is done, or to list the ones nobody realizes
+        (`gap` = `design`) or nobody tests (`gap` = `verification`). Each requirement says what
+        realizes it (`designed_by`) and what tests it (`tested_by`, with each test's result).
+        Only a test whose result is `passed` verifies (`verification`): a `failed` one makes
+        the requirement `failing`, and `not_run` or `blocked` leave it `unverified`.
+        The rates leave out rejected requirements and are null when there is none. To change a
+        status or a result, use `update_element` (`req_status`, `test_result`).
+        """
+        return CoverageRead.of(await get_requirements().coverage(status=status, priority=priority))
 
     # --- Documents --------------------------------------------------------
     # The markdown attached to an element, which lives in PostgreSQL while the
@@ -1821,7 +1914,7 @@ def build_mcp_server(
         the same type and name is reused, never overwritten, and a refused row (a
         relationship the metamodel forbids, say) does not stop the others unless
         `strict` is true. New packages and new elements outside any folder go under
-        `target_package_id`. Junctions and diagram connections are not imported, and
+        `target_package_id`. Junctions are imported as elements; diagram connections are not, and
         diagram views are not imported over MCP. The text is at most 1 MB in all; a
         larger file goes through the Échanges screen of the web interface.
         """
@@ -1874,6 +1967,47 @@ def build_mcp_server(
             ),
         )
         return ImportReportRead.of(report)
+
+    # --- Reports (docs/adr/0062) --------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_report_templates() -> list[ReportTemplateRead]:
+        """The report templates: id, version, title, the kinds of subject, the formats served.
+
+        Call this before `generate_report`: a template takes only the kinds of
+        subject it lists, and `formats` is what this server can really produce
+        (html is always there).
+        """
+        reports = get_reports()
+        return [
+            ReportTemplateRead.of(template, reports.formats)
+            for template in await reports.list_templates()
+        ]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def generate_report(
+        template: ReportTemplateArgument,
+        subject_kind: SubjectKind,
+        subject_id: SubjectIdArgument,
+        format: ReportFormat = "html",  # noqa: A002 - the name an agent sees
+    ) -> FileRead:
+        """Build a report on a diagram or a package and store it under `reports/`: it writes.
+
+        Answers with the file's path (`key`) and its record, never its bytes: read
+        an html report with `read_file`, or give the path to the person, who
+        downloads it from the web interface. Each call stores one more file - a
+        regeneration never overwrites. The report is refused, with a message
+        saying which ceiling, past 500 elements, 20 diagrams, 2 MiB of attached
+        documents or 30 seconds: narrow the scope and call again. A format the
+        server cannot produce (`pdf`, `docx`) is refused too: use `html`.
+        """
+        return FileRead.of(
+            await get_reports().deposit(
+                ReportRequest(template, ReportSubject(subject_kind, subject_id), format)
+            )
+        )
 
     # --- Metamodel --------------------------------------------------------
 

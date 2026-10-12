@@ -4,7 +4,7 @@
 // It decides nothing: it names the change the user made. "Relier le contenu…"
 // is the only road from a group to a relationship, and it opens the usual link
 // form for a pair the user picked — one explicit gesture per relationship, each
-// validated by the API (docs/adr/0063).
+// validated by the API (docs/adr/0069).
 import { ref } from 'vue'
 
 import type { DiagramObject } from './useDiagram'

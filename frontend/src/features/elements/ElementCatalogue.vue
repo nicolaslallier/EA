@@ -19,6 +19,7 @@ import { useMe } from '../../lib/me'
 import DocumentPanel from '../documents/DocumentPanel.vue'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import PackageManager from '../packages/PackageManager.vue'
+import ReportDialog from '../reports/ReportDialog.vue'
 import PackageTree from '../packages/PackageTree.vue'
 import { ALL, ELEMENT_DRAG_TYPE, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
@@ -288,6 +289,7 @@ function day(iso: string): string {
         @select="selectPackage"
         @drop="(elementId, target) => file([elementId], target)"
       />
+      <ReportDialog v-if="selectedPackage" subject-kind="package" :subject-id="selectedPackage.id" />
       <label v-if="selectedPackage" class="subpackages">
         <input
           type="checkbox"

@@ -62,9 +62,12 @@ from ea.domain.exchange import (
     Issue,
     Severity,
     Unreadable,
+    element_exchange_name,
     element_type_of,
     exchange_name,
     fold_properties,
+    junction_kind_of,
+    junction_name,
     relationship_type_of,
 )
 
@@ -158,7 +161,8 @@ class _Writer:
         body += self.properties(properties)
         xml = (
             f'<element identifier="{self.attr(item.identifier)}" '
-            f'xsi:type="{exchange_name(item.element_type)}">{body}</element>'
+            f'xsi:type="{element_exchange_name(item.element_type, item.properties)}">'
+            f"{body}</element>"
         )
         self.settle(item.identifier)
         return xml
@@ -297,6 +301,7 @@ class _Draft:
     access_type: AccessType | None = None
     directed: bool = False
     modifier: str = ""
+    junction_kind: str = ""
 
 
 #: What a slot of the file holds once read: a row to build, or a row to report as unreadable.
@@ -390,16 +395,8 @@ def _read_element(node: Element, index: int, reading: _Reading) -> _Slot:
             cascade=False,
         )
     reading.seen.add(identifier)
-    if kind in JUNCTION_NAMES:
-        issue = Issue(
-            Severity.INFO,
-            "junction_not_supported",
-            "junctions cannot be stored; this one is ignored",
-            identifier,
-            path=path,
-        )
-        return Unreadable(Category.ELEMENTS, identifier, ignored=True), issue
-    element_type = element_type_of(kind)
+    junction = junction_kind_of(kind) if kind in JUNCTION_NAMES else None
+    element_type = ElementType.JUNCTION if junction else element_type_of(kind)
     if element_type is None:
         return _unreadable(
             Category.ELEMENTS,
@@ -410,14 +407,18 @@ def _read_element(node: Element, index: int, reading: _Reading) -> _Slot:
             shown=identifier,
         )
     issues: list[Issue] = []
+    name = _text_of(node, "name", issues)
+    if junction and not name:
+        name = junction_name(identifier, junction)  # Exchange gives a junction no name
     return _Draft(
         identifier,
         path,
-        _text_of(node, "name", issues),
+        name,
         _text_of(node, "documentation", issues),
         _pairs_of(node),
         issues,
         element_type=element_type,
+        junction_kind=junction or "",
     )
 
 
@@ -823,6 +824,9 @@ def parse_model(data: bytes) -> ExchangeModel:
         for issue in (*slot.issues, *missing, *folded.issues):
             issues.append(_located(issue, slot))
         if slot.element_type is not None:
+            element_properties = folded.properties
+            if slot.junction_kind:
+                element_properties = {**element_properties, "junction_type": slot.junction_kind}
             elements.append(
                 ExchangeElement(
                     identifier=slot.identifier,
@@ -830,7 +834,7 @@ def parse_model(data: bytes) -> ExchangeModel:
                     name=slot.name,
                     description=folded.description,
                     documentation=slot.documentation,
-                    properties=folded.properties,
+                    properties=element_properties,
                     path=slot.path,
                 )
             )

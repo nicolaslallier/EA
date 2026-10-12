@@ -5,7 +5,7 @@ Revises: 0015
 Date: 2026-10-11
 
 Donnée de référence : un stéréotype est une étiquette posée sur un élément d'un
-type de base, jamais un type nouveau (docs/adr/0064). `base_type` est une
+type de base, jamais un type nouveau (docs/adr/0070). `base_type` est une
 chaîne contrôlée par le domaine — un enum PostgreSQL figerait le métamodèle dans
 le schéma. `profile_properties.position` garde l'ordre de déclaration. Rien à
 convertir : quatre tables neuves, aucune lecture ni transformation de donnée existante -

@@ -1,4 +1,4 @@
-"""The PostgreSQL implementation of `TemplateRepository` - a body in, a body out (docs/adr/0066).
+"""The PostgreSQL implementation of `TemplateRepository` - a body in, a body out (docs/adr/0072).
 
 Every write opens its unit through `ea.db.unit_of_work` and inserts its audit events in the
 same transaction. A body read back goes through the same validators that wrote it, so a row

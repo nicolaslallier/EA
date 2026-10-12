@@ -34,7 +34,7 @@ dépendance.**
 | Durée de vie | Mémoire de la session d'édition ; vidée à l'ouverture d'un diagramme et après un conflit de révision. Un historique rechargé annulerait la disposition d'un collègue |
 | Annuler et enregistrer | Annuler restaure l'état local puis demande l'enregistrement habituel (anti-rebond) : il n'existe pas de « défaire côté serveur » |
 | Export | `serializeSvg` fabrique un SVG autonome (palette claire fixe, styles en ligne, texte échappé, couleurs `#rrggbb` validées, ni `<script>` ni lien externe). Le PNG est ce SVG dessiné sur un `<canvas>` (1x/2x) |
-| Auto-layout | `autoLayout.ts` (livré avec les vues générées, [`0065`](0065-vues-generees-vivantes-ou-figees.md)) : rangées par couche ArchiMate, tri par barycentre, déterministe ; il ne partage avec les anneaux du voisinage que `BOX_WIDTH`/`BOX_HEIGHT` |
+| Auto-layout | `autoLayout.ts` (livré avec les vues générées, [`0071`](0071-vues-generees-vivantes-ou-figees.md)) : rangées par couche ArchiMate, tri par barycentre, déterministe ; il ne partage avec les anneaux du voisinage que `BOX_WIDTH`/`BOX_HEIGHT` |
 | Clavier | Chaque geste a un équivalent : flèches ±1 px (Maj ±10), Alt+flèches redimensionnent, Ctrl/Cmd+A, Suppr, Ctrl+Z / Ctrl+Maj+Z |
 
 ## Alternatives envisagées et écartées

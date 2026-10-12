@@ -76,7 +76,7 @@ export function useDiagram() {
   const { status, error } = read
   const saving = ref(false)
   const saveError = ref('')
-  /** `null`: drawn by hand. Else a view generated from `source` (docs/adr/0065). */
+  /** `null`: drawn by hand. Else a view generated from `source` (docs/adr/0071). */
   const generation = ref<Generation | null>(null)
   const source = ref<ViewSource | null>(null)
   const live = computed(() => generation.value === 'live')
@@ -88,7 +88,7 @@ export function useDiagram() {
   const reloaded = ref(false)
   let mine: (Scene & { elements: ElementRead[]; relationships: RelationshipRead[] }) | null = null
 
-  // Undo and redo (docs/adr/0062). Memory only, per editing
+  // Undo and redo (docs/adr/0068). Memory only, per editing
   // session: `open` and `close` empty it. A command restores the *boxes* and
   // asks for a save; the graph (a relationship created from a link) is not
   // part of it — taking one back is `DELETE /relationships`, offered by hand.
@@ -478,7 +478,7 @@ export function useDiagram() {
     history.redo()
   }
 
-  // --- Notes and groups (docs/adr/0063) -------------------------
+  // --- Notes and groups (docs/adr/0069) -------------------------
 
   const DEFAULT_OBJECT: Record<'note' | 'group', Size & { text: string; z: number }> = {
     note: { width: 180, height: 90, text: '', z: 1 },
@@ -652,7 +652,7 @@ export function useDiagram() {
     saveError.value = ''
   }
 
-  // --- Generated views (docs/adr/0065) -----------------------------------
+  // --- Generated views (docs/adr/0071) -----------------------------------
 
   /** Store the layout computed here and make the live view an editable diagram. */
   async function freeze(): Promise<void> {

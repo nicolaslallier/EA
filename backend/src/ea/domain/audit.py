@@ -82,6 +82,7 @@ class AuditAction(StrEnum):
     TEMPLATE_UPDATED = "template.updated"
     TEMPLATE_DELETED = "template.deleted"
     RELATIONSHIP_CREATED = "relationship.created"
+    RELATIONSHIP_UPDATED = "relationship.updated"
     RELATIONSHIP_DELETED = "relationship.deleted"
     DIAGRAM_CREATED = "diagram.created"
     DIAGRAM_UPDATED = "diagram.updated"

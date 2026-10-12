@@ -63,8 +63,8 @@ async def test_a_dry_run_writes_nothing_a_real_import_commits_and_replaying_crea
         await count(engine_at_head, "elements"),
         await count(engine_at_head, "relationships"),
     ) == (
+        4,
         3,
-        2,
     )
 
     again = await client.post("/exchanges/imports", **upload("minimal-model.xml", dry_run="false"))
@@ -74,8 +74,8 @@ async def test_a_dry_run_writes_nothing_a_real_import_commits_and_replaying_crea
         await count(engine_at_head, "elements"),
         await count(engine_at_head, "relationships"),
     ) == (
+        4,
         3,
-        2,
     )
 
 

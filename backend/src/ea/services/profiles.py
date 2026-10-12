@@ -6,7 +6,7 @@ layer owns: **what an element carries must agree with what it is** - a
 stereotype of another base type is refused, two stereotypes declaring one key
 cannot be carried together, and the values already there are checked against
 the formats declared. `required` is reported by `domain.profiles.missing_required`
-and never enforced here. No regular expression is run for a user (docs/adr/0064).
+and never enforced here. No regular expression is run for a user (docs/adr/0070).
 """
 
 from __future__ import annotations

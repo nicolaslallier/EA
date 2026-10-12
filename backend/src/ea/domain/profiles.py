@@ -80,7 +80,7 @@ def check_template(template: str) -> None:
     """A template is short text where `*` is any run, `?` any one character and `#` one digit.
 
     No regular expression is ever run on a user's behalf: a hostile pattern cannot be told
-    from a good one by reading it (docs/adr/0064), so there is none. Matching is the
+    from a good one by reading it (docs/adr/0070), so there is none. Matching is the
     two-pointer algorithm below, at most `len(template) * len(value)` steps.
     """
     if not template or len(template) > MAX_TEMPLATE_LENGTH:

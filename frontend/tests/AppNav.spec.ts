@@ -107,3 +107,12 @@ describe('AppNav', () => {
     await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
   })
 })
+
+describe('the reading section', () => {
+  it('is listed under its own heading', async () => {
+    await renderNav('/view')
+
+    expect(screen.getByText('Lecture')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Consultation/ })).toHaveAttribute('href', '/view')
+  })
+})

@@ -146,10 +146,10 @@ class TestImport:
         assert response.status_code == 200
         assert body["dry_run"] is True and body["applied"] is False
         assert body["counts"]["elements"] == {
-            "created": 3,
+            "created": 4,
             "reused": 0,
             "rejected": 0,
-            "ignored": 1,
+            "ignored": 0,
         }
         assert body["sha256"] == hashlib.sha256(data).hexdigest()
         assert isinstance(body["duration_ms"], int) and body["duration_ms"] >= 0
@@ -164,10 +164,10 @@ class TestImport:
         first = await client.post("/exchanges/imports", **upload(data, dry_run="false"))
         again = await client.post("/exchanges/imports", **upload(data, dry_run="false"))
 
-        assert first.json()["applied"] is True and len(repository.elements) == 3
+        assert first.json()["applied"] is True and len(repository.elements) == 4
         assert again.json()["counts"]["elements"]["created"] == 0
         assert again.json()["counts"]["relationships"]["created"] == 0
-        assert len(repository.elements) == 3 and len(repository.relationships) == 2
+        assert len(repository.elements) == 4 and len(repository.relationships) == 3
 
     async def test_strict_with_a_refused_row_writes_nothing_and_says_so(
         self, client: httpx.AsyncClient, repository: InMemoryRepository

@@ -133,7 +133,7 @@ class PostgresSavedQueryRepository:
                     delete(SavedQueryRecord).where(SavedQueryRecord.id == query_id)
                 )
             except IntegrityError as error:
-                # RESTRICT: a generated view reads this query (docs/adr/0065).
+                # RESTRICT: a generated view reads this query (docs/adr/0071).
                 if constraint_of(error) == "fk_diagrams_source_query_id_saved_queries":
                     msg = "a generated view reads this query: delete the view first"
                     raise SourceInUseError(msg) from error

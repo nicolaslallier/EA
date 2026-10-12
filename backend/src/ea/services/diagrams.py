@@ -137,17 +137,20 @@ class DiagramService:
             raise _not_found(diagram_id)
         return diagram
 
-    async def open(self, diagram_id: UUID, *, as_of: date | None = None) -> DiagramDetail:
+    async def open(
+        self, diagram_id: UUID, *, as_of: date | None = None, link_limit: int | None = None
+    ) -> DiagramDetail:
         """A diagram with the part of the graph it shows, stale boxes left out.
 
         `as_of` removes nothing - a diagram is a view, and a box out of period keeps
         its place in the layout (docs/adr/0060) - it only says which ones are not in
-        service that day, for the SPA to grey.
+        service that day, for the SPA to grey. `link_limit` stops the read of the links in
+        SQL (a report asks for one more than it accepts).
         """
         require_caller()
         diagram = await self.get(diagram_id)
         if diagram.generation is Generation.LIVE:
-            # No box is stored: who is on it is what the source yields now (docs/adr/0065).
+            # No box is stored: who is on it is what the source yields now (docs/adr/0071).
             members = await self._members_of(diagram)
             return DiagramDetail(
                 diagram=diagram, nodes=(), graph=await self._architecture.view_of(members)
@@ -155,7 +158,9 @@ class DiagramService:
         nodes = await self._repository.nodes_of(diagram_id)
         objects = await self._repository.objects_of(diagram_id)
         edges = await self._repository.edges_of(diagram_id)
-        graph = await self._architecture.view_of([node.element_id for node in nodes])
+        graph = await self._architecture.view_of(
+            [node.element_id for node in nodes], link_limit=link_limit
+        )
         present = {element.id for element in graph.elements}
         linked = {link.id for link in graph.relationships}
         inactive_elements: frozenset[UUID] = frozenset()
@@ -300,7 +305,7 @@ class DiagramService:
         )
         return stored
 
-    # --- Generated views (docs/adr/0065) -------------------------------------
+    # --- Generated views (docs/adr/0071) -------------------------------------
 
     def _resolver(self) -> ViewSourceResolver:
         if self._sources is None:

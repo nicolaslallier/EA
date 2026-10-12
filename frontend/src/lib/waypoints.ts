@@ -1,6 +1,6 @@
 // The route of a link: the bends a person put in it.
 //
-// A link stays the relationship of the graph (docs/adr/0063); only
+// A link stays the relationship of the graph (docs/adr/0069); only
 // its stroke belongs to the view. With no bend it is the straight segment
 // trimmed to the two borders, exactly as before; with bends it leaves each box
 // towards the nearest bend. Pure functions, nothing is mutated.

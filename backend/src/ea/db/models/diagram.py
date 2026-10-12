@@ -56,10 +56,10 @@ class DiagramRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Moves on by one at every `PUT /layout` (docs/adr/0063) so a save
+    # Moves on by one at every `PUT /layout` (docs/adr/0069) so a save
     # made on a stale copy is refused instead of overwriting a colleague's.
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    # A view generated from a query or a package (docs/adr/0065); NULL: drawn by hand.
+    # A view generated from a query or a package (docs/adr/0071); NULL: drawn by hand.
     generation: Mapped[str | None] = mapped_column(String(6), nullable=True)
     # RESTRICT: a query or a package a view reads cannot be deleted from under it.
     source_query_id: Mapped[UUID | None] = mapped_column(

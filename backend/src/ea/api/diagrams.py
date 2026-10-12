@@ -7,10 +7,11 @@ no diagram-specific way to change the graph.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Annotated, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from ea.api.dependencies import Diagrams
 from ea.api.schemas import (
@@ -26,6 +27,7 @@ from ea.api.schemas import (
     ErrorResponse,
     SourceDiffRead,
 )
+from ea.domain.diagram_render import render_svg
 from ea.domain.packages import UNSET
 
 router = APIRouter(tags=["diagrams"])
@@ -186,3 +188,31 @@ async def unfreeze_diagram(
         diagram_id, revision=body.revision, discard_annotations=body.discard_annotations
     )
     return DiagramRead.of(await diagrams.open(diagram_id))
+
+
+_SVG_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, no-cache",
+}
+
+
+@router.get(
+    "/diagrams/{diagram_id}/render.svg",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {
+            "description": "The diagram as a static SVG (docs/adr/0063).",
+            "content": {"image/svg+xml": {"schema": {"type": "string"}}},
+        },
+        **NOT_FOUND,
+    },
+)
+async def render_diagram(diagram_id: UUID, diagrams: Diagrams, request: Request) -> Response:
+    """The one static drawing of a diagram, cacheable by content (`ETag`)."""
+    svg = render_svg(await diagrams.open(diagram_id))
+    etag = f'"{sha256(svg.encode()).hexdigest()[:32]}"'
+    headers = {**_SVG_HEADERS, "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return Response(svg, media_type="image/svg+xml", headers=headers)
