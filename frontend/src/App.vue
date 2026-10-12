@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // The shell: a header, the section menu, and whatever the router mounts.
 // It holds no screen of its own — every section lives behind a route.
+import { useRoute } from 'vue-router'
+
 import AppNav from './components/AppNav.vue'
 import AsOfPicker from './components/AsOfPicker.vue'
 import BackendStatus from './components/BackendStatus.vue'
@@ -9,6 +11,7 @@ import { useAsOf } from './lib/asof'
 import { HOME } from './router/sections'
 
 const { asOf } = useAsOf()
+const route = useRoute()
 </script>
 
 <template>
@@ -23,7 +26,7 @@ const { asOf } = useAsOf()
     </header>
 
     <div class="app__body">
-      <AppNav />
+      <AppNav v-if="!route.meta.reader" />
       <main class="app__main">
         <p v-if="asOf" class="app__asof" role="status">
           Vue au {{ asOf }} — le catalogue est filtré à cette date.

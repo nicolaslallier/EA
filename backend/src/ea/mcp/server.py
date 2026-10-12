@@ -93,6 +93,8 @@ from ea.api.schemas import (
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    ReportTemplateId,
+    ReportTemplateRead,
     RequestIdFilter,
     Reserved,
     RestoreRead,
@@ -147,6 +149,7 @@ from ea.domain.query import (
     PropertyOp,
     QueryOrder,
 )
+from ea.domain.reports import ReportFormat, ReportRequest, ReportSubject, SubjectKind
 from ea.domain.search import DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT
 from ea.mcp.errors import speaking_plainly
 from ea.services.analysis import AnalysisService
@@ -159,6 +162,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.reports import ReportService
 from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
@@ -332,7 +336,17 @@ and `impact_of` reads the model as it is on a day. A plateau is a state of the
 architecture, containing what it composes or aggregates: `list_plateaus` lists
 them by date, `gap_between` says what leaves, arrives and stays from one to
 another. Never work that out by hand. `create_gap` draws the `gap` element
-between two plateaus — it writes, so ask first.\
+between two plateaus — it writes, so ask first.
+
+Reports are dated documents built from the catalogue. `list_report_templates`
+names the templates, the kind of subject each takes (a diagram or a package) and
+the formats this server can produce (html is always there; pdf and docx only
+where the server carries the engine). `generate_report` builds one, stores it in
+the bucket under `reports/` and answers with its path and record, never its
+bytes: read an html report with `read_file`, or give the path to the person. A
+report is a snapshot and writes a file, so ask first; it is refused past 500
+elements, 20 diagrams, 2 MiB of attached documents or 30 seconds — narrow the
+scope when it is.\
 """
 
 #: The services the tools call, looked up per call. See the module docstring.
@@ -348,6 +362,7 @@ ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
 RequirementProvider = Callable[[], RequirementService]
+ReportProvider = Callable[[], ReportService]
 
 # --- Argument constraints --------------------------------------------------
 # Every bound an HTTP endpoint also enforces — a name, a page, a depth, a
@@ -356,6 +371,12 @@ RequirementProvider = Callable[[], RequirementService]
 # its own sentence, a `Field(description=...)` is laid over the shared type and
 # the bounds come through untouched. What is declared below is what only an
 # agent is offered: a document as text, a search, an id described for a model.
+ReportTemplateArgument = Annotated[
+    ReportTemplateId, Field(description="A template id, as `list_report_templates` reports it.")
+]
+SubjectIdArgument = Annotated[
+    UUID, Field(description="The id of the diagram or the package the report is about.")
+]
 ElementId = Annotated[
     UUID, Field(description="The id of an element, as returned when it was created.")
 ]
@@ -657,15 +678,17 @@ def build_mcp_server(
     get_analysis: AnalysisProvider,
     get_timeline: TimelineProvider,
     get_requirements: RequirementProvider,
+    get_reports: ReportProvider,
     *,
     version: str = "0.1.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the eleven services.
+    """Assemble the tool set over the twelve services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines, the exchanges, the analyses and the time.
+    queries, the audit trail, the baselines, the exchanges, the analyses, the time and the
+    reports.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -1041,7 +1064,7 @@ def build_mcp_server(
         comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
 
-    # --- Requirements (docs/adr/0064) ---------------------------------------
+    # --- Requirements (docs/adr/0067) ---------------------------------------
     # A requirement is an element and a test or a design realizes it; this tool only reads.
 
     @server.tool(annotations=READS)
@@ -1770,6 +1793,47 @@ def build_mcp_server(
             ),
         )
         return ImportReportRead.of(report)
+
+    # --- Reports (docs/adr/0062) --------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_report_templates() -> list[ReportTemplateRead]:
+        """The report templates: id, version, title, the kinds of subject, the formats served.
+
+        Call this before `generate_report`: a template takes only the kinds of
+        subject it lists, and `formats` is what this server can really produce
+        (html is always there).
+        """
+        reports = get_reports()
+        return [
+            ReportTemplateRead.of(template, reports.formats)
+            for template in await reports.list_templates()
+        ]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def generate_report(
+        template: ReportTemplateArgument,
+        subject_kind: SubjectKind,
+        subject_id: SubjectIdArgument,
+        format: ReportFormat = "html",  # noqa: A002 - the name an agent sees
+    ) -> FileRead:
+        """Build a report on a diagram or a package and store it under `reports/`: it writes.
+
+        Answers with the file's path (`key`) and its record, never its bytes: read
+        an html report with `read_file`, or give the path to the person, who
+        downloads it from the web interface. Each call stores one more file - a
+        regeneration never overwrites. The report is refused, with a message
+        saying which ceiling, past 500 elements, 20 diagrams, 2 MiB of attached
+        documents or 30 seconds: narrow the scope and call again. A format the
+        server cannot produce (`pdf`, `docx`) is refused too: use `html`.
+        """
+        return FileRead.of(
+            await get_reports().deposit(
+                ReportRequest(template, ReportSubject(subject_kind, subject_id), format)
+            )
+        )
 
     # --- Metamodel --------------------------------------------------------
 

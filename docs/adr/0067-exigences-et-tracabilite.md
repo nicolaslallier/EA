@@ -5,7 +5,7 @@ statut: Proposition   # Proposition | Accepté | Supersédé par : NNNN
 affects: domain/requirements.py, services/requirements.py, repositories/architecture_store.py, api/requirements.py, mcp/server.py, frontend/src/features/requirements/
 ---
 
-# 64. Exigences et traçabilité
+# 67. Exigences et traçabilité
 
 ## Contexte
 
@@ -25,7 +25,7 @@ Aucune table, aucune migration, aucune dépendance. La couverture est une lectur
 | Cas de test | élément `deliverable` ou `artifact` portant la clé `test_result` (`not_run, passed, failed, blocked`) et, facultativement, `test_last_run` |
 | Lien de traçabilité | `realization`, de la conception ou du test vers l'exigence |
 
-La couverture suit les `realization` entrantes à travers les chaînes d'exigences, avec un ensemble d'éléments déjà vus (une boucle se termine). Un élément non motivationnel qui n'est pas un test est de la conception ; un test est un `deliverable`/`artifact` avec `test_result` ; les autres éléments de motivation (partie prenante, pilote) ne comptent pour rien. Un écart `design` est une exigence sans conception, un écart `verification` une exigence réalisée sans test. **Vérifiée ne veut pas dire « a un test ».** Seul un test dont `test_result` vaut exactement `passed` vérifie ; un `failed` met l'exigence `failing`, et `not_run`, `blocked` ou une valeur inconnue la laissent `unverified` (la réponse porte `verified`, `failing`, `unverified`, dont la somme est le nombre d'exigences actives, et `verification` par exigence). L'écart `verification` couvre donc aussi une exigence en échec. Une **jonction** (ADR 0062) entre une conception et une exigence est traversée, jamais comptée comme conception : la lecture suit les `realization` à travers les jonctions (dix sauts au plus, chacune suivie une fois, donc une boucle se termine), et une jonction sans élément réel derrière ne rend pas l'exigence réalisée.
+La couverture suit les `realization` entrantes à travers les chaînes d'exigences, avec un ensemble d'éléments déjà vus (une boucle se termine). Un élément non motivationnel qui n'est pas un test est de la conception ; un test est un `deliverable`/`artifact` avec `test_result` ; les autres éléments de motivation (partie prenante, pilote) ne comptent pour rien. Un écart `design` est une exigence sans conception, un écart `verification` une exigence réalisée sans test. **Vérifiée ne veut pas dire « a un test ».** Seul un test dont `test_result` vaut exactement `passed` vérifie ; un `failed` met l'exigence `failing`, et `not_run`, `blocked` ou une valeur inconnue la laissent `unverified` (la réponse porte `verified`, `failing`, `unverified`, dont la somme est le nombre d'exigences actives, et `verification` par exigence). L'écart `verification` couvre donc aussi une exigence en échec. Une **jonction** (ADR 0065) entre une conception et une exigence est traversée, jamais comptée comme conception : la lecture suit les `realization` à travers les jonctions (dix sauts au plus, chacune suivie une fois, donc une boucle se termine), et une jonction sans élément réel derrière ne rend pas l'exigence réalisée.
 
 Une exigence `rejected` n'entre ni dans les taux ni dans les écarts, et un taux sur zéro exigence active vaut `null`.
 

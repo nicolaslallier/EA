@@ -1,7 +1,7 @@
 """The requirements coverage endpoint.
 
 It reads the same graph `/elements` serves: a requirement is an element and a
-test or a design realizes it (`docs/adr/0064`). The route adds no store, and
+test or a design realizes it (`docs/adr/0067`). The route adds no store, and
 the rates are the server's answer: the SPA shows them and never recomputes one.
 """
 

@@ -90,6 +90,13 @@ from ea.domain.query import (
     QueryOrder,
     RelationTest,
 )
+from ea.domain.reports import (
+    ReportFormat,
+    ReportRequest,
+    ReportSubject,
+    ReportTemplate,
+    SubjectKind,
+)
 from ea.domain.requirements import RESULT_PROPERTY, Coverage, Gap, RequirementTrace, Verification
 from ea.domain.saved_queries import (
     MAX_SAVED_QUERY_DESCRIPTION,
@@ -1930,7 +1937,59 @@ class RoadmapRead(BaseModel):
         )
 
 
-# --- Requirements and their traceability (docs/adr/0064) ---
+# --- Reports (docs/adr/0062) -------------------------------------------------
+
+#: A built-in template's id: a slug. Declared once; the MCP tools import it.
+ReportTemplateId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9-]*$",
+        description="A template id from GET /report-templates.",
+    ),
+]
+
+
+class ReportSubjectBody(_Input):
+    """What the report is about: a kind and the id of one object of that kind."""
+
+    kind: SubjectKind
+    id: UUID
+
+
+class ReportCreate(_Input):
+    template: ReportTemplateId
+    subject: ReportSubjectBody
+    format: ReportFormat
+
+    def request(self) -> ReportRequest:
+        return ReportRequest(
+            template_id=self.template,
+            subject=ReportSubject(kind=self.subject.kind, id=self.subject.id),
+            format=self.format,
+        )
+
+
+class ReportTemplateRead(BaseModel):
+    id: str
+    version: int
+    title: str
+    subjects: list[SubjectKind] = Field(description="The kinds of subject the template takes.")
+    formats: list[ReportFormat] = Field(description="The formats this deployment can produce.")
+
+    @classmethod
+    def of(cls, template: ReportTemplate, formats: Sequence[ReportFormat]) -> ReportTemplateRead:
+        return cls(
+            id=template.id,
+            version=template.version,
+            title=template.title,
+            subjects=sorted(template.subjects),
+            formats=list(formats),
+        )
+
+
+# --- Requirements and their traceability (docs/adr/0067) ---
 
 #: A status or a priority to narrow the coverage to. Which values exist is
 #: `domain/requirements.py`'s decision and the domain refuses the others; this

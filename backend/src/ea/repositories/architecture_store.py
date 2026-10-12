@@ -506,8 +506,11 @@ async def _links_within(
     ids: Sequence[UUID],
     types: Sequence[RelationshipType],
     as_of: date | None = None,
+    limit: int | None = None,
 ) -> tuple[Relationship, ...]:
-    """The relationships whose two ends are both among `ids`: a drawable sub-graph."""
+    """The relationships whose two ends are both among `ids`: a drawable sub-graph.
+
+    `limit` is applied in SQL: a caller that bounds a read asks for one row more than it accepts."""
     if not ids:
         return ()
     statement = (
@@ -520,6 +523,8 @@ async def _links_within(
         )
         .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
     )
+    if limit is not None:
+        statement = statement.limit(limit)
     return tuple(relationship_from_row(row) for row in await session.scalars(statement))
 
 
@@ -1065,7 +1070,9 @@ class PostgresArchitectureRepository:
         walk = _impact_walk(element_id, _clamp_depth(depth), relationship_types, as_of)
         return await self._view_of_walk(walk, relationship_types, as_of)
 
-    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+    async def view_of(
+        self, element_ids: Sequence[UUID], *, link_limit: int | None = None
+    ) -> GraphView:
         if not element_ids:
             return GraphView(elements=(), relationships=())
         async with reading(self._sessions) as session:
@@ -1075,7 +1082,9 @@ class PostgresArchitectureRepository:
                 .order_by(ElementRecord.name, ElementRecord.id)
             )
             elements = tuple(element_from_row(row) for row in found)
-            links = await _links_within(session, [element.id for element in elements], ())
+            links = await _links_within(
+                session, [element.id for element in elements], (), limit=link_limit
+            )
         return GraphView(elements=elements, relationships=links)
 
     # --- Analysis: the reads behind the matrix and the checks ---------------
@@ -1379,7 +1388,7 @@ class PostgresArchitectureRepository:
             row = (await session.scalars(statement)).first()
             return element_from_row(row) if row is not None else None
 
-    # --- Requirements (docs/adr/0064) --------------------------------------
+    # --- Requirements (docs/adr/0067) --------------------------------------
 
     async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
         kinds = [kind.value for kind in REQUIREMENT_TYPES]
@@ -1408,7 +1417,7 @@ class PostgresArchitectureRepository:
                 )
             )
             # A junction between a design and a requirement is crossed, not stopped at
-            # (docs/adr/0062): follow realizations into the junctions found, within the same
+            # (docs/adr/0065): follow realizations into the junctions found, within the same
             # link budget. A junction is followed once, so a loop of them ends.
             followed: set[UUID] = set()
             frontier = {link.source_id for link in links if link.source_type.value == junction}

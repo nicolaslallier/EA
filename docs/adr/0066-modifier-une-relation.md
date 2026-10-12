@@ -5,7 +5,7 @@ statut: Proposition
 affects: backend/src/ea/domain/model.py, backend/src/ea/domain/ports.py, backend/src/ea/repositories/architecture_store.py, backend/src/ea/services/architecture.py, backend/src/ea/api/architecture.py, backend/src/ea/mcp/server.py
 ---
 
-# 63. Modifier une relation
+# 66. Modifier une relation
 
 Date : 2026-10-11
 Statut : Proposition
@@ -69,5 +69,5 @@ point d'entrée est l'API et l'agent.
 
 ## Références
 
-- ADR liés : [0046](0046-journal-d-audit-append-only.md) (toute écriture porte `audit=`), [0048](0048-approbation-et-verrouillage-des-elements.md), [0062](0062-la-jonction-est-un-element.md)
+- ADR liés : [0046](0046-journal-d-audit-append-only.md) (toute écriture porte `audit=`), [0048](0048-approbation-et-verrouillage-des-elements.md), [0065](0065-la-jonction-est-un-element.md)
 - Code concerné : `backend/src/ea/repositories/architecture_store.py` (`update_relationship`), `backend/src/ea/services/architecture.py`

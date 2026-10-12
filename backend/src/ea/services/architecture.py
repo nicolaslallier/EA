@@ -530,7 +530,7 @@ class ArchitectureService:
         directed: bool | None = None,
         properties: Mapping[str, str] | None = None,
     ) -> Relationship:
-        """Change what a link says; never its type or its ends (docs/adr/0063).
+        """Change what a link says; never its type or its ends (docs/adr/0066).
 
         An omitted field keeps its value; `properties` replaces the whole map. Applied to the
         link as the repository holds it under lock; both elements it joins are locked and
@@ -605,10 +605,12 @@ class ArchitectureService:
             element_id, relationship_types=relationship_types
         )
 
-    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+    async def view_of(
+        self, element_ids: Sequence[UUID], *, link_limit: int | None = None
+    ) -> GraphView:
         """The elements among these ids that still exist, and the links between them."""
         require_caller()
-        return await self._repository.view_of(element_ids)
+        return await self._repository.view_of(element_ids, link_limit=link_limit)
 
     # --- Analysis ---------------------------------------------------------
 

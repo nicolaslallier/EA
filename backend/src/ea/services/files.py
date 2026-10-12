@@ -91,6 +91,11 @@ class FileService:
         self._metadata = metadata
         self._now = clock
 
+    @property
+    def available(self) -> bool:
+        """Whether a bucket is configured: a use case that would write checks it first."""
+        return self._configured is not None
+
     def _store(self) -> ObjectStore:
         if self._configured is None:
             msg = "file storage is not configured on this deployment (EA_S3_ENABLED is off)"

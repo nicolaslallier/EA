@@ -34,7 +34,7 @@ class TestElement:
             an_element(name="   ")
 
     def test_a_junction_is_an_element_like_another(self) -> None:
-        """Decided in docs/adr/0062: a junction is catalogued (BPMN gates, AND/OR of a process)."""
+        """Decided in docs/adr/0065: a junction is catalogued (BPMN gates, AND/OR of a process)."""
         assert an_element(element_type=E.JUNCTION, name="Gate").element_type is E.JUNCTION
 
     def test_renaming_moves_the_updated_timestamp_only(self) -> None:

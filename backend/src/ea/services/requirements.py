@@ -2,7 +2,7 @@
 
 This service adds no store and writes nothing. A requirement is an element, a
 test or a design realizes it, and the coverage is computed here on demand from
-one repository read - see `docs/adr/0064`. Writing a requirement, its status or
+one repository read - see `docs/adr/0067`. Writing a requirement, its status or
 its test result goes through `ArchitectureService`, so the ArchiMate rules and
 the properties convention are enforced there and nowhere else.
 

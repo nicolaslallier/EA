@@ -5,7 +5,7 @@ statut: Proposition
 affects: backend/src/ea/domain/model.py, backend/src/ea/domain/junctions.py, backend/src/ea/domain/exchange.py, backend/src/ea/formats/archimate_xml.py, backend/src/ea/formats/csv_files.py, backend/src/ea/services/architecture.py
 ---
 
-# 62. La jonction est un élément
+# 65. La jonction est un élément
 
 Date : 2026-10-11
 Statut : Proposition

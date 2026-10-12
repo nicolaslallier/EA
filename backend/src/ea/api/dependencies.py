@@ -22,6 +22,7 @@ from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.reports import ReportService
 from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
@@ -292,6 +293,26 @@ def get_timeline_service(request: Request) -> TimelineService:
 
 
 Timeline = Annotated[TimelineService, Depends(get_timeline_service)]
+
+
+def report_service_of(app: FastAPI) -> ReportService:
+    """The report use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled without diagrams or without a file service: a wiring
+    fault and a 500, never an empty template list.
+    """
+    service: ReportService | None = getattr(app.state, "report_service", None)
+    if service is None:
+        msg = "no report service on the application — are diagrams and files attached?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_report_service(request: Request) -> ReportService:
+    return report_service_of(request.app)
+
+
+Reports = Annotated[ReportService, Depends(get_report_service)]
 
 
 def requirement_service_of(app: FastAPI) -> RequirementService:

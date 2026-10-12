@@ -1,4 +1,4 @@
-"""Requirements, and the traceability read from the graph (docs/adr/0064).
+"""Requirements, and the traceability read from the graph (docs/adr/0067).
 
 There is no requirement table. A requirement is a `requirement` or a
 `constraint` element; its status, priority, source and readable identifier are
@@ -289,7 +289,7 @@ def _reach(
                 continue
             seen.add(source.id)
             if is_requirement(source) or source.element_type is ElementType.JUNCTION:
-                # A junction only wires links together (docs/adr/0062): cross it, never list it.
+                # A junction only wires links together (docs/adr/0065): cross it, never list it.
                 queue.append(source.id)
             elif is_test(source):
                 tested[source.id] = source

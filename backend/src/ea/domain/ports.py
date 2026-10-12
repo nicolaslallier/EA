@@ -352,11 +352,14 @@ class ArchitectureRepository(Protocol):
         """Whether composing `target` under `source` would make containment cyclic."""
         ...
 
-    async def view_of(self, element_ids: Sequence[UUID]) -> GraphView:
+    async def view_of(
+        self, element_ids: Sequence[UUID], *, link_limit: int | None = None
+    ) -> GraphView:
         """The elements among these ids that exist, and the links with both ends among them.
 
         What a saved diagram shows (docs/adr/0031): an id the graph no longer
-        holds is simply absent from the answer, never an error.
+        holds is simply absent from the answer, never an error. `link_limit` stops the
+        read of the links in SQL; a caller that bounds a read asks for one more than it takes.
         """
         ...
 
@@ -691,7 +694,7 @@ class RequirementRepository(Protocol):
     """The one read the requirements coverage needs and the catalogue lacks.
 
     A requirement is an element and a test or a design realizes it
-    (docs/adr/0064), so nothing here is a new store: it is the query
+    (docs/adr/0067), so nothing here is a new store: it is the query
     `ElementFilter` cannot express, because it follows a relationship.
     Declared apart from `ArchitectureRepository`, like the IPAM port, and
     satisfied by the same PostgreSQL class.

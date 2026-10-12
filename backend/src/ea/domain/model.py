@@ -204,7 +204,7 @@ class Relationship:
         directed: bool | None = None,
         properties: Mapping[str, str] | None = None,
     ) -> Relationship:
-        """What a link says, changed; what it connects (type, ends) never is (docs/adr/0063).
+        """What a link says, changed; what it connects (type, ends) never is (docs/adr/0066).
 
         An omitted field keeps its value; `properties` replaces the whole map, as it does
         on an element. `access_type` only means something on an access relationship.

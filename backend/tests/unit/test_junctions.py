@@ -1,4 +1,4 @@
-"""A junction is an element carrying `junction_type` (docs/adr/0062)."""
+"""A junction is an element carrying `junction_type` (docs/adr/0065)."""
 
 from __future__ import annotations
 

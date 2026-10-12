@@ -1,4 +1,4 @@
-"""A junction is an element: the AND/OR that several links meet at (docs/adr/0062).
+"""A junction is an element: the AND/OR that several links meet at (docs/adr/0065).
 
 It carries one fact beside its name, `junction_type` (`and` or `or`), kept in
 `properties` like the IPAM's address. Exchange writes the same fact in the

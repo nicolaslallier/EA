@@ -16,6 +16,7 @@ import ElementDetail from '../elements/ElementDetail.vue'
 import { useElementDetail } from '../elements/useElementDetail'
 import { useMetamodel } from '../metamodel/useMetamodel'
 import PackageTree from '../packages/PackageTree.vue'
+import ReportDialog from '../reports/ReportDialog.vue'
 import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
 import { useAsOf } from '../../lib/asof'
@@ -283,6 +284,7 @@ function onConnect(sourceId: string, targetId: string): void {
     <header class="editor__header">
       <RouterLink :to="{ query: {} }">← Tous les diagrammes</RouterLink>
       <h2 v-if="editor.diagram.value">{{ editor.diagram.value.name }}</h2>
+      <ReportDialog v-if="editor.diagram.value" subject-kind="diagram" :subject-id="diagramId" />
       <p v-if="canWrite" class="hint" aria-live="polite">{{ saveState }}</p>
     </header>
 

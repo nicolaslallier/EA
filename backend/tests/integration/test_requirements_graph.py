@@ -130,7 +130,7 @@ class TestImpact:
         So the waves of a design element or of a requirement hold the
         requirement and the goal above it, never the tests beside it. What a
         failing test reaches is its requirement — pinned here so the
-        convention of docs/adr/0064 is a tested fact, not a habit.
+        convention of docs/adr/0067 is a tested fact, not a habit.
         """
         design = await graph_service.create_element(element_type=E.APPLICATION_COMPONENT, name="D")
         requirement = await graph_service.create_element(element_type=E.REQUIREMENT, name="R")

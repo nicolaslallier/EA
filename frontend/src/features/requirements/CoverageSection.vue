@@ -3,7 +3,7 @@
 // and tested by a test?
 //
 // There is nothing here the catalogue does not already hold: a requirement is
-// an element and its realizers are links (docs/adr/0064). This screen is a
+// an element and its realizers are links (docs/adr/0067). This screen is a
 // reading of the server's coverage. The two filters live in the URL, per the
 // rule in CLAUDE.md: a colleague should be able to be sent "the approved
 // requirements nobody tests".

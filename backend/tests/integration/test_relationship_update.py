@@ -1,4 +1,4 @@
-"""PATCH /relationships/{id} and junctions against a real PostgreSQL (docs/adr/0062, 0063)."""
+"""PATCH /relationships/{id} and junctions against a real PostgreSQL (docs/adr/0065, 0066)."""
 
 from __future__ import annotations
 
