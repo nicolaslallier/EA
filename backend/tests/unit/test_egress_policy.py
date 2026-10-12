@@ -44,6 +44,11 @@ class TestAddressesNobodyMayReach:
             "255.255.255.255",
             "::ffff:127.0.0.1",
             "::ffff:169.254.169.254",
+            "::127.0.0.1",
+            "::7f00:1",
+            "::a00:1",
+            "fec0::1",
+            "100.100.100.200",
         ],
     )
     def test_they_are_refused_even_when_the_configuration_allows_everything_private(
@@ -96,6 +101,15 @@ class TestDeclaringNetworks:
             networks_from(["not-a-cidr"])
 
         assert "not-a-cidr" not in str(raised.value)
+
+    def test_ranges_that_merely_contain_a_metadata_address_can_be_declared_without_it(self) -> None:
+        wide = net("100.64.0.0/10", "fd00::/8")
+
+        check_address(ipaddress.ip_address("100.64.0.9"), allowed=wide)
+        check_address(ipaddress.ip_address("fd12::1"), allowed=wide)
+        for metadata in ("100.100.100.200", "fd00:ec2::254"):
+            with pytest.raises(EgressRefusedError):
+                check_address(ipaddress.ip_address(metadata), allowed=wide)
 
     def test_a_private_range_can_be_declared(self) -> None:
         assert networks_from(["10.1.0.0/16", "fd12::/16"])
