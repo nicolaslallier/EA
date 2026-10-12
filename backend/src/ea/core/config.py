@@ -459,8 +459,13 @@ class Settings(BaseSettings):
     def _tokens_cannot_split_a_header(cls, value: dict[str, SecretStr]) -> dict[str, SecretStr]:
         for token in value.values():
             secret = token.get_secret_value()
-            if not secret or len(secret) > MAX_TOKEN_LENGTH or not secret.isprintable():
-                msg = "external_tokens: a token is empty, too long, or holds a control character"
+            if (
+                not secret
+                or len(secret) > MAX_TOKEN_LENGTH
+                or not secret.isascii()
+                or not secret.isprintable()
+            ):
+                msg = "external_tokens: a token is empty, too long, or not printable ASCII"
                 raise ValueError(msg)
         return value
 

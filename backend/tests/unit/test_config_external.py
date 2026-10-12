@@ -167,7 +167,7 @@ class TestWhatCannotBeDeclared:
         with pytest.raises(ValueError, match="external_tokens"):
             settings(tokens={"mian": TOKEN})
 
-    @pytest.mark.parametrize("token", ["a\nb", "a\rb", "a\x00b", "", "x" * 5000])
+    @pytest.mark.parametrize("token", ["a\nb", "a\rb", "a\x00b", "", "x" * 5000, "tokén", "日本"])
     def test_a_token_that_could_split_a_header_is_refused(self, token: str) -> None:
         with pytest.raises(ValueError, match="external_tokens"):
             settings(tokens={"main": token})

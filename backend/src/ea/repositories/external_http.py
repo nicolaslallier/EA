@@ -189,14 +189,17 @@ class EgressClient:
     ) -> EgressResponse:
         netloc = f"[{address}]" if ":" in address else address
         host = self._host if self._port == 443 else f"{self._host}:{self._port}"
-        request = self._client.build_request(
-            method,
-            f"https://{netloc}:{self._port}{path}",
-            params=dict(params) if params else None,
-            json=body,
-            headers={**self._headers, "Host": host},
-            extensions={"sni_hostname": self._host},
-        )
+        try:
+            request = self._client.build_request(
+                method,
+                f"https://{netloc}:{self._port}{path}",
+                params=dict(params) if params else None,
+                json=body,
+                headers={**self._headers, "Host": host},
+                extensions={"sni_hostname": self._host},
+            )
+        except (UnicodeError, ValueError):  # a header or a body that cannot be encoded
+            raise EgressError("the request could not be built") from None
         received = bytearray()
         try:
             response = await self._client.send(request, stream=True, follow_redirects=False)

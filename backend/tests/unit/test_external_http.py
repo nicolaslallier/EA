@@ -331,6 +331,29 @@ class TestWhenItFails:
 
 
 @pytest.mark.asyncio
+class TestAHeaderThatCannotBeEncoded:
+    async def test_it_is_a_failure_of_the_call_not_a_crash_and_the_value_stays_out_of_it(
+        self,
+    ) -> None:
+        egress = EgressClient(
+            API,
+            headers={"Authorization": "Bearer tok\u00e9n-secret"},
+            ports=(443,),
+            allowed_networks=(),
+            timeout=1,
+            total_timeout=2,
+            max_bytes=100,
+            resolver=resolving(PUBLIC),  # type: ignore[arg-type]
+            transport=httpx.MockTransport(ok),
+        )
+
+        with pytest.raises(EgressError) as raised:
+            await egress.get("/x")
+
+        assert "secret" not in str(raised.value)
+
+
+@pytest.mark.asyncio
 class TestWriting:
     async def test_a_write_sends_its_json_once_and_is_never_retried(self) -> None:
         seen: list[httpx.Request] = []
