@@ -15,6 +15,10 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 AT = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
 FROZEN = "EA001"
+RESTRICT = "23001"
+CHECK = "23514"
+UNIQUE = "23505"
+FOREIGN_KEY = "23503"
 
 
 def sqlstate_of(error: DBAPIError) -> str | None:
@@ -124,6 +128,10 @@ class World:
     diagram: UUID
     outside_diagram: UUID
     stereotype: UUID
+    stereotype_seeded: UUID
+    note: UUID
+    drawn: UUID
+    link2: UUID
     free: UUID
 
 
@@ -142,6 +150,18 @@ async def build_world(connection: AsyncConnection) -> World:
         id=world.link,
         relationship_type="association",
         source_id=world.inside,
+        target_id=world.outside,
+        source_type="node",
+        target_type="node",
+        created_at=AT,
+    )
+    world.link2 = uuid4()
+    await insert(
+        connection,
+        "relationships",
+        id=world.link2,
+        relationship_type="association",
+        source_id=world.outside,
         target_id=world.outside,
         source_type="node",
         target_type="node",
@@ -167,6 +187,10 @@ async def build_world(connection: AsyncConnection) -> World:
         x=0,
         y=0,
     )
+    world.drawn = await an_element(connection, "drawn", None)
+    await insert(
+        connection, "diagram_nodes", diagram_id=world.diagram, element_id=world.drawn, x=0, y=0
+    )
     world.outside_diagram = await a_diagram(connection, "Libre", None)
     profile, world.stereotype = uuid4(), uuid4()
     await insert(connection, "profiles", id=profile, name="P", created_at=AT, updated_at=AT)
@@ -179,7 +203,73 @@ async def build_world(connection: AsyncConnection) -> World:
         base_type="node",
         icon_key="k",
     )
+    world.stereotype_seeded = uuid4()
+    await insert(
+        connection,
+        "profile_stereotypes",
+        id=world.stereotype_seeded,
+        profile_id=profile,
+        name="S2",
+        base_type="node",
+        icon_key="k",
+    )
+    await insert(
+        connection,
+        "element_stereotypes",
+        element_id=world.inside,
+        stereotype_id=world.stereotype_seeded,
+    )
+    world.note = uuid4()
+    await insert(
+        connection,
+        "diagram_objects",
+        id=world.note,
+        diagram_id=world.diagram,
+        kind="note",
+        x=0,
+        y=0,
+        width=10,
+        height=10,
+    )
+    await insert(connection, "diagram_edges", diagram_id=world.diagram, relationship_id=world.link)
     return world
+
+
+#: label -> (table, operation) the DETAIL must name.
+EXPECTED: dict[str, tuple[str, str]] = {
+    "element update": ("elements", "UPDATE"),
+    "element approval": ("elements", "UPDATE"),
+    "element delete": ("elements", "DELETE"),
+    "element filed in": ("elements", "UPDATE"),
+    "element filed out": ("elements", "UPDATE"),
+    "element created inside": ("elements", "INSERT"),
+    "link update (one end inside)": ("relationships", "UPDATE"),
+    "link delete (one end inside)": ("relationships", "DELETE"),
+    "link created (one end inside)": ("relationships", "INSERT"),
+    "document update": ("element_documents", "UPDATE"),
+    "document delete": ("element_documents", "DELETE"),
+    "document created": ("element_documents", "INSERT"),
+    "stereotype laid": ("element_stereotypes", "INSERT"),
+    "stereotype link updated": ("element_stereotypes", "UPDATE"),
+    "stereotype link deleted": ("element_stereotypes", "DELETE"),
+    "diagram update": ("diagrams", "UPDATE"),
+    "diagram delete": ("diagrams", "DELETE"),
+    "diagram filed in": ("diagrams", "UPDATE"),
+    "diagram box moved": ("diagram_nodes", "UPDATE"),
+    "diagram box added": ("diagram_nodes", "INSERT"),
+    "diagram note added": ("diagram_objects", "INSERT"),
+    "diagram note moved": ("diagram_objects", "UPDATE"),
+    "diagram note deleted": ("diagram_objects", "DELETE"),
+    "diagram edge added": ("diagram_edges", "INSERT"),
+    "diagram edge updated": ("diagram_edges", "UPDATE"),
+    "diagram edge deleted": ("diagram_edges", "DELETE"),
+    "package renamed": ("packages", "UPDATE"),
+    "published package renamed": ("packages", "UPDATE"),
+    "package moved in": ("packages", "UPDATE"),
+    "sub-package created": ("packages", "INSERT"),
+    "package deleted": ("packages", "DELETE"),
+    "outside element deleted while a published diagram draws it": ("diagram_nodes", "DELETE"),
+}
 
 
 def refused(world: World) -> dict[str, tuple[str, dict[str, Any]]]:
@@ -279,10 +369,38 @@ def refused(world: World) -> dict[str, tuple[str, dict[str, Any]]]:
             {"id": uuid4(), "p": world.child, "at": AT},
         ),
         "package deleted": ("DELETE FROM packages WHERE id = :id", {"id": world.child}),
+        "stereotype link updated": (
+            "UPDATE element_stereotypes SET stereotype_id = :s WHERE element_id = :e",
+            {"e": world.inside, "s": world.stereotype},
+        ),
+        "stereotype link deleted": (
+            "DELETE FROM element_stereotypes WHERE element_id = :e",
+            {"e": world.inside},
+        ),
+        "diagram note moved": (
+            "UPDATE diagram_objects SET x = 9 WHERE id = :id",
+            {"id": world.note},
+        ),
+        "diagram note deleted": (
+            "DELETE FROM diagram_objects WHERE id = :id",
+            {"id": world.note},
+        ),
+        "diagram edge added": (
+            "INSERT INTO diagram_edges (diagram_id, relationship_id) VALUES (:d, :r)",
+            {"d": world.diagram, "r": world.link2},
+        ),
+        "diagram edge updated": (
+            "UPDATE diagram_edges SET waypoints = '[[1,1]]' WHERE diagram_id = :d",
+            {"d": world.diagram},
+        ),
+        "diagram edge deleted": (
+            "DELETE FROM diagram_edges WHERE diagram_id = :d",
+            {"d": world.diagram},
+        ),
         # Review focus 5: an unpublished element that a published diagram draws.
         "outside element deleted while a published diagram draws it": (
             "DELETE FROM elements WHERE id = :id",
-            {"id": world.outside},
+            {"id": world.drawn},
         ),
     }
 
@@ -302,6 +420,7 @@ async def test_every_write_into_a_published_subtree_is_refused_by_the_database(
         parts = (detail_of(raised.value) or "").split("|")
         assert parts[0] == str(world.root), label
         assert parts[1] == "v1.0.0", label
+        assert (parts[2], parts[3]) == EXPECTED[label], (label, parts)
 
     async with engine_at_head.connect() as connection:
         untouched = (
@@ -370,14 +489,14 @@ async def test_a_version_is_append_only_and_only_its_reopening_can_be_written(
     for sql in (
         "UPDATE package_versions SET notes = 'rewritten' WHERE id = :id",
         "UPDATE package_versions SET version = 'v9.9.9' WHERE id = :id",
+        "UPDATE package_versions SET reopen_reason = 'x' WHERE id = :id",
+        "UPDATE package_versions SET reopened_at = :at WHERE id = :id",
         "DELETE FROM package_versions WHERE id = :id",
     ):
-        with pytest.raises(DBAPIError):
+        with pytest.raises(DBAPIError) as raised:
             async with engine_at_head.begin() as connection:
-                await connection.execute(text(sql), {"id": version_id})
-    with pytest.raises(DBAPIError):
-        async with engine_at_head.begin() as connection:
-            await connection.execute(text("TRUNCATE package_versions"))
+                await connection.execute(text(sql), {"id": version_id, "at": AT})
+        assert sqlstate_of(raised.value) in {RESTRICT, CHECK}, sql
 
     async with engine_at_head.begin() as connection:
         await connection.execute(
@@ -388,21 +507,23 @@ async def test_a_version_is_append_only_and_only_its_reopening_can_be_written(
             ),
             {"at": AT, "e": uuid4(), "id": version_id},
         )
-    with pytest.raises(DBAPIError):  # a reopened version never changes again
+    with pytest.raises(DBAPIError) as raised:  # a reopened version never changes again
         async with engine_at_head.begin() as connection:
             await connection.execute(
                 text("UPDATE package_versions SET reopen_reason = 'again' WHERE id = :id"),
                 {"id": version_id},
             )
+    assert sqlstate_of(raised.value) == RESTRICT
 
 
 async def test_only_one_version_is_in_force_per_package(engine_at_head: AsyncEngine) -> None:
     async with engine_at_head.begin() as connection:
         root = await a_package(connection, "Finance", None)
         await publish(connection, root, "v1.0.0")
-    with pytest.raises(DBAPIError):
+    with pytest.raises(DBAPIError) as raised:
         async with engine_at_head.begin() as connection:
             await publish(connection, root, "v1.1.0")
+    assert sqlstate_of(raised.value) == UNIQUE
 
 
 async def test_a_baseline_a_version_points_at_cannot_be_deleted(
@@ -411,6 +532,57 @@ async def test_a_baseline_a_version_points_at_cannot_be_deleted(
     async with engine_at_head.begin() as connection:
         root = await a_package(connection, "Finance", None)
         await publish(connection, root)
-    with pytest.raises(DBAPIError):
+    with pytest.raises(DBAPIError) as raised:
         async with engine_at_head.begin() as connection:
             await connection.execute(text("DELETE FROM baselines"))
+    assert sqlstate_of(raised.value) == FOREIGN_KEY
+
+
+async def test_a_temp_table_cannot_shadow_the_guard(engine_at_head: AsyncEngine) -> None:
+    async with engine_at_head.begin() as connection:
+        world = await build_world(connection)
+        await publish(connection, world.root)
+    with pytest.raises(DBAPIError) as raised:
+        async with engine_at_head.begin() as connection:
+            await connection.execute(
+                text("CREATE TEMP TABLE package_versions (reopened_at timestamptz)")
+            )
+            await connection.execute(text("CREATE TEMP TABLE elements (id uuid, package_id uuid)"))
+            await connection.execute(
+                text("UPDATE public.elements SET description = 'x' WHERE id = :id"),
+                {"id": world.inside},
+            )
+    assert sqlstate_of(raised.value) == FROZEN
+
+
+CLOSE_ALL = (
+    "UPDATE package_versions SET reopened_by_sub = 's', reopened_by = 'n', "
+    "reopened_at = :at, reopen_reason = 'r', reopen_audit_event_id = :e WHERE id = :id"
+)
+
+
+async def test_closing_a_version_sets_the_five_columns_together(
+    engine_at_head: AsyncEngine,
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+        version_id = await publish(connection, root)
+    for sql in (
+        "UPDATE package_versions SET reopened_at = :at WHERE id = :id",
+        "UPDATE package_versions SET reopened_at = :at, reopened_by_sub = 's' WHERE id = :id",
+        "UPDATE package_versions SET reopened_at = :at, reopened_by_sub = 's', reopened_by = 'n', "
+        "reopen_reason = 'r' WHERE id = :id",
+    ):
+        with pytest.raises(DBAPIError) as raised:
+            async with engine_at_head.begin() as connection:
+                await connection.execute(text(sql), {"id": version_id, "at": AT})
+        assert sqlstate_of(raised.value) == CHECK, sql
+    with pytest.raises(DBAPIError) as raised:  # an update that leaves it in force
+        async with engine_at_head.begin() as connection:
+            await connection.execute(
+                text("UPDATE package_versions SET reopen_reason = 'r' WHERE id = :id"),
+                {"id": version_id},
+            )
+    assert sqlstate_of(raised.value) == RESTRICT
+    async with engine_at_head.begin() as connection:
+        await connection.execute(text(CLOSE_ALL), {"at": AT, "e": uuid4(), "id": version_id})

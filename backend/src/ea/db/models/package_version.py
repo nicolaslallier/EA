@@ -22,7 +22,11 @@ class PackageVersionRecord(Base):
     __table_args__ = (
         CheckConstraint("bump in ('major', 'minor', 'patch')", name="bump_known"),
         CheckConstraint(
-            "(reopened_at is null) = (reopened_by_sub is null)", name="reopening_whole"
+            "(reopened_at is null) = (reopened_by_sub is null)"
+            " and (reopened_at is null) = (reopened_by is null)"
+            " and (reopened_at is null) = (reopen_reason is null)"
+            " and (reopened_at is null) = (reopen_audit_event_id is null)",
+            name="reopening_whole",
         ),
         Index("uq_package_versions_package_version", "package_id", "version", unique=True),
         # Static DDL text: at most one version in force per package.

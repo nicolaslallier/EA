@@ -30,11 +30,12 @@ _LOCK_TIMEOUT = "10s"
 _FROZEN_ANCESTOR = """
 CREATE FUNCTION ea_frozen_ancestor(start uuid)
 RETURNS TABLE (package_id uuid, version text)
-LANGUAGE sql STABLE AS $$
+LANGUAGE sql STABLE SET search_path = public, pg_temp AS $$
     WITH RECURSIVE up (id, parent_id, depth) AS (
         SELECT p.id, p.parent_id, 0 FROM packages p WHERE p.id = start
         UNION ALL
         SELECT p.id, p.parent_id, up.depth + 1 FROM packages p JOIN up ON p.id = up.parent_id
+        WHERE up.depth < 64
     )
     SELECT v.package_id, v.version
     FROM up JOIN package_versions v ON v.package_id = up.id AND v.reopened_at IS NULL
@@ -45,7 +46,7 @@ $$
 
 _ASSERT_UNFROZEN = """
 CREATE FUNCTION ea_assert_unfrozen(pkg uuid, tbl text, op text) RETURNS void
-LANGUAGE plpgsql STABLE AS $$
+LANGUAGE plpgsql STABLE SET search_path = public, pg_temp AS $$
 DECLARE
     hit record;
 BEGIN
@@ -74,10 +75,22 @@ _RETURN_ROW = """
 """
 
 
+# Nothing published anywhere: leave before any owner sub-select is evaluated.
+_PROBE = """
+    IF NOT EXISTS (SELECT 1 FROM package_versions WHERE reopened_at IS NULL) THEN
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RETURN NEW;
+    END IF;
+"""
+
+
 def _guard(name: str, body: str) -> str:
     return (
-        f"CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$\n"
-        f"BEGIN\n{body}{_RETURN_ROW}END\n$$"
+        f"CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql "
+        f"SET search_path = public, pg_temp AS $$\n"
+        f"BEGIN\n{_PROBE}{body}{_RETURN_ROW}END\n$$"
     )
 
 
@@ -122,18 +135,19 @@ _RELATIONSHIPS = _guard(
 """,
 )
 # A row that hangs from an element (a document, a stereotype) or from a diagram (a box, a note,
-# a route): the owner's place decides. `to_jsonb` reads the column by name for every table.
+# a route): the owner's place decides.
+# Direct field access, so a renamed column fails loudly, not silently.
 _OF_ELEMENT = _guard(
     "ea_guard_of_element",
     """
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
         PERFORM ea_assert_unfrozen(
-            (SELECT package_id FROM elements WHERE id = (to_jsonb(OLD) ->> 'element_id')::uuid),
+            (SELECT package_id FROM elements WHERE id = OLD.element_id),
             TG_TABLE_NAME, TG_OP);
     END IF;
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
         PERFORM ea_assert_unfrozen(
-            (SELECT package_id FROM elements WHERE id = (to_jsonb(NEW) ->> 'element_id')::uuid),
+            (SELECT package_id FROM elements WHERE id = NEW.element_id),
             TG_TABLE_NAME, TG_OP);
     END IF;
 """,
@@ -143,25 +157,27 @@ _OF_DIAGRAM = _guard(
     """
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
         PERFORM ea_assert_unfrozen(
-            (SELECT package_id FROM diagrams WHERE id = (to_jsonb(OLD) ->> 'diagram_id')::uuid),
+            (SELECT package_id FROM diagrams WHERE id = OLD.diagram_id),
             TG_TABLE_NAME, TG_OP);
     END IF;
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
         PERFORM ea_assert_unfrozen(
-            (SELECT package_id FROM diagrams WHERE id = (to_jsonb(NEW) ->> 'diagram_id')::uuid),
+            (SELECT package_id FROM diagrams WHERE id = NEW.diagram_id),
             TG_TABLE_NAME, TG_OP);
     END IF;
 """,
 )
 
 _VERSIONS_IMMUTABLE = """
-CREATE FUNCTION ea_package_versions_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION ea_package_versions_append_only() RETURNS trigger LANGUAGE plpgsql
+SET search_path = public, pg_temp AS $$
 BEGIN
     IF TG_OP <> 'UPDATE' THEN
         RAISE EXCEPTION 'package_versions is append-only' USING ERRCODE = 'restrict_violation';
     END IF;
     -- Only closing a version in force is allowed, and nothing else may move with it.
     IF OLD.reopened_at IS NOT NULL
+       OR NEW.reopened_at IS NULL
        OR (NEW.id, NEW.package_id, NEW.version, NEW.bump, NEW.notes, NEW.adr, NEW.baseline_id,
            NEW.element_count, NEW.relationship_count, NEW.box_count, NEW.published_by_sub,
            NEW.published_by, NEW.published_at, NEW.publish_audit_event_id)
@@ -218,7 +234,10 @@ def upgrade() -> None:
             "bump in ('major', 'minor', 'patch')", name=op.f("ck_package_versions_bump_known")
         ),
         sa.CheckConstraint(
-            "(reopened_at is null) = (reopened_by_sub is null)",
+            "(reopened_at is null) = (reopened_by_sub is null) "
+            "and (reopened_at is null) = (reopened_by is null) "
+            "and (reopened_at is null) = (reopen_reason is null) "
+            "and (reopened_at is null) = (reopen_audit_event_id is null)",
             name=op.f("ck_package_versions_reopening_whole"),
         ),
         sa.ForeignKeyConstraint(
