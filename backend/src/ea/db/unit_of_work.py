@@ -252,12 +252,17 @@ async def work(
             raise
         recorder = _RECORDER[0]
         if recorder is not None:
+            # Out of the shared unit: it is aborted or will be rolled back, and a trace
+            # written through it would go with it.
+            token = _current.set(None)
             try:
                 await recorder(refusal)
             except Exception:  # the refusal must reach the caller whatever happens
                 logger.exception(
                     "frozen refusal not recorded", extra={"action": "frozen_refusal_unrecorded"}
                 )
+            finally:
+                _current.reset(token)
         what = (
             f"package {refusal.package_id} is published as {refusal.version}"
             if refusal.package_id is not None
