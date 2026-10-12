@@ -654,7 +654,7 @@ class InMemoryRepository:
         as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
         self.last_as_of = as_of
-        return tuple(self.relationships.values())
+        return tuple(self.relationships.values())[offset : offset + limit]
 
     async def update_relationship(
         self,

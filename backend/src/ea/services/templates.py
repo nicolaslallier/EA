@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from ea.domain.archimate import RelationshipType
 from ea.domain.audit import AuditAction, template_view
 from ea.domain.diagram_objects import DiagramObject, DiagramScene, ObjectKind
 from ea.domain.diagram_templates import (
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
     from ea.services.diagrams import DiagramService
 
 Clock = Callable[[], datetime]
+
+_LINK_PAGE = 200
 
 logger = logging.getLogger(__name__)
 
@@ -339,16 +342,31 @@ class TemplateService:
         )
         return await self._diagrams.open(diagram.id)
 
+    async def _already_linked(
+        self, source: UUID, target: UUID, relationship_type: RelationshipType
+    ) -> bool:
+        """Whether this exact link exists - read page by page, so a hub is not cut at a page."""
+        offset = 0
+        while True:
+            page = await self._architecture.list_relationships(
+                element_id=source,
+                relationship_types=[relationship_type],
+                limit=_LINK_PAGE,
+                offset=offset,
+            )
+            if any(r.source_id == source and r.target_id == target for r in page):
+                return True
+            if len(page) < _LINK_PAGE:
+                return False
+            offset += _LINK_PAGE
+
     async def _connect(self, links: Sequence[TemplateLink], ids: Mapping[str, UUID]) -> None:
         """Create the template's links between filled slots - never twice the same one."""
         for link in links:
             source, target = ids.get(link.source_key), ids.get(link.target_key)
             if source is None or target is None:
                 continue
-            existing = await self._architecture.list_relationships(
-                element_id=source, relationship_types=[link.relationship_type], limit=200
-            )
-            if any(r.source_id == source and r.target_id == target for r in existing):
+            if await self._already_linked(source, target, link.relationship_type):
                 continue
             await self._architecture.connect(
                 relationship_type=link.relationship_type, source_id=source, target_id=target
