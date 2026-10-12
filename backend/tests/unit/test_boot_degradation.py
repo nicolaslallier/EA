@@ -119,7 +119,7 @@ class _DownSystem(FakeExternalSystem):
 
 
 class TestTheThirdPartyTargets:
-    """A declared target that fails its boot probe degrades `external`, nothing else (adr/0062)."""
+    """A declared target that fails its boot probe degrades `external`, nothing else (adr/0073)."""
 
     @pytest.mark.asyncio
     async def test_an_unreachable_target_boots_the_api_and_is_named_without_its_reason(

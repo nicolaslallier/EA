@@ -193,7 +193,7 @@ NC    := \033[0m
         pg-up pg-down pg-ping pg-shell pg-migrate pg-revision pg-history \
         pg-vector-check pg-stack app-stack require-postgres-password \
         runner-up runner-down runner-logs runner-pull \
-        app-up app-down app-restart app-delete app-ps app-logs \
+        app-env app-up app-down app-restart app-delete app-ps app-logs \
         compose-up compose-down compose-ps compose-logs compose-reset \
         embed-ping embed-models docs-reindex files-reconcile baseline-capture openapi openapi-check \
         test test-unit test-integration test-postgres test-fe lint typecheck check \
@@ -361,7 +361,10 @@ runner-pull: ## Retire l'image du runner et le recrée (GitHub refuse les vieill
 	$(RUNNER_COMPOSE) pull
 	$(RUNNER_COMPOSE) up -d
 
-app-up: ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
+app-env: ## Rend les secrets de deploy/ea.env depuis OpenBao (infra/env)
+	scripts/vault-render-env.sh
+
+app-up: app-env ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
 	$(PORTAINER_STACK) up
 
 app-down: ## Arrête la stack EA dans Portainer (elle reste déclarée)

@@ -18,11 +18,23 @@ from ea.db.models.baseline import (
     BaselineRelationshipRecord,
 )
 from ea.db.models.chunk import DocumentChunk
-from ea.db.models.diagram import DiagramNodeRecord, DiagramRecord
+from ea.db.models.diagram import (
+    DiagramEdgeRecord,
+    DiagramNodeRecord,
+    DiagramObjectRecord,
+    DiagramRecord,
+)
+from ea.db.models.diagram_template import DiagramTemplateRecord
 from ea.db.models.document import ElementDocument
 from ea.db.models.external import ExternalReferenceRecord
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
+from ea.db.models.profile import (
+    ElementStereotypeRecord,
+    ProfileRecord,
+    PropertyRecord,
+    StereotypeRecord,
+)
 from ea.db.models.saved_query import SavedQueryRecord
 
 __all__ = [
@@ -32,14 +44,21 @@ __all__ = [
     "BaselineElementRecord",
     "BaselineRecord",
     "BaselineRelationshipRecord",
+    "DiagramEdgeRecord",
     "DiagramNodeRecord",
+    "DiagramObjectRecord",
     "DiagramRecord",
+    "DiagramTemplateRecord",
     "DocumentChunk",
     "ElementDocument",
     "ElementRecord",
+    "ElementStereotypeRecord",
     "ExternalReferenceRecord",
     "FileMetadataRecord",
     "PackageRecord",
+    "ProfileRecord",
+    "PropertyRecord",
     "RelationshipRecord",
     "SavedQueryRecord",
+    "StereotypeRecord",
 ]

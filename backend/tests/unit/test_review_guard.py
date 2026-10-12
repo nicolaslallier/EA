@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from ea.domain import approval
-from ea.repositories import document_store, package_store
+from ea.repositories import document_store, package_store, profile_store
 from ea.services.architecture import ArchitectureService
 
 #: (where, route) -> a name the route's body must call.
@@ -55,6 +55,10 @@ ROUTES = {
         "PostgresPackageRepository.delete",
         package_store.PostgresPackageRepository.delete,
     ): "guard_all",
+    (
+        "PostgresProfileRepository.set_for_element",
+        profile_store.PostgresProfileRepository.set_for_element,
+    ): "guard_element_write",
     ("approval.guard_all", approval.guard_all): "guard_element_write",
 }
 
@@ -125,6 +129,10 @@ ELEMENT_WRITERS = {
         "_write": "plan_restore blocks on approved_or_locked, read in the same transaction",
         "PostgresBaselineRepository.create": "copies FROM elements into baseline_*: no write to it",
     },
+    "profile_store.py": {
+        "PostgresProfileRepository.set_for_element": "guard_element_write(STEREOTYPES) on the "
+        "row it holds locked, then touch",
+    },
     "package_store.py": {
         "PostgresPackageRepository.delete": "guard_all(FILING)",
         "PostgresPackageRepository.move_elements": "guard_all(FILING)",
@@ -190,12 +198,22 @@ def _writes_column(function: ast.AST, column: str) -> bool:
     return False
 
 
+def _mentions(function: ast.AST, name: str) -> bool:
+    return any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(function))
+
+
 def revision_without_author(source: str) -> set[str]:
-    """Functions that write `revision` and not `last_modified_by_sub`, or the reverse."""
+    """Functions that write `revision` and not `last_modified_by_sub`, or the reverse.
+
+    The `revision` of an element is the one that names an author. A diagram has a
+    counter of the same name (docs/adr/0069) that only guards a concurrent save, so a
+    function that handles a `DiagramRecord` is not about an element's revision.
+    """
     return {
         name
         for name, function in _functions(source).items()
-        if _writes_column(function, "revision") != _writes_column(function, "last_modified_by_sub")
+        if not _mentions(function, "DiagramRecord")
+        and _writes_column(function, "revision") != _writes_column(function, "last_modified_by_sub")
     }
 
 
@@ -214,6 +232,13 @@ async def author_only(session):
 """
 
 
+DIAGRAM_COUNTER = """
+async def save(session):
+    row = await session.get(DiagramRecord, 1)
+    row.revision = row.revision + 1
+"""
+
+
 def _src() -> Path:
     return Path(__file__).parents[2] / "src" / "ea"
 
@@ -222,6 +247,7 @@ def test_the_analyser_sees_a_new_door_and_a_half_touch() -> None:
     assert element_writers(NEW_DOOR) == {"Sneaky.rename_everything"}
     assert element_writers("def read(row: ElementRecord):\n    return row.name\n") == set()
     assert revision_without_author(HALF_A_TOUCH) == {"bump", "author_only"}
+    assert revision_without_author(DIAGRAM_COUNTER) == set()
 
 
 def test_only_the_declared_functions_write_to_the_elements_table() -> None:

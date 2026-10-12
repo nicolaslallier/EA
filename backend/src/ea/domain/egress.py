@@ -2,7 +2,7 @@
 
 Pure: the standard library's `ipaddress` and nothing else. The server only calls hosts the
 configuration names, but a name is resolved by somebody else's DNS, so the *address* it
-resolves to is what is checked, for every address the name returns (docs/adr/0062).
+resolves to is what is checked, for every address the name returns (docs/adr/0073).
 
 Two lists. What nobody may reach whatever the configuration says: loopback, link-local
 (which holds the cloud metadata services), unspecified, multicast, reserved, and the IPv6

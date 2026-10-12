@@ -21,14 +21,19 @@ from uuid import UUID
 
 from ea.domain.errors import InvalidCursorError
 from ea.domain.external import ExternalReference
+from ea.domain.generated_views import QuerySource
 from ea.domain.model import Element, Relationship
 from ea.domain.query import to_json
 
 if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `ports`, which imports this module.
-    from ea.domain.diagrams import Diagram, DiagramNode
+    from ea.domain.diagram_objects import DiagramScene
+    from ea.domain.diagram_templates import DiagramTemplate
+    from ea.domain.diagrams import Diagram
     from ea.domain.documents import Document
+    from ea.domain.model import StereotypeRef
     from ea.domain.packages import Package
+    from ea.domain.profiles import Profile
     from ea.domain.saved_queries import SavedQuery
 
 MAX_AUDIT_PAGE: Final = 200
@@ -47,6 +52,8 @@ class EntityKind(StrEnum):
     DOCUMENT = "document"
     BASELINE = "baseline"
     EXTERNAL_REFERENCE = "external_reference"
+    PROFILE = "profile"
+    TEMPLATE = "template"
 
 
 class AuditChannel(StrEnum):
@@ -69,12 +76,23 @@ class AuditAction(StrEnum):
     ELEMENT_REOPENED = "element.reopened"
     ELEMENT_LOCKED = "element.locked"
     ELEMENT_UNLOCKED = "element.unlocked"
+    ELEMENT_STEREOTYPES_CHANGED = "element.stereotypes_changed"
+    PROFILE_CREATED = "profile.created"
+    PROFILE_UPDATED = "profile.updated"
+    PROFILE_DELETED = "profile.deleted"
+    TEMPLATE_CREATED = "template.created"
+    TEMPLATE_UPDATED = "template.updated"
+    TEMPLATE_DELETED = "template.deleted"
     RELATIONSHIP_CREATED = "relationship.created"
+    RELATIONSHIP_UPDATED = "relationship.updated"
     RELATIONSHIP_DELETED = "relationship.deleted"
     DIAGRAM_CREATED = "diagram.created"
     DIAGRAM_UPDATED = "diagram.updated"
     DIAGRAM_DELETED = "diagram.deleted"
     DIAGRAM_LAYOUT_REPLACED = "diagram.layout_replaced"
+    DIAGRAM_GENERATED = "diagram.generated"
+    DIAGRAM_FROZEN = "diagram.frozen"
+    DIAGRAM_UNFROZEN = "diagram.unfrozen"
     DOCUMENT_ATTACHED = "document.attached"
     DOCUMENT_REVISED = "document.revised"
     DOCUMENT_DISCARDED = "document.discarded"
@@ -212,23 +230,99 @@ def diagram_view(diagram: Diagram) -> dict[str, Any]:
         "name": diagram.name,
         "description": diagram.description,
         "package_id": str(diagram.package_id) if diagram.package_id else None,
+        "generation": diagram.generation.value if diagram.generation else None,
+        "source": _source_view(diagram),
     }
 
 
-def layout_view(nodes: Sequence[DiagramNode]) -> dict[str, Any]:
-    ordered = sorted(nodes, key=lambda node: str(node.element_id))
+def _source_view(diagram: Diagram) -> dict[str, Any] | None:
+    """Where a generated view reads: ids and a flag, never a name."""
+    source = diagram.source
+    if source is None:
+        return None
+    if isinstance(source, QuerySource):
+        return {"query_id": str(source.query_id)}
+    return {"package_id": str(source.package_id), "recursive": source.recursive}
+
+
+def scene_views(
+    before: DiagramScene, after: DiagramScene, *, revision: int
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Counts of what a saved scene changed - never a coordinate, never the text of a note.
+
+    One event per save, not one per box (an autosave fires at every pause); the
+    figures say how much moved, the diagram's own revision says which save it was.
+    """
+    kept = {node.element_id: node for node in before.nodes}
+    moved = sum(
+        1
+        for node in after.nodes
+        if node.element_id in kept
+        and (node.x, node.y, node.width, node.height)
+        != (
+            kept[node.element_id].x,
+            kept[node.element_id].y,
+            kept[node.element_id].width,
+            kept[node.element_id].height,
+        )
+    )
+    old_ids = {node.element_id for node in before.nodes}
+    new_ids = {node.element_id for node in after.nodes}
+    return (
+        {
+            "diagram_revision": revision,
+            "nodes": len(before.nodes),
+            "objects": len(before.objects),
+            "edges": len(before.edges),
+        },
+        {
+            "diagram_revision": revision + 1,
+            "nodes": len(after.nodes),
+            "objects": len(after.objects),
+            "edges": len(after.edges),
+            "nodes_added": len(new_ids - old_ids),
+            "nodes_removed": len(old_ids - new_ids),
+            "nodes_moved": moved,
+        },
+    )
+
+
+def profile_view(profile: Profile) -> dict[str, Any]:
+    """A profile and the shape of its stereotypes - reference data, no element and no value."""
     return {
-        "nodes": [
+        "id": str(profile.id),
+        "name": profile.name,
+        "description": profile.description,
+        "stereotypes": [
             {
-                "element_id": str(node.element_id),
-                "x": node.x,
-                "y": node.y,
-                "width": node.width,
-                "height": node.height,
+                "name": s.name,
+                "base_type": s.base_type.value,
+                "colour": s.colour,
+                "icon_key": s.icon_key.value,
+                "properties": [p.key for p in s.properties],
             }
-            for node in ordered
-        ]
+            for s in sorted(profile.stereotypes, key=lambda s: s.name)
+        ],
     }
+
+
+def template_view(template: DiagramTemplate) -> dict[str, Any]:
+    """A template by its name and its counts: the text of its notes is the author's."""
+    body = template.body
+    return {
+        "id": str(template.id),
+        "name": template.name,
+        "description": template.description,
+        "slots": len(body.slots),
+        "groups": len(body.groups),
+        "notes": len(body.notes),
+        "links": len(body.links),
+    }
+
+
+def stereotypes_view(refs: Sequence[StereotypeRef]) -> dict[str, Any]:
+    """The labels an element carries, by name: never one of its property values."""
+    return {"stereotypes": sorted(ref.name for ref in refs)}
 
 
 def document_view(document: Document) -> dict[str, Any]:

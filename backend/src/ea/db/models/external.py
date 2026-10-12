@@ -1,4 +1,4 @@
-"""The links from an element to objects in other tools (docs/adr/0062).
+"""The links from an element to objects in other tools (docs/adr/0073).
 
 The title and the state are a **cache** of what a provider said, refreshed on request: they are
 third-party text, bounded here and rendered as text by the SPA. Nothing secret is stored — no

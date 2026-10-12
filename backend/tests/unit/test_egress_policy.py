@@ -1,6 +1,6 @@
 """Which addresses an outbound call may reach — decided on the address, never on a name.
 
-Pure rules (docs/adr/0062). A name that resolves to a loopback, a link-local, a cloud
+Pure rules (docs/adr/0073). A name that resolves to a loopback, a link-local, a cloud
 metadata or a private address is the SSRF shape, and the check is done on every address
 the name resolves to, so a name answering with one public and one private address is
 refused as a whole.

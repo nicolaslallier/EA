@@ -11,6 +11,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy.dialects.postgresql import JSONB
 
 from ea.db.base import Base
 
@@ -376,3 +377,79 @@ def test_the_validity_indexes_are_declared_on_the_models() -> None:
         "ix_relationships_valid_from",
         "ix_relationships_valid_until",
     } <= declared
+
+
+def test_a_diagram_object_is_a_note_or_a_group_and_only_a_note_is_anchored() -> None:
+    table = Base.metadata.tables["diagram_objects"]
+    names = {c.name for c in table.constraints}
+
+    assert {"ck_diagram_objects_kind", "ck_diagram_objects_group_has_no_anchor"} <= names
+
+
+def test_the_parent_and_the_anchor_let_go_instead_of_deleting() -> None:
+    table = Base.metadata.tables["diagram_objects"]
+
+    for column in ("parent_id", "anchor_element_id"):
+        key = next(iter(table.c[column].foreign_keys))
+        assert key.ondelete == "SET NULL"
+    assert (
+        next(iter(Base.metadata.tables["diagram_nodes"].c.parent_object_id.foreign_keys)).ondelete
+        == "SET NULL"
+    )
+
+
+def test_a_route_follows_its_relationship_and_its_diagram() -> None:
+    table = Base.metadata.tables["diagram_edges"]
+
+    assert [c.name for c in table.primary_key.columns] == ["diagram_id", "relationship_id"]
+    for column in ("diagram_id", "relationship_id"):
+        assert next(iter(table.c[column].foreign_keys)).ondelete == "CASCADE"
+
+
+def test_a_diagram_carries_a_revision_that_starts_at_zero() -> None:
+    column = Base.metadata.tables["diagrams"].c.revision
+
+    assert column.nullable is False
+    assert str(column.server_default.arg) == "0"  # type: ignore[union-attr]
+
+
+def test_an_applied_stereotype_is_restricted_while_an_element_takes_its_tags_with_it() -> None:
+    table = Base.metadata.tables["element_stereotypes"]
+
+    assert next(iter(table.c.stereotype_id.foreign_keys)).ondelete == "RESTRICT"
+    assert next(iter(table.c.element_id.foreign_keys)).ondelete == "CASCADE"
+    assert table.c.stereotype_id.index is True
+
+
+def test_a_stereotype_name_is_unique_within_its_profile_and_a_profile_name_everywhere() -> None:
+    names = {
+        c.name
+        for t in ("profiles", "profile_stereotypes")
+        for c in Base.metadata.tables[t].constraints
+    }
+
+    assert {"uq_profiles_name", "uq_profile_stereotypes_profile_id_name"} <= names
+
+
+def test_a_diagram_has_at_most_one_source_and_a_generation_exactly_when_it_has_one() -> None:
+    names = {c.name for c in Base.metadata.tables["diagrams"].constraints}
+
+    assert {
+        "ck_diagrams_generation",
+        "ck_diagrams_one_source",
+        "ck_diagrams_generation_iff_source",
+    } <= names
+
+
+def test_a_source_in_use_cannot_be_deleted() -> None:
+    table = Base.metadata.tables["diagrams"]
+
+    for column in ("source_query_id", "source_package_id"):
+        assert next(iter(table.c[column].foreign_keys)).ondelete == "RESTRICT"
+
+
+def test_a_template_body_is_one_versioned_jsonb_never_queried_inside() -> None:
+    table = Base.metadata.tables["diagram_templates"]
+
+    assert isinstance(table.c.body.type, JSONB)
+    assert "uq_diagram_templates_name" in {c.name for c in table.constraints}

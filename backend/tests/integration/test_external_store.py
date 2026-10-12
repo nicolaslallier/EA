@@ -1,4 +1,4 @@
-"""The `external_references` table against a real PostgreSQL (docs/adr/0062)."""
+"""The `external_references` table against a real PostgreSQL (docs/adr/0073)."""
 
 from __future__ import annotations
 

@@ -152,6 +152,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagram-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Templates */
+        get: operations["list_templates_diagram_templates_get"];
+        put?: never;
+        /** Create Template */
+        post: operations["create_template_diagram_templates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagram-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Template */
+        get: operations["read_template_diagram_templates__template_id__get"];
+        /** Update Template */
+        put: operations["update_template_diagram_templates__template_id__put"];
+        post?: never;
+        /** Delete Template */
+        delete: operations["delete_template_diagram_templates__template_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagram-templates/{template_id}/instantiate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Instantiate Template
+         * @description Build a diagram from a template.
+         *
+         *     Each slot is bound to an existing element of its type, to an element to
+         *     create, or left out. Everything refusable is refused before anything is
+         *     written; relationships are created only if `create_relationships` is true.
+         */
+        post: operations["instantiate_template_diagram_templates__template_id__instantiate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams": {
         parameters: {
             query?: never;
@@ -170,6 +231,29 @@ export interface paths {
          * @description A new, empty diagram. Its name must not be taken.
          */
         post: operations["create_diagram_diagrams_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Diagram
+         * @description A new **live** view: everything a saved query or a package yields, at each opening.
+         *
+         *     It stores no box. To edit it, freeze it; to see it frozen from the start,
+         *     freeze it right after (the layout is the SPA's, the server computes none).
+         */
+        post: operations["generate_diagram_diagrams_generate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -203,6 +287,46 @@ export interface paths {
         patch: operations["update_diagram_diagrams__diagram_id__patch"];
         trace?: never;
     };
+    "/diagrams/{diagram_id}/as-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save As Template
+         * @description Keep the shape of a diagram: each element becomes a slot of the same type.
+         */
+        post: operations["save_as_template_diagrams__diagram_id__as_template_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Freeze Diagram
+         * @description Store the layout and make the live view an ordinary editable diagram.
+         */
+        post: operations["freeze_diagram_diagrams__diagram_id__freeze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/diagrams/{diagram_id}/layout": {
         parameters: {
             query?: never;
@@ -213,12 +337,77 @@ export interface paths {
         get?: never;
         /**
          * Replace Diagram Layout
-         * @description Replace every box of a diagram at once.
+         * @description Replace the whole scene of a diagram at once.
          *
-         *     Each element must exist and appear once; otherwise nothing is written.
+         *     `revision` is the one the client read; if somebody saved since, nothing is
+         *     written and the answer is a 409 `diagram_revision_conflict`. Otherwise the
+         *     new revision comes back in `X-Diagram-Revision`. Each element must exist
+         *     and appear once, and a route may only name a link joining two placed
+         *     elements; otherwise nothing is written.
          */
         put: operations["replace_diagram_layout_diagrams__diagram_id__layout_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/render.svg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render Diagram
+         * @description The one static drawing of a diagram, cacheable by content (`ETag`).
+         */
+        get: operations["render_diagram_diagrams__diagram_id__render_svg_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/source-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Source Diff
+         * @description What a frozen view would gain and lose if it followed its source again. Writes nothing.
+         */
+        get: operations["read_source_diff_diagrams__diagram_id__source_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagrams/{diagram_id}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze Diagram
+         * @description Back to a live view. Refused (409) while notes, groups or routes would be lost,
+         *     unless `discard_annotations` is true.
+         */
+        post: operations["unfreeze_diagram_diagrams__diagram_id__unfreeze_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -249,6 +438,30 @@ export interface paths {
         post?: never;
         /** Discard Document */
         delete: operations["discard_document_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/html": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Document Html
+         * @description The document as a safe HTML fragment, for a reader that cannot render markdown.
+         *
+         *     Raw HTML in the document is shown as text, images are not loaded and `javascript:` / `data:`
+         *     links are not links (docs/adr/0062): the SPA inserts the result with `v-html` for exactly
+         *     that reason.
+         */
+        get: operations["read_document_html_documents__document_id__html_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -550,6 +763,29 @@ export interface paths {
          */
         get: operations["read_element_relations_elements__element_id__relationships_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/elements/{element_id}/stereotypes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Element Stereotypes
+         * @description Replace the set of stereotypes an element carries.
+         *
+         *     A stereotype of another base type is a 422, and so is a set of stereotypes
+         *     declaring one key twice or a stored value that breaks a declared format.
+         */
+        put: operations["set_element_stereotypes_elements__element_id__stereotypes_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1165,6 +1401,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profiles
+         * @description Every profile with its stereotypes, sorted by name.
+         */
+        get: operations["list_profiles_profiles_get"];
+        put?: never;
+        /** Create Profile */
+        post: operations["create_profile_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Profile
+         * @description Create a profile from an exported document (at most 256 KB, `profile_format: 1`).
+         *
+         *     The body is read and measured here rather than parsed by FastAPI, so the
+         *     size ceiling is checked on the bytes and a malformed document is a typed
+         *     422 rather than a validation report naming the server's models.
+         */
+        post: operations["import_profile_profiles_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Profile */
+        get: operations["read_profile_profiles__profile_id__get"];
+        /** Update Profile */
+        put: operations["update_profile_profiles__profile_id__put"];
+        post?: never;
+        /**
+         * Delete Profile
+         * @description Delete a profile — refused while one of its stereotypes is applied to an element.
+         */
+        delete: operations["delete_profile_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/{profile_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Profile
+         * @description The profile as a versioned document that `POST /profiles/import` accepts.
+         */
+        get: operations["export_profile_profiles__profile_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profiles/{profile_id}/stereotypes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Stereotype */
+        post: operations["add_stereotype_profiles__profile_id__stereotypes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/quality": {
         parameters: {
             query?: never;
@@ -1292,6 +1632,96 @@ export interface paths {
         delete: operations["delete_relationship_relationships__relationship_id__delete"];
         options?: never;
         head?: never;
+        /**
+         * Update Relationship
+         * @description Change what a link says: its name, its properties, its access type, its direction.
+         *
+         *     Never its type or its ends. `properties` is replaced wholesale when given. Both elements
+         *     the link joins are reviewed: an approved one goes back to review, a locked one is a 409.
+         */
+        patch: operations["update_relationship_relationships__relationship_id__patch"];
+        trace?: never;
+    };
+    "/report-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Report Templates
+         * @description The built-in templates, with the subjects they take and the formats served.
+         */
+        get: operations["list_report_templates_report_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Report
+         * @description Build a report and deposit it in the bucket under `reports/`. Editors only.
+         */
+        post: operations["create_report_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/render": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Render Report
+         * @description Build a report and return it. Nothing is stored.
+         */
+        get: operations["render_report_reports_render_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/requirements/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Coverage
+         * @description Which requirements are realized by a design and tested, and which are not.
+         *
+         *     `status` and `priority` narrow the requirements listed and counted. The
+         *     rates leave out rejected requirements and are `null` when none is left.
+         */
+        get: operations["read_coverage_requirements_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -1313,6 +1743,47 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stereotypes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Stereotypes
+         * @description Every stereotype, flat — what the SPA needs to draw and to offer them.
+         */
+        get: operations["list_stereotypes_stereotypes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stereotypes/{stereotype_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace Stereotype */
+        put: operations["replace_stereotype_stereotypes__stereotype_id__put"];
+        post?: never;
+        /**
+         * Delete Stereotype
+         * @description Delete a stereotype — refused, with the count, while elements carry it.
+         */
+        delete: operations["delete_stereotype_stereotypes__stereotype_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1434,6 +1905,16 @@ export interface components {
          * @enum {string}
          */
         ApprovalState: "draft" | "in_review" | "approved";
+        /** AsTemplateRequest */
+        AsTemplateRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
         /**
          * Aspect
          * @description The aspect an element belongs to — the column of the ArchiMate framework.
@@ -1445,7 +1926,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored" | "external_reference.linked" | "external_reference.unlinked" | "external_reference.refreshed";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored" | "external_reference.linked" | "external_reference.unlinked" | "external_reference.refreshed";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1733,6 +2214,56 @@ export interface components {
             /** Reused */
             reused: number;
         };
+        /**
+         * CoverageRead
+         * @description The coverage of the requirements asked about.
+         *
+         *     The rates are over the *active* requirements (a rejected one needs neither
+         *     a design nor a test) and are `null` when there is none: a rate over nothing
+         *     is not 100 %.
+         */
+        CoverageRead: {
+            /** Active */
+            active: number;
+            /** By Priority */
+            by_priority: {
+                [key: string]: number;
+            };
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** Design Rate */
+            design_rate: number | null;
+            /** Designed */
+            designed: number;
+            /**
+             * Failing
+             * @description Active requirements with at least one failing test.
+             */
+            failing: number;
+            /** Requirements */
+            requirements: components["schemas"]["RequirementTraceRead"][];
+            /** Total */
+            total: number;
+            /**
+             * Unverified
+             * @description Active requirements with no passing test (none, not run).
+             */
+            unverified: number;
+            /** Verification Rate */
+            verification_rate: number | null;
+            /**
+             * Verified
+             * @description Active requirements with a passing test and no failing one.
+             */
+            verified: number;
+        };
+        /** CreateElementSchema */
+        CreateElementSchema: {
+            /** Name */
+            name: string;
+        };
         /** DiagramCreate */
         DiagramCreate: {
             /**
@@ -1746,12 +2277,52 @@ export interface components {
             package_id?: string | null;
         };
         /**
-         * DiagramLayout
-         * @description Every box of a diagram. It replaces the stored layout whole.
+         * DiagramEdge
+         * @description The route of one link on this diagram. A link with no row is drawn straight.
          */
-        DiagramLayout: {
+        DiagramEdge: {
+            /**
+             * Relationship Id
+             * Format: uuid
+             */
+            relationship_id: string;
+            /** Waypoints */
+            waypoints: components["schemas"]["DiagramPoint"][];
+        };
+        /**
+         * DiagramFreeze
+         * @description The layout the SPA computed for a live view, stored when it is frozen.
+         *
+         *     `revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.
+         */
+        DiagramFreeze: {
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Revision */
+            revision: number;
+        };
+        /** DiagramGenerate */
+        DiagramGenerate: {
+            /** Name */
+            name: string;
+            source: components["schemas"]["ViewSource"];
+        };
+        /**
+         * DiagramLayout
+         * @description The whole scene of a diagram, replacing the stored one — against the revision the client saw.
+         *
+         *     Every field is required, empty lists included: an optional one would split
+         *     this model into `-Input` and `-Output` schemas (docs/adr/0035).
+         */
+        DiagramLayout: {
+            /** Edges */
+            edges: components["schemas"]["DiagramEdge"][];
+            /** Nodes */
+            nodes: components["schemas"]["DiagramNode"][];
+            /** Objects */
+            objects: components["schemas"]["DiagramObject"][];
+            /** Revision */
+            revision: number;
         };
         /**
          * DiagramNode
@@ -1765,8 +2336,49 @@ export interface components {
             element_id: string;
             /** Height */
             height: number;
+            /** Parent Object Id */
+            parent_object_id: string | null;
             /** Width */
             width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /**
+         * DiagramObject
+         * @description A note (its text is the body) or a group (its text is the title). Never a fact.
+         */
+        DiagramObject: {
+            /** Anchor Element Id */
+            anchor_element_id: string | null;
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["ObjectKind"];
+            /** Parent Id */
+            parent_id: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** DiagramPoint */
+        DiagramPoint: {
             /** X */
             x: number;
             /** Y */
@@ -1784,8 +2396,11 @@ export interface components {
             created_at: string;
             /** Description */
             description: string;
+            /** Edges */
+            edges: components["schemas"]["DiagramEdge"][];
             /** Elements */
             elements: components["schemas"]["ElementRead"][];
+            generation: components["schemas"]["Generation"] | null;
             /**
              * Id
              * Format: uuid
@@ -1805,6 +2420,8 @@ export interface components {
             name: string;
             /** Nodes */
             nodes: components["schemas"]["DiagramNode"][];
+            /** Objects */
+            objects: components["schemas"]["DiagramObject"][];
             /** Package Id */
             package_id: string | null;
             /**
@@ -1812,6 +2429,12 @@ export interface components {
              * @description Only the relationships whose two ends are both on the diagram.
              */
             relationships: components["schemas"]["RelationshipRead"][];
+            /**
+             * Revision
+             * @description Send it back with the next PUT /layout: a stale one is a 409.
+             */
+            revision: number;
+            source: components["schemas"]["ViewSource"] | null;
             /**
              * Updated At
              * Format: date-time
@@ -1827,6 +2450,7 @@ export interface components {
             created_at: string;
             /** Description */
             description: string;
+            generation: components["schemas"]["Generation"] | null;
             /**
              * Id
              * Format: uuid
@@ -1843,6 +2467,85 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** DiagramTemplateCreate */
+        DiagramTemplateCreate: {
+            body: components["schemas"]["TemplateBodySchema"];
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /** DiagramTemplateRead */
+        DiagramTemplateRead: {
+            body: components["schemas"]["TemplateBodySchema"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DiagramTemplateSummaryRead */
+        DiagramTemplateSummaryRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /** Group Count */
+            group_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Link Count */
+            link_count: number;
+            /** Name */
+            name: string;
+            /** Note Count */
+            note_count: number;
+            /** Slot Count */
+            slot_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DiagramTemplateUpdate */
+        DiagramTemplateUpdate: {
+            body?: components["schemas"]["TemplateBodySchema"] | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** DiagramUnfreeze */
+        DiagramUnfreeze: {
+            /** Discard Annotations */
+            discard_annotations: boolean;
+            /** Revision */
+            revision: number;
         };
         /**
          * DiagramUpdate
@@ -2080,11 +2783,21 @@ export interface components {
              * @description Counts the changes to its content; an approval names one.
              */
             revision: number;
+            /** Stereotypes */
+            stereotypes: components["schemas"]["StereotypeRef"][];
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ElementStereotypesSet
+         * @description The whole set of stereotypes an element carries: it replaces the previous one.
+         */
+        ElementStereotypesSet: {
+            /** Stereotype Ids */
+            stereotype_ids: string[];
         };
         /**
          * ElementType
@@ -2129,7 +2842,7 @@ export interface components {
          * EntityKind
          * @enum {string}
          */
-        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline" | "external_reference";
+        EntityKind: "element" | "relationship" | "package" | "saved_query" | "diagram" | "document" | "baseline" | "external_reference" | "profile" | "template";
         /** EntityRefRead */
         EntityRefRead: {
             /**
@@ -2435,6 +3148,12 @@ export interface components {
             severity: components["schemas"]["Severity"];
         };
         /**
+         * Gap
+         * @description What is missing around a requirement, if anything.
+         * @enum {string}
+         */
+        Gap: "design" | "verification" | "none";
+        /**
          * GapCreate
          * @description Draw the gap between two plateaus.
          */
@@ -2455,6 +3174,11 @@ export interface components {
              */
             name?: string | null;
         };
+        /**
+         * Generation
+         * @enum {string}
+         */
+        Generation: "live" | "frozen";
         /**
          * GraphRead
          * @description A sub-graph: the nodes and the edges between them, ready to be drawn.
@@ -2525,6 +3249,12 @@ export interface components {
             /** Unreadable */
             unreadable: number;
         };
+        /**
+         * IconKey
+         * @description The closed set of icons the SPA ships — an icon is picked, never uploaded.
+         * @enum {string}
+         */
+        IconKey: "none" | "database" | "server" | "cloud" | "user" | "lock" | "document" | "gear" | "queue" | "api";
         /** ImportCountsRead */
         ImportCountsRead: {
             elements: components["schemas"]["CountsRead"];
@@ -2568,6 +3298,29 @@ export interface components {
              * @description True when `issues` was cut at the report ceiling.
              */
             truncated: boolean;
+        };
+        /**
+         * InstantiateBinding
+         * @description What fills one slot: an existing element, one to create, or neither (slot left out).
+         */
+        InstantiateBinding: {
+            create: components["schemas"]["CreateElementSchema"] | null;
+            /** Element Id */
+            element_id: string | null;
+            /** Slot Key */
+            slot_key: string;
+        };
+        /** InstantiateRequest */
+        InstantiateRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["InstantiateBinding"][];
+            /**
+             * Create Relationships
+             * @default false
+             */
+            create_relationships?: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * IssueRead
@@ -2716,6 +3469,11 @@ export interface components {
              */
             package_id: string | null;
         };
+        /**
+         * ObjectKind
+         * @enum {string}
+         */
+        ObjectKind: "note" | "group";
         /** PackageCreate */
         PackageCreate: {
             /**
@@ -2838,6 +3596,69 @@ export interface components {
             /** Valid Until */
             valid_until: string | null;
         };
+        /** ProfileCreate */
+        ProfileCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description?: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * ProfileDocument
+         * @description A profile as a portable document: no ids, no dates, a version.
+         */
+        ProfileDocument: {
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /**
+             * Profile Format
+             * @constant
+             */
+            profile_format: 1;
+            /** Stereotypes */
+            stereotypes: components["schemas"]["StereotypeWrite"][];
+        };
+        /** ProfileRead */
+        ProfileRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Stereotypes */
+            stereotypes: components["schemas"]["StereotypeRead"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ProfileUpdate */
+        ProfileUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * PropertyKind
+         * @enum {string}
+         */
+        PropertyKind: "free" | "enum" | "template";
         /**
          * PropertyOp
          * @enum {string}
@@ -3047,6 +3868,108 @@ export interface components {
              */
             strength: number;
             value: components["schemas"]["RelationshipType"];
+        };
+        /**
+         * RelationshipUpdate
+         * @description A partial update of a link. An omitted field keeps its stored value.
+         *
+         *     The type and the two ends are absent on purpose: another type or another end is another
+         *     link, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,
+         *     replaces the whole map, as it does on an element.
+         */
+        RelationshipUpdate: {
+            /** @description Only meaningful on an access relationship. */
+            access_type?: components["schemas"]["AccessType"] | null;
+            /**
+             * Directed
+             * @description Only meaningful on an association relationship.
+             */
+            directed?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Properties */
+            properties?: {
+                [key: string]: string;
+            } | null;
+        };
+        /** ReportCreate */
+        ReportCreate: {
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "html" | "pdf" | "docx";
+            subject: components["schemas"]["ReportSubjectBody"];
+            /**
+             * Template
+             * @description A template id from GET /report-templates.
+             */
+            template: string;
+        };
+        /**
+         * ReportSubjectBody
+         * @description What the report is about: a kind and the id of one object of that kind.
+         */
+        ReportSubjectBody: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "package" | "diagram" | "query";
+        };
+        /** ReportTemplateRead */
+        ReportTemplateRead: {
+            /**
+             * Formats
+             * @description The formats this deployment can produce.
+             */
+            formats: ("html" | "pdf" | "docx")[];
+            /** Id */
+            id: string;
+            /**
+             * Subjects
+             * @description The kinds of subject the template takes.
+             */
+            subjects: ("package" | "diagram" | "query")[];
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * RequirementTraceRead
+         * @description One requirement, what realizes it, what tests it, and what is missing.
+         */
+        RequirementTraceRead: {
+            /** Designed By */
+            designed_by: components["schemas"]["TraceElementRead"][];
+            element_type: components["schemas"]["ElementType"];
+            gap: components["schemas"]["Gap"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Identifier
+             * @description The readable identifier, empty when none is recorded.
+             */
+            identifier: string;
+            /** Name */
+            name: string;
+            /** Priority */
+            priority: string;
+            /** Status */
+            status: string;
+            /** Tested By */
+            tested_by: components["schemas"]["TraceElementRead"][];
+            /** @description `verified` only if a test passed and none failed; `failing`; or `unverified`. */
+            verification: components["schemas"]["Verification"];
         };
         /**
          * RestorePlanRead
@@ -3276,6 +4199,80 @@ export interface components {
          * @enum {string}
          */
         Severity: "error" | "warning" | "info";
+        /** SourceDiffRead */
+        SourceDiffRead: {
+            /** Added */
+            added: components["schemas"]["ElementRead"][];
+            /** Removed */
+            removed: string[];
+        };
+        /**
+         * StereotypePropertySchema
+         * @description One declared property. Every field is required: no default, no `-Input` twin.
+         */
+        StereotypePropertySchema: {
+            /** Allowed Values */
+            allowed_values: string[];
+            /** Help */
+            help: string;
+            /** Key */
+            key: string;
+            kind: components["schemas"]["PropertyKind"];
+            /** Label */
+            label: string;
+            /** Required */
+            required: boolean;
+            /** Template */
+            template: string | null;
+        };
+        /** StereotypeRead */
+        StereotypeRead: {
+            base_type: components["schemas"]["ElementType"];
+            /** Colour */
+            colour: string | null;
+            icon_key: components["schemas"]["IconKey"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Profile Id
+             * Format: uuid
+             */
+            profile_id: string;
+            /** Properties */
+            properties: components["schemas"]["StereotypePropertySchema"][];
+        };
+        /**
+         * StereotypeRef
+         * @description The stereotype an element carries - enough to draw it, none of its rules.
+         */
+        StereotypeRef: {
+            /** Colour */
+            colour: string | null;
+            icon_key: components["schemas"]["IconKey"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** StereotypeWrite */
+        StereotypeWrite: {
+            base_type: components["schemas"]["ElementType"];
+            /** Colour */
+            colour: string | null;
+            icon_key: components["schemas"]["IconKey"];
+            /** Name */
+            name: string;
+            /** Properties */
+            properties: components["schemas"]["StereotypePropertySchema"][];
+        };
         /**
          * SubnetCreate
          * @description A new subnet: a `communication_network` element carrying a prefix.
@@ -3363,6 +4360,109 @@ export interface components {
             /** Vrf */
             vrf: string;
         };
+        /** TemplateBodySchema */
+        TemplateBodySchema: {
+            /** Groups */
+            groups: components["schemas"]["TemplateGroupSchema"][];
+            /** Links */
+            links: components["schemas"]["TemplateLinkSchema"][];
+            /** Notes */
+            notes: components["schemas"]["TemplateNoteSchema"][];
+            /** Slots */
+            slots: components["schemas"]["TemplateSlotSchema"][];
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+        };
+        /** TemplateGroupSchema */
+        TemplateGroupSchema: {
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** TemplateLinkSchema */
+        TemplateLinkSchema: {
+            relationship_type: components["schemas"]["RelationshipType"];
+            /** Source Key */
+            source_key: string;
+            /** Target Key */
+            target_key: string;
+        };
+        /** TemplateNoteSchema */
+        TemplateNoteSchema: {
+            /** Anchor Key */
+            anchor_key: string | null;
+            /** Colour */
+            colour: string | null;
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Text */
+            text: string;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** TemplateSlotSchema */
+        TemplateSlotSchema: {
+            element_type: components["schemas"]["ElementType"];
+            /** Height */
+            height: number;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Parent Key */
+            parent_key: string | null;
+            /** Stereotype */
+            stereotype: string | null;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /**
+         * TraceElementRead
+         * @description An element on the other end of a realization of a requirement.
+         */
+        TraceElementRead: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Result
+             * @description For a test, the result it records (`passed`, `failed`…); absent otherwise.
+             */
+            result: string | null;
+        };
         /**
          * Transition
          * @enum {string}
@@ -3380,6 +4480,27 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * Verification
+         * @description What the tests of a requirement say, as a whole.
+         * @enum {string}
+         */
+        Verification: "verified" | "failing" | "unverified";
+        /**
+         * ViewSource
+         * @description Where a generated view reads its members: a saved query, or a package.
+         *
+         *     Exactly one of the two ids. Both fields are required (nullable) so the
+         *     model is one schema for the request and for the answer.
+         */
+        ViewSource: {
+            /** Package Id */
+            package_id: string | null;
+            /** Query Id */
+            query_id: string | null;
+            /** Recursive */
+            recursive: boolean;
         };
     };
     responses: never;
@@ -3897,6 +5018,387 @@ export interface operations {
             };
         };
     };
+    list_templates_diagram_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateSummaryRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_template_diagram_templates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_template_diagram_templates__template_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_template_diagram_templates__template_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_template_diagram_templates__template_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    instantiate_template_diagram_templates__template_id__instantiate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstantiateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_diagrams_diagrams_get: {
         parameters: {
             query?: {
@@ -4013,6 +5515,84 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_diagram_diagrams_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramGenerate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4204,6 +5784,157 @@ export interface operations {
             };
         };
     };
+    save_as_template_diagrams__diagram_id__as_template_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AsTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramTemplateRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    freeze_diagram_diagrams__diagram_id__freeze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramFreeze"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     replace_diagram_layout_diagrams__diagram_id__layout_put: {
         parameters: {
             query?: never;
@@ -4253,8 +5984,231 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    render_diagram_diagrams__diagram_id__render_svg_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The diagram as a static SVG (docs/adr/0063). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_source_diff_diagrams__diagram_id__source_diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDiffRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    unfreeze_diagram_diagrams__diagram_id__unfreeze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramUnfreeze"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4436,6 +6390,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_document_html_documents__document_id__html_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5676,6 +7688,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_element_stereotypes_elements__element_id__stereotypes_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                element_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElementStereotypesSet"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElementRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7853,6 +9936,505 @@ export interface operations {
             };
         };
     };
+    list_profiles_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_profile_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    import_profile_profiles_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileDocument"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_profile_profiles__profile_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_profile_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_profile_profiles__profile_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDocument"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_stereotype_profiles__profile_id__stereotypes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StereotypeWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StereotypeRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_quality_quality_get: {
         parameters: {
             query?: {
@@ -8456,6 +11038,324 @@ export interface operations {
             };
         };
     };
+    update_relationship_relationships__relationship_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                relationship_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelationshipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_report_templates_report_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportTemplateRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_report_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    render_report_reports_render_get: {
+        parameters: {
+            query: {
+                template: string;
+                subject_kind: "package" | "diagram" | "query";
+                subject_id: string;
+                format: "html" | "pdf" | "docx";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report, as an attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": string;
+                    "text/html; charset=utf-8": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_coverage_requirements_coverage_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                priority?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_roadmap_roadmap_get: {
         parameters: {
             query?: {
@@ -8490,6 +11390,180 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_stereotypes_stereotypes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StereotypeRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_stereotype_stereotypes__stereotype_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stereotype_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StereotypeWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StereotypeRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_stereotype_stereotypes__stereotype_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                stereotype_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

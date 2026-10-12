@@ -16,10 +16,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi.responses import HTMLResponse
 
 from ea.api.dependencies import Documents
 from ea.api.schemas import DocumentRead, DocumentSummaryRead, ErrorResponse
 from ea.domain.documents import MAX_DOCUMENT_BYTES
+from ea.domain.markdown_html import render_markdown
 
 router = APIRouter(tags=["documents"])
 
@@ -95,6 +97,25 @@ async def list_element_documents(
 async def read_document(document_id: UUID, documents: Documents) -> DocumentRead:
     """One document with its markdown, as text."""
     return DocumentRead.of(await documents.get(document_id))
+
+
+@router.get("/documents/{document_id}/html", response_class=HTMLResponse, responses=NOT_FOUND)
+async def read_document_html(document_id: UUID, documents: Documents) -> HTMLResponse:
+    """The document as a safe HTML fragment, for a reader that cannot render markdown.
+
+    Raw HTML in the document is shown as text, images are not loaded and `javascript:` / `data:`
+    links are not links (docs/adr/0062): the SPA inserts the result with `v-html` for exactly
+    that reason.
+    """
+    document = await documents.get(document_id)
+    return HTMLResponse(
+        render_markdown(document.content),
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.put("/documents/{document_id}", response_model=DocumentRead, responses=REJECTED)

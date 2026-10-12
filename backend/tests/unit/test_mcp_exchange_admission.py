@@ -23,12 +23,16 @@ from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from tests.conftest import InMemoryAuditLog, InMemoryExchange, InMemoryRepository
 from tests.exchange_files import DATA
@@ -55,6 +59,9 @@ def mcp_over(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     external_service: ExternalReferenceService,
+    diagram_service: DiagramService,
+    profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> MCPServer[Any]:
     return build_mcp_server(
         lambda: service,
@@ -69,6 +76,11 @@ def mcp_over(
         lambda: AnalysisService(service, InMemoryRepository()),
         lambda: TimelineService(service, InMemoryRepository()),
         lambda: external_service,
+        lambda: diagram_service,
+        lambda: profile_service,
+        lambda: template_service,
+        lambda: RequirementService(InMemoryRepository()),
+        lambda: app.state.report_service,
     )
 
 
@@ -82,6 +94,9 @@ def parts(
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
     external_service: ExternalReferenceService,
+    diagram_service: DiagramService,
+    profile_service: ProfileService,
+    template_service: TemplateService,
 ) -> tuple[Any, ...]:
     return (
         document_service,
@@ -92,6 +107,9 @@ def parts(
         audit_log,
         baseline_service,
         external_service,
+        diagram_service,
+        profile_service,
+        template_service,
     )
 
 

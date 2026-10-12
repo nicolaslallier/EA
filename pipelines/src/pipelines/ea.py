@@ -58,7 +58,7 @@ class StaleReference:
     """An external reference whose cache is old — identified, never described.
 
     Only the id and where it points (target, kind): the cached title is a third party's text,
-    and a flow has no use for it (docs/adr/0062).
+    and a flow has no use for it (docs/adr/0073).
     """
 
     id: UUID

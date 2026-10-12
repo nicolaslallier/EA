@@ -21,7 +21,7 @@ from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
-from tests.conftest import FIXED_NOW, InMemoryAuditLog, InMemoryRepository, an_approver
+from tests.conftest import FIXED_NOW, InMemoryAuditLog, InMemoryRepository, an_approver, lay_out
 
 pytestmark = pytest.mark.asyncio
 
@@ -314,6 +314,6 @@ class TestTheOtherDoorsIntoAnElement:
         put_in_state(repository, locked.id, S.APPROVED, locked=True)
         diagram = await diagram_service.create(name="View")
 
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(locked.id, 1.0, 2.0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(locked.id, 1.0, 2.0)])
 
         assert repository.elements[locked.id].locked is True

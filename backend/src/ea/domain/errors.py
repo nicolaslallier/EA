@@ -43,6 +43,70 @@ class DuplicateDiagramError(DomainError):
     """A diagram name is already taken."""
 
 
+class DiagramRevisionConflictError(DomainError):
+    """A layout was saved against a revision someone else has since moved on from."""
+
+
+class ProfileNotFoundError(DomainError):
+    """A profile referenced by id is absent from the store."""
+
+
+class StereotypeNotFoundError(DomainError):
+    """A stereotype referenced by id is absent from the store."""
+
+
+class DuplicateProfileError(DomainError):
+    """A profile name, or a stereotype name within its profile, is already taken."""
+
+
+class StereotypeInUseError(DomainError):
+    """A stereotype is applied to elements and cannot be removed or re-typed."""
+
+
+class GeneratedViewTooLargeError(DomainError):
+    """A view's source yields more elements than a diagram can hold: narrow the filter."""
+
+
+class GeneratedViewsUnavailableError(DomainError):
+    """Generated views were asked for on a deployment without the queries and packages they read."""
+
+
+class DiagramLiveError(DomainError):
+    """A live view has no boxes of its own: it is recomputed at each opening, so not editable."""
+
+
+class DiagramNotLiveError(DomainError):
+    """The diagram is not a live view: there is nothing to freeze."""
+
+
+class DiagramNotGeneratedError(DomainError):
+    """The diagram was drawn by hand: it has no source to freeze, refresh or thaw."""
+
+
+class DiagramHasAnnotationsError(DomainError):
+    """Thawing a view would delete the notes, groups or routes drawn on it."""
+
+
+class SourceInUseError(DomainError):
+    """A query or a package is read by a generated view and cannot be deleted from under it."""
+
+
+class TemplateNotFoundError(DomainError):
+    """A diagram template referenced by id is absent from the store."""
+
+
+class TemplateLimitError(DomainError):
+    """The library holds as many templates as it may: delete one before saving another."""
+
+
+class TemplateBusyError(DomainError):
+    """As many diagrams are being built from templates as the process allows: retry shortly."""
+
+
+class DuplicateTemplateError(DomainError):
+    """A diagram template name is already taken."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 
@@ -346,6 +410,14 @@ class InvalidLifespanError(DomainError):
     """
 
 
+class InvalidJunctionError(DomainError):
+    """A junction whose `junction_type` is neither `and` nor `or` (docs/adr/0065)."""
+
+
+class InvalidRequirementError(DomainError):
+    """A requirement status, priority or test result outside its vocabulary (docs/adr/0067)."""
+
+
 class InvalidTimelineError(DomainError):
     """A question about time the model cannot answer: a plateau against itself, an element
     that is not a plateau, a roadmap window that ends before it starts or spans too many years."""
@@ -360,7 +432,7 @@ class ExternalReferenceNotFoundError(DomainError):
 
 
 class DuplicateExternalReferenceError(DomainError):
-    """This element already cites this external object (docs/adr/0062)."""
+    """This element already cites this external object (docs/adr/0073)."""
 
 
 class InvalidExternalReferenceError(DomainError):
@@ -400,3 +472,27 @@ class ExternalWriteTimeoutError(DomainError):
     A write that is not idempotent is never retried by the server: the caller checks the
     provider before trying again.
     """
+
+
+class ReportTooLargeError(DomainError):
+    """A report would pass a ceiling: elements, diagrams, document bytes or time.
+
+    The message names the ceiling and how to narrow the scope. A silent truncation would hand
+    over a report that looks complete and is not (docs/adr/0062).
+    """
+
+
+class ReportFormatUnavailableError(DomainError):
+    """The format needs a native library this deployment does not carry."""
+
+
+class ReportBusyError(DomainError):
+    """As many reports are being built as the process allows (globally, or for this caller)."""
+
+
+class UnknownReportTemplateError(DomainError):
+    """No built-in template has this id."""
+
+
+class UnsupportedReportSubjectError(DomainError):
+    """This template does not take this kind of subject."""

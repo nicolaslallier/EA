@@ -25,6 +25,10 @@ export type Section = {
   group: SectionGroup['id']
   /** The screen, lazily loaded. Absent means "declared, not built yet". */
   view?: RouteRecordRaw['component']
+  /** Nested screens, mounted inside this section's view (which holds a `<RouterView>`). */
+  children?: RouteRecordRaw[]
+  /** A reading screen: the shell drops the editing menu around it (docs/adr/0064). */
+  reader?: boolean
 }
 
 export const GROUPS: readonly SectionGroup[] = [
@@ -32,6 +36,7 @@ export const GROUPS: readonly SectionGroup[] = [
   { id: 'analysis', label: 'Analyse' },
   { id: 'storage', label: 'Stockage' },
   { id: 'governance', label: 'Gouvernance' },
+  { id: 'reading', label: 'Lecture' },
 ]
 
 export const SECTIONS: readonly Section[] = [
@@ -68,6 +73,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/diagrams/DiagramsSection.vue'),
   },
   {
+    path: '/profils',
+    name: 'profiles',
+    label: 'Profils',
+    summary: 'Des stéréotypes et les propriétés attendues sur un type d\'élément.',
+    group: 'model',
+    view: () => import('../features/profiles/ProfilesSection.vue'),
+  },
+  {
     path: '/ipam',
     name: 'ipam',
     label: 'Adressage IP',
@@ -98,6 +111,14 @@ export const SECTIONS: readonly Section[] = [
     summary: "Ce qui dépend d'un élément, de proche en proche.",
     group: 'analysis',
     view: () => import('../features/impact/ImpactSection.vue'),
+  },
+  {
+    path: '/analyse/couverture',
+    name: 'coverage',
+    label: 'Couverture des exigences',
+    summary: 'Les exigences sans réalisation et sans test.',
+    group: 'analysis',
+    view: () => import('../features/requirements/CoverageSection.vue'),
   },
   {
     path: '/analyse/feuille-de-route',
@@ -162,6 +183,33 @@ export const SECTIONS: readonly Section[] = [
     summary: 'Figer le modèle, comparer deux états, restaurer.',
     group: 'governance',
     view: () => import('../features/baselines/BaselinesSection.vue'),
+  },
+  {
+    path: '/view',
+    name: 'view',
+    label: 'Consultation',
+    summary: 'Lire le modèle sans pouvoir le modifier : éléments, relations, diagrammes.',
+    group: 'reading',
+    reader: true,
+    view: () => import('../features/view/ViewShell.vue'),
+    children: [
+      { path: '', name: 'view-home', component: () => import('../features/view/ViewHome.vue') },
+      {
+        path: 'package/:id',
+        name: 'view-package',
+        component: () => import('../features/view/ViewPackage.vue'),
+      },
+      {
+        path: 'element/:id',
+        name: 'view-element',
+        component: () => import('../features/view/ViewElement.vue'),
+      },
+      {
+        path: 'diagram/:id',
+        name: 'view-diagram',
+        component: () => import('../features/view/ViewDiagram.vue'),
+      },
+    ],
   },
 ]
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // What an element cites in other tools — a ticket, a page — with the title and state the server
-// cached (docs/adr/0062).
+// cached (docs/adr/0073).
 //
 // The server does everything that is a rule: how an identifier is spelled, which targets exist,
 // what a provider says. This lists, asks and shows the answer. A title is a third party's text:

@@ -23,7 +23,7 @@ from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
-from tests.conftest import FIXED_NOW, InMemoryAuditLog, a_reader
+from tests.conftest import FIXED_NOW, InMemoryAuditLog, a_reader, lay_out
 
 pytestmark = pytest.mark.asyncio
 
@@ -228,7 +228,7 @@ class TestDiagrams:
 
         diagram = await diagram_service.create(name="Vue", description="")
         await diagram_service.update(diagram.id, name="Vue 2")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(element.id, 1, 2)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 1, 2)])
         await diagram_service.delete(diagram.id)
 
         assert [e.action for e in audit_log.events] == [
@@ -238,8 +238,17 @@ class TestDiagrams:
             AuditAction.DIAGRAM_DELETED,
         ]
         layout = audit_log.events[2]
-        assert layout.before == {"nodes": []}
-        assert layout.after is not None and len(layout.after["nodes"]) == 1
+        assert layout.before == {"diagram_revision": 0, "nodes": 0, "objects": 0, "edges": 0}
+        assert layout.after is not None
+        assert (
+            layout.after["diagram_revision"],
+            layout.after["nodes"],
+            layout.after["nodes_added"],
+        ) == (
+            1,
+            1,
+            1,
+        )
 
     async def test_a_refused_diagram_write_leaves_no_event(
         self, diagram_service: DiagramService, audit_log: InMemoryAuditLog

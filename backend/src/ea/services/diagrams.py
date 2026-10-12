@@ -18,12 +18,26 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from ea.domain.audit import AuditAction, diagram_view, layout_view
+from ea.domain.audit import AuditAction, diagram_view, scene_views
+from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, check_scene
 from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
 from ea.domain.errors import (
+    DiagramHasAnnotationsError,
+    DiagramLiveError,
     DiagramNotFoundError,
+    DiagramNotGeneratedError,
+    DiagramNotLiveError,
+    GeneratedViewsUnavailableError,
     PackageNotFoundError,
     UnknownLayoutElementError,
+)
+from ea.domain.generated_views import (
+    MAX_GENERATED_MEMBERS,
+    Generation,
+    SourceDiff,
+    ViewSource,
+    diff_members,
+    resolve_members,
 )
 from ea.domain.packages import UNSET, Unset, descendants_of
 from ea.domain.timeline import Lifespan
@@ -35,7 +49,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from ea.domain.audit import AuditEvent
-    from ea.domain.ports import DiagramRepository, PackageRepository
+    from ea.domain.ports import DiagramRepository, PackageRepository, ViewSourceResolver
     from ea.services.architecture import ArchitectureService
 
 Clock = Callable[[], datetime]
@@ -61,8 +75,10 @@ class DiagramService:
         *,
         packages: PackageRepository | None = None,
         clock: Clock = _utc_now,
+        sources: ViewSourceResolver | None = None,
     ) -> None:
         self._repository = repository
+        self._sources = sources
         self._architecture = architecture
         self._packages = packages
         self._now = clock
@@ -121,18 +137,32 @@ class DiagramService:
             raise _not_found(diagram_id)
         return diagram
 
-    async def open(self, diagram_id: UUID, *, as_of: date | None = None) -> DiagramDetail:
+    async def open(
+        self, diagram_id: UUID, *, as_of: date | None = None, link_limit: int | None = None
+    ) -> DiagramDetail:
         """A diagram with the part of the graph it shows, stale boxes left out.
 
         `as_of` removes nothing - a diagram is a view, and a box out of period keeps
         its place in the layout (docs/adr/0060) - it only says which ones are not in
-        service that day, for the SPA to grey.
+        service that day, for the SPA to grey. `link_limit` stops the read of the links in
+        SQL (a report asks for one more than it accepts).
         """
         require_caller()
         diagram = await self.get(diagram_id)
+        if diagram.generation is Generation.LIVE:
+            # No box is stored: who is on it is what the source yields now (docs/adr/0071).
+            members = await self._members_of(diagram)
+            return DiagramDetail(
+                diagram=diagram, nodes=(), graph=await self._architecture.view_of(members)
+            )
         nodes = await self._repository.nodes_of(diagram_id)
-        graph = await self._architecture.view_of([node.element_id for node in nodes])
+        objects = await self._repository.objects_of(diagram_id)
+        edges = await self._repository.edges_of(diagram_id)
+        graph = await self._architecture.view_of(
+            [node.element_id for node in nodes], link_limit=link_limit
+        )
         present = {element.id for element in graph.elements}
+        linked = {link.id for link in graph.relationships}
         inactive_elements: frozenset[UUID] = frozenset()
         inactive_links: frozenset[UUID] = frozenset()
         if as_of is not None:
@@ -152,6 +182,8 @@ class DiagramService:
             diagram=diagram,
             nodes=tuple(node for node in nodes if node.element_id in present),
             graph=graph,
+            objects=objects,
+            edges=tuple(edge for edge in edges if edge.relationship_id in linked),
             inactive_elements=inactive_elements,
             inactive_relationships=inactive_links,
         )
@@ -204,47 +236,200 @@ class DiagramService:
             "diagram deleted", extra={"action": "diagram_deleted", "diagram_id": str(diagram_id)}
         )
 
-    async def replace_layout(self, diagram_id: UUID, nodes: Sequence[DiagramNode]) -> None:
-        """Replace every box of a diagram, refusing an element the graph lacks.
+    async def replace_layout(
+        self,
+        diagram_id: UUID,
+        *,
+        revision: int,
+        nodes: Sequence[DiagramNode],
+        objects: Sequence[DiagramObject] = (),
+        edges: Sequence[DiagramEdge] = (),
+    ) -> int:
+        """Replace the whole scene of a diagram, against the revision the caller saw.
 
-        A body that places one element twice is refused before anything is
-        read; otherwise an unknown diagram is a 404. The elements are checked
-        in one graph query, not one per box.
+        A scene that breaks `check_scene` is refused before anything is read;
+        an unknown diagram is a 404; an element the graph lacks, or a route for
+        a link that does not join two placed elements, is refused; a stale
+        `revision` is a conflict. The elements and links are checked in one
+        graph query, not one per box. Returns the new revision.
         """
         require_editor()
-        layout = check_layout(nodes)
+        scene = check_scene(nodes, objects, edges)
         diagram = await self.get(diagram_id)
-        graph = await self._architecture.view_of([node.element_id for node in layout])
+        if diagram.generation is Generation.LIVE:
+            msg = "a live view is recomputed at every opening and cannot be edited: freeze it"
+            raise DiagramLiveError(msg)
+        graph = await self._architecture.view_of([node.element_id for node in scene.nodes])
         present = {element.id for element in graph.elements}
-        missing = [str(node.element_id) for node in layout if node.element_id not in present]
+        missing = [str(node.element_id) for node in scene.nodes if node.element_id not in present]
         if missing:
             msg = f"no element with id {', '.join(missing)}"
             raise UnknownLayoutElementError(msg)
+        joined = {link.id for link in graph.relationships}
+        stray = [
+            str(edge.relationship_id) for edge in scene.edges if edge.relationship_id not in joined
+        ]
+        if stray:
+            msg = f"no relationship between two elements of the diagram: {', '.join(stray)}"
+            raise ValueError(msg)
 
-        def events(before: tuple[DiagramNode, ...]) -> tuple[AuditEvent, ...]:
+        def events(before: DiagramScene) -> tuple[AuditEvent, ...]:
+            old, new = scene_views(before, scene, revision=revision)
             return (
                 self._trail.event(
                     AuditAction.DIAGRAM_LAYOUT_REPLACED,
                     entity_id=diagram_id,
-                    before=layout_view(before),
-                    after=layout_view(layout),
+                    before=old,
+                    after=new,
                 ),
             )
 
-        if not await self._repository.replace_layout(
-            diagram_id, layout, now=self._now(), audit=events
-        ):
+        stored = await self._repository.replace_layout(
+            diagram_id, scene, revision=revision, now=self._now(), audit=events
+        )
+        if stored is None:
             raise _not_found(diagram_id)  # deleted between the read and the write
+        # Counts only: the text of a note is the author's, and may be sensitive.
         logger.info(
-            "diagram %r laid out with %d box(es)",
+            "diagram %r saved at revision %d",
             logged(diagram.name),
-            len(layout),
+            stored,
             extra={
                 "action": "diagram_layout_replaced",
                 "diagram_id": str(diagram_id),
-                "nodes": len(layout),
+                "diagram_revision": stored,
+                "nodes": len(scene.nodes),
+                "objects": len(scene.objects),
+                "edges": len(scene.edges),
             },
         )
+        return stored
+
+    # --- Generated views (docs/adr/0071) -------------------------------------
+
+    def _resolver(self) -> ViewSourceResolver:
+        if self._sources is None:
+            msg = "generated views need the queries and packages, which this deployment lacks"
+            raise GeneratedViewsUnavailableError(msg)
+        return self._sources
+
+    async def _members_of(self, diagram: Diagram) -> tuple[UUID, ...]:
+        """What the source of a generated view yields now: at most the ceiling, else refused."""
+        if diagram.source is None:
+            raise DiagramNotGeneratedError("this diagram was drawn by hand: it has no source")
+        found = await self._resolver().members(diagram.source, limit=MAX_GENERATED_MEMBERS)
+        return resolve_members(found)
+
+    async def generate(self, *, name: str, source: ViewSource) -> DiagramDetail:
+        """A new live view of everything a query or a package yields.
+
+        The source is read once now, to refuse a missing one and one too big for a
+        diagram; nothing of it is stored but the reference.
+        """
+        require_editor()
+        resolve_members(await self._resolver().members(source, limit=MAX_GENERATED_MEMBERS))
+        diagram = Diagram.create(
+            name=name, now=self._now(), generation=Generation.LIVE, source=source
+        )
+
+        def generated(stored: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_GENERATED, entity_id=stored.id, after=diagram_view(stored)
+                ),
+            )
+
+        stored = await self._repository.add(diagram, audit=generated)
+        self._audit("generated view created: %r", stored, "diagram_generated")
+        return await self.open(stored.id)
+
+    async def source_diff(self, diagram_id: UUID) -> SourceDiff:
+        """What a frozen view would gain and lose if it followed its source. Writes nothing."""
+        require_caller()
+        diagram = await self._frozen(diagram_id)
+        stored = [node.element_id for node in await self._repository.nodes_of(diagram_id)]
+        added, removed = diff_members(stored, await self._members_of(diagram))
+        return SourceDiff(added=(await self._architecture.view_of(added)).elements, removed=removed)
+
+    async def freeze(
+        self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, revision: int
+    ) -> Diagram:
+        """Store the layout the SPA computed and make the view an ordinary editable diagram.
+
+        Against the revision the caller read: a view somebody else froze or thawed meanwhile
+        is a conflict, not an overwrite.
+        """
+        require_editor()
+        layout = check_layout(nodes)
+        diagram = await self.get(diagram_id)
+        if diagram.generation is None:
+            raise DiagramNotGeneratedError("this diagram was drawn by hand: it has no source")
+        if diagram.generation is Generation.FROZEN:
+            raise DiagramNotLiveError("this view is already frozen")
+        members = set(await self._members_of(diagram))
+        strangers = [n for n in layout if n.element_id not in members]
+        if strangers:
+            msg = f"{len(strangers)} box(es) are not in the source of this view"
+            raise ValueError(msg)
+
+        def frozen(before: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_FROZEN,
+                    entity_id=diagram_id,
+                    before=diagram_view(before),
+                    after={**diagram_view(before), "generation": "frozen", "nodes": len(layout)},
+                ),
+            )
+
+        stored = await self._repository.freeze(
+            diagram_id, layout, revision=revision, now=self._now(), audit=frozen
+        )
+        if stored is None:
+            raise _not_found(diagram_id)
+        self._audit("view frozen: %r", diagram, "diagram_frozen")
+        return await self.get(diagram_id)
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, discard_annotations: bool = False
+    ) -> Diagram:
+        """Back to a live view. Notes, groups and custom routes are not silently lost."""
+        require_editor()
+        diagram = await self._frozen(diagram_id)
+        annotated = bool(
+            await self._repository.objects_of(diagram_id)
+            or await self._repository.edges_of(diagram_id)
+        )
+        if annotated and not discard_annotations:
+            msg = "this view carries notes, groups or routed links: thawing would delete them"
+            raise DiagramHasAnnotationsError(msg)
+
+        def thawed(before: Diagram) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.DIAGRAM_UNFROZEN,
+                    entity_id=diagram_id,
+                    before=diagram_view(before),
+                    after={**diagram_view(before), "generation": "live"},
+                ),
+            )
+
+        stored = await self._repository.unfreeze(
+            diagram_id, revision=revision, now=self._now(), audit=thawed
+        )
+        if stored is None:
+            raise _not_found(diagram_id)
+        self._audit("view thawed: %r", diagram, "diagram_unfrozen")
+        return await self.get(diagram_id)
+
+    async def _frozen(self, diagram_id: UUID) -> Diagram:
+        diagram = await self.get(diagram_id)
+        if diagram.generation is None:
+            raise DiagramNotGeneratedError("this diagram was drawn by hand: it has no source")
+        if diagram.generation is Generation.LIVE:
+            msg = "this view is live: it has no stored boxes to refresh or thaw"
+            raise DiagramLiveError(msg)
+        return diagram
 
     @staticmethod
     def _audit(message: str, diagram: Diagram, action: str) -> None:

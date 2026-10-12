@@ -20,8 +20,9 @@ from ea.domain.audit import (
     element_view,
     encode_cursor,
     events_for,
-    layout_view,
+    scene_views,
 )
+from ea.domain.diagram_objects import DiagramObject, DiagramScene, ObjectKind
 from ea.domain.diagrams import DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import InvalidCursorError
@@ -104,11 +105,20 @@ class TestTheViews:
         assert view["byte_size"] == len(b"# Secret plan\n")
         assert len(view["sha256"]) == 64
 
-    def test_a_layout_view_is_ordered_so_two_equal_layouts_compare_equal(self) -> None:
-        first, second = uuid4(), uuid4()
-        nodes = [DiagramNode(second, 1, 2), DiagramNode(first, 3, 4)]
+    def test_a_scene_view_counts_what_moved_and_carries_no_coordinate_nor_text(self) -> None:
+        first, second, third = uuid4(), uuid4(), uuid4()
+        before = DiagramScene(nodes=(DiagramNode(first, 1, 2), DiagramNode(second, 3, 4)))
+        after = DiagramScene(
+            nodes=(DiagramNode(first, 9, 9), DiagramNode(third, 0, 0)),
+            objects=(DiagramObject(uuid4(), ObjectKind.NOTE, 0, 0, 10, 10, text="secret plan"),),
+        )
 
-        assert layout_view(nodes) == layout_view(list(reversed(nodes)))
+        old, new = scene_views(before, after, revision=4)
+
+        assert old == {"diagram_revision": 4, "nodes": 2, "objects": 0, "edges": 0}
+        assert new["diagram_revision"] == 5
+        assert (new["nodes_added"], new["nodes_removed"], new["nodes_moved"]) == (1, 1, 1)
+        assert "secret" not in str(new)
 
 
 class TestActions:

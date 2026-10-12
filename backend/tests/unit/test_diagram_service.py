@@ -16,7 +16,9 @@ from pydantic import ValidationError
 
 from ea.api.schemas import (
     MAX_BOX_SIZE,
+    MAX_DIAGRAM_EDGES,
     MAX_DIAGRAM_NODES,
+    MAX_DIAGRAM_OBJECTS,
     MIN_BOX_SIZE,
     DiagramCreate,
     DiagramLayout,
@@ -34,7 +36,7 @@ from ea.domain.model import Element
 from ea.domain.packages import Package
 from ea.services.architecture import ArchitectureService
 from ea.services.diagrams import DiagramService
-from tests.conftest import FIXED_NOW, InMemoryDiagrams, InMemoryPackages
+from tests.conftest import FIXED_NOW, InMemoryDiagrams, InMemoryPackages, lay_out
 
 
 async def an_element(service: ArchitectureService, name: str = "Facturation") -> Element:
@@ -67,7 +69,7 @@ class TestCreatingAndListing:
         element = await an_element(service)
         second = await diagram_service.create(name="Zeta")
         await diagram_service.create(name="Alpha")
-        await diagram_service.replace_layout(second.id, [DiagramNode(element.id, 10, 20)])
+        await lay_out(diagram_service, second.id, [DiagramNode(element.id, 10, 20)])
 
         listed = await diagram_service.list_diagrams()
 
@@ -91,8 +93,10 @@ class TestReading:
         )
         await service.connect(relationship_type=R.SERVING, source_id=api.id, target_id=outsider.id)
         diagram = await diagram_service.create(name="Vente")
-        await diagram_service.replace_layout(
-            diagram.id, [DiagramNode(api.id, 0, 0), DiagramNode(process.id, 200, 0)]
+        await lay_out(
+            diagram_service,
+            diagram.id,
+            [DiagramNode(api.id, 0, 0), DiagramNode(process.id, 200, 0)],
         )
 
         detail = await diagram_service.open(diagram.id)
@@ -164,9 +168,9 @@ class TestTheLayout:
         first = await an_element(service, "A")
         second = await an_element(service, "B")
         diagram = await diagram_service.create(name="Vente")
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(first.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(first.id, 0, 0)])
 
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(second.id, 1.5, -2)])
+        await lay_out(diagram_service, diagram.id, [DiagramNode(second.id, 1.5, -2)])
 
         detail = await diagram_service.open(diagram.id)
         assert detail.nodes == (DiagramNode(second.id, 1.5, -2),)
@@ -178,7 +182,7 @@ class TestTheLayout:
         ghost = uuid4()
 
         with pytest.raises(UnknownLayoutElementError, match=str(ghost)):
-            await diagram_service.replace_layout(diagram.id, [DiagramNode(ghost, 0, 0)])
+            await lay_out(diagram_service, diagram.id, [DiagramNode(ghost, 0, 0)])
 
     async def test_a_layout_placing_one_element_twice_is_refused(
         self, service: ArchitectureService, diagram_service: DiagramService
@@ -187,8 +191,10 @@ class TestTheLayout:
         diagram = await diagram_service.create(name="Vente")
 
         with pytest.raises(ValueError, match="twice"):
-            await diagram_service.replace_layout(
-                diagram.id, [DiagramNode(element.id, 0, 0), DiagramNode(element.id, 9, 9)]
+            await lay_out(
+                diagram_service,
+                diagram.id,
+                [DiagramNode(element.id, 0, 0), DiagramNode(element.id, 9, 9)],
             )
 
     async def test_a_layout_for_an_unknown_diagram_is_not_found(
@@ -197,7 +203,7 @@ class TestTheLayout:
         element = await an_element(service)
 
         with pytest.raises(DiagramNotFoundError):
-            await diagram_service.replace_layout(uuid4(), [DiagramNode(element.id, 0, 0)])
+            await lay_out(diagram_service, uuid4(), [DiagramNode(element.id, 0, 0)])
 
 
 @pytest.mark.asyncio
@@ -212,7 +218,7 @@ class TestTheAuditTrail:
         with caplog.at_level(logging.INFO, logger="ea.services"):
             diagram = await diagram_service.create(name="Vente")
             await diagram_service.update(diagram.id, description="d")
-            await diagram_service.replace_layout(diagram.id, [DiagramNode(element.id, 0, 0)])
+            await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 0, 0)])
             await diagram_service.open(diagram.id)
             await diagram_service.delete(diagram.id)
 
@@ -232,39 +238,104 @@ class TestTheAuditTrail:
 class TestTheBounds:
     """Declared once in `api/schemas.py`, and stopped before any service runs."""
 
-    def test_a_layout_holds_at_most_the_declared_number_of_boxes(self) -> None:
-        node = {"element_id": str(uuid4()), "x": 0, "y": 0, "width": 132, "height": 46}
+    @staticmethod
+    def body(
+        nodes: list[dict[str, object]] | None = None,
+        objects: list[dict[str, object]] | None = None,
+        edges: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        return {"revision": 0, "nodes": nodes or [], "objects": objects or [], "edges": edges or []}
 
-        DiagramLayout.model_validate({"nodes": [node] * MAX_DIAGRAM_NODES})
+    @staticmethod
+    def box(**overrides: object) -> dict[str, object]:
+        return {
+            "element_id": str(uuid4()),
+            "x": 0,
+            "y": 0,
+            "width": 132,
+            "height": 46,
+            "parent_object_id": None,
+            "z": 0,
+            **overrides,
+        }
+
+    @staticmethod
+    def note(**overrides: object) -> dict[str, object]:
+        return {
+            "id": str(uuid4()),
+            "kind": "note",
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 50,
+            "text": "",
+            "colour": None,
+            "z": 0,
+            "parent_id": None,
+            "anchor_element_id": None,
+            **overrides,
+        }
+
+    def test_a_layout_holds_at_most_the_declared_number_of_boxes(self) -> None:
+        node = self.box()
+
+        DiagramLayout.model_validate(self.body([node] * MAX_DIAGRAM_NODES))
         with pytest.raises(ValidationError):
-            DiagramLayout.model_validate({"nodes": [node] * (MAX_DIAGRAM_NODES + 1)})
+            DiagramLayout.model_validate(self.body([node] * (MAX_DIAGRAM_NODES + 1)))
+
+    def test_a_scene_holds_at_most_the_declared_notes_groups_and_routes(self) -> None:
+        DiagramLayout.model_validate(self.body(objects=[self.note()] * MAX_DIAGRAM_OBJECTS))
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate(
+                self.body(objects=[self.note()] * (MAX_DIAGRAM_OBJECTS + 1))
+            )
+        edge = {"relationship_id": str(uuid4()), "waypoints": []}
+        DiagramLayout.model_validate(self.body(edges=[edge] * MAX_DIAGRAM_EDGES))
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate(self.body(edges=[edge] * (MAX_DIAGRAM_EDGES + 1)))
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"text": "x" * 2001},
+            {"colour": 'red" onload="x'},
+            {"colour": "#12345"},
+            {"z": 10_001},
+            {"x": float("inf")},
+            {"width": 10},
+        ],
+    )
+    def test_an_object_outside_its_bounds_is_refused(self, bad: dict[str, object]) -> None:
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate(self.body(objects=[self.note(**bad)]))
+
+    def test_a_route_has_at_most_twenty_bends_and_the_revision_is_not_negative(self) -> None:
+        bends = [{"x": 0, "y": 0}] * 21
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate(
+                self.body(edges=[{"relationship_id": str(uuid4()), "waypoints": bends}])
+            )
+        with pytest.raises(ValidationError):
+            DiagramLayout.model_validate({**self.body(), "revision": -1})
 
     @pytest.mark.parametrize("x", [100_001, -100_001, "nan", "inf"])
     def test_a_coordinate_outside_the_canvas_is_refused(self, x: object) -> None:
         with pytest.raises(ValidationError):
-            DiagramLayout.model_validate(
-                {
-                    "nodes": [
-                        {"element_id": str(uuid4()), "x": x, "y": 0, "width": 132, "height": 46}
-                    ]
-                }
-            )
+            DiagramLayout.model_validate(self.body([self.box(x=x)]))
 
     @pytest.mark.parametrize("size", [MIN_BOX_SIZE - 1, MAX_BOX_SIZE + 1, "nan", "inf"])
     def test_a_box_size_outside_the_bounds_is_refused(self, size: object) -> None:
         with pytest.raises(ValidationError):
-            DiagramLayout.model_validate(
-                {
-                    "nodes": [
-                        {"element_id": str(uuid4()), "x": 0, "y": 0, "width": size, "height": 46}
-                    ]
-                }
-            )
+            DiagramLayout.model_validate(self.body([self.box(width=size)]))
 
     def test_a_box_states_its_size(self) -> None:
         """Required rather than defaulted, so the read and write schemas stay one."""
         with pytest.raises(ValidationError):
-            DiagramLayout.model_validate({"nodes": [{"element_id": str(uuid4()), "x": 0, "y": 0}]})
+            DiagramLayout.model_validate(
+                self.body(
+                    [{"element_id": str(uuid4()), "x": 0, "y": 0, "parent_object_id": None, "z": 0}]
+                )
+            )
 
     def test_an_unknown_field_is_refused(self) -> None:
         with pytest.raises(ValidationError):

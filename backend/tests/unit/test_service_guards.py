@@ -29,7 +29,11 @@ from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
+from ea.services.reports import ReportService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from tests.conftest import a_reader
 
@@ -43,14 +47,44 @@ WRITES = {
         "complete_element",
         "delete_element",
         "connect",
+        "update_relationship",
         "disconnect",
     },
-    DiagramService: {"create", "update", "delete", "replace_layout"},
+    DiagramService: {
+        "create",
+        "update",
+        "delete",
+        "replace_layout",
+        "generate",
+        "freeze",
+        "unfreeze",
+    },
+    ProfileService: {
+        "create_profile",
+        "update_profile",
+        "delete_profile",
+        "add_stereotype",
+        "replace_stereotype",
+        "delete_stereotype",
+        "import_profile",
+        "apply_stereotypes",
+        "apply_stereotype",
+        "remove_stereotype",
+    },
+    TemplateService: {
+        "create_template",
+        "update_template",
+        "delete_template",
+        "create_from_diagram",
+        "instantiate",
+    },
     DocumentService: {"attach", "attach_text", "revise", "revise_text", "discard", "reindex_all"},
     ExchangeService: {"import_exchange"},
     ExternalReferenceService: {"link", "refresh", "refresh_element", "unlink", "open_issue"},
     FileService: {"upload", "delete", "set_details", "reconcile"},
     PackageService: {"create", "update", "delete", "move_elements"},
+    RequirementService: set(),
+    ReportService: {"deposit"},
     SavedQueryService: {"create", "update", "delete"},
     TimelineService: {"create_gap"},
     IpamService: {"declare_network", "assign_address", "allocate_next", "release_address"},

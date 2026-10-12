@@ -2,10 +2,10 @@
 titre: Références externes — des cibles nommées, une seule porte de sortie, des écritures chez un tiers fermées par défaut
 date: 2026-10-11
 statut: Proposition
-affects: backend/src/ea/domain/external.py, backend/src/ea/domain/egress.py, backend/src/ea/repositories/external_http.py, backend/src/ea/repositories/external_providers.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/api/external.py, backend/src/ea/mcp/server.py, backend/src/ea/core/config.py, backend/migrations/versions/0015_external_references.py, frontend/src/features/external, pipelines/src/pipelines/references.py
+affects: backend/src/ea/domain/external.py, backend/src/ea/domain/egress.py, backend/src/ea/repositories/external_http.py, backend/src/ea/repositories/external_providers.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/api/external.py, backend/src/ea/mcp/server.py, backend/src/ea/core/config.py, backend/migrations/versions/0019_external_references.py, frontend/src/features/external, pipelines/src/pipelines/references.py
 ---
 
-# 62. Références externes — des cibles nommées, une seule porte de sortie, des écritures chez un tiers fermées par défaut
+# 73. Références externes — des cibles nommées, une seule porte de sortie, des écritures chez un tiers fermées par défaut
 
 Date : 2026-10-11
 Statut : Proposition

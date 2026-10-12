@@ -239,6 +239,7 @@ WRITES = {
         WriteKind.DOCUMENT: "no",
         WriteKind.FILING: "no",
         WriteKind.RESTORE: "no",
+        WriteKind.STEREOTYPES: "no",
     },
     "locked": dict.fromkeys(WriteKind, "no"),
 }

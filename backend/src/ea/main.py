@@ -26,15 +26,22 @@ from ea.api.dependencies import (
     architecture_service_of,
     audit_service_of,
     baseline_service_of,
+    diagram_service_of,
     document_service_of,
     exchange_service_of,
     external_service_of,
     file_service_of,
     ipam_service_of,
     package_service_of,
+    profile_service_of,
+    report_service_of,
+    requirement_service_of,
     saved_query_service_of,
+    template_service_of,
     timeline_service_of,
 )
+from ea.api.diagram_templates import router as templates_router
+from ea.api.diagrams import REVISION_HEADER
 from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
@@ -47,7 +54,10 @@ from ea.api.me import router as me_router
 from ea.api.metamodel import router as metamodel_router
 from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.packages import router as packages_router
+from ea.api.profiles import router as profiles_router
 from ea.api.queries import router as queries_router
+from ea.api.reports import router as reports_router
+from ea.api.requirements import router as requirements_router
 from ea.api.schemas import ErrorResponse
 from ea.api.timeline import router as timeline_router
 from ea.core.config import Settings, get_settings
@@ -72,10 +82,15 @@ from ea.domain.ports import (
     IpamRepository,
     ObjectStore,
     PackageRepository,
+    ProfileRepository,
+    RequirementRepository,
     SavedQueryRepository,
+    TemplateRepository,
     TimelineRepository,
+    ViewSourceResolver,
 )
 from ea.domain.quality import MAX_QUALITY_ELEMENTS, QualityParams
+from ea.domain.reports import Renderer, ReportFormat
 from ea.domain.search import EMBEDDING_DIMENSIONS
 from ea.mcp import MCP_PATH, build_mcp_server
 from ea.mcp.auth import AsTheLocalDeveloper, KeycloakTokenVerifier, auth_settings
@@ -93,7 +108,10 @@ from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.repositories.profile_store import PostgresProfileRepository
+from ea.repositories.report_renderers import available_renderers
 from ea.repositories.saved_query_store import PostgresSavedQueryRepository
+from ea.repositories.template_store import PostgresTemplateRepository
 from ea.services.analysis import AnalysisService, ScopeResolver, analysis_admission
 from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
@@ -107,8 +125,13 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
+from ea.services.reports import ReportService, report_admission
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService, build_admission
 from ea.services.timeline import TimelineService
+from ea.services.view_sources import QueriesAndPackages
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +143,7 @@ logger = logging.getLogger(__name__)
 #: `FILES` is the MinIO bucket behind the *Fichiers* section; without it the
 #: `/files` routes and the four MCP file tools answer 503, exactly as they do
 #: where `EA_S3_ENABLED` is off.
-#: `EXTERNAL` is the third-party systems behind the references of an element (docs/adr/0062):
+#: `EXTERNAL` is the third-party systems behind the references of an element (docs/adr/0073):
 #: it is named when any declared target failed its boot probe; that target is then not
 #: asked, its references are served from the cache and linking to it answers 503.
 SEARCH: Final = "search"
@@ -257,6 +280,8 @@ def _lifespan(
     exchanges: ExchangeRepository | None = None,
     external: ExternalReferenceRepository | None = None,
     external_systems: Mapping[str, ExternalSystem] | None = None,
+    profiles: ProfileRepository | None = None,
+    templates: TemplateRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Start and stop everything the process owns, however it was assembled.
 
@@ -326,6 +351,8 @@ def _lifespan(
             metadata_store = file_metadata
             audit_store = audit
             baseline_store = baselines
+            profile_store = profiles
+            template_store = templates
             exchange_store: ExchangeRepository | None = None
             external_store = external
             if settings.postgres_enabled:
@@ -349,6 +376,10 @@ def _lifespan(
                     baseline_store = PostgresBaselineRepository(app.state.db_sessions)
                 if external_store is None:
                     external_store = PostgresExternalReferenceRepository(app.state.db_sessions)
+                if profile_store is None:
+                    profile_store = PostgresProfileRepository(app.state.db_sessions)
+                if template_store is None:
+                    template_store = PostgresTemplateRepository(app.state.db_sessions)
                 logger.info(
                     "relational store ready at %s:%s/%s",
                     settings.postgres_host,
@@ -364,12 +395,17 @@ def _lifespan(
                         settings.postgres_database,
                     )
                     app.state.architecture_service = ArchitectureService(
-                        repository, separate_duties=settings.approval_separation
+                        repository,
+                        separate_duties=settings.approval_separation,
+                        stereotypes=profile_store,
                     )
                     # The IP addressing is a reading of that same graph and adds
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    app.state.requirement_service = RequirementService(
+                        repository, admission=app.state.analysis_admission
+                    )
                     app.state.analysis_service = AnalysisService(
                         app.state.architecture_service,
                         repository,
@@ -412,8 +448,32 @@ def _lifespan(
                     query_store, package_store, architecture_service_of(app)
                 )
             if diagram_store is not None:
+                # A generated view reads the saved queries and the package tree; without
+                # either (the relational store shut) it answers 503 instead of guessing.
+                saved_queries = getattr(app.state, "saved_query_service", None)
+                package_tree = getattr(app.state, "package_service", None)
                 app.state.diagram_service = DiagramService(
-                    diagram_store, architecture_service_of(app), packages=package_store
+                    diagram_store,
+                    architecture_service_of(app),
+                    packages=package_store,
+                    sources=(
+                        QueriesAndPackages(
+                            architecture_service_of(app), saved_queries, package_tree
+                        )
+                        if saved_queries is not None and package_tree is not None
+                        else None
+                    ),
+                )
+            if template_store is not None and diagram_store is not None:
+                app.state.template_service = TemplateService(
+                    template_store,
+                    architecture_service_of(app),
+                    app.state.diagram_service,
+                    admission=app.state.template_admission,
+                )
+            if profile_store is not None:
+                app.state.profile_service = ProfileService(
+                    profile_store, architecture_service_of(app)
                 )
             if exchange_store is not None:
                 app.state.exchange_service = ExchangeService(
@@ -484,6 +544,7 @@ def _lifespan(
                 # there whenever the store is — and `None` only on the test
                 # seam that builds an app without PostgreSQL at all.
                 app.state.file_service = FileService(store, metadata=metadata_store)
+            _attach_reports(app, detect_engines=True)
             # Published once every probe has run: `/health` reads it, and it is
             # the only place an operator is told which store is missing without
             # opening the logs — see docs/adr/0037.
@@ -519,6 +580,41 @@ def _lifespan(
             logger.info("shutting down")
 
     return lifespan
+
+
+def _attach_reports(app: FastAPI, *, detect_engines: bool = False) -> None:
+    """The report use cases, once the services they read and write through exist.
+
+    Called wherever the last of those can appear: `create_app` for the injected test seams, the
+    lifespan for the real stores. Idempotent. One admission serves every door (HTTP and MCP), so
+    that two doors cannot hold twice the places (docs/adr/0062).
+
+    The PDF engine loads native libraries, so it is looked for only where a deployment really
+    starts (`detect_engines`, the lifespan) and when a test did not impose its own table.
+    """
+    diagrams = getattr(app.state, "diagram_service", None)
+    files = getattr(app.state, "file_service", None)
+    architecture = getattr(app.state, "architecture_service", None)
+    if (
+        diagrams is None
+        or files is None
+        or architecture is None
+        or getattr(app.state, "report_service", None) is not None
+    ):
+        return
+    renderers = getattr(app.state, "report_renderers", None)
+    if renderers is None and detect_engines:
+        renderers = available_renderers()
+    app.state.report_service = ReportService(
+        diagrams,
+        architecture,
+        getattr(app.state, "document_service", None),
+        files,
+        packages=getattr(app.state, "package_service", None),
+        admission=app.state.report_admission,
+        extra_renderers=renderers,
+        app_version=app.version,
+    )
 
 
 def _transport_security(settings: Settings) -> TransportSecuritySettings:
@@ -608,6 +704,11 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: analysis_service_of(app),
         lambda: timeline_service_of(app),
         lambda: external_service_of(app),
+        lambda: diagram_service_of(app),
+        lambda: profile_service_of(app),
+        lambda: template_service_of(app),
+        lambda: requirement_service_of(app),
+        lambda: report_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
         auth=auth_settings(settings) if auth else None,
@@ -645,6 +746,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    requirements: RequirementRepository | None = None,
     analysis: AnalysisRepository | None = None,
     timeline: TimelineRepository | None = None,
     diagrams: DiagramRepository | None = None,
@@ -658,7 +760,11 @@ def create_app(
     external: ExternalReferenceRepository | None = None,
     external_systems: Mapping[str, ExternalSystem] | None = None,
     external_inactive: Mapping[str, ExternalKind] | None = None,
+    profiles: ProfileRepository | None = None,
+    templates: TemplateRepository | None = None,
+    view_sources: ViewSourceResolver | None = None,
     verifier: AccessTokenVerifier | None = None,
+    report_renderers: Mapping[ReportFormat, Renderer] | None = None,
 ) -> FastAPI:
     """Assemble the application.
 
@@ -712,13 +818,18 @@ def create_app(
             exchanges=exchanges,
             external=external,
             external_systems=external_systems,
+            profiles=profiles,
+            templates=templates,
         ),
     )
     app.state.settings = settings
+    app.state.report_renderers = report_renderers
+    app.state.report_admission = report_admission()
     # Validated here, so a wrong `EA_QUALITY_REQUIRED` stops the boot (docs/adr/0057); and one
     # admission for the analyses that read the whole model, whichever door they come through.
     app.state.quality_params = build_quality_params(settings)
     app.state.analysis_admission = analysis_admission()
+    app.state.template_admission = build_admission()
     # One admission for every door an import comes through: HTTP's (in the middleware below),
     # MCP's and a script's (in the service), so that three doors cannot hold six places.
     admission = Admission(
@@ -727,7 +838,7 @@ def create_app(
         lease_seconds=settings.exchange_import_lease_s,
     )
     app.state.import_admission = admission
-    # And one for the calls out to third parties (docs/adr/0062), global and per caller.
+    # And one for the calls out to third parties (docs/adr/0073), global and per caller.
     app.state.external_admission = Admission(
         settings.external_max_in_flight,
         per_caller=settings.external_per_caller,
@@ -753,6 +864,10 @@ def create_app(
                 inactive=external_inactive,
                 admission=app.state.external_admission,
             )
+        if requirements is not None:
+            app.state.requirement_service = RequirementService(
+                requirements, admission=app.state.analysis_admission
+            )
         if analysis is not None:
             app.state.analysis_service = AnalysisService(
                 architecture_service,
@@ -773,7 +888,16 @@ def create_app(
             )
         if diagrams is not None:
             app.state.diagram_service = DiagramService(
-                diagrams, architecture_service, packages=packages
+                diagrams, architecture_service, packages=packages, sources=view_sources
+            )
+        if profiles is not None:
+            app.state.profile_service = ProfileService(profiles, architecture_service)
+        if templates is not None and diagrams is not None:
+            app.state.template_service = TemplateService(
+                templates,
+                architecture_service,
+                app.state.diagram_service,
+                admission=app.state.template_admission,
             )
         if exchanges is not None:
             app.state.exchange_service = ExchangeService(
@@ -791,6 +915,7 @@ def create_app(
             )
     if files is not None:
         app.state.file_service = FileService(files, metadata=file_metadata)
+    _attach_reports(app)
     if audit is not None:
         app.state.audit_service = AuditService(audit)
     if baselines is not None:
@@ -828,6 +953,7 @@ def create_app(
             "Content-Disposition",
             "X-Export-Skipped-Views",
             "Retry-After",
+            REVISION_HEADER,
         ],
     )
     # Added last, so it is the outermost layer: it then times and reports the
@@ -839,13 +965,17 @@ def create_app(
     app.include_router(architecture_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(documents_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(diagrams_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(profiles_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(templates_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(requirements_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(timeline_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(external_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(reports_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(baselines_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

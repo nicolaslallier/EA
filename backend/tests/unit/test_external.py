@@ -2,7 +2,7 @@
 
 Pure rules, no I/O: the shape of an identifier per kind, the address the server
 builds from it, the scope it falls in, and when a cached title is old enough to be
-doubted. See docs/adr/0062.
+doubted. See docs/adr/0073.
 """
 
 from __future__ import annotations

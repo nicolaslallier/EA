@@ -1,4 +1,4 @@
-"""The one door out: a client that cannot be made to call anything else (docs/adr/0062).
+"""The one door out: a client that cannot be made to call anything else (docs/adr/0073).
 
 No test here opens a socket: the transport is `httpx.MockTransport` and the resolver is a
 function, so what is checked is the *decision* — which address is connected to, what is

@@ -4,7 +4,7 @@ Pure, like `ipam.py`: nothing here opens a socket or imports a framework. What
 the server accepts as an identifier, the address it builds from it, the scope an
 allow-list is checked against, and when a cached title is old enough to be doubted
 are all decided here, so the REST adapter, the MCP adapter and the service cannot
-disagree. See docs/adr/0062.
+disagree. See docs/adr/0073.
 
 **The stored address is built, never copied.** `parse_reference` returns the
 canonical identifier and the URL derived from the configured web base; a pasted

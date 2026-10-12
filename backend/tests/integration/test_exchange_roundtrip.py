@@ -312,7 +312,7 @@ async def test_a_dry_run_reports_what_the_real_import_does_and_changes_nothing(
     real = await exchange.import_exchange(data, REAL)
 
     assert (real.counts, real.issues) == (simulated.counts, simulated.issues)
-    assert await repository.count_elements(ElementFilter()) == 3
+    assert await repository.count_elements(ElementFilter()) == 4
 
 
 async def test_a_refused_relation_leaves_the_rest_and_strict_leaves_nothing(
@@ -699,7 +699,8 @@ async def a_filed_catalogue(whole: Any) -> dict[str, Any]:
     view = await diagrams.create(name="Vue d'ensemble", description="La vue\nen deux lignes")
     await diagrams.replace_layout(
         view.id,
-        [
+        revision=0,
+        nodes=[
             DiagramNode(elements["Billing"].id, 10.4, 20, 120, 55),
             DiagramNode(elements["Invoice"].id, -30, 400, 200, 80),
         ],

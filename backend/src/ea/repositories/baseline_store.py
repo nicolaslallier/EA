@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
 from sqlalchemy import cast as sql_cast
+from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as upsert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -712,4 +713,13 @@ async def _write(
                     "height": statement.excluded.height,
                 },
             )
+        )
+    moved = {box.diagram_id for box in plan.boxes_to_restore}
+    if moved:
+        # Whoever has one of these diagrams open holds boxes that no longer exist:
+        # moving the revision on makes their next save a 409 instead of an overwrite.
+        await session.execute(
+            sql_update(DiagramRecord)
+            .where(DiagramRecord.id.in_(moved))
+            .values(revision=DiagramRecord.revision + 1)
         )

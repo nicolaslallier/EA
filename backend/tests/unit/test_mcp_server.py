@@ -29,16 +29,22 @@ from ea.api.schemas import (
     ExternalIssueOpen,
     ExternalReferenceCreate,
     FileDetailsWrite,
+    InstantiateRequest,
     MoveElements,
     PackageCreate,
     PackageUpdate,
     RelationshipCreate,
+    RelationshipUpdate,
     RestoreRequest,
     SavedQueryCreate,
     SubnetCreate,
 )
 from ea.core.config import Settings
+from ea.domain.archimate import ElementType
+from ea.domain.diagrams import DiagramNode
 from ea.domain.external import ExternalSnapshot, ExternalStatus
+from ea.domain.generated_views import QuerySource
+from ea.domain.profiles import IconKey
 from ea.main import create_app
 from ea.mcp import build_mcp_server
 from ea.mcp.server import INSTRUCTIONS
@@ -54,7 +60,11 @@ from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
+from ea.services.reports import ReportService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 from tests.conftest import (
     FakeExternalSystem,
@@ -63,10 +73,12 @@ from tests.conftest import (
     InMemoryExchange,
     InMemoryObjectStore,
     InMemoryRepository,
+    InMemoryViewSources,
     a_reader,
     an_approver,
 )
 from tests.exchange_files import DATA
+from tests.unit.test_template_service import BODY
 
 
 @pytest.fixture
@@ -83,6 +95,11 @@ def server(
     analysis: AnalysisService,
     timeline: TimelineService,
     external_service: ExternalReferenceService,
+    diagram_service: DiagramService,
+    profile_service: ProfileService,
+    template_service: TemplateService,
+    requirements: RequirementService,
+    report_service: ReportService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
     return build_mcp_server(
@@ -98,7 +115,17 @@ def server(
         lambda: analysis,
         lambda: timeline,
         lambda: external_service,
+        lambda: diagram_service,
+        lambda: profile_service,
+        lambda: template_service,
+        lambda: requirements,
+        lambda: report_service,
     )
+
+
+@pytest.fixture
+def requirements(repository: InMemoryRepository) -> RequirementService:
+    return RequirementService(repository)
 
 
 @pytest.fixture
@@ -115,6 +142,11 @@ def server_without_an_index(
     analysis: AnalysisService,
     timeline: TimelineService,
     external_service: ExternalReferenceService,
+    diagram_service: DiagramService,
+    profile_service: ProfileService,
+    template_service: TemplateService,
+    requirements: RequirementService,
+    report_service: ReportService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
     return build_mcp_server(
@@ -130,6 +162,11 @@ def server_without_an_index(
         lambda: analysis,
         lambda: timeline,
         lambda: external_service,
+        lambda: diagram_service,
+        lambda: profile_service,
+        lambda: template_service,
+        lambda: requirements,
+        lambda: report_service,
     )
 
 
@@ -364,10 +401,17 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert (
-            len(names) == 64
-        )  # fifty-nine, and the five tools of the external references (docs/adr/0062)
+        # seventy-one on main, plus the five tools of the external references (docs/adr/0073)
+        assert len(names) == 76
         assert names == {
+            "list_diagram_templates",
+            "instantiate_diagram_template",
+            "create_generated_diagram",
+            "list_profiles",
+            "apply_stereotype",
+            "remove_stereotype",
+            "list_diagrams",
+            "get_diagram",
             "export_model",
             "import_model",
             "create_element",
@@ -378,6 +422,8 @@ class TestTheToolset:
             "connect_elements",
             "list_relationships",
             "read_element_relations",
+            "update_relationship",
+            "get_coverage",
             "disconnect_elements",
             "neighbourhood",
             "impact_of",
@@ -415,6 +461,8 @@ class TestTheToolset:
             "set_file_details",
             "upload_file",
             "delete_file",
+            "list_report_templates",
+            "generate_report",
             "list_packages",
             "create_package",
             "update_package",
@@ -672,6 +720,61 @@ class TestRelationships:
         assert {element["name"] for element in view["elements"]} == {"Billing", "Invoice API"}
         assert len(view["relationships"]) == 1
 
+    async def test_a_link_can_be_changed_but_not_retyped_or_moved(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+        )
+
+        updated = await call(
+            server, "update_relationship", relationship_id=link["id"], name="implements"
+        )
+
+        assert updated["name"] == "implements"
+        assert updated["source_id"] == source["id"]
+        tool = next(t for t in await server.list_tools() if t.name == "update_relationship")
+        assert set(tool.input_schema["properties"]) == {
+            "relationship_id",
+            "name",
+            "access_type",
+            "directed",
+            "properties",
+        }
+        assert tool.annotations is not None
+        assert (tool.annotations.read_only_hint, tool.annotations.destructive_hint) == (
+            False,
+            False,
+        )
+
+    async def test_an_explicit_null_is_refused_as_the_http_adapter_refuses_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+            properties={"k": "v"},
+        )
+
+        for field in ("name", "properties", "directed", "access_type"):
+            with pytest.raises(ToolError):
+                await server.call_tool(
+                    "update_relationship", {"relationship_id": link["id"], field: None}
+                )
+        kept = await call(server, "update_relationship", relationship_id=link["id"])
+        assert kept["properties"] == {"k": "v"}  # omitted, not nulled
+
     async def test_a_link_can_be_removed(self, server: MCPServer[Any]) -> None:
         source = await an_element(server, "application_component", "Billing")
         target = await an_element(server, "application_service", "Invoice API")
@@ -686,6 +789,45 @@ class TestRelationships:
         await call(server, "disconnect_elements", relationship_id=link["id"])
 
         assert await call(server, "list_relationships") == {"result": []}
+
+
+@pytest.mark.asyncio
+class TestCoverage:
+    async def test_it_lists_the_gaps_an_agent_asks_about(self, server: MCPServer[Any]) -> None:
+        requirement = await call(
+            server,
+            "create_element",
+            element_type="requirement",
+            name="Chiffrer",
+            properties={"req_status": "approved"},
+        )
+        design = await an_element(server, "application_component", "Coffre")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=design["id"],
+            target_id=requirement["id"],
+        )
+
+        coverage = await call(server, "get_coverage", status="approved")
+
+        assert coverage["total"] == 1
+        (item,) = coverage["requirements"]
+        assert item["gap"] == "verification"
+        assert item["designed_by"][0]["name"] == "Coffre"
+
+    async def test_an_unknown_status_comes_back_as_a_tool_error(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="unknown status"):
+            await server.call_tool("get_coverage", {"status": "banana"})
+
+    async def test_the_tool_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_coverage")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
 
 
 @pytest.mark.asyncio
@@ -1972,6 +2114,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("update_element", "description", ElementUpdate, "description"),
             ("update_element", "documentation", ElementUpdate, "documentation"),
             ("connect_elements", "name", RelationshipCreate, "name"),
+            ("update_relationship", "name", RelationshipUpdate, "name"),
             ("declare_ip_subnet", "name", SubnetCreate, "name"),
             ("declare_ip_subnet", "cidr", SubnetCreate, "cidr"),
             ("declare_ip_subnet", "vrf", SubnetCreate, "vrf"),
@@ -2011,6 +2154,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("open_external_issue", "scope", ExternalIssueOpen, "scope"),
             ("open_external_issue", "title", ExternalIssueOpen, "title"),
             ("open_external_issue", "body", ExternalIssueOpen, "body"),
+            ("instantiate_diagram_template", "name", InstantiateRequest, "name"),
+            ("instantiate_diagram_template", "bindings", InstantiateRequest, "bindings"),
         ],
     )
     async def test_a_body_field_and_its_tool_argument_agree(
@@ -2055,6 +2200,9 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("check_model", "cursor", "/quality", "cursor"),
             ("aggregate_model", "by", "/analytics/aggregate", "by"),
             ("aggregate_model", "property_key", "/analytics/aggregate", "property"),
+            ("get_coverage", "status", "/requirements/coverage", "status"),
+            ("get_coverage", "priority", "/requirements/coverage", "priority"),
+            ("generate_report", "template", "/reports/render", "template"),
         ],
     )
     async def test_a_query_parameter_and_its_tool_argument_agree(
@@ -2230,7 +2378,7 @@ class TestImportModel:
         report = await call(server, "import_model", content=DATA_XML)
 
         assert report["dry_run"] is True and report["applied"] is False
-        assert report["counts"]["elements"]["created"] == 3
+        assert report["counts"]["elements"]["created"] == 4
         assert (repository.elements, repository.relationships) == ({}, {})
         assert len(audit_log.events) == events
 
@@ -2256,7 +2404,7 @@ class TestImportModel:
     ) -> None:
         report = await call(server, "import_model", content=DATA_XML, dry_run=False)
 
-        assert report["applied"] is True and len(repository.elements) == 3
+        assert report["applied"] is True and len(repository.elements) == 4
 
     async def test_csv_takes_its_three_texts(
         self, server: MCPServer[Any], repository: InMemoryRepository
@@ -2548,3 +2696,281 @@ class TestAggregateModel:
     async def test_an_unknown_dimension_is_refused(self, server: MCPServer[Any]) -> None:
         with pytest.raises(ToolError):
             await call(server, "aggregate_model", by="bogus")
+
+
+@pytest.mark.asyncio
+class TestDiagrams:
+    async def test_the_diagrams_are_listed_and_one_is_read_with_its_scene(
+        self, server: MCPServer[Any], diagram_service: DiagramService
+    ) -> None:
+        created = await diagram_service.create(name="Paysage applicatif")
+
+        listed = await call(server, "list_diagrams")
+        opened = await call(server, "get_diagram", diagram_id=str(created.id))
+
+        assert [d["name"] for d in listed["result"]] == ["Paysage applicatif"]
+        assert (opened["revision"], opened["nodes"], opened["objects"], opened["edges"]) == (
+            0,
+            [],
+            [],
+            [],
+        )
+
+    async def test_an_unknown_diagram_is_named_in_the_message(self, server: MCPServer[Any]) -> None:
+        missing = uuid4()
+
+        with pytest.raises(ToolError) as failure:
+            await call(server, "get_diagram", diagram_id=str(missing))
+
+        assert str(missing) in str(failure.value)
+
+    async def test_both_tools_only_read(self, server: MCPServer[Any]) -> None:
+        tools = {t.name: t for t in await server.list_tools()}
+
+        for name in ("list_diagrams", "get_diagram"):
+            assert tools[name].annotations is not None
+            assert tools[name].annotations.read_only_hint is True  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+class TestProfiles:
+    async def test_an_agent_reads_the_profiles_then_tags_an_element(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        profile = await profile_service.create_profile(name="SI")
+        stereotype = await profile_service.add_stereotype(
+            profile.id,
+            name="database",
+            base_type=ElementType.APPLICATION_COMPONENT,
+            colour=None,
+            icon_key=IconKey.DATABASE,
+            properties=(),
+        )
+        element = await an_element(server, "application_component", "Facturation")
+
+        listed = await call(server, "list_profiles")
+        tagged = await call(
+            server, "apply_stereotype", element_id=element["id"], stereotype_id=str(stereotype.id)
+        )
+        untagged = await call(
+            server, "remove_stereotype", element_id=element["id"], stereotype_id=str(stereotype.id)
+        )
+
+        assert listed["result"][0]["stereotypes"][0]["name"] == "database"
+        assert [s["name"] for s in tagged["stereotypes"]] == ["database"]
+        assert untagged["stereotypes"] == []
+
+    async def test_a_stereotype_of_another_type_is_refused_in_words_the_model_can_act_on(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        profile = await profile_service.create_profile(name="SI")
+        stereotype = await profile_service.add_stereotype(
+            profile.id,
+            name="x",
+            base_type=ElementType.NODE,
+            colour=None,
+            icon_key=IconKey.NONE,
+            properties=(),
+        )
+        element = await an_element(server, "application_component", "Facturation")
+
+        with pytest.raises(ToolError, match="applies to node"):
+            await call(
+                server,
+                "apply_stereotype",
+                element_id=element["id"],
+                stereotype_id=str(stereotype.id),
+            )
+
+    async def test_a_reader_may_list_but_not_tag(
+        self, server: MCPServer[Any], profile_service: ProfileService
+    ) -> None:
+        element = await an_element(server, "application_component", "Facturation")
+
+        with acting_as(a_reader()):
+            assert await call(server, "list_profiles") == {"result": []}
+            with pytest.raises(ToolError):
+                await call(
+                    server, "apply_stereotype", element_id=element["id"], stereotype_id=str(uuid4())
+                )
+
+    async def test_the_write_tools_say_they_write(self, server: MCPServer[Any]) -> None:
+        tools = {t.name: t for t in await server.list_tools()}
+
+        assert tools["list_profiles"].annotations.read_only_hint is True  # type: ignore[union-attr]
+        assert tools["apply_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]
+        assert tools["remove_stereotype"].annotations.read_only_hint is False  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+class TestGeneratedDiagrams:
+    async def test_an_agent_draws_a_perimeter_from_a_query_instead_of_placing_boxes(
+        self, server: MCPServer[Any], view_sources: InMemoryViewSources
+    ) -> None:
+        element = await an_element(server, "application_component", "Facturation")
+        query = uuid4()
+        view_sources.answers[QuerySource(query)] = [UUID(element["id"])]
+
+        view = await call(server, "create_generated_diagram", name="Périmètre", query_id=str(query))
+
+        assert view["generation"] == "live"
+        assert [e["id"] for e in view["elements"]] == [element["id"]]
+
+    async def test_it_needs_exactly_one_source(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError, match="query or a package"):
+            await call(server, "create_generated_diagram", name="X")
+        with pytest.raises(ToolError, match="query or a package"):
+            await call(
+                server,
+                "create_generated_diagram",
+                name="X",
+                query_id=str(uuid4()),
+                package_id=str(uuid4()),
+            )
+
+    async def test_it_is_flagged_as_a_write(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "create_generated_diagram")
+
+        assert tool.annotations is not None and tool.annotations.read_only_hint is False
+
+
+@pytest.mark.asyncio
+class TestTemplates:
+    async def test_an_agent_builds_a_diagram_from_a_template_without_any_relationship_by_default(
+        self, server: MCPServer[Any], template_service: TemplateService
+    ) -> None:
+        template = await template_service.create_template(name="Application + hôte", body=BODY)
+
+        listed = await call(server, "list_diagram_templates")
+        built = await call(
+            server,
+            "instantiate_diagram_template",
+            template_id=str(template.id),
+            name="Facturation",
+            bindings=[
+                {"slot_key": "app", "element_id": None, "create": {"name": "Facturation"}},
+                {"slot_key": "host", "element_id": None, "create": {"name": "srv-01"}},
+            ],
+        )
+
+        assert [t["slot_count"] for t in listed["result"]] == [2]
+        assert built["relationships"] == []
+        assert {e["name"] for e in built["elements"]} == {"Facturation", "srv-01"}
+
+    async def test_a_wrong_type_is_refused_in_words_the_model_can_act_on(
+        self, server: MCPServer[Any], template_service: TemplateService
+    ) -> None:
+        template = await template_service.create_template(name="T", body=BODY)
+        node = await an_element(server, "node", "H")
+
+        with pytest.raises(ToolError, match="application_component"):
+            await call(
+                server,
+                "instantiate_diagram_template",
+                template_id=str(template.id),
+                name="X",
+                bindings=[{"slot_key": "app", "element_id": node["id"], "create": None}],
+            )
+
+
+@pytest.mark.asyncio
+class TestReports:
+    async def a_diagram(self, service: ArchitectureService, diagram_service: DiagramService) -> str:
+        element = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT, name="Facturation"
+        )
+        diagram = await diagram_service.create(name="Vente")
+        await diagram_service.replace_layout(
+            diagram.id, revision=0, nodes=[DiagramNode(element.id, 10.0, 10.0)]
+        )
+        return str(diagram.id)
+
+    async def test_the_templates_name_their_subjects_and_the_served_formats(
+        self, server: MCPServer[Any]
+    ) -> None:
+        templates = (await call(server, "list_report_templates"))["result"]
+
+        assert [t["id"] for t in templates] == ["fiche-diagramme", "inventaire-paquet"]
+        assert templates[0]["subjects"] == ["diagram"]
+        assert templates[0]["formats"] == ["html"]
+
+    async def test_a_report_is_deposited_and_answered_by_its_record_never_its_bytes(
+        self,
+        server: MCPServer[Any],
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        files_store: InMemoryObjectStore,
+    ) -> None:
+        diagram_id = await self.a_diagram(service, diagram_service)
+
+        record = await call(
+            server,
+            "generate_report",
+            template="fiche-diagramme",
+            subject_kind="diagram",
+            subject_id=diagram_id,
+        )
+
+        assert record["key"] == "reports/2026/2026-09-07-vente-fiche-diagramme-ab12cd34.html"
+        assert record["metadata"]["tags"] == ["rapport", "fiche-diagramme"]
+        assert "content" not in record
+        assert record["key"] in files_store.objects
+
+    async def test_a_reader_cannot_generate_one_and_nothing_is_written(
+        self,
+        server: MCPServer[Any],
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        files_store: InMemoryObjectStore,
+    ) -> None:
+        diagram_id = await self.a_diagram(service, diagram_service)
+
+        with acting_as(a_reader()), pytest.raises(ToolError):
+            await server.call_tool(
+                "generate_report",
+                {
+                    "template": "fiche-diagramme",
+                    "subject_kind": "diagram",
+                    "subject_id": diagram_id,
+                },
+            )
+
+        assert files_store.objects == {}
+
+    async def test_an_unavailable_format_says_so_in_words_the_model_can_act_on(
+        self,
+        server: MCPServer[Any],
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+    ) -> None:
+        diagram_id = await self.a_diagram(service, diagram_service)
+
+        with pytest.raises(ToolError, match="not available"):
+            await server.call_tool(
+                "generate_report",
+                {
+                    "template": "fiche-diagramme",
+                    "subject_kind": "diagram",
+                    "subject_id": diagram_id,
+                    "format": "pdf",
+                },
+            )
+
+    async def test_the_template_bound_is_the_http_adapters(self, server: MCPServer[Any]) -> None:
+        with pytest.raises(ToolError):
+            await server.call_tool(
+                "generate_report",
+                {"template": "Not A Slug", "subject_kind": "diagram", "subject_id": str(uuid4())},
+            )
+
+    async def test_the_read_is_read_only_and_the_write_never_destroys(
+        self, server: MCPServer[Any]
+    ) -> None:
+        tools = {tool.name: tool.annotations for tool in await server.list_tools()}
+
+        listing = tools["list_report_templates"]
+        assert listing is not None
+        assert listing.read_only_hint is True
+        generate = tools["generate_report"]
+        assert generate is not None
+        assert (generate.read_only_hint, generate.destructive_hint) == (False, False)

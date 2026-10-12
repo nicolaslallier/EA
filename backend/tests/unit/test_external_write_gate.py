@@ -1,4 +1,4 @@
-"""Every write to a third party goes through the one gate, `ensure_writable` (docs/adr/0062).
+"""Every write to a third party goes through the one gate, `ensure_writable` (docs/adr/0073).
 
 Reads the source, like `test_service_guards.py`: a function of a service that calls the
 provider's `create_issue` must call `ensure_writable` too, and the gate is what refuses a

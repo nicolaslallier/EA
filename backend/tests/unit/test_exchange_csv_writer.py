@@ -210,3 +210,14 @@ async def test_an_access_without_a_stated_type_is_written_as_the_unspecified_acc
     files = await written([actor()], [link])
 
     assert files["properties.csv"][1:] == [["r", "ea.access_type", "access"]]
+
+
+@pytest.mark.asyncio
+async def test_a_junction_is_written_with_its_exchange_type() -> None:
+    junction = ExchangeElement(
+        "j-1", ElementType.JUNCTION, "Gate", properties={"junction_type": "or"}
+    )
+
+    files = await written([junction])
+
+    assert files["elements.csv"][1] == ["j-1", "OrJunction", "Gate", "", ""]

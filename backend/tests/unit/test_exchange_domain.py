@@ -34,11 +34,13 @@ from ea.domain.exchange import (
     accept_element,
     accept_link,
     digest_of,
+    element_exchange_name,
     element_type_of,
     exchange_element_of,
     exchange_name,
     exchange_relationship_of,
     identifier_of,
+    junction_kind_of,
     pascal_case,
     relationship_type_of,
     validate_element,
@@ -79,8 +81,15 @@ def test_the_only_connector_is_the_junction_and_it_is_not_a_modelled_type() -> N
     connectors = [t for t in ElementType if t.is_connector]
 
     assert connectors == [ElementType.JUNCTION]
-    assert element_type_of("AndJunction") is None
+    assert element_type_of("AndJunction") is None  # resolved by `junction_kind_of`, not by type
     assert frozenset({"AndJunction", "OrJunction"}) == JUNCTION_NAMES
+    assert junction_kind_of("AndJunction") == "and"
+    assert junction_kind_of("OrJunction") == "or"
+    assert junction_kind_of("junction") == "and"
+    assert junction_kind_of("Node") is None
+    assert element_exchange_name(ElementType.JUNCTION, {"junction_type": "or"}) == "OrJunction"
+    assert element_exchange_name(ElementType.JUNCTION, {}) == "AndJunction"
+    assert element_exchange_name(ElementType.NODE, {}) == "Node"
 
 
 def test_unknown_names_are_none() -> None:
@@ -526,3 +535,16 @@ def test_the_creation_ceiling_is_a_setting_with_the_domains_default() -> None:
     for bad in (-1, MAX_PACKAGES + 1):
         with pytest.raises(ValidationError):
             Settings(debug=True, auth_enabled=False, exchange_max_new_folders=bad)
+
+
+def test_a_generated_junction_name_always_fits_and_stays_distinct_and_stable() -> None:
+    from ea.domain.exchange import MAX_NAME_LENGTH, junction_name
+
+    assert junction_name("id-and", "and") == "And junction id-and"  # short: unchanged
+    for length in (253, 2000):
+        name = junction_name("x" * length, "or")
+        assert len(name) <= MAX_NAME_LENGTH
+        assert name == junction_name("x" * length, "or")  # a re-import finds it again
+    one, two = "p" * 300 + "a", "p" * 300 + "b"
+    assert junction_name(one, "and") != junction_name(two, "and")
+    assert junction_name(one, "and") != junction_name(one, "or")

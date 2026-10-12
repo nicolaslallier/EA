@@ -170,6 +170,7 @@ class TestApplyingAPlan:
             "add RelationshipRecord",
             "flush",
             "INSERT diagram_nodes",
+            "UPDATE SET",  # the diagrams whose boxes came back: a new revision, so no stale save
         ]
 
     async def test_every_refusal_is_logged_before_it_is_raised(

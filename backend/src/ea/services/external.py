@@ -1,4 +1,4 @@
-"""Use cases over the links from an element to objects in other tools — docs/adr/0062.
+"""Use cases over the links from an element to objects in other tools — docs/adr/0073.
 
 What is decided here, and nowhere else:
 

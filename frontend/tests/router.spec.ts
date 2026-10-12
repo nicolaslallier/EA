@@ -46,6 +46,29 @@ describe('the application router', () => {
     expect(SECTIONS.find((section) => section.name === 'search')?.group).toBe('analysis')
   })
 
+  it('routes the reader mode and its screens under /view', async () => {
+    const app = router()
+
+    await app.push('/view')
+    expect(app.currentRoute.value.name).toBe('view-home')
+    await app.push('/view/package/p1')
+    expect(app.currentRoute.value.name).toBe('view-package')
+    await app.push('/view/element/11111111-1111-4111-8111-111111111111')
+    expect(app.currentRoute.value.name).toBe('view-element')
+    await app.push('/view/diagram/dddddddd-0000-4000-8000-000000000000')
+    expect(app.currentRoute.value.name).toBe('view-diagram')
+    expect(app.currentRoute.value.meta.reader).toBe(true)
+  })
+
+  it('does not make the reader mode the landing page', async () => {
+    const app = router()
+
+    await app.push('/')
+
+    expect(app.currentRoute.value.path).toBe(HOME)
+    expect(HOME).not.toBe('/view')
+  })
+
   it('falls back to a not-found screen instead of a blank one', async () => {
     const app = router()
 
