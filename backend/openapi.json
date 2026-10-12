@@ -292,6 +292,9 @@
           "package.updated",
           "package.deleted",
           "package.elements_moved",
+          "package.published",
+          "package.reopened",
+          "package.write_refused_frozen",
           "saved_query.created",
           "saved_query.updated",
           "saved_query.deleted",
@@ -894,6 +897,15 @@
         ],
         "title": "BucketRead",
         "type": "object"
+      },
+      "Bump": {
+        "enum": [
+          "major",
+          "minor",
+          "patch"
+        ],
+        "title": "Bump",
+        "type": "string"
       },
       "ConflictPolicy": {
         "enum": [
@@ -3001,6 +3013,30 @@
         "title": "FindingRead",
         "type": "object"
       },
+      "FrozenByRead": {
+        "properties": {
+          "package_id": {
+            "format": "uuid",
+            "title": "Package Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id",
+          "path",
+          "version"
+        ],
+        "title": "FrozenByRead",
+        "type": "object"
+      },
       "Gap": {
         "description": "What is missing around a requirement, if anything.",
         "enum": [
@@ -3811,6 +3847,18 @@
       },
       "PackageRead": {
         "properties": {
+          "allowed_actions": {
+            "description": "The gestures offered to the caller; the server decides, the client draws.",
+            "items": {
+              "enum": [
+                "publish",
+                "reopen"
+              ],
+              "type": "string"
+            },
+            "title": "Allowed Actions",
+            "type": "array"
+          },
           "child_count": {
             "description": "Packages directly below this one.",
             "title": "Child Count",
@@ -3834,6 +3882,29 @@
             "description": "Elements filed directly in this package.",
             "title": "Element Count",
             "type": "integer"
+          },
+          "frozen_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenByRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The publication that freezes this package: itself or an ancestor."
+          },
+          "frozen_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version in force on this very package, if it was published on its own.",
+            "title": "Frozen Version"
           },
           "id": {
             "format": "uuid",
@@ -3876,6 +3947,9 @@
           "element_count",
           "diagram_count",
           "child_count",
+          "frozen_version",
+          "frozen_by",
+          "allowed_actions",
           "created_at",
           "updated_at"
         ],
@@ -3926,6 +4000,147 @@
           }
         },
         "title": "PackageUpdate",
+        "type": "object"
+      },
+      "PackageVersionRead": {
+        "properties": {
+          "adr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adr"
+          },
+          "baseline_id": {
+            "format": "uuid",
+            "title": "Baseline Id",
+            "type": "string"
+          },
+          "boxes": {
+            "title": "Boxes",
+            "type": "integer"
+          },
+          "bump": {
+            "$ref": "#/components/schemas/Bump"
+          },
+          "elements": {
+            "title": "Elements",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "package_id": {
+            "format": "uuid",
+            "title": "Package Id",
+            "type": "string"
+          },
+          "publish_audit_event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publish Audit Event Id"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "title": "Published By",
+            "type": "string"
+          },
+          "relationships": {
+            "title": "Relationships",
+            "type": "integer"
+          },
+          "reopen_audit_event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopen Audit Event Id"
+          },
+          "reopen_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopen Reason"
+          },
+          "reopened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopened At"
+          },
+          "reopened_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopened By"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "package_id",
+          "version",
+          "bump",
+          "notes",
+          "adr",
+          "baseline_id",
+          "elements",
+          "relationships",
+          "boxes",
+          "published_by",
+          "published_at",
+          "publish_audit_event_id",
+          "reopened_by",
+          "reopened_at",
+          "reopen_reason",
+          "reopen_audit_event_id"
+        ],
+        "title": "PackageVersionRead",
         "type": "object"
       },
       "PlateauGapRead": {
@@ -4222,6 +4437,103 @@
           "value"
         ],
         "title": "PropertyTestSchema",
+        "type": "object"
+      },
+      "PublicationPreviewRead": {
+        "properties": {
+          "boxes": {
+            "title": "Boxes",
+            "type": "integer"
+          },
+          "bump": {
+            "$ref": "#/components/schemas/Bump"
+          },
+          "diagrams": {
+            "title": "Diagrams",
+            "type": "integer"
+          },
+          "elements": {
+            "title": "Elements",
+            "type": "integer"
+          },
+          "relationships": {
+            "title": "Relationships",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "bump",
+          "elements",
+          "relationships",
+          "boxes",
+          "diagrams"
+        ],
+        "title": "PublicationPreviewRead",
+        "type": "object"
+      },
+      "PublishPackage": {
+        "additionalProperties": false,
+        "properties": {
+          "adr": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adr"
+          },
+          "bump": {
+            "$ref": "#/components/schemas/Bump"
+          },
+          "dry_run": {
+            "default": true,
+            "description": "A preview unless told otherwise.",
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "notes": {
+            "maxLength": 4000,
+            "title": "Notes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bump",
+          "notes"
+        ],
+        "title": "PublishPackage",
+        "type": "object"
+      },
+      "PublishResult": {
+        "properties": {
+          "preview": {
+            "$ref": "#/components/schemas/PublicationPreviewRead"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackageVersionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "preview",
+          "published"
+        ],
+        "title": "PublishResult",
         "type": "object"
       },
       "QualityReportRead": {
@@ -4625,6 +4937,21 @@
           }
         },
         "title": "RelationshipUpdate",
+        "type": "object"
+      },
+      "ReopenPackage": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReopenPackage",
         "type": "object"
       },
       "ReportCreate": {
@@ -13859,6 +14186,287 @@
           }
         ],
         "summary": "Update Package",
+        "tags": [
+          "packages"
+        ]
+      }
+    },
+    "/packages/{package_id}/publish": {
+      "post": {
+        "description": "Freeze the package and everything below it under a new version (an approver's gesture).\n\nA preview unless `dry_run` is false: the version it would take and what it would freeze.\nA MAJOR names its ADR. Nothing below a published package can be written until it is reopened.",
+        "operationId": "publish_package_packages__package_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishPackage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Package",
+        "tags": [
+          "packages"
+        ]
+      }
+    },
+    "/packages/{package_id}/reopen": {
+      "post": {
+        "description": "Close the version in force, with a reason (an approver's gesture).",
+        "operationId": "reopen_package_packages__package_id__reopen_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReopenPackage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageVersionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reopen Package",
+        "tags": [
+          "packages"
+        ]
+      }
+    },
+    "/packages/{package_id}/versions": {
+      "get": {
+        "description": "Every version the package was published under, the latest first.",
+        "operationId": "list_package_versions_packages__package_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PackageVersionRead"
+                  },
+                  "title": "Response List Package Versions Packages  Package Id  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Package Versions",
         "tags": [
           "packages"
         ]
