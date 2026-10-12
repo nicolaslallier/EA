@@ -118,7 +118,7 @@ def test_the_deployed_api_verifies_tokens_with_the_infra_ca_mounted_read_only() 
     api = _stack_service("api")
 
     assert re.search(r"^\s+EA_AUTH_CA_CERT: /etc/ssl/certs/infra-ca\.pem\s*$", api, re.M), api
-    assert re.search(r"^\s+- \S.*:/etc/ssl/certs/infra-ca\.pem:ro\s*$", api, re.M), api
+    assert re.search(r"^\s+target: /etc/ssl/certs/infra-ca\.pem\s*$", api, re.M), api
     enabled = re.search(r"^\s+EA_AUTH_ENABLED:\s*(\S+)\s*$", api, re.M)
     assert enabled is None or enabled.group(1).strip("\"'") == "true", enabled
 
