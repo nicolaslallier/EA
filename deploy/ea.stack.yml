@@ -84,8 +84,10 @@ services:
       # deploy/ea.env, deux objets JSON — jamais dans ce fichier.
       EA_EXTERNAL_TARGETS: ${EA_EXTERNAL_TARGETS:-}
       EA_EXTERNAL_TOKENS: ${EA_EXTERNAL_TOKENS:-}
-    volumes:
-      - ${INFRA_CA_CERT:?INFRA_CA_CERT est obligatoire, le chemin du CA de l'Infra, vu de l'hôte Docker}:/etc/ssl/certs/infra-ca.pem:ro
+    configs:
+      # La CA publique de l'Infra vient de git (deploy/infra-ca.crt), pas d'un chemin de l'hôte.
+      - source: infra-ca
+        target: /etc/ssl/certs/infra-ca.pem
     networks:
       infra-net:
         aliases:
@@ -108,6 +110,10 @@ services:
       infra-net:
         aliases:
           - ea-web
+
+configs:
+  infra-ca:
+    file: ./infra-ca.crt
 
 networks:
   infra-net:
