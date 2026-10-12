@@ -31,6 +31,7 @@ from ea.api.schemas import (
     PackageCreate,
     PackageUpdate,
     RelationshipCreate,
+    RelationshipUpdate,
     RestoreRequest,
     SavedQueryCreate,
     SubnetCreate,
@@ -53,6 +54,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.reports import ReportService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 from tests.conftest import (
@@ -80,6 +82,7 @@ def server(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    requirements: RequirementService,
     report_service: ReportService,
 ) -> MCPServer[Any]:
     """The adapter over the in-memory stores — no database, no transport."""
@@ -95,8 +98,14 @@ def server(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: requirements,
         lambda: report_service,
     )
+
+
+@pytest.fixture
+def requirements(repository: InMemoryRepository) -> RequirementService:
+    return RequirementService(repository)
 
 
 @pytest.fixture
@@ -112,6 +121,7 @@ def server_without_an_index(
     exchange_service: ExchangeService,
     analysis: AnalysisService,
     timeline: TimelineService,
+    requirements: RequirementService,
     report_service: ReportService,
 ) -> MCPServer[Any]:
     """The same adapter on a deployment with `EA_EMBEDDINGS_ENABLED` off."""
@@ -127,6 +137,7 @@ def server_without_an_index(
         lambda: exchange_service,
         lambda: analysis,
         lambda: timeline,
+        lambda: requirements,
         lambda: report_service,
     )
 
@@ -362,7 +373,9 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        assert len(names) == 61  # fifty-nine, and the two report tools: list and generate
+        assert (
+            len(names) == 63
+        )  # fifty-nine, the two of reports, update_relationship and get_coverage
         assert names == {
             "export_model",
             "import_model",
@@ -374,6 +387,8 @@ class TestTheToolset:
             "connect_elements",
             "list_relationships",
             "read_element_relations",
+            "update_relationship",
+            "get_coverage",
             "disconnect_elements",
             "neighbourhood",
             "impact_of",
@@ -665,6 +680,61 @@ class TestRelationships:
         assert {element["name"] for element in view["elements"]} == {"Billing", "Invoice API"}
         assert len(view["relationships"]) == 1
 
+    async def test_a_link_can_be_changed_but_not_retyped_or_moved(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+        )
+
+        updated = await call(
+            server, "update_relationship", relationship_id=link["id"], name="implements"
+        )
+
+        assert updated["name"] == "implements"
+        assert updated["source_id"] == source["id"]
+        tool = next(t for t in await server.list_tools() if t.name == "update_relationship")
+        assert set(tool.input_schema["properties"]) == {
+            "relationship_id",
+            "name",
+            "access_type",
+            "directed",
+            "properties",
+        }
+        assert tool.annotations is not None
+        assert (tool.annotations.read_only_hint, tool.annotations.destructive_hint) == (
+            False,
+            False,
+        )
+
+    async def test_an_explicit_null_is_refused_as_the_http_adapter_refuses_it(
+        self, server: MCPServer[Any]
+    ) -> None:
+        source = await an_element(server, "application_component", "Billing")
+        target = await an_element(server, "application_service", "Invoice API")
+        link = await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=source["id"],
+            target_id=target["id"],
+            properties={"k": "v"},
+        )
+
+        for field in ("name", "properties", "directed", "access_type"):
+            with pytest.raises(ToolError):
+                await server.call_tool(
+                    "update_relationship", {"relationship_id": link["id"], field: None}
+                )
+        kept = await call(server, "update_relationship", relationship_id=link["id"])
+        assert kept["properties"] == {"k": "v"}  # omitted, not nulled
+
     async def test_a_link_can_be_removed(self, server: MCPServer[Any]) -> None:
         source = await an_element(server, "application_component", "Billing")
         target = await an_element(server, "application_service", "Invoice API")
@@ -679,6 +749,45 @@ class TestRelationships:
         await call(server, "disconnect_elements", relationship_id=link["id"])
 
         assert await call(server, "list_relationships") == {"result": []}
+
+
+@pytest.mark.asyncio
+class TestCoverage:
+    async def test_it_lists_the_gaps_an_agent_asks_about(self, server: MCPServer[Any]) -> None:
+        requirement = await call(
+            server,
+            "create_element",
+            element_type="requirement",
+            name="Chiffrer",
+            properties={"req_status": "approved"},
+        )
+        design = await an_element(server, "application_component", "Coffre")
+        await call(
+            server,
+            "connect_elements",
+            relationship_type="realization",
+            source_id=design["id"],
+            target_id=requirement["id"],
+        )
+
+        coverage = await call(server, "get_coverage", status="approved")
+
+        assert coverage["total"] == 1
+        (item,) = coverage["requirements"]
+        assert item["gap"] == "verification"
+        assert item["designed_by"][0]["name"] == "Coffre"
+
+    async def test_an_unknown_status_comes_back_as_a_tool_error(
+        self, server: MCPServer[Any]
+    ) -> None:
+        with pytest.raises(ToolError, match="unknown status"):
+            await server.call_tool("get_coverage", {"status": "banana"})
+
+    async def test_the_tool_only_reads(self, server: MCPServer[Any]) -> None:
+        tool = next(t for t in await server.list_tools() if t.name == "get_coverage")
+
+        assert tool.annotations is not None
+        assert tool.annotations.read_only_hint is True
 
 
 @pytest.mark.asyncio
@@ -1788,6 +1897,7 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("update_element", "description", ElementUpdate, "description"),
             ("update_element", "documentation", ElementUpdate, "documentation"),
             ("connect_elements", "name", RelationshipCreate, "name"),
+            ("update_relationship", "name", RelationshipUpdate, "name"),
             ("declare_ip_subnet", "name", SubnetCreate, "name"),
             ("declare_ip_subnet", "cidr", SubnetCreate, "cidr"),
             ("declare_ip_subnet", "vrf", SubnetCreate, "vrf"),
@@ -1865,6 +1975,8 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("check_model", "cursor", "/quality", "cursor"),
             ("aggregate_model", "by", "/analytics/aggregate", "by"),
             ("aggregate_model", "property_key", "/analytics/aggregate", "property"),
+            ("get_coverage", "status", "/requirements/coverage", "status"),
+            ("get_coverage", "priority", "/requirements/coverage", "priority"),
             ("generate_report", "template", "/reports/render", "template"),
         ],
     )
@@ -2041,7 +2153,7 @@ class TestImportModel:
         report = await call(server, "import_model", content=DATA_XML)
 
         assert report["dry_run"] is True and report["applied"] is False
-        assert report["counts"]["elements"]["created"] == 3
+        assert report["counts"]["elements"]["created"] == 4
         assert (repository.elements, repository.relationships) == ({}, {})
         assert len(audit_log.events) == events
 
@@ -2067,7 +2179,7 @@ class TestImportModel:
     ) -> None:
         report = await call(server, "import_model", content=DATA_XML, dry_run=False)
 
-        assert report["applied"] is True and len(repository.elements) == 3
+        assert report["applied"] is True and len(repository.elements) == 4
 
     async def test_csv_takes_its_three_texts(
         self, server: MCPServer[Any], repository: InMemoryRepository

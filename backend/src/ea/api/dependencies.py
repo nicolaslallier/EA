@@ -23,6 +23,7 @@ from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.reports import ReportService
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -312,3 +313,25 @@ def get_report_service(request: Request) -> ReportService:
 
 
 Reports = Annotated[ReportService, Depends(get_report_service)]
+
+
+def requirement_service_of(app: FastAPI) -> RequirementService:
+    """The requirements use cases the lifespan attached, or a clear failure.
+
+    Absent means the app was assembled with a doubled architecture service and
+    no repository behind it: the coverage needs the one read `ElementFilter`
+    cannot express. A wiring fault, so a 500 — never an empty coverage, which a
+    client could not tell from a catalogue with no requirement.
+    """
+    service: RequirementService | None = getattr(app.state, "requirement_service", None)
+    if service is None:
+        msg = "no requirement service on the application — was it assembled without a graph?"
+        raise RuntimeError(msg)
+    return service
+
+
+def get_requirement_service(request: Request) -> RequirementService:
+    return requirement_service_of(request.app)
+
+
+Requirements = Annotated[RequirementService, Depends(get_requirement_service)]

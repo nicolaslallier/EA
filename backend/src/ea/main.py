@@ -31,6 +31,7 @@ from ea.api.dependencies import (
     ipam_service_of,
     package_service_of,
     report_service_of,
+    requirement_service_of,
     saved_query_service_of,
     timeline_service_of,
 )
@@ -47,6 +48,7 @@ from ea.api.middleware import REQUEST_ID_HEADER, RequestLogging
 from ea.api.packages import router as packages_router
 from ea.api.queries import router as queries_router
 from ea.api.reports import router as reports_router
+from ea.api.requirements import router as requirements_router
 from ea.api.schemas import ErrorResponse
 from ea.api.timeline import router as timeline_router
 from ea.core.config import Settings, get_settings
@@ -67,6 +69,7 @@ from ea.domain.ports import (
     IpamRepository,
     ObjectStore,
     PackageRepository,
+    RequirementRepository,
     SavedQueryRepository,
     TimelineRepository,
 )
@@ -102,6 +105,7 @@ from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
 from ea.services.reports import ReportService, report_admission
+from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
 from ea.services.timeline import TimelineService
 
@@ -335,6 +339,9 @@ def _lifespan(
                     # no store, so it is built from the very repository above —
                     # see docs/adr/0020.
                     app.state.ipam_service = IpamService(app.state.architecture_service, repository)
+                    app.state.requirement_service = RequirementService(
+                        repository, admission=app.state.analysis_admission
+                    )
                     app.state.analysis_service = AnalysisService(
                         app.state.architecture_service,
                         repository,
@@ -576,6 +583,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: exchange_service_of(app),
         lambda: analysis_service_of(app),
         lambda: timeline_service_of(app),
+        lambda: requirement_service_of(app),
         lambda: report_service_of(app),
         version=app.version,
         token_verifier=KeycloakTokenVerifier(_LazyVerifier(app)) if auth else None,
@@ -614,6 +622,7 @@ def create_app(
     documents: DocumentRepository | None = None,
     indexer: DocumentIndexer | None = None,
     ipam: IpamRepository | None = None,
+    requirements: RequirementRepository | None = None,
     analysis: AnalysisRepository | None = None,
     timeline: TimelineRepository | None = None,
     diagrams: DiagramRepository | None = None,
@@ -704,6 +713,10 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if requirements is not None:
+            app.state.requirement_service = RequirementService(
+                requirements, admission=app.state.analysis_admission
+            )
         if analysis is not None:
             app.state.analysis_service = AnalysisService(
                 architecture_service,
@@ -794,6 +807,7 @@ def create_app(
     app.include_router(packages_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(queries_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(ipam_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(requirements_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(timeline_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

@@ -72,8 +72,10 @@ from ea.domain.ports import (
     EndsReview,
     GraphView,
     Held,
+    RelationshipChange,
 )
 from ea.domain.query import Direction, PropertyOp, PropertyTest, QueryOrder, RelationTest
+from ea.domain.requirements import MAX_JUNCTION_HOPS, REQUIREMENT_TYPES
 from ea.domain.timeline import MEMBERSHIP, ROADMAP_EDGES, VALID_FROM, VALID_UNTIL
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
@@ -880,6 +882,62 @@ class PostgresArchitectureRepository:
                 write_events(session, cast("EndsReview", ends).audit(end))
         return relationship
 
+    @replayable
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        """What a link says, changed under the locks of the link and of its two ends.
+
+        The ends are locked first and the link second, like `delete_relationship`: that is
+        the one order that cannot deadlock with a deletion. The ends of a link never change,
+        so they can be read before the lock; the link itself is read again under it, and
+        `change` is applied to *that* row. `change` is pure, so it is first run on the
+        unlocked read to find out who the writer is (the ends' reviewer) and whether
+        anything changes at all: a patch that changes nothing takes no lock and writes nothing.
+        """
+        async with work(self._sessions) as session:
+            found = await session.get(RelationshipRecord, relationship_id)
+            if found is None:
+                return None
+            glimpsed = relationship_from_row(found)
+            preview = change(glimpsed)
+            if relationship_row(preview) == relationship_row(glimpsed):
+                return glimpsed
+            author = author_of(events_for(audit, RelationshipChange(glimpsed, preview)))
+            # The ends are locked (and must exist) before the link; they are reviewed only once
+            # the patch is known to change something, so a no-op writes — and undoes — nothing.
+            end_rows = await lock_elements(
+                session, (found.source_id, found.target_id), key_only=True
+            )
+            if end_rows.keys() != {found.source_id, found.target_id}:
+                raise ElementNotFoundError("cannot update: an element at one end does not exist")
+            row = await session.get(
+                RelationshipRecord, relationship_id, with_for_update=True, populate_existing=True
+            )
+            if row is None:
+                return None
+            before = relationship_from_row(row)
+            after = change(before)
+            wanted = relationship_row(after)
+            if wanted == relationship_row(before):
+                return before
+            reviewed = (
+                await _review_rows(session, end_rows, ends, author) if ends is not None else []
+            )
+            events = events_for(audit, RelationshipChange(before, after))
+            for column in ("name", "access_type", "directed", "properties"):
+                setattr(row, column, wanted[column])
+            await session.flush()
+            write_events(session, events)
+            for end in reviewed:
+                write_events(session, cast("EndsReview", ends).audit(end))
+        return after
+
     async def get_relationship(self, relationship_id: UUID) -> Relationship | None:
         async with reading(self._sessions) as session:
             row = await session.get(RelationshipRecord, relationship_id)
@@ -1329,3 +1387,67 @@ class PostgresArchitectureRepository:
         async with reading(self._sessions) as session:
             row = (await session.scalars(statement)).first()
             return element_from_row(row) if row is not None else None
+
+    # --- Requirements (docs/adr/0067) --------------------------------------
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        kinds = [kind.value for kind in REQUIREMENT_TYPES]
+        junction = ElementType.JUNCTION.value
+        realizes = RelationshipRecord.relationship_type == RelationshipType.REALIZATION.value
+        requirements_statement = (
+            select(ElementRecord)
+            .where(ElementRecord.element_type.in_(kinds))
+            .order_by(ElementRecord.name, ElementRecord.id)
+            .limit(requirement_limit)
+        )
+
+        def links_into(targets: Any, room: int) -> Any:
+            return (
+                select(RelationshipRecord)
+                .where(realizes, targets)
+                .order_by(RelationshipRecord.created_at, RelationshipRecord.id)
+                .limit(room)
+            )
+
+        async with reading(self._sessions) as session:
+            links = tuple(
+                relationship_from_row(row)
+                for row in await session.scalars(
+                    links_into(RelationshipRecord.target_type.in_(kinds), link_limit)
+                )
+            )
+            # A junction between a design and a requirement is crossed, not stopped at
+            # (docs/adr/0065): follow realizations into the junctions found, within the same
+            # link budget. A junction is followed once, so a loop of them ends.
+            followed: set[UUID] = set()
+            frontier = {link.source_id for link in links if link.source_type.value == junction}
+            for _ in range(MAX_JUNCTION_HOPS):
+                frontier -= followed
+                room = link_limit - len(links)
+                if not frontier or room <= 0:
+                    break
+                followed |= frontier
+                more = tuple(
+                    relationship_from_row(row)
+                    for row in await session.scalars(
+                        links_into(RelationshipRecord.target_id.in_(frontier), room)
+                    )
+                )
+                links = (*links, *more)
+                frontier = {link.source_id for link in more if link.source_type.value == junction}
+            requirements = {
+                row.id: element_from_row(row)
+                for row in await session.scalars(requirements_statement)
+            }
+            # Bounded by the links just read, themselves bounded above.
+            others = {link.source_id for link in links} - requirements.keys()
+            sources = (
+                await session.scalars(select(ElementRecord).where(ElementRecord.id.in_(others)))
+                if others
+                else ()
+            )
+            elements = {**requirements, **{row.id: element_from_row(row) for row in sources}}
+        return GraphView(
+            elements=tuple(sorted(elements.values(), key=lambda e: (e.name, e.id))),
+            relationships=links,
+        )

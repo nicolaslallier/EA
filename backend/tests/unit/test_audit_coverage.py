@@ -270,6 +270,7 @@ def test_the_expected_writes_are_found() -> None:
         "transition_element",
         "delete_element",
         "add_relationship",
+        "update_relationship",
         "delete_relationship",
     }
     assert found["PostgresDocumentRepository"] == {"add", "replace", "delete"}

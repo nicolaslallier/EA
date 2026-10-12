@@ -1189,7 +1189,14 @@ export interface paths {
         delete: operations["delete_relationship_relationships__relationship_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update Relationship
+         * @description Change what a link says: its name, its properties, its access type, its direction.
+         *
+         *     Never its type or its ends. `properties` is replaced wholesale when given. Both elements
+         *     the link joins are reviewed: an approved one goes back to review, a locked one is a 409.
+         */
+        patch: operations["update_relationship_relationships__relationship_id__patch"];
         trace?: never;
     };
     "/report-templates": {
@@ -1244,6 +1251,29 @@ export interface paths {
          * @description Build a report and return it. Nothing is stored.
          */
         get: operations["render_report_reports_render_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/requirements/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Coverage
+         * @description Which requirements are realized by a design and tested, and which are not.
+         *
+         *     `status` and `priority` narrow the requirements listed and counted. The
+         *     rates leave out rejected requirements and are `null` when none is left.
+         */
+        get: operations["read_coverage_requirements_coverage_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1402,7 +1432,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -1689,6 +1719,51 @@ export interface components {
             rejected: number;
             /** Reused */
             reused: number;
+        };
+        /**
+         * CoverageRead
+         * @description The coverage of the requirements asked about.
+         *
+         *     The rates are over the *active* requirements (a rejected one needs neither
+         *     a design nor a test) and are `null` when there is none: a rate over nothing
+         *     is not 100 %.
+         */
+        CoverageRead: {
+            /** Active */
+            active: number;
+            /** By Priority */
+            by_priority: {
+                [key: string]: number;
+            };
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** Design Rate */
+            design_rate: number | null;
+            /** Designed */
+            designed: number;
+            /**
+             * Failing
+             * @description Active requirements with at least one failing test.
+             */
+            failing: number;
+            /** Requirements */
+            requirements: components["schemas"]["RequirementTraceRead"][];
+            /** Total */
+            total: number;
+            /**
+             * Unverified
+             * @description Active requirements with no passing test (none, not run).
+             */
+            unverified: number;
+            /** Verification Rate */
+            verification_rate: number | null;
+            /**
+             * Verified
+             * @description Active requirements with a passing test and no failing one.
+             */
+            verified: number;
         };
         /** DiagramCreate */
         DiagramCreate: {
@@ -2265,6 +2340,12 @@ export interface components {
             rule: components["schemas"]["RuleCode"];
             severity: components["schemas"]["Severity"];
         };
+        /**
+         * Gap
+         * @description What is missing around a requirement, if anything.
+         * @enum {string}
+         */
+        Gap: "design" | "verification" | "none";
         /**
          * GapCreate
          * @description Draw the gap between two plateaus.
@@ -2879,6 +2960,29 @@ export interface components {
             strength: number;
             value: components["schemas"]["RelationshipType"];
         };
+        /**
+         * RelationshipUpdate
+         * @description A partial update of a link. An omitted field keeps its stored value.
+         *
+         *     The type and the two ends are absent on purpose: another type or another end is another
+         *     link, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,
+         *     replaces the whole map, as it does on an element.
+         */
+        RelationshipUpdate: {
+            /** @description Only meaningful on an access relationship. */
+            access_type?: components["schemas"]["AccessType"] | null;
+            /**
+             * Directed
+             * @description Only meaningful on an association relationship.
+             */
+            directed?: boolean | null;
+            /** Name */
+            name?: string | null;
+            /** Properties */
+            properties?: {
+                [key: string]: string;
+            } | null;
+        };
         /** ReportCreate */
         ReportCreate: {
             /**
@@ -2927,6 +3031,36 @@ export interface components {
             title: string;
             /** Version */
             version: number;
+        };
+        /**
+         * RequirementTraceRead
+         * @description One requirement, what realizes it, what tests it, and what is missing.
+         */
+        RequirementTraceRead: {
+            /** Designed By */
+            designed_by: components["schemas"]["TraceElementRead"][];
+            element_type: components["schemas"]["ElementType"];
+            gap: components["schemas"]["Gap"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Identifier
+             * @description The readable identifier, empty when none is recorded.
+             */
+            identifier: string;
+            /** Name */
+            name: string;
+            /** Priority */
+            priority: string;
+            /** Status */
+            status: string;
+            /** Tested By */
+            tested_by: components["schemas"]["TraceElementRead"][];
+            /** @description `verified` only if a test passed and none failed; `failing`; or `unverified`. */
+            verification: components["schemas"]["Verification"];
         };
         /**
          * RestorePlanRead
@@ -3244,6 +3378,25 @@ export interface components {
             vrf: string;
         };
         /**
+         * TraceElementRead
+         * @description An element on the other end of a realization of a requirement.
+         */
+        TraceElementRead: {
+            element_type: components["schemas"]["ElementType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Result
+             * @description For a test, the result it records (`passed`, `failed`…); absent otherwise.
+             */
+            result: string | null;
+        };
+        /**
          * Transition
          * @enum {string}
          */
@@ -3261,6 +3414,12 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * Verification
+         * @description What the tests of a requirement say, as a whole.
+         * @enum {string}
+         */
+        Verification: "verified" | "failing" | "unverified";
     };
     responses: never;
     parameters: never;
@@ -7822,6 +7981,77 @@ export interface operations {
             };
         };
     };
+    update_relationship_relationships__relationship_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                relationship_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelationshipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_report_templates_report_templates_get: {
         parameters: {
             query?: never;
@@ -8010,6 +8240,56 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_coverage_requirements_coverage_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                priority?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -247,6 +247,7 @@
           "element.locked",
           "element.unlocked",
           "relationship.created",
+          "relationship.updated",
           "relationship.deleted",
           "diagram.created",
           "diagram.updated",
@@ -893,6 +894,96 @@
           "ignored"
         ],
         "title": "CountsRead",
+        "type": "object"
+      },
+      "CoverageRead": {
+        "description": "The coverage of the requirements asked about.\n\nThe rates are over the *active* requirements (a rejected one needs neither\na design nor a test) and are `null` when there is none: a rate over nothing\nis not 100 %.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "by_priority": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Priority",
+            "type": "object"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "design_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Design Rate"
+          },
+          "designed": {
+            "title": "Designed",
+            "type": "integer"
+          },
+          "failing": {
+            "description": "Active requirements with at least one failing test.",
+            "title": "Failing",
+            "type": "integer"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementTraceRead"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "unverified": {
+            "description": "Active requirements with no passing test (none, not run).",
+            "title": "Unverified",
+            "type": "integer"
+          },
+          "verification_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Rate"
+          },
+          "verified": {
+            "description": "Active requirements with a passing test and no failing one.",
+            "title": "Verified",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "designed",
+          "verified",
+          "failing",
+          "unverified",
+          "design_rate",
+          "verification_rate",
+          "by_status",
+          "by_priority",
+          "requirements"
+        ],
+        "title": "CoverageRead",
         "type": "object"
       },
       "DiagramCreate": {
@@ -2096,6 +2187,16 @@
         ],
         "title": "FindingRead",
         "type": "object"
+      },
+      "Gap": {
+        "description": "What is missing around a requirement, if anything.",
+        "enum": [
+          "design",
+          "verification",
+          "none"
+        ],
+        "title": "Gap",
+        "type": "string"
       },
       "GapCreate": {
         "additionalProperties": false,
@@ -3407,6 +3508,64 @@
         "title": "RelationshipTypeRead",
         "type": "object"
       },
+      "RelationshipUpdate": {
+        "additionalProperties": false,
+        "description": "A partial update of a link. An omitted field keeps its stored value.\n\nThe type and the two ends are absent on purpose: another type or another end is another\nlink, and the metamodel has to judge it (`DELETE` then `POST`). `properties`, when given,\nreplaces the whole map, as it does on an element.",
+        "properties": {
+          "access_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an access relationship."
+          },
+          "directed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only meaningful on an association relationship.",
+            "title": "Directed"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Free-form attributes, e.g. owner or criticality.",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          }
+        },
+        "title": "RelationshipUpdate",
+        "type": "object"
+      },
       "ReportCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3514,6 +3673,71 @@
           "formats"
         ],
         "title": "ReportTemplateRead",
+        "type": "object"
+      },
+      "RequirementTraceRead": {
+        "description": "One requirement, what realizes it, what tests it, and what is missing.",
+        "properties": {
+          "designed_by": {
+            "items": {
+              "$ref": "#/components/schemas/TraceElementRead"
+            },
+            "title": "Designed By",
+            "type": "array"
+          },
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "gap": {
+            "$ref": "#/components/schemas/Gap"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "The readable identifier, empty when none is recorded.",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tested_by": {
+            "items": {
+              "$ref": "#/components/schemas/TraceElementRead"
+            },
+            "title": "Tested By",
+            "type": "array"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/Verification",
+            "description": "`verified` only if a test passed and none failed; `failing`; or `unverified`."
+          }
+        },
+        "required": [
+          "id",
+          "element_type",
+          "name",
+          "identifier",
+          "status",
+          "priority",
+          "gap",
+          "verification",
+          "designed_by",
+          "tested_by"
+        ],
+        "title": "RequirementTraceRead",
         "type": "object"
       },
       "RestorePlanRead": {
@@ -4203,6 +4427,43 @@
         "title": "SubnetRead",
         "type": "object"
       },
+      "TraceElementRead": {
+        "description": "An element on the other end of a realization of a requirement.",
+        "properties": {
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a test, the result it records (`passed`, `failed`\u2026); absent otherwise.",
+            "title": "Result"
+          }
+        },
+        "required": [
+          "id",
+          "element_type",
+          "name",
+          "result"
+        ],
+        "title": "TraceElementRead",
+        "type": "object"
+      },
       "Transition": {
         "enum": [
           "submit",
@@ -4254,6 +4515,16 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "Verification": {
+        "description": "What the tests of a requirement say, as a whole.",
+        "enum": [
+          "verified",
+          "failing",
+          "unverified"
+        ],
+        "title": "Verification",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -11183,6 +11454,103 @@
         "tags": [
           "architecture"
         ]
+      },
+      "patch": {
+        "description": "Change what a link says: its name, its properties, its access type, its direction.\n\nNever its type or its ends. `properties` is replaced wholesale when given. Both elements\nthe link joins are reviewed: an approved one goes back to review, a locked one is a 409.",
+        "operationId": "update_relationship_relationships__relationship_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relationship_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Relationship Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationshipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Relationship",
+        "tags": [
+          "architecture"
+        ]
       }
     },
     "/report-templates": {
@@ -11482,6 +11850,103 @@
         "summary": "Render Report",
         "tags": [
           "reports"
+        ]
+      }
+    },
+    "/requirements/coverage": {
+      "get": {
+        "description": "Which requirements are realized by a design and tested, and which are not.\n\n`status` and `priority` narrow the requirements listed and counted. The\nrates leave out rejected requirements and are `null` when none is left.",
+        "operationId": "read_coverage_requirements_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A value of the vocabulary, or `unset` for requirements that have none.",
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "priority",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "description": "A value of the vocabulary, or `unset` for requirements that have none.",
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Priority"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Coverage",
+        "tags": [
+          "requirements"
         ]
       }
     },

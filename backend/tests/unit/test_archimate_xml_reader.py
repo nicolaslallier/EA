@@ -22,7 +22,12 @@ class TestAWellFormedFile:
     def test_the_minimal_model_is_read(self) -> None:
         model = parse_model((DATA / "minimal-model.xml").read_bytes())
 
-        assert [e.name for e in model.elements] == ["Customer", "Shop", "Ordering"]
+        assert [e.name for e in model.elements] == [
+            "Customer",
+            "Shop",
+            "Ordering",
+            "And junction id-and",
+        ]
         shop = model.elements[1]
         assert shop.element_type is ElementType.APPLICATION_COMPONENT
         assert dict(shop.properties) == {"owner": "retail"}
@@ -34,16 +39,14 @@ class TestAWellFormedFile:
         ]
         assert model.relationships[1].name == "serves"
 
-    def test_a_junction_is_set_aside_not_read(self) -> None:
+    def test_a_junction_is_read_as_an_element(self) -> None:
         model = parse_model((DATA / "minimal-model.xml").read_bytes())
 
-        (junction,) = model.unreadable
-        assert (junction.category, junction.identifier, junction.ignored) == (
-            Category.ELEMENTS,
-            "id-and",
-            True,
-        )
-        assert "junction_not_supported" in codes(model)
+        junction = next(e for e in model.elements if e.identifier == "id-and")
+        assert junction.element_type is ElementType.JUNCTION
+        assert junction.properties["junction_type"] == "and"
+        assert junction.name == "And junction id-and"
+        assert model.unreadable == ()
 
     def test_a_path_locates_each_element(self) -> None:
         model = parse_model((DATA / "minimal-model.xml").read_bytes())

@@ -29,6 +29,7 @@ from ea.api.schemas import (
     Offset,
     RelationshipCreate,
     RelationshipRead,
+    RelationshipUpdate,
     Search,
 )
 from ea.domain.archimate import ElementType, Layer, RelationshipType
@@ -208,6 +209,33 @@ async def list_relationships(
         as_of=as_of,
     )
     return [RelationshipRead.of(relationship) for relationship in relationships]
+
+
+@router.patch(
+    "/relationships/{relationship_id}",
+    response_model=RelationshipRead,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
+    },
+)
+async def update_relationship(
+    relationship_id: UUID, payload: RelationshipUpdate, service: Architecture
+) -> RelationshipRead:
+    """Change what a link says: its name, its properties, its access type, its direction.
+
+    Never its type or its ends. `properties` is replaced wholesale when given. Both elements
+    the link joins are reviewed: an approved one goes back to review, a locked one is a 409.
+    """
+    relationship = await service.update_relationship(
+        relationship_id,
+        name=payload.name,
+        access_type=payload.access_type,
+        directed=payload.directed,
+        properties=payload.properties,
+    )
+    return RelationshipRead.of(relationship)
 
 
 @router.delete(

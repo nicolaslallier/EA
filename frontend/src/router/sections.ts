@@ -105,6 +105,14 @@ export const SECTIONS: readonly Section[] = [
     view: () => import('../features/impact/ImpactSection.vue'),
   },
   {
+    path: '/analyse/couverture',
+    name: 'coverage',
+    label: 'Couverture des exigences',
+    summary: 'Les exigences sans réalisation et sans test.',
+    group: 'analysis',
+    view: () => import('../features/requirements/CoverageSection.vue'),
+  },
+  {
     path: '/analyse/feuille-de-route',
     name: 'roadmap',
     label: 'Feuille de route',

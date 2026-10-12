@@ -92,9 +92,11 @@ from ea.domain.ports import (
     GraphView,
     Held,
     PackageRemoval,
+    RelationshipChange,
     RowRefusal,
     Transaction,
 )
+from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -597,6 +599,32 @@ class InMemoryRepository:
         self.last_as_of = as_of
         return tuple(self.relationships.values())
 
+    async def update_relationship(
+        self,
+        relationship_id: UUID,
+        change: Callable[[Relationship], Relationship],
+        *,
+        audit: AuditOf[RelationshipChange],
+        ends: EndsReview | None = None,
+    ) -> Relationship | None:
+        before = self.relationships.get(relationship_id)
+        if before is None:
+            return None
+        after = change(before)
+        if after == before:
+            return before
+        events = events_for(audit, RelationshipChange(before, after))
+        reviewed = (
+            self._review_ends((before.source_id, before.target_id), ends, events)
+            if ends is not None
+            else []
+        )
+        self.relationships[relationship_id] = after
+        self.audit_log.append(events)
+        for end in reviewed:
+            self.audit_log.append(ends.audit(end))  # type: ignore[union-attr]
+        return after
+
     async def delete_relationship(
         self,
         relationship_id: UUID,
@@ -831,6 +859,33 @@ class InMemoryRepository:
             ),
             None,
         )
+
+    # --- Requirements (docs/adr/0067) ---
+
+    async def traceability(self, *, requirement_limit: int, link_limit: int) -> GraphView:
+        realizations = [
+            link for link in self.relationships.values() if link.relationship_type is R.REALIZATION
+        ]
+        links = [link for link in realizations if link.target_type in REQUIREMENT_TYPES]
+        frontier = {k.source_id for k in links if k.source_type is ElementType.JUNCTION}
+        followed: set[UUID] = set()
+        while frontier - followed:
+            now = frontier - followed
+            followed |= now
+            more = [link for link in realizations if link.target_id in now]
+            links += more
+            frontier = {k.source_id for k in more if k.source_type is ElementType.JUNCTION}
+        links = tuple(links[:link_limit])
+        wanted = {link.source_id for link in links}
+        requirements = [e for e in self.elements.values() if e.element_type in REQUIREMENT_TYPES][
+            :requirement_limit
+        ]
+        extra = [
+            e
+            for e in self.elements.values()
+            if e.id in wanted and e.element_type not in REQUIREMENT_TYPES
+        ]
+        return GraphView(elements=(*requirements, *extra), relationships=links)
 
     async def would_close_a_containment_cycle(self, source_id: UUID, target_id: UUID) -> bool:
         """Walk the stored containment edges from target back to source."""

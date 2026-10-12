@@ -33,10 +33,9 @@ class TestElement:
         with pytest.raises(ValueError, match="name"):
             an_element(name="   ")
 
-    def test_a_junction_is_not_a_modelled_element(self) -> None:
-        """Junctions exist to fan relationships in and out, not to be catalogued."""
-        with pytest.raises(ValueError, match="junction"):
-            an_element(element_type=E.JUNCTION)
+    def test_a_junction_is_an_element_like_another(self) -> None:
+        """Decided in docs/adr/0065: a junction is catalogued (BPMN gates, AND/OR of a process)."""
+        assert an_element(element_type=E.JUNCTION, name="Gate").element_type is E.JUNCTION
 
     def test_renaming_moves_the_updated_timestamp_only(self) -> None:
         element = an_element()
