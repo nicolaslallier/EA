@@ -32,6 +32,7 @@ from uuid import UUID
 from ea.domain.audit import AuditAction, external_reference_view
 from ea.domain.errors import (
     DuplicateExternalReferenceError,
+    ElementLockedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
@@ -300,7 +301,16 @@ class ExternalReferenceService:
             if row.target in down:
                 refreshed[row.id] = ExternalView(reference=row, stale=True)
                 continue
-            view = await self._refresh(row)
+            try:
+                view = await self._refresh(row)
+            except ElementLockedError:
+                # Review froze the element: its line keeps what it had, and the batch goes on.
+                logger.info(
+                    "a reference was not refreshed: its element is under review",
+                    extra={"action": "external_refresh_blocked", "reference_id": str(row.id)},
+                )
+                refreshed[row.id] = self._view(row)
+                continue
             if view.reference is row:
                 down.add(row.target)
             refreshed[row.id] = view

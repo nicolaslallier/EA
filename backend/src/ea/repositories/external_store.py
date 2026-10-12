@@ -1,10 +1,11 @@
 """The PostgreSQL implementation of `ExternalReferenceRepository` (docs/adr/0073).
 
 Like the other stores it takes the session factory and opens one unit of work per call, and a
-write and its audit events are one transaction. Unlike `document_store`, it does not hold the
-element's review lock nor `touch` it: a reference is a pointer beside the element, outside the
-content a reviewer approved, so adding or removing one neither needs the element to be open for
-change nor moves its revision (the decision is argued in the ADR).
+write and its audit events are one transaction. Like `document_store`, it locks the element a
+reference hangs from before writing and puts the locked row to `guard_element_write` with
+`WriteKind.EXTERNAL_REFERENCE`: a locked element accepts nothing, an approved one nothing until
+an approver reopens it (docs/adr/0065). Unlike a document, it does not `touch` the element: a
+pointer to a ticket is not content a reviewer approved, so the revision does not move.
 """
 
 from __future__ import annotations
@@ -16,8 +17,10 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from ea.db.models.architecture import ElementRecord
 from ea.db.models.external import ExternalReferenceRecord as Row
 from ea.db.unit_of_work import reading, work
+from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import events_for
 from ea.domain.errors import DuplicateExternalReferenceError, ElementNotFoundError
 from ea.domain.external import (
@@ -27,7 +30,7 @@ from ea.domain.external import (
     ExternalSnapshot,
     ExternalStatus,
 )
-from ea.repositories.architecture_store import constraint_of
+from ea.repositories.architecture_store import constraint_of, element_from_row
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import replayable
 
@@ -38,6 +41,24 @@ if TYPE_CHECKING:
 
 #: Named by the frozen naming convention of `db/base.py`.
 ONE_CITATION: str = "uq_external_references_element_id_target_external_id"
+
+
+async def _hold_the_element(session: AsyncSession, element_id: UUID) -> ElementRecord | None:
+    """Lock the element a reference hangs from, in the reference's own transaction, before writing.
+
+    `FOR KEY SHARE` is enough to hold the element's review state still (a transition's `UPDATE`
+    waits for it); a missing element is left to the foreign key.
+    """
+    return await session.get(
+        ElementRecord, element_id, with_for_update={"key_share": True}, populate_existing=True
+    )
+
+
+def _guard_the_element(element: ElementRecord | None) -> None:
+    """`guard_element_write` for a reference write. No reference is written without it:
+    `tests/unit/test_review_guard.py` fails on a writer that does not call it."""
+    if element is not None:
+        guard_element_write(element_from_row(element), WriteKind.EXTERNAL_REFERENCE)
 
 
 def _to_reference(row: Row) -> ExternalReference:
@@ -89,6 +110,7 @@ class PostgresExternalReferenceRepository:
         )
         events = events_for(audit, reference)
         async with work(self._sessions) as session:
+            _guard_the_element(await _hold_the_element(session, reference.element_id))
             session.add(row)
             try:
                 await session.flush()
@@ -130,7 +152,11 @@ class PostgresExternalReferenceRepository:
     @replayable
     async def delete(self, reference_id: UUID, *, audit: AuditOf[ExternalReference]) -> bool:
         async with work(self._sessions) as session:
-            row = await session.get(Row, reference_id, with_for_update=True)
+            known = await session.get(Row, reference_id)  # only to learn the element
+            if known is None:
+                return False
+            _guard_the_element(await _hold_the_element(session, known.element_id))
+            row = await session.get(Row, reference_id, with_for_update=True, populate_existing=True)
             if row is None:
                 return False
             events = events_for(audit, _to_reference(row))
@@ -148,9 +174,15 @@ class PostgresExternalReferenceRepository:
         audit: AuditOf[ExternalReference],
     ) -> ExternalReference | None:
         async with work(self._sessions) as session:
-            row = await session.get(Row, reference_id, with_for_update=True)
+            known = await session.get(Row, reference_id)  # only to learn the element
+            if known is None:
+                return None
+            element = await _hold_the_element(session, known.element_id)
+            row = await session.get(Row, reference_id, with_for_update=True, populate_existing=True)
             if row is None:
                 return None
+            if (row.title, row.status) != (snapshot.title, snapshot.status.value):
+                _guard_the_element(element)  # a changed cache is a write; a clock is not
             events = events_for(audit, _to_reference(row))
             row.title = snapshot.title
             row.status = snapshot.status.value

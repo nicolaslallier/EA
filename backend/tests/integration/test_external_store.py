@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.audit import AuditAction, AuditChannel, AuditEvent, EntityKind
-from ea.domain.errors import DuplicateExternalReferenceError, ElementNotFoundError
+from ea.domain.errors import (
+    DuplicateExternalReferenceError,
+    ElementLockedError,
+    ElementNotFoundError,
+)
 from ea.domain.external import ExternalKind, ExternalReference, ExternalSnapshot, ExternalStatus
 from ea.domain.model import Element
 from ea.repositories.architecture_store import PostgresArchitectureRepository
@@ -208,3 +212,59 @@ async def test_a_hostile_stored_row_still_reads_back(engine_at_head: AsyncEngine
 
     assert row.external_id == "../../etc#x"  # read as text; the connector re-validates it
     assert row.title == "<script>"
+
+
+async def put_in_state(
+    engine: AsyncEngine, element_id: object, state: str, *, locked: bool = False
+) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE elements SET approval_state = :s, locked = :l WHERE id = :id"),
+            {"s": state, "l": locked, "id": element_id},
+        )
+
+
+async def revision_of(engine: AsyncEngine, element_id: object) -> int:
+    async with engine.connect() as connection:
+        return int(
+            await connection.scalar(
+                text("SELECT revision FROM elements WHERE id = :id"), {"id": element_id}
+            )
+            or 0
+        )
+
+
+@pytest.mark.parametrize(("state", "locked"), [("approved", False), ("approved", True)])
+async def test_a_frozen_element_accepts_no_link_no_unlink_and_no_changing_refresh(
+    engine_at_head: AsyncEngine, state: str, locked: bool
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    row = await store.add(reference(element_id), audit=())
+    await put_in_state(engine_at_head, element_id, state, locked=locked)
+    revision = await revision_of(engine_at_head, element_id)
+    changed = ExternalSnapshot.of("Renamed", ExternalStatus.CLOSED)
+
+    with pytest.raises(ElementLockedError):
+        await store.add(reference(element_id, 13), audit=())
+    with pytest.raises(ElementLockedError):
+        await store.delete(row.id, audit=())
+    with pytest.raises(ElementLockedError):
+        await store.update_snapshot(row.id, changed, now=NOW, audit=lambda b: ())
+
+    assert await store.get(row.id) == row
+    # a refresh that changes nothing is only a clock: it goes through
+    same = ExternalSnapshot.of(row.title, row.status)
+    assert await store.update_snapshot(row.id, same, now=NOW, audit=lambda b: ()) is not None
+    assert await revision_of(engine_at_head, element_id) == revision
+
+
+async def test_a_reopened_element_accepts_references_again_without_a_new_revision(
+    engine_at_head: AsyncEngine,
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    await put_in_state(engine_at_head, element_id, "in_review")
+    before = await revision_of(engine_at_head, element_id)
+
+    await store.add(reference(element_id), audit=())
+
+    assert await revision_of(engine_at_head, element_id) == before
