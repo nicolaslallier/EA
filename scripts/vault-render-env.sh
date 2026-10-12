@@ -5,6 +5,8 @@
 # sont laissées telles quelles. Même jeton que `make vault-env` de l'Infra.
 #
 # Usage : scripts/vault-render-env.sh   (EA_STACK_ENV, INFRA_DIR, VAULT_URL)
+# Dans GitHub Actions (docs/adr/0044) : BAO_TOKEN vient d'un secret du dépôt et
+# VAULT_CA_CERT est la CA montée dans le runner ; .openbao.env n'est pas lu.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")/.."
@@ -16,14 +18,17 @@ VAULT_URL="${VAULT_URL:-https://vault.infra.famillelallier.net}"
 MAP="EA_POSTGRES_PASSWORD=EA_DB_PASSWORD EA_S3_SECRET_KEY=EA_S3_SECRET_KEY"
 
 die() { echo "vault-render-env.sh: $*" >&2; exit 1; }
-[ -f "$INFRA_DIR/.openbao.env" ] || die "$INFRA_DIR/.openbao.env introuvable (make vault-init dans l'Infra)."
+CA="${VAULT_CA_CERT:-$INFRA_DIR/certs/infra-ca.crt}"
+if [ -z "${BAO_TOKEN:-}" ]; then
+  [ -f "$INFRA_DIR/.openbao.env" ] || die "$INFRA_DIR/.openbao.env introuvable (make vault-init dans l'Infra)."
+  # shellcheck disable=SC1091
+  BAO_TOKEN="$(. "$INFRA_DIR/.openbao.env" && printf %s "${BAO_TOKEN:?BAO_TOKEN absent}")"
+fi
 command -v jq >/dev/null || die "jq est requis."
 
-# shellcheck disable=SC1091
-BAO_TOKEN="$(. "$INFRA_DIR/.openbao.env" && printf %s "${BAO_TOKEN:?BAO_TOKEN absent}")"
 # Le jeton passe par un fichier de config curl lu sur stdin, jamais par argv.
 secret="$(printf 'header = "X-Vault-Token: %s"\n' "$BAO_TOKEN" \
-  | curl -fsS -m 10 --cacert "$INFRA_DIR/certs/infra-ca.crt" -K - "$VAULT_URL/v1/infra/data/env" \
+  | curl -fsS -m 10 --cacert "$CA" -K - "$VAULT_URL/v1/infra/data/env" \
   | jq -c .data.data)" || die "coffre illisible (scellé ? jeton expiré ?)."
 
 [ -f "$OUT" ] || : > "$OUT"
