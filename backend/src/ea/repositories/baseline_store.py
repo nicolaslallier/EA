@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ARRAY, Text, Uuid, and_, any_, delete, func, literal, select
+from sqlalchemy import ARRAY, Text, Uuid, and_, any_, delete, func, literal, select, text
 from sqlalchemy import cast as sql_cast
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as upsert
@@ -73,6 +73,7 @@ from ea.repositories.architecture_store import (
 )
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
+from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -668,6 +669,10 @@ class PostgresBaselineRepository:
             try:
                 async with work(self._sessions, alone=True) as session:
                     await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+                    # The very first statement, so before the snapshot: it waits for a
+                    # publication in flight (SHARE), whose freeze the triggers then see. Without
+                    # it the snapshot predates the freeze and the writes slip past it.
+                    await session.execute(text(lock_guarded("ROW EXCLUSIVE")))
                     plan = await self._plan(session, baseline_id, keep_new=keep_new)
                     blocked = plan.blocked
                     if plan.is_blocked:

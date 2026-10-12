@@ -71,7 +71,10 @@ def test_the_recognised_states_are_the_two_that_postgresql_asks_to_retry() -> No
             ],
         ),
         (document_store.PostgresDocumentRepository, ["add", "replace", "delete"]),
-        (package_store.PostgresPackageRepository, ["move_elements", "delete"]),
+        (
+            package_store.PostgresPackageRepository,
+            ["move_elements", "delete", "publish", "reopen"],
+        ),
     ],
 )
 def test_every_writer_that_locks_elements_is_replayable(store: type, writers: list[str]) -> None:

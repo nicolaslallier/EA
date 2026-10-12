@@ -37,6 +37,7 @@ from ea.domain.errors import (
     PackageNotFrozenError,
     SourceInUseError,
     TooManyPackagesError,
+    WriteConflictError,
 )
 from ea.domain.package_versions import (
     Bump,
@@ -44,7 +45,9 @@ from ea.domain.package_versions import (
     Publication,
     PublicationPreview,
     effective_freezes,
+    latest_version,
     next_version,
+    parse_version,
 )
 from ea.domain.packages import (
     MAX_PACKAGES,
@@ -65,6 +68,7 @@ from ea.repositories.architecture_store import (
 from ea.repositories.audit_store import write_events
 from ea.repositories.baseline_store import capture_scope, scope_size
 from ea.repositories.conflicts import replayable
+from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -128,22 +132,19 @@ async def _locked_tree(session: AsyncSession) -> dict[UUID, Package]:
     return {row.id: _to_package(row) for row in rows}
 
 
-#: The tables a published subtree's triggers guard; a publication waits for the writers of
-#: all of them, and stops the new ones, so the copy and the freeze see the same state.
-_GUARDED_TABLES: Final = (
-    "elements",
-    "relationships",
-    "element_documents",
-    "element_stereotypes",
-    "diagrams",
-    "diagram_nodes",
-    "diagram_objects",
-    "diagram_edges",
-    "packages",
-)
-# A constant list of our own table names, nothing a caller wrote.
-_LOCK_GUARDED: Final = "LOCK TABLE " + ", ".join(_GUARDED_TABLES) + " IN SHARE MODE"  # nosec B608
+# A publication waits for the writers in flight, and stops the new ones, so the copy and the
+# freeze see the same state. Deliberate: it may wait longer for them than the API's default.
 _WAIT_FOR_WRITERS: Final = "SET LOCAL lock_timeout = '10s'"
+# A constant statement over our own table names, nothing a caller wrote.
+_LOCK_GUARDED: Final = lock_guarded("SHARE")
+
+
+async def _latest(session: AsyncSession, package_id: UUID) -> str | None:
+    """The highest version ever published for this package, reopened or not."""
+    rows = await session.scalars(
+        select(PackageVersionRecord.version).where(PackageVersionRecord.package_id == package_id)
+    )
+    return latest_version(rows)
 
 
 def _to_version(row: PackageVersionRecord) -> PackageVersion:
@@ -461,13 +462,13 @@ class PostgresPackageRepository:
             return await _in_force(session)
 
     async def versions(self, package_id: UUID) -> tuple[PackageVersion, ...]:
-        statement = (
-            select(PackageVersionRecord)
-            .where(PackageVersionRecord.package_id == package_id)
-            .order_by(PackageVersionRecord.published_at.desc(), PackageVersionRecord.id.desc())
+        statement = select(PackageVersionRecord).where(
+            PackageVersionRecord.package_id == package_id
         )
         async with reading(self._sessions) as session:
-            return tuple(_to_version(row) for row in await session.scalars(statement))
+            found = [_to_version(row) for row in await session.scalars(statement)]
+        # By number, the latest first: a clock that stepped back must not reorder them.
+        return tuple(sorted(found, key=lambda v: parse_version(v.version), reverse=True))
 
     async def _check_publishable(
         self, session: AsyncSession, package_id: UUID, tree: Mapping[UUID, Package]
@@ -487,12 +488,7 @@ class PostgresPackageRepository:
             scope = await self._check_publishable(session, package_id, tree)
             size = await scope_size(session, scope)
             refuse_oversize(size, self._limits, what="the package")
-            last = await session.scalar(
-                select(PackageVersionRecord.version)
-                .where(PackageVersionRecord.package_id == package_id)
-                .order_by(PackageVersionRecord.published_at.desc(), PackageVersionRecord.id.desc())
-                .limit(1)
-            )
+            last = await _latest(session, package_id)
         return PublicationPreview(
             version=next_version(last, bump),
             bump=bump,
@@ -502,6 +498,8 @@ class PostgresPackageRepository:
             diagrams=size.diagrams,
         )
 
+    # `audit` is called again if the write is replayed: it builds a fresh event each time.
+    @replayable
     async def publish(
         self,
         package_id: UUID,
@@ -520,22 +518,21 @@ class PostgresPackageRepository:
             await session.execute(text(_LOCK_GUARDED))
             scope = await self._check_publishable(session, package_id, tree)
             refuse_oversize(await scope_size(session, scope), self._limits, what="the package")
-            last = await session.scalar(
-                select(PackageVersionRecord.version)
-                .where(PackageVersionRecord.package_id == package_id)
-                .order_by(PackageVersionRecord.published_at.desc(), PackageVersionRecord.id.desc())
-                .limit(1)
-            )
+            last = await _latest(session, package_id)
             version = next_version(last, publication.bump)
             path = path_of(tree[package_id], tree)
-            label = path if len(path) <= 150 else "…" + path[-149:]
+            label = path if len(path) <= 120 else "…" + path[-119:]
+            # The name carries a fresh random id: nobody can pre-create a baseline under it
+            # (names are unique) and make the approver's publication fail.
+            baseline_id = uuid4()
             baseline = Baseline.create(
-                name=f"{label} {version} [{str(package_id)[:8]}]",
+                name=f"{label} {version} [{baseline_id}]",
                 description=f"Publication {version} of {label}",
                 created_by_sub=by_sub,
                 created_by=by,
                 now=now,
             )
+            baseline = replace(baseline, id=baseline_id)
             captured = await capture_scope(
                 session, baseline, scope, package_id=package_id, path=path
             )
@@ -581,10 +578,15 @@ class PostgresPackageRepository:
                 if constraint_of(error) == "uq_package_versions_in_force":
                     msg = "this package was published meanwhile: reopen it first"
                     raise PackageAlreadyFrozenError(msg) from error
+                if constraint_of(error) == "uq_package_versions_package_version":
+                    msg = "another publication of this package got in the way: read it again"
+                    raise WriteConflictError(msg) from error
                 raise
             write_events(session, events)
         return stored
 
+    # `audit` is called again if the write is replayed: it builds a fresh event each time.
+    @replayable
     async def reopen(
         self,
         package_id: UUID,

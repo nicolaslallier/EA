@@ -136,9 +136,7 @@ async def test_the_next_version_follows_the_latest_even_after_a_reopening(
     closed = await reopen_it(repo, root)
     assert closed.reopened_at is not None and closed.reopen_audit_event_id is not None
     assert await repo.in_force() == {}
-    second = await publish_it(
-        repo, root, bump=Bump.MAJOR, adr="ADR-0042", now=NOW + timedelta(days=1)
-    )
+    second = await publish_it(repo, root, bump=Bump.MAJOR, adr="ADR-0042")
     assert second.version == "v2.0.0"
     assert [v.version for v in await repo.versions(root)] == [second.version, "v1.0.0"]
 
@@ -271,3 +269,100 @@ async def test_a_write_racing_a_publication_is_either_in_the_baseline_or_refused
         assert copied == "late"  # the write committed first, so the baseline holds it
     else:
         assert copied == ""
+
+
+async def test_a_clock_that_stepped_back_still_numbers_the_versions_in_order(
+    repo: PostgresPackageRepository, engine_at_head: AsyncEngine
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+    await publish_it(repo, root, now=NOW)
+    await reopen_it(repo, root)
+    second = await publish_it(repo, root, now=NOW - timedelta(days=1))
+    await reopen_it(repo, root)
+    third = await publish_it(repo, root, now=NOW - timedelta(days=2))
+    assert (second.version, third.version) == ("v1.1.0", "v1.2.0")
+    assert [v.version for v in await repo.versions(root)] == ["v1.2.0", "v1.1.0", "v1.0.0"]
+
+
+async def test_a_baseline_pre_created_under_the_predictable_name_cannot_block_a_publication(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+        await connection.execute(
+            text(
+                "INSERT INTO baselines (id, name, description, created_by_sub, created_by,"
+                " created_at) VALUES (:id, :name, '', 'x', 'x', :at)"
+            ),
+            {"id": uuid4(), "name": f"Finance v1.0.0 [{str(root)[:8]}]", "at": NOW},
+        )
+    version = await publish_it(repo, root)
+    assert version.version == "v1.0.0"
+
+
+async def test_a_restore_planned_before_a_publication_cannot_write_into_the_frozen_subtree(
+    engine_at_head: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The restore's snapshot predates the freeze: it must wait, not slip a write past it."""
+    from ea.repositories import baseline_store
+    from tests.integration.test_baseline_restore import LATER, restored
+    from tests.integration.test_baseline_store import Model, a_baseline, created
+
+    model = Model(engine_at_head)
+    await model.seed()
+    baseline = await model.baselines.create(a_baseline(), audit=created)
+    await model.graph.update_element(
+        model.left.id, lambda e: e.rename("renamed", now=LATER), audit=()
+    )
+    plan = await model.baselines.restore_plan(baseline.id, keep_new=False)
+    repo = PostgresPackageRepository(async_sessionmaker(engine_at_head, expire_on_commit=False))
+    root = next(p.id for p in await model.packages.list_all() if p.name == "Core")
+
+    planned, proceed = asyncio.Event(), asyncio.Event()
+    real_write = baseline_store._write
+
+    async def slow_write(*args: object, **kwargs: object) -> None:
+        planned.set()
+        await proceed.wait()
+        await real_write(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(baseline_store, "_write", slow_write)
+    restoring = asyncio.ensure_future(
+        model.baselines.apply_restore(
+            baseline.id, keep_new=False, expected=plan, now=LATER, audit=restored
+        )
+    )
+    await asyncio.wait_for(planned.wait(), 10)
+    publishing = asyncio.ensure_future(publish_it(repo, root))
+    await asyncio.wait({publishing}, timeout=1)  # unfixed, it commits here; fixed, it waits
+    proceed.set()
+    outcomes = await asyncio.gather(restoring, publishing, return_exceptions=True)
+
+    async with engine_at_head.connect() as connection:
+        frozen = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT name FROM baseline_elements WHERE baseline_id = ("
+                        "SELECT baseline_id FROM package_versions WHERE package_id = :p)"
+                    ),
+                    {"p": root},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        live = (
+            await connection.execute(
+                text("SELECT name FROM elements WHERE id = :id"), {"id": model.left.id}
+            )
+        ).scalar_one()
+    published = [o for o in outcomes if isinstance(o, PackageVersion)]
+    assert len(published) == 1, outcomes
+    # What was frozen is what the subtree holds: the restore either landed before the copy
+    # or was refused after it; it never rewrote a subtree that had already been copied.
+    assert frozen == [live]
+    assert all(o is None or isinstance(o, PackageVersion | PackageFrozenError) for o in outcomes), (
+        outcomes
+    )

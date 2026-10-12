@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -36,6 +36,20 @@ class Bump(StrEnum):
     MAJOR = "major"
     MINOR = "minor"
     PATCH = "patch"
+
+
+def parse_version(version: str) -> tuple[int, int, int]:
+    found = _VERSION.fullmatch(version)
+    if found is None:
+        msg = "a version of this package does not read as vMAJOR.MINOR.PATCH"
+        raise InvalidPublicationError(msg)
+    major, minor, patch = (int(part) for part in found.groups())
+    return major, minor, patch
+
+
+def latest_version(versions: Iterable[str]) -> str | None:
+    """The highest of these versions by number (v1.10.0 follows v1.9.0), or `None`."""
+    return max(versions, key=parse_version, default=None)
 
 
 def next_version(last: str | None, bump: Bump) -> str:

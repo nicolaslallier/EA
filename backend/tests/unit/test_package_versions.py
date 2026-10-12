@@ -16,6 +16,7 @@ from ea.domain.package_versions import (
     allowed_actions,
     digest,
     effective_freezes,
+    latest_version,
     next_version,
     publication,
     reopening_reason,
@@ -136,3 +137,16 @@ class TestWhatACallerMayDo:
 
     def test_an_editor_without_the_approver_role_is_offered_nothing(self) -> None:
         assert allowed_actions(self.editor, frozen_by=None, own_version=None) == ()
+
+
+class TestTheLatestVersion:
+    def test_it_compares_numbers_not_strings(self) -> None:
+        assert latest_version(["v1.9.0", "v1.10.0", "v1.2.0"]) == "v1.10.0"
+        assert latest_version(["v2.0.0", "v10.0.0", "v9.9.9"]) == "v10.0.0"
+
+    def test_no_version_is_none(self) -> None:
+        assert latest_version([]) is None
+
+    def test_an_unreadable_version_is_refused(self) -> None:
+        with pytest.raises(InvalidPublicationError):
+            latest_version(["v1.0.0", "nonsense"])
