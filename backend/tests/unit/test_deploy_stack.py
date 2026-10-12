@@ -404,3 +404,13 @@ def test_no_third_party_secret_or_host_is_written_in_the_stack_or_its_example() 
     assert "ghp_" not in text + example
     assert "github_pat_" not in text + example
     assert "EA_EXTERNAL_TOKENS=\n" in example
+
+
+def test_the_ca_is_inlined_and_matches_the_file_in_git() -> None:
+    # `file:` is a bind mount the host daemon resolves: Portainer's clone is not there.
+    import yaml
+
+    stack = yaml.safe_load((STACK).read_text())
+    config = stack["configs"]["infra-ca"]
+    assert "file" not in config
+    assert config["content"].strip() == (REPO_ROOT / "deploy" / "infra-ca.crt").read_text().strip()
