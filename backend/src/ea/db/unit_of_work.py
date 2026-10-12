@@ -27,6 +27,7 @@ import re
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Final
+from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
@@ -36,10 +37,12 @@ from ea.domain.errors import (
     ImportInProgressError,
     NotAuthenticatedError,
     NotAuthorisedError,
+    PackageFrozenError,
     TooManyRefusedRowsError,
     WriteConflictError,
 )
 from ea.domain.exchange import MAX_REFUSED_ROWS
+from ea.domain.package_versions import FrozenRefusal
 from ea.domain.ports import RowRefusal, Transaction
 
 if TYPE_CHECKING:
@@ -68,6 +71,35 @@ _NOT_THE_ROWS: Final = (
 )
 
 _CONDEMNED: Final = "another change got in the way of this one: run the import again"
+
+#: The SQLSTATE the guard triggers of migration 0020 raise (docs/adr/0074).
+FROZEN_SQLSTATE: Final = "EA001"
+
+type RefusalRecorder = Callable[[FrozenRefusal], Awaitable[None]]
+
+#: One recorder per process, registered by `create_app` (a list so that no `global` is needed).
+_RECORDER: list[RefusalRecorder | None] = [None]
+
+
+def set_refusal_recorder(recorder: RefusalRecorder | None) -> None:
+    """Register what `work()` calls, after the rollback, when a frozen subtree refused a write."""
+    _RECORDER[0] = recorder
+
+
+def frozen_refusal_of(error: DBAPIError) -> FrozenRefusal | None:
+    """The refusal this database error means, or `None` for any other error.
+
+    A detail that does not read still answers a refusal with every field empty: the
+    write was refused, and an unreadable reason must not turn into a permitted one.
+    """
+    cause = getattr(error.orig, "__cause__", None)
+    if getattr(cause, "sqlstate", None) != FROZEN_SQLSTATE:
+        return None
+    parts = (getattr(cause, "detail", None) or "").split("|")
+    try:
+        return FrozenRefusal(UUID(parts[0]), parts[1], parts[2], parts[3])
+    except (IndexError, ValueError):
+        return FrozenRefusal(None, None, None, None)
 
 
 class _Unit:
@@ -166,7 +198,7 @@ async def _nested(session: AsyncSession) -> AsyncIterator[None]:
 
 
 @asynccontextmanager
-async def work(
+async def _write_unit(
     sessions: async_sessionmaker[AsyncSession], *, alone: bool = False
 ) -> AsyncIterator[AsyncSession]:
     """The unit of work of one repository *write*.
@@ -197,6 +229,42 @@ async def work(
             )
             raise WriteConflictError(_CONDEMNED) from error
         raise
+
+
+@asynccontextmanager
+async def work(
+    sessions: async_sessionmaker[AsyncSession], *, alone: bool = False
+) -> AsyncIterator[AsyncSession]:
+    """The unit of work of one repository *write* — and the one place that reads the database's
+    refusal of a write into a published subtree (docs/adr/0074).
+
+    The trigger's `EA001` becomes a `PackageFrozenError`. The write has been rolled back
+    when the recorder is called, so the trace of the refusal is written in a transaction of
+    its own and cannot be lost with it; a recorder that fails is logged, never allowed to
+    hide the refusal.
+    """
+    try:
+        async with _write_unit(sessions, alone=alone) as session:
+            yield session
+    except DBAPIError as error:
+        refusal = frozen_refusal_of(error)
+        if refusal is None:
+            raise
+        recorder = _RECORDER[0]
+        if recorder is not None:
+            try:
+                await recorder(refusal)
+            except Exception:  # the refusal must reach the caller whatever happens
+                logger.exception(
+                    "frozen refusal not recorded", extra={"action": "frozen_refusal_unrecorded"}
+                )
+        what = (
+            f"package {refusal.package_id} is published as {refusal.version}"
+            if refusal.package_id is not None
+            else "a published package"
+        )
+        msg = f"{what}: an approver must reopen it first"
+        raise PackageFrozenError(msg, refusal) from error
 
 
 @asynccontextmanager
