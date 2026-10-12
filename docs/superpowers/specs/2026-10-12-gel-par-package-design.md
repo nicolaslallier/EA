@@ -34,21 +34,24 @@ Un index unique partiel `(package_id) WHERE reopened_at IS NULL` garantit au plu
 
 **`baselines`** gagne `scope_package_id` (nullable, sans FK, comme le reste des copies) et `scope_path` (chemin copié, il survit à la suppression du package). Les tables `baseline_*` ne changent pas. Sans périmètre, la baseline est celle d'aujourd'hui (tout le modèle).
 
-## 3. Domaine et garde
+## 3. Application du gel : des triggers PostgreSQL (décision du 2026-10-12)
 
-- `domain/packages.py` : calcul pur de la version suivante, `FrozenBy(package_id, path, version)`.
-- `domain/approval.py` : `guard_element_write(element, kind, caller, frozen_by=None)`. Si `frozen_by` est renseigné, **tout** est refusé, approbateur compris (`409 package_frozen`, message « rouvrir X vN d'abord »). Le verrou d'élément garde sa logique.
-- Le dépôt résout l'ancêtre gelé par une CTE sur les ancêtres **dans la requête qui verrouille la ligne**, donc dans la transaction qui écrit.
-- `tests/unit/test_review_guard.py` (AST) est étendu : une porte d'écriture qui n'appelle pas la résolution échoue.
+Le refus est appliqué **par la base**, pas par une garde Python dans chaque porte : aucune porte ne peut être oubliée, y compris un futur script, l'import ou le pipeline.
 
-**Portée du gel** dans un sous-arbre gelé, sont refusés : modifier ou supprimer un élément, ajouter ou retirer un lien dont un bout est dedans (même si l'autre est dehors), documents, rangement dedans ou dehors, restauration d'une baseline qui le touche, renommer / déplacer / supprimer un package ou créer un sous-package, modifier / supprimer / déplacer un diagramme.
+- Fonction `ea_frozen_ancestor(pkg)` (CTE sur les ancêtres, jointe aux versions en vigueur) et `ea_assert_unfrozen(pkg, table, op)` qui lève l'erreur `EA001` quand le package ou un ancêtre est gelé. Sortie rapide quand aucune version n'est en vigueur nulle part (une sonde d'index) : le coût est nul tant que rien n'est gelé.
+- Triggers `BEFORE INSERT/UPDATE/DELETE` sur `elements` (ancien et nouveau `package_id`), `relationships` (package de chacun des deux bouts), `element_documents`, `element_stereotypes` (package de l'élément), `diagrams` (ancien et nouveau `package_id`), `diagram_nodes`, `diagram_objects`, `diagram_edges` (package du diagramme) et `packages` (le package lui-même et son nouveau parent). `document_chunks` (index dérivé), `file_metadata`, `external_references` (cache d'un outil tiers) et `audit_events` ne sont pas gelés.
+- Traduction **centrale** dans `db/unit_of_work.work()` : l'erreur `EA001` devient `PackageFrozenError` (`409 package_frozen`), avec le package gelant, sa version, la table et l'opération, jamais un nom ni un contenu. Chaque écriture refusée annule sa transaction ; l'événement d'audit du refus est écrit après, dans sa propre transaction (§ 9).
+- Le test AST de `test_review_guard.py` n'est plus le contrat du gel ; il reste celui du verrou par élément (ADR 0048), inchangé. Un test d'intégration parcourt **toutes** les tables du tableau ci-dessus et prouve qu'une écriture directe est refusée.
+- Conséquences assumées : supprimer un élément non gelé que représente un diagramme gelé, ou lié à un élément gelé, est refusé tant que le package n'est pas rouvert ; restaurer une baseline qui touche un sous-arbre gelé échoue en bloc (rien n'est écrit).
+
+**Portée** dans un sous-arbre gelé : modifier ou supprimer un élément (révision, approbation, verrou compris), ajouter ou retirer un lien dont un bout y est, documents, stéréotypes, rangement dedans ou dehors, renommer / déplacer / supprimer un package ou créer un sous-package, modifier / supprimer / déplacer un diagramme ou sa scène.
 
 ## 4. Services
 
-**`PackageService.publish`** (`require_approver`, une transaction `SERIALIZABLE`) :
+**`PackageService.publish`** (`require_approver`, une transaction qui prend d'abord `LOCK TABLE … IN SHARE MODE` sur les tables gelées : elle attend les écritures en cours, bloque les nouvelles, et la baseline lit donc exactement l'état qui sera gelé) :
 1. verrou de l'arbre (celui de l'ADR 0042) ;
 2. refus si le package ou un ancêtre est gelé (`409 package_already_frozen`) ;
-3. refus si le sous-arbre dépasse les plafonds des baselines (`422 scope_too_large`), jamais de coupe silencieuse ;
+3. refus si le sous-arbre dépasse les plafonds des baselines (`422 baseline_too_large`, le code existant), jamais de coupe silencieuse ;
 4. version calculée ; `adr` exigé si MAJEUR (`422 adr_required`) ;
 5. baseline du sous-arbre, nommée `<chemin> vX.Y.Z` (éléments, liens dont les deux bouts sont dedans, boîtes de ses diagrammes) ;
 6. insertion de la ligne de version ;
@@ -69,7 +72,7 @@ Un index unique partiel `(package_id) WHERE reopened_at IS NULL` garantit au plu
 - `PackageRead` : `frozen_version`, `frozen_by` (ancêtre gelé effectif), `allowed_actions` (`publish`, `reopen`) selon l'état et le rôle.
 - `ElementRead` et `DiagramRead` : `frozen_by`.
 - `GET /baselines` expose le périmètre ; `POST /baselines` accepte `package_id`.
-- Erreurs typées : `package_frozen`, `package_already_frozen`, `adr_required`, `scope_too_large`, avec leur ligne dans `_STATUS` (`api/errors.py`).
+- Erreurs typées : `package_frozen`, `package_already_frozen`, `package_not_frozen`, `adr_required`, `invalid_publication`, `baseline_too_large`, avec leur ligne dans `_STATUS` (`api/errors.py`).
 
 **MCP : 76 → 79 outils.** `list_package_versions` (lecture), `publish_package` (écriture, dry run par défaut, renvoie la version et le nombre d'éléments gelés), `reopen_package` (écriture). Entrée dans l'assertion de liste de `tests/unit/test_mcp_server.py`. Les bornes (notes, `adr`, motif) sont déclarées une fois dans `api/schemas.py` et couvertes par `TestTheSameBoundsAsTheHttpAdapter`.
 
@@ -94,7 +97,7 @@ Un index unique partiel `(package_id) WHERE reopened_at IS NULL` garantit au plu
 
 ## 8. Risques (voir aussi § 9 et § 10)
 
-- Chaque porte d'écriture doit résoudre l'ancêtre : c'est le coût du gel dérivé, couvert par le test AST.
+- Un trigger par table écrite : une table nouvelle qui référence des éléments doit recevoir le sien (le test d'intégration liste les tables gelées et échoue sur un oubli connu).
 - Un gros sous-arbre rend la publication lente : bornée par les plafonds de baseline, refus plutôt que coupe.
 - Un MAJEUR repose sur une référence d'ADR saisie à la main ; le serveur n'en juge pas le contenu.
 
@@ -111,15 +114,15 @@ Objectif : pour tout état d'un sous-arbre, savoir **qui**, **quand**, **par que
 | Publier | `package.published` |
 | Rouvrir | `package.reopened` |
 | Baseline scopée créée, supprimée, restaurée | événements baseline existants, avec le périmètre |
-| Écriture **refusée** par un gel | `write.refused_frozen` — acteur, canal, entité visée, package gelant, version |
+| Écriture **refusée** par un gel | `package.write_refused_frozen` — acteur, canal, package gelant, version, table et opération visées |
 
-Le dernier point déroge à la règle « un refus n'écrit pas d'événement » (CLAUDE.md, audit). Raison : une tentative d'écrire dans un sous-arbre figé est un signal de sécurité, pas du bruit. L'événement est écrit dans **sa propre transaction**, après le rollback de l'écriture refusée, pour qu'un refus ne soit jamais perdu avec elle. Garde-fou : un appelant qui boucle sur des refus passe par l'`Admission` des analyses (429) au-delà d'un seuil, sinon le journal devient le vecteur de déni de service.
+Le dernier point déroge à la règle « un refus n'écrit pas d'événement » (CLAUDE.md, audit). Raison : une tentative d'écrire dans un sous-arbre figé est un signal de sécurité, pas du bruit. L'événement est écrit dans **sa propre transaction**, après le rollback de l'écriture refusée, pour qu'un refus ne soit jamais perdu avec elle. Garde-fou : au-delà de 30 refus par minute et par `sub`, l'événement n'est plus écrit (le refus reste journalisé avec le nombre supprimé), sinon le journal devient le vecteur de déni de service.
 
 **Ce qui est journalisé sans être audité** : les aperçus (`dry_run=true`) de publication et de restauration — ligne structurée `action=package_publish_preview`, acteur, canal, request id, compte annoncé. Ils ne changent aucun état.
 
 **Intégrité.** `package_versions` est append-only : un trigger refuse `DELETE` et `TRUNCATE`, et refuse tout `UPDATE` hors des trois colonnes de réouverture quand elles sont nulles. Le rôle de base de données en `INSERT, SELECT` reste dû par l'Infra (comme pour `audit_events`).
 
-**Lecture.** `GET /audit` gagne le filtre `package_id` (le curseur `(at, id)` ne change pas) ; `GET /packages/{id}/versions` rend l'historique des versions avec acteur et dates. Le SPA affiche, sur la fiche d'un package, les versions et l'historique réutilisant `features/history`. Deux outils MCP en lecture existent déjà pour l'audit ; `list_package_versions` s'y ajoute.
+**Lecture.** `GET /audit?entity_kind=package&entity_id=<id>` suffit (publications, réouvertures et refus ont le package pour entité) ; `GET /packages/{id}/versions` rend l'historique des versions avec acteur et dates. Le SPA affiche, sur la fiche d'un package, les versions et l'historique réutilisant `features/history`. Deux outils MCP en lecture existent déjà pour l'audit ; `list_package_versions` s'y ajoute.
 
 **Rétention.** Rien ne purge : `docs/audit-retention.md` est mis à jour (versions et événements de refus).
 
@@ -132,15 +135,15 @@ La revue n'est pas facultative : elle est une **tâche du plan** et une **condit
 | Menace | Parade |
 |---|---|
 | Un éditeur publie ou rouvre | `require_approver` dans `services/`, jamais dans le routeur ; 403 testé HTTP et MCP |
-| Contourner le gel par une porte oubliée | Résolution de l'ancêtre dans `guard_element_write` + test AST qui échoue sur une porte sans garde |
-| Course : écriture qui passe pendant la publication | `SERIALIZABLE` + verrou d'arbre + verrou de ligne ; test `asyncio.gather` |
+| Contourner le gel par une porte oubliée | Triggers en base sur chaque table écrite ; test d'intégration qui les parcourt toutes |
+| Course : écriture qui passe pendant la publication | `LOCK TABLE … IN SHARE MODE` + verrou d'arbre ; le trigger lit l'état validé ; test `asyncio.gather` |
 | Déplacer un élément hors d'un package gelé, ou le faire entrer | `FILING` refusé aux deux extrémités |
 | Rouvrir sans laisser de trace | Motif obligatoire, événement d'audit, trigger append-only |
 | Un agent MCP gèle un sous-arbre par erreur | `dry_run=true` par défaut, annotation d'écriture, aperçu du nombre d'éléments |
 | Publication d'un énorme sous-arbre (déni de service) | Plafonds de baseline, refus `scope_too_large`, `Admission` par appelant |
 | Injection par `notes`, `adr`, `reason` | Bornes de longueur dans `api/schemas.py`, refus du NUL, rendu en texte (`noVHtml.spec.ts`), valeurs hors des logs |
 | Fuite dans les logs et les erreurs | Pas de texte ni de noms dans l'audit ni dans les logs de refus ; erreurs typées génériques |
-| Ancêtre gelé inconnu → écriture permise | Échec fermé : si la résolution échoue, l'écriture est refusée |
+| Ancêtre gelé inconnu → écriture permise | Échec fermé : une erreur dans le trigger annule l'écriture |
 
 **Étapes de la revue** :
 1. Relecture du modèle de menaces avec la spec, avant le plan d'implémentation.
