@@ -6,6 +6,7 @@
 #
 # Usage : scripts/vault-render-env.sh   (EA_STACK_ENV, INFRA_DIR, VAULT_URL)
 set -euo pipefail
+umask 077
 cd "$(dirname "$0")/.."
 
 OUT="${EA_STACK_ENV:-deploy/ea.env}"
@@ -27,13 +28,14 @@ secret="$(printf 'header = "X-Vault-Token: %s"\n' "$BAO_TOKEN" \
 
 [ -f "$OUT" ] || : > "$OUT"
 chmod 600 "$OUT"
-tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
+tmp="$tmpdir/env"
 cp "$OUT" "$tmp"
 for pair in $MAP; do
   var="${pair%%=*}"; key="${pair#*=}"
   val="$(jq -er --arg k "$key" '.[$k]' <<<"$secret")" || die "clé $key absente de infra/env."
-  grep -v "^$var=" "$tmp" > "$tmp.n" || true
-  printf '%s=%s\n' "$var" "$val" >> "$tmp.n"; mv "$tmp.n" "$tmp"
+  grep -v "^$var=" "$tmp" > "$tmpdir/env.n" || true
+  printf '%s=%s\n' "$var" "$val" >> "$tmpdir/env.n"; mv "$tmpdir/env.n" "$tmp"
   echo "  $var <- infra/env:$key"
 done
 cat "$tmp" > "$OUT"
