@@ -497,6 +497,10 @@ async def test_a_version_is_append_only_and_only_its_reopening_can_be_written(
             async with engine_at_head.begin() as connection:
                 await connection.execute(text(sql), {"id": version_id, "at": AT})
         assert sqlstate_of(raised.value) in {RESTRICT, CHECK}, sql
+    with pytest.raises(DBAPIError) as raised:
+        async with engine_at_head.begin() as connection:
+            await connection.execute(text("TRUNCATE package_versions"))
+    assert sqlstate_of(raised.value) == RESTRICT
 
     async with engine_at_head.begin() as connection:
         await connection.execute(
