@@ -804,6 +804,7 @@ def create_app(
     # to the log, never to the response (`api/errors.py`).
     app = FastAPI(
         title=settings.app_name,
+        version="1.0.0",
         lifespan=_lifespan(
             settings,
             open_graph=architecture_service is None,

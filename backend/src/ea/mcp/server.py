@@ -818,7 +818,7 @@ def build_mcp_server(
     get_requirements: RequirementProvider,
     get_reports: ReportProvider,
     *,
-    version: str = "0.1.0",
+    version: str = "1.0.0",
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
