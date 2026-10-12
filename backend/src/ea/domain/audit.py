@@ -23,6 +23,7 @@ from ea.domain.errors import InvalidCursorError
 from ea.domain.external import ExternalReference
 from ea.domain.generated_views import QuerySource
 from ea.domain.model import Element, Relationship
+from ea.domain.package_versions import digest
 from ea.domain.query import to_json
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from ea.domain.diagrams import Diagram
     from ea.domain.documents import Document
     from ea.domain.model import StereotypeRef
+    from ea.domain.package_versions import PackageVersion
     from ea.domain.packages import Package
     from ea.domain.profiles import Profile
     from ea.domain.saved_queries import SavedQuery
@@ -100,6 +102,9 @@ class AuditAction(StrEnum):
     PACKAGE_UPDATED = "package.updated"
     PACKAGE_DELETED = "package.deleted"
     PACKAGE_ELEMENTS_MOVED = "package.elements_moved"
+    PACKAGE_PUBLISHED = "package.published"
+    PACKAGE_REOPENED = "package.reopened"
+    PACKAGE_WRITE_REFUSED_FROZEN = "package.write_refused_frozen"
     SAVED_QUERY_CREATED = "saved_query.created"
     SAVED_QUERY_UPDATED = "saved_query.updated"
     SAVED_QUERY_DELETED = "saved_query.deleted"
@@ -393,6 +398,23 @@ def package_view(package: Package) -> dict[str, Any]:
         "description": package.description,
         "created_at": package.created_at.isoformat(),
         "updated_at": package.updated_at.isoformat(),
+    }
+
+
+def package_version_view(version: PackageVersion) -> dict[str, Any]:
+    """A publication as the trail keeps it: ids, counts and SHA-256 digests (docs/adr/0046)."""
+    return {
+        "id": str(version.id),
+        "package_id": str(version.package_id),
+        "version": version.version,
+        "bump": version.bump.value,
+        "baseline_id": str(version.baseline_id),
+        "elements": version.element_count,
+        "relationships": version.relationship_count,
+        "boxes": version.box_count,
+        "notes_sha256": digest(version.notes),
+        "adr_sha256": digest(version.adr) if version.adr else None,
+        "reopen_reason_sha256": (digest(version.reopen_reason) if version.reopen_reason else None),
     }
 
 
