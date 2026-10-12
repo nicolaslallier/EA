@@ -376,7 +376,6 @@ class TestTheToolset:
         assert (
             len(names) == 63
         )  # fifty-nine, the two of reports, update_relationship and get_coverage
-        assert len(names) == 61  # fifty-nine, and the two report tools: list and generate
         assert names == {
             "export_model",
             "import_model",
