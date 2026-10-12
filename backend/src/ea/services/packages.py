@@ -18,12 +18,21 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ea.domain.audit import AuditAction, package_view
+from ea.domain.audit import AuditAction, package_version_view, package_view
 from ea.domain.errors import (
     CyclicPackageError,
     PackageNotEmptyError,
     PackageNotFoundError,
     TooManyPackagesError,
+)
+from ea.domain.package_versions import (
+    Bump,
+    PackageVersion,
+    PublishOutcome,
+    allowed_actions,
+    effective_freezes,
+    publication,
+    reopening_reason,
 )
 from ea.domain.packages import (
     MAX_MOVE_BATCH,
@@ -38,7 +47,7 @@ from ea.domain.packages import (
     path_of,
 )
 from ea.services.audit import AuditTrail
-from ea.services.caller import logged, require_caller, require_editor
+from ea.services.caller import logged, require_approver, require_caller, require_editor
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
@@ -78,11 +87,19 @@ class PackageService:
     async def _summaries(self) -> dict[UUID, PackageSummary]:
         packages = await self._tree()
         counts = await self._repository.counts()
+        in_force = await self._repository.in_force()
+        frozen = effective_freezes(packages, in_force)
+        caller = require_caller()
         return {
             package.id: PackageSummary(
                 package=package,
                 path=path_of(package, packages),
                 counts=counts.get(package.id, PackageCounts()),
+                frozen_by=frozen.get(package.id),
+                own_version=in_force.get(package.id),
+                actions=allowed_actions(
+                    caller, frozen_by=frozen.get(package.id), own_version=in_force.get(package.id)
+                ),
             )
             for package in packages.values()
         }
@@ -293,3 +310,92 @@ class PackageService:
         logger.info(
             message, logged(package.name), extra={"action": action, "package_id": str(package.id)}
         )
+
+    async def versions(self, package_id: UUID) -> tuple[PackageVersion, ...]:
+        require_caller()
+        await self.get(package_id)
+        return await self._repository.versions(package_id)
+
+    async def publish(
+        self,
+        package_id: UUID,
+        *,
+        bump: Bump,
+        notes: str,
+        adr: str | None = None,
+        dry_run: bool = True,
+    ) -> PublishOutcome:
+        """Publish a version: freeze the subtree, copy it, say so. A preview unless told otherwise.
+
+        The words are checked before anything is read; the preview is what the caller would
+        get now, and the write recomputes everything under the locks (docs/adr/0074).
+        """
+        caller = require_approver()
+        wanted = publication(bump=bump, notes=notes, adr=adr)
+        await self.get(package_id)
+        preview = await self._repository.preview_publication(package_id, bump=wanted.bump)
+        if dry_run:
+            logger.info(
+                "package publication previewed",
+                extra={
+                    "action": "package_publish_preview",
+                    "package_id": str(package_id),
+                    "version": preview.version,
+                    "elements": preview.elements,
+                },
+            )
+            return PublishOutcome(preview, None)
+
+        def published(stored: PackageVersion) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_PUBLISHED,
+                    entity_id=package_id,
+                    after=package_version_view(stored),
+                ),
+            )
+
+        stored = await self._repository.publish(
+            package_id,
+            publication=wanted,
+            by_sub=caller.subject,
+            by=caller.username,
+            now=self._now(),
+            audit=published,
+        )
+        logger.info(
+            "package published",
+            extra={
+                "action": "package_published",
+                "package_id": str(package_id),
+                "version": stored.version,
+            },
+        )
+        return PublishOutcome(preview, stored)
+
+    async def reopen(self, package_id: UUID, *, reason: str) -> PackageVersion:
+        caller = require_approver()
+        said = reopening_reason(reason)
+
+        def reopened(stored: PackageVersion) -> tuple[AuditEvent, ...]:
+            return (
+                self._trail.event(
+                    AuditAction.PACKAGE_REOPENED,
+                    entity_id=package_id,
+                    after=package_version_view(stored),
+                ),
+            )
+
+        stored = await self._repository.reopen(
+            package_id,
+            reason=said,
+            by_sub=caller.subject,
+            by=caller.username,
+            now=self._now(),
+            audit=reopened,
+        )
+        logger.info(
+            "package reopened",
+            extra={"action": "package_reopened", "package_id": str(package_id)},
+        )
+        return stored

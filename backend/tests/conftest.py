@@ -73,8 +73,10 @@ from ea.domain.errors import (
     InvalidQueryError,
     NotAuthenticatedError,
     NotAuthorisedError,
+    PackageAlreadyFrozenError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    PackageNotFrozenError,
     ProfileNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
@@ -113,7 +115,15 @@ from ea.domain.generated_views import (
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, StereotypeRef
-from ea.domain.packages import Package, PackageCounts, name_key
+from ea.domain.package_versions import (
+    Bump,
+    PackageVersion,
+    Publication,
+    PublicationPreview,
+    effective_freezes,
+    next_version,
+)
+from ea.domain.packages import Package, PackageCounts, descendants_of, name_key
 from ea.domain.ports import (
     ElementChange,
     ElementFilter,
@@ -247,6 +257,15 @@ def _is_loopback(host: object) -> bool:
         return False
     mapped = getattr(address, "ipv4_mapped", None)
     return bool(address.is_loopback or (mapped is not None and mapped.is_loopback))
+
+
+@pytest.fixture(autouse=True)
+def _no_frozen_refusal_recorder_left_behind() -> Iterator[None]:
+    """The recorder is a process-wide registration (ea.db.unit_of_work): no test leaks one."""
+    from ea.db.unit_of_work import set_refusal_recorder
+
+    yield
+    set_refusal_recorder(None)
 
 
 @pytest.fixture(autouse=True)
@@ -1697,6 +1716,7 @@ class InMemoryPackages:
     def __init__(self, graph: InMemoryRepository, diagrams: InMemoryDiagrams) -> None:
         self.audit_log = graph.audit_log
         self.packages: dict[UUID, Package] = {}
+        self.published: list[PackageVersion] = []
         self._graph = graph
         self._diagrams = diagrams
         graph.package_tree = self
@@ -1727,6 +1747,84 @@ class InMemoryPackages:
             )
             for p in self.packages.values()
         }
+
+    async def in_force(self) -> dict[UUID, str]:
+        return {v.package_id: v.version for v in self.published if v.in_force}
+
+    async def versions(self, package_id: UUID) -> tuple[PackageVersion, ...]:
+        return tuple(reversed([v for v in self.published if v.package_id == package_id]))
+
+    async def preview_publication(self, package_id: UUID, *, bump: Bump) -> PublicationPreview:
+        if package_id not in self.packages:
+            raise PackageNotFoundError(str(package_id))
+        if package_id in effective_freezes(self.packages, await self.in_force()):
+            raise PackageAlreadyFrozenError("published")
+        counts = await self.counts()
+        scope = {package_id, *descendants_of(package_id, self.packages)}
+        last = next(
+            (v.version for v in reversed(self.published) if v.package_id == package_id), None
+        )
+        return PublicationPreview(
+            version=next_version(last, bump),
+            bump=bump,
+            elements=sum(counts.get(p, PackageCounts()).elements for p in scope),
+            relationships=0,
+            boxes=0,
+            diagrams=sum(counts.get(p, PackageCounts()).diagrams for p in scope),
+        )
+
+    async def publish(
+        self,
+        package_id: UUID,
+        *,
+        publication: Publication,
+        by_sub: str,
+        by: str,
+        now: datetime,
+        audit: Any,
+    ) -> PackageVersion:
+        preview = await self.preview_publication(package_id, bump=publication.bump)
+        draft = PackageVersion(
+            id=uuid4(),
+            package_id=package_id,
+            version=preview.version,
+            bump=publication.bump,
+            notes=publication.notes,
+            adr=publication.adr,
+            baseline_id=uuid4(),
+            element_count=preview.elements,
+            relationship_count=0,
+            box_count=0,
+            published_by_sub=by_sub,
+            published_by=by,
+            published_at=now,
+        )
+        events = events_for(audit, draft)
+        stored = replace(draft, publish_audit_event_id=events[0].id)
+        self.published.append(stored)
+        self.audit_log.append(events)
+        return stored
+
+    async def reopen(
+        self, package_id: UUID, *, reason: str, by_sub: str, by: str, now: datetime, audit: Any
+    ) -> PackageVersion:
+        if package_id not in self.packages:
+            raise PackageNotFoundError(str(package_id))
+        for index, version in enumerate(self.published):
+            if version.package_id == package_id and version.in_force:
+                closed = replace(
+                    version,
+                    reopened_by_sub=by_sub,
+                    reopened_by=by,
+                    reopened_at=now,
+                    reopen_reason=reason,
+                )
+                events = events_for(audit, closed)
+                closed = replace(closed, reopen_audit_event_id=events[0].id)
+                self.published[index] = closed
+                self.audit_log.append(events)
+                return closed
+        raise PackageNotFrozenError("not published")
 
     async def fold_names(self, names: Sequence[str]) -> list[str]:
         return [name_key(name) for name in names]
