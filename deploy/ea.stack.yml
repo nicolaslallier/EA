@@ -112,8 +112,42 @@ services:
           - ea-web
 
 configs:
+  # `content:` et non `file:` : en compose simple, `file:` devient un bind mount
+  # résolu par le démon de l'hôte, qui ne voit pas le clone de Portainer
+  # (/data/compose/N/…). Copie de deploy/infra-ca.crt (CA publique), gardée à
+  # l'identique par test_deploy_stack.py.
   infra-ca:
-    file: ./infra-ca.crt
+    content: |
+      -----BEGIN CERTIFICATE-----
+      MIIFGzCCAwOgAwIBAgIUIWs1q2xZULfa4bkMUNCRJ6nTP4AwDQYJKoZIhvcNAQEL
+      BQAwHTEbMBkGA1UEAwwSSW5mcmEgTG9jYWwgRGV2IENBMB4XDTI2MDkxMzA5NDkw
+      NloXDTM2MDkxMDA5NDkwNlowHTEbMBkGA1UEAwwSSW5mcmEgTG9jYWwgRGV2IENB
+      MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAo44j3XjiEoJS7oVEkDZ0
+      pCQ9tayz3yrT2LDQCroxtzCHin1o0aTliQwna6FQkndk8Z9CZ/2vv+8WYS1la+sC
+      T90tL+JcD+VzHzM7v/Gy3p9LhCW6rfSeRTMfr0Xtr9gVd/wnwQ/TvbNNHNnRG1W/
+      Ov3wzbDAT6hsKzfGcqE9MgxwDNUs4u4NaTvGPpTp5rXrcf+A+GwIpvh/XzzO4PT0
+      d4RdTXH5EF3qTZReHJfNlyNe01jmlhbki86uPfeLaBd5MVzWS/a0R6knbMRQOa80
+      ZoRGfwOrJHZXIsR4d901AZ4DBJwA1YBVTWWtygs5+1lnJk02FaVigR2a03iFaV1r
+      aUOKdRb35AD6x231Eg64ay+YlGXNAhZQxLb5KDQGUFj8A0yDjQ+voGTXSQzcSGpF
+      Q1BWeDLwPY7o342SeKO4LcihYedmJp79UjxHgOuw4tN6OVLUag+kpuPL7ra/o09c
+      0xuXZ9aeyc6c8lC9gEfsvhq8A65T5ZcpsWhZlp2eVushE/WhQWPbOGtOZT0DdpZc
+      1U1HS9+c26iubLTmxdIW/9ayHAjUuD+gVUSFOELKcRARzfic9wCzBN6wmu8ucvaG
+      YbmgFjlHflXhNl3MlGC3vnCKhiiPUqS5bbFaprSi0+NTOVrz/WGtT/lA2OI2iD33
+      Yvncaqiac/H7DbsRx8z7GIECAwEAAaNTMFEwHQYDVR0OBBYEFMmbYr1f4HAdlTrQ
+      zaJM+C+UPxUvMB8GA1UdIwQYMBaAFMmbYr1f4HAdlTrQzaJM+C+UPxUvMA8GA1Ud
+      EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggIBACdLE4yM1RHtXUBhsElPsmK7
+      yKP8HAlJ7o5zwBJ0fxJs9JGF2A9wkfS3KcpM0qfKYvPizApd16WuzcReLEqP/uWc
+      w5ZgBwXoxmkm6kEok85bdf6KXz0srg0ECQGMcCHsvzZhKd4yb3JUFxG2Q2ktx5hx
+      DQg7YRciFiMtynW5/TrwywJcHMFHzhBcaAr7B310ap6qPKSmKeAYvS7YKEASEyih
+      x4FMdEvyV/G2BNMHHNhygh+Us+Y7JKeJ4HkZvmpvil8naGBDbzwuQcnVnjWjUM1l
+      uxwEz4rvTV5zH4/NBOaF+01uEKy7nbB5myBFnkUnCswLNqXfHG0PCQ0Rvynnd81z
+      QVuMg9nQ7yXD4eNPg/2m2CHvYzjAStY7JG0I2SbXlPFLJtr6MmUqb/iIcwqZAudc
+      EYmdsYiXW+y4P+HhQasz/j4NyR5YyeCJ/B3ptgaeEWTSMqQy/Zoa3qbVXnNLFljG
+      B15D5SR2qchoT627p1Yr6STuRGbFJm+YzH3+CEhQyMbekgD4LDv4XlWhmIvTFBxq
+      op3tCrojD0XlvMRoju67XrHiXg/Kkximx1jy2NrB611HmzdrMjnc4v22LDrH5JTa
+      99KawYmY1IIftz6vNMTdpXDY+3DjQURiq71JTGef9Ovu1EcxsN5g33/OtNCaMZ1E
+      bTla18CxuysL8NmdXMBd
+      -----END CERTIFICATE-----
 
 networks:
   infra-net:
