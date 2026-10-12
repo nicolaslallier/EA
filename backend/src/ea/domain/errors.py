@@ -43,6 +43,70 @@ class DuplicateDiagramError(DomainError):
     """A diagram name is already taken."""
 
 
+class DiagramRevisionConflictError(DomainError):
+    """A layout was saved against a revision someone else has since moved on from."""
+
+
+class ProfileNotFoundError(DomainError):
+    """A profile referenced by id is absent from the store."""
+
+
+class StereotypeNotFoundError(DomainError):
+    """A stereotype referenced by id is absent from the store."""
+
+
+class DuplicateProfileError(DomainError):
+    """A profile name, or a stereotype name within its profile, is already taken."""
+
+
+class StereotypeInUseError(DomainError):
+    """A stereotype is applied to elements and cannot be removed or re-typed."""
+
+
+class GeneratedViewTooLargeError(DomainError):
+    """A view's source yields more elements than a diagram can hold: narrow the filter."""
+
+
+class GeneratedViewsUnavailableError(DomainError):
+    """Generated views were asked for on a deployment without the queries and packages they read."""
+
+
+class DiagramLiveError(DomainError):
+    """A live view has no boxes of its own: it is recomputed at each opening, so not editable."""
+
+
+class DiagramNotLiveError(DomainError):
+    """The diagram is not a live view: there is nothing to freeze."""
+
+
+class DiagramNotGeneratedError(DomainError):
+    """The diagram was drawn by hand: it has no source to freeze, refresh or thaw."""
+
+
+class DiagramHasAnnotationsError(DomainError):
+    """Thawing a view would delete the notes, groups or routes drawn on it."""
+
+
+class SourceInUseError(DomainError):
+    """A query or a package is read by a generated view and cannot be deleted from under it."""
+
+
+class TemplateNotFoundError(DomainError):
+    """A diagram template referenced by id is absent from the store."""
+
+
+class TemplateLimitError(DomainError):
+    """The library holds as many templates as it may: delete one before saving another."""
+
+
+class TemplateBusyError(DomainError):
+    """As many diagrams are being built from templates as the process allows: retry shortly."""
+
+
+class DuplicateTemplateError(DomainError):
+    """A diagram template name is already taken."""
+
+
 class UnknownLayoutElementError(DomainError):
     """A diagram layout places an element the graph does not hold.
 

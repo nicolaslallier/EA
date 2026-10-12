@@ -119,10 +119,21 @@ class TestDiagramsGreyInsteadOfFiltering:
         await client.put(
             f"/diagrams/{diagram['id']}/layout",
             json={
+                "revision": 0,
                 "nodes": [
-                    {"element_id": e["id"], "x": 0, "y": 0, "width": 100, "height": 50}
+                    {
+                        "element_id": e["id"],
+                        "x": 0,
+                        "y": 0,
+                        "width": 100,
+                        "height": 50,
+                        "parent_object_id": None,
+                        "z": 0,
+                    }
                     for e in (legacy, always)
-                ]
+                ],
+                "objects": [],
+                "edges": [],
             },
         )
 

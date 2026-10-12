@@ -35,7 +35,9 @@ from ea.repositories import (
     diagram_store,
     document_store,
     package_store,
+    profile_store,
     saved_query_store,
+    template_store,
 )
 
 SRC = Path(__file__).parents[2] / "src" / "ea"
@@ -57,6 +59,14 @@ AUDITED_STORES = {
     package_store.PostgresPackageRepository: (
         ports.PackageRepository,
         conftest_module.InMemoryPackages,
+    ),
+    profile_store.PostgresProfileRepository: (
+        ports.ProfileRepository,
+        conftest_module.InMemoryProfiles,
+    ),
+    template_store.PostgresTemplateRepository: (
+        ports.TemplateRepository,
+        conftest_module.InMemoryTemplates,
     ),
     saved_query_store.PostgresSavedQueryRepository: (
         ports.SavedQueryRepository,
@@ -274,8 +284,25 @@ def test_the_expected_writes_are_found() -> None:
         "delete_relationship",
     }
     assert found["PostgresDocumentRepository"] == {"add", "replace", "delete"}
-    assert found["PostgresDiagramRepository"] == {"add", "save", "delete", "replace_layout"}
+    assert found["PostgresDiagramRepository"] == {
+        "add",
+        "save",
+        "delete",
+        "replace_layout",
+        "freeze",
+        "unfreeze",
+    }
     assert found["PostgresPackageRepository"] == {"add", "save", "delete", "move_elements"}
+    assert found["PostgresProfileRepository"] == {
+        "add_profile",
+        "save_profile",
+        "delete_profile",
+        "add_stereotype",
+        "replace_stereotype",
+        "delete_stereotype",
+        "set_for_element",
+    }
+    assert found["PostgresTemplateRepository"] == {"add", "save", "delete"}
     assert found["PostgresSavedQueryRepository"] == {"add", "save", "delete"}
     assert found["PostgresBaselineRepository"] == {"create", "delete", "apply_restore"}
 

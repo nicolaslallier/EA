@@ -221,6 +221,28 @@
         "title": "ApprovalState",
         "type": "string"
       },
+      "AsTemplateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "AsTemplateRequest",
+        "type": "object"
+      },
       "Aspect": {
         "description": "The aspect an element belongs to \u2014 the column of the ArchiMate framework.",
         "enum": [
@@ -246,6 +268,13 @@
           "element.reopened",
           "element.locked",
           "element.unlocked",
+          "element.stereotypes_changed",
+          "profile.created",
+          "profile.updated",
+          "profile.deleted",
+          "template.created",
+          "template.updated",
+          "template.deleted",
           "relationship.created",
           "relationship.updated",
           "relationship.deleted",
@@ -253,6 +282,9 @@
           "diagram.updated",
           "diagram.deleted",
           "diagram.layout_replaced",
+          "diagram.generated",
+          "diagram.frozen",
+          "diagram.unfrozen",
           "document.attached",
           "document.revised",
           "document.discarded",
@@ -986,6 +1018,22 @@
         "title": "CoverageRead",
         "type": "object"
       },
+      "CreateElementSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateElementSchema",
+        "type": "object"
+      },
       "DiagramCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1020,9 +1068,34 @@
         "title": "DiagramCreate",
         "type": "object"
       },
-      "DiagramLayout": {
+      "DiagramEdge": {
         "additionalProperties": false,
-        "description": "Every box of a diagram. It replaces the stored layout whole.",
+        "description": "The route of one link on this diagram. A link with no row is drawn straight.",
+        "properties": {
+          "relationship_id": {
+            "format": "uuid",
+            "title": "Relationship Id",
+            "type": "string"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramPoint"
+            },
+            "maxItems": 20,
+            "title": "Waypoints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "relationship_id",
+          "waypoints"
+        ],
+        "title": "DiagramEdge",
+        "type": "object"
+      },
+      "DiagramFreeze": {
+        "additionalProperties": false,
+        "description": "The layout the SPA computed for a live view, stored when it is frozen.\n\n`revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.",
         "properties": {
           "nodes": {
             "items": {
@@ -1031,10 +1104,79 @@
             "maxItems": 500,
             "title": "Nodes",
             "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
           }
         },
         "required": [
+          "revision",
           "nodes"
+        ],
+        "title": "DiagramFreeze",
+        "type": "object"
+      },
+      "DiagramGenerate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ViewSource"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "DiagramGenerate",
+        "type": "object"
+      },
+      "DiagramLayout": {
+        "additionalProperties": false,
+        "description": "The whole scene of a diagram, replacing the stored one \u2014 against the revision the client saw.\n\nEvery field is required, empty lists included: an optional one would split\nthis model into `-Input` and `-Output` schemas (docs/adr/0035).",
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramEdge"
+            },
+            "maxItems": 2000,
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramNode"
+            },
+            "maxItems": 500,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramObject"
+            },
+            "maxItems": 500,
+            "title": "Objects",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "nodes",
+          "objects",
+          "edges"
         ],
         "title": "DiagramLayout",
         "type": "object"
@@ -1054,6 +1196,18 @@
             "title": "Height",
             "type": "number"
           },
+          "parent_object_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Object Id"
+          },
           "width": {
             "maximum": 5000.0,
             "minimum": 20.0,
@@ -1071,6 +1225,12 @@
             "minimum": -100000.0,
             "title": "Y",
             "type": "number"
+          },
+          "z": {
+            "maximum": 10000.0,
+            "minimum": -10000.0,
+            "title": "Z",
+            "type": "integer"
           }
         },
         "required": [
@@ -1078,9 +1238,134 @@
           "x",
           "y",
           "width",
-          "height"
+          "height",
+          "parent_object_id",
+          "z"
         ],
         "title": "DiagramNode",
+        "type": "object"
+      },
+      "DiagramObject": {
+        "additionalProperties": false,
+        "description": "A note (its text is the body) or a group (its text is the title). Never a fact.",
+        "properties": {
+          "anchor_element_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Element Id"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ObjectKind"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "maximum": 10000.0,
+            "minimum": -10000.0,
+            "title": "Z",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "x",
+          "y",
+          "width",
+          "height",
+          "text",
+          "colour",
+          "z",
+          "parent_id",
+          "anchor_element_id"
+        ],
+        "title": "DiagramObject",
+        "type": "object"
+      },
+      "DiagramPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "DiagramPoint",
         "type": "object"
       },
       "DiagramRead": {
@@ -1095,12 +1380,29 @@
             "title": "Description",
             "type": "string"
           },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
           "elements": {
             "items": {
               "$ref": "#/components/schemas/ElementRead"
             },
             "title": "Elements",
             "type": "array"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Generation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -1136,6 +1438,13 @@
             "title": "Nodes",
             "type": "array"
           },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramObject"
+            },
+            "title": "Objects",
+            "type": "array"
+          },
           "package_id": {
             "anyOf": [
               {
@@ -1156,6 +1465,21 @@
             "title": "Relationships",
             "type": "array"
           },
+          "revision": {
+            "description": "Send it back with the next PUT /layout: a stale one is a 409.",
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ViewSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1169,7 +1493,12 @@
           "created_at",
           "updated_at",
           "package_id",
+          "generation",
+          "source",
+          "revision",
           "nodes",
+          "objects",
+          "edges",
           "elements",
           "relationships"
         ],
@@ -1186,6 +1515,16 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Generation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -1224,10 +1563,195 @@
           "description",
           "node_count",
           "package_id",
+          "generation",
           "created_at",
           "updated_at"
         ],
         "title": "DiagramSummaryRead",
+        "type": "object"
+      },
+      "DiagramTemplateCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/TemplateBodySchema"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ],
+        "title": "DiagramTemplateCreate",
+        "type": "object"
+      },
+      "DiagramTemplateRead": {
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/TemplateBodySchema"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DiagramTemplateRead",
+        "type": "object"
+      },
+      "DiagramTemplateSummaryRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "group_count": {
+            "title": "Group Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "link_count": {
+            "title": "Link Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note_count": {
+            "title": "Note Count",
+            "type": "integer"
+          },
+          "slot_count": {
+            "title": "Slot Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "slot_count",
+          "group_count",
+          "note_count",
+          "link_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DiagramTemplateSummaryRead",
+        "type": "object"
+      },
+      "DiagramTemplateUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateBodySchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "DiagramTemplateUpdate",
+        "type": "object"
+      },
+      "DiagramUnfreeze": {
+        "additionalProperties": false,
+        "properties": {
+          "discard_annotations": {
+            "title": "Discard Annotations",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "discard_annotations"
+        ],
+        "title": "DiagramUnfreeze",
         "type": "object"
       },
       "DiagramUpdate": {
@@ -1681,6 +2205,13 @@
             "title": "Revision",
             "type": "integer"
           },
+          "stereotypes": {
+            "items": {
+              "$ref": "#/components/schemas/StereotypeRef"
+            },
+            "title": "Stereotypes",
+            "type": "array"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1696,6 +2227,7 @@
           "description",
           "documentation",
           "properties",
+          "stereotypes",
           "package_id",
           "created_at",
           "updated_at",
@@ -1707,6 +2239,26 @@
           "allowed_transitions"
         ],
         "title": "ElementRead",
+        "type": "object"
+      },
+      "ElementStereotypesSet": {
+        "additionalProperties": false,
+        "description": "The whole set of stereotypes an element carries: it replaces the previous one.",
+        "properties": {
+          "stereotype_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Stereotype Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stereotype_ids"
+        ],
+        "title": "ElementStereotypesSet",
         "type": "object"
       },
       "ElementType": {
@@ -1871,7 +2423,9 @@
           "saved_query",
           "diagram",
           "document",
-          "baseline"
+          "baseline",
+          "profile",
+          "template"
         ],
         "title": "EntityKind",
         "type": "string"
@@ -2234,6 +2788,14 @@
         "title": "GapCreate",
         "type": "object"
       },
+      "Generation": {
+        "enum": [
+          "live",
+          "frozen"
+        ],
+        "title": "Generation",
+        "type": "string"
+      },
       "GraphRead": {
         "description": "A sub-graph: the nodes and the edges between them, ready to be drawn.",
         "properties": {
@@ -2420,6 +2982,23 @@
         "title": "HeatmapRead",
         "type": "object"
       },
+      "IconKey": {
+        "description": "The closed set of icons the SPA ships \u2014 an icon is picked, never uploaded.",
+        "enum": [
+          "none",
+          "database",
+          "server",
+          "cloud",
+          "user",
+          "lock",
+          "document",
+          "gear",
+          "queue",
+          "api"
+        ],
+        "title": "IconKey",
+        "type": "string"
+      },
       "ImportCountsRead": {
         "properties": {
           "elements": {
@@ -2502,6 +3081,76 @@
           "duration_ms"
         ],
         "title": "ImportReportRead",
+        "type": "object"
+      },
+      "InstantiateBinding": {
+        "additionalProperties": false,
+        "description": "What fills one slot: an existing element, one to create, or neither (slot left out).",
+        "properties": {
+          "create": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreateElementSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "slot_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Slot Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot_key",
+          "element_id",
+          "create"
+        ],
+        "title": "InstantiateBinding",
+        "type": "object"
+      },
+      "InstantiateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/InstantiateBinding"
+            },
+            "maxItems": 50,
+            "title": "Bindings",
+            "type": "array"
+          },
+          "create_relationships": {
+            "default": false,
+            "title": "Create Relationships",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bindings"
+        ],
+        "title": "InstantiateRequest",
         "type": "object"
       },
       "IssueRead": {
@@ -2858,6 +3507,14 @@
         "title": "MoveElements",
         "type": "object"
       },
+      "ObjectKind": {
+        "enum": [
+          "note",
+          "group"
+        ],
+        "title": "ObjectKind",
+        "type": "string"
+      },
       "PackageCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3116,6 +3773,151 @@
         ],
         "title": "PlateauRead",
         "type": "object"
+      },
+      "ProfileCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProfileCreate",
+        "type": "object"
+      },
+      "ProfileDocument": {
+        "additionalProperties": false,
+        "description": "A profile as a portable document: no ids, no dates, a version.",
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "profile_format": {
+            "const": 1,
+            "title": "Profile Format",
+            "type": "integer"
+          },
+          "stereotypes": {
+            "items": {
+              "$ref": "#/components/schemas/StereotypeWrite"
+            },
+            "maxItems": 100,
+            "title": "Stereotypes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile_format",
+          "name",
+          "description",
+          "stereotypes"
+        ],
+        "title": "ProfileDocument",
+        "type": "object"
+      },
+      "ProfileRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stereotypes": {
+            "items": {
+              "$ref": "#/components/schemas/StereotypeRead"
+            },
+            "title": "Stereotypes",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "created_at",
+          "updated_at",
+          "stereotypes"
+        ],
+        "title": "ProfileRead",
+        "type": "object"
+      },
+      "ProfileUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ProfileUpdate",
+        "type": "object"
+      },
+      "PropertyKind": {
+        "enum": [
+          "free",
+          "enum",
+          "template"
+        ],
+        "title": "PropertyKind",
+        "type": "string"
       },
       "PropertyOp": {
         "enum": [
@@ -4280,6 +5082,230 @@
         "title": "Severity",
         "type": "string"
       },
+      "SourceDiffRead": {
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/ElementRead"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "added",
+          "removed"
+        ],
+        "title": "SourceDiffRead",
+        "type": "object"
+      },
+      "StereotypePropertySchema": {
+        "additionalProperties": false,
+        "description": "One declared property. Every field is required: no default, no `-Input` twin.",
+        "properties": {
+          "allowed_values": {
+            "items": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Allowed Values",
+            "type": "array"
+          },
+          "help": {
+            "maxLength": 300,
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "maxLength": 63,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PropertyKind"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "required",
+          "kind",
+          "allowed_values",
+          "template",
+          "help"
+        ],
+        "title": "StereotypePropertySchema",
+        "type": "object"
+      },
+      "StereotypeRead": {
+        "properties": {
+          "base_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "icon_key": {
+            "$ref": "#/components/schemas/IconKey"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "profile_id": {
+            "format": "uuid",
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/StereotypePropertySchema"
+            },
+            "title": "Properties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "profile_id",
+          "name",
+          "base_type",
+          "colour",
+          "icon_key",
+          "properties"
+        ],
+        "title": "StereotypeRead",
+        "type": "object"
+      },
+      "StereotypeRef": {
+        "description": "The stereotype an element carries - enough to draw it, none of its rules.",
+        "properties": {
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "icon_key": {
+            "$ref": "#/components/schemas/IconKey"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "colour",
+          "icon_key"
+        ],
+        "title": "StereotypeRef",
+        "type": "object"
+      },
+      "StereotypeWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "base_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "icon_key": {
+            "$ref": "#/components/schemas/IconKey"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/StereotypePropertySchema"
+            },
+            "maxItems": 30,
+            "title": "Properties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "base_type",
+          "colour",
+          "icon_key",
+          "properties"
+        ],
+        "title": "StereotypeWrite",
+        "type": "object"
+      },
       "SubnetCreate": {
         "additionalProperties": false,
         "description": "A new subnet: a `communication_network` element carrying a prefix.",
@@ -4427,6 +5453,326 @@
         "title": "SubnetRead",
         "type": "object"
       },
+      "TemplateBodySchema": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateGroupSchema"
+            },
+            "maxItems": 100,
+            "title": "Groups",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateLinkSchema"
+            },
+            "maxItems": 100,
+            "title": "Links",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateNoteSchema"
+            },
+            "maxItems": 100,
+            "title": "Notes",
+            "type": "array"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateSlotSchema"
+            },
+            "maxItems": 50,
+            "title": "Slots",
+            "type": "array"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "slots",
+          "groups",
+          "notes",
+          "links"
+        ],
+        "title": "TemplateBodySchema",
+        "type": "object"
+      },
+      "TemplateGroupSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "text",
+          "x",
+          "y",
+          "width",
+          "height",
+          "colour",
+          "parent_key"
+        ],
+        "title": "TemplateGroupSchema",
+        "type": "object"
+      },
+      "TemplateLinkSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "relationship_type": {
+            "$ref": "#/components/schemas/RelationshipType"
+          },
+          "source_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Source Key",
+            "type": "string"
+          },
+          "target_key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Target Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_key",
+          "target_key",
+          "relationship_type"
+        ],
+        "title": "TemplateLinkSchema",
+        "type": "object"
+      },
+      "TemplateNoteSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Key"
+          },
+          "colour": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colour"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "text": {
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "text",
+          "x",
+          "y",
+          "width",
+          "height",
+          "colour",
+          "parent_key",
+          "anchor_key"
+        ],
+        "title": "TemplateNoteSchema",
+        "type": "object"
+      },
+      "TemplateSlotSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "element_type": {
+            "$ref": "#/components/schemas/ElementType"
+          },
+          "height": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "key": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "parent_key": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Key"
+          },
+          "stereotype": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stereotype"
+          },
+          "width": {
+            "maximum": 5000.0,
+            "minimum": 20.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "element_type",
+          "label",
+          "x",
+          "y",
+          "width",
+          "height",
+          "stereotype",
+          "parent_key"
+        ],
+        "title": "TemplateSlotSchema",
+        "type": "object"
+      },
       "TraceElementRead": {
         "description": "An element on the other end of a realization of a requirement.",
         "properties": {
@@ -4525,6 +5871,47 @@
         ],
         "title": "Verification",
         "type": "string"
+      },
+      "ViewSource": {
+        "additionalProperties": false,
+        "description": "Where a generated view reads its members: a saved query, or a package.\n\nExactly one of the two ids. Both fields are required (nullable) so the\nmodel is one schema for the request and for the answer.",
+        "properties": {
+          "package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
+          "recursive": {
+            "title": "Recursive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query_id",
+          "package_id",
+          "recursive"
+        ],
+        "title": "ViewSource",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -5490,6 +6877,502 @@
         ]
       }
     },
+    "/diagram-templates": {
+      "get": {
+        "operationId": "list_templates_diagram_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DiagramTemplateSummaryRead"
+                  },
+                  "title": "Response List Templates Diagram Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Templates",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "post": {
+        "operationId": "create_template_diagram_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramTemplateCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
+    "/diagram-templates/{template_id}": {
+      "delete": {
+        "operationId": "delete_template_diagram_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "get": {
+        "operationId": "read_template_diagram_templates__template_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      },
+      "put": {
+        "operationId": "update_template_diagram_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramTemplateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
+    "/diagram-templates/{template_id}/instantiate": {
+      "post": {
+        "description": "Build a diagram from a template.\n\nEach slot is bound to an existing element of its type, to an element to\ncreate, or left out. Everything refusable is refused before anything is\nwritten; relationships are created only if `create_relationships` is true.",
+        "operationId": "instantiate_template_diagram_templates__template_id__instantiate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstantiateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Instantiate Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
     "/diagrams": {
       "get": {
         "description": "Every saved diagram, sorted by name \u2014 or only those filed in a package.",
@@ -5670,6 +7553,103 @@
           }
         ],
         "summary": "Create Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/diagrams/generate": {
+      "post": {
+        "description": "A new **live** view: everything a saved query or a package yields, at each opening.\n\nIt stores no box. To edit it, freeze it; to see it frozen from the start,\nfreeze it right after (the layout is the SPA's, the server computes none).",
+        "operationId": "generate_diagram_diagrams_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramGenerate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Diagram",
         "tags": [
           "diagrams"
         ]
@@ -5938,9 +7918,217 @@
         ]
       }
     },
+    "/diagrams/{diagram_id}/as-template": {
+      "post": {
+        "description": "Keep the shape of a diagram: each element becomes a slot of the same type.",
+        "operationId": "save_as_template_diagrams__diagram_id__as_template_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AsTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save As Template",
+        "tags": [
+          "diagram-templates"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/freeze": {
+      "post": {
+        "description": "Store the layout and make the live view an ordinary editable diagram.",
+        "operationId": "freeze_diagram_diagrams__diagram_id__freeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramFreeze"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Freeze Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
     "/diagrams/{diagram_id}/layout": {
       "put": {
-        "description": "Replace every box of a diagram at once.\n\nEach element must exist and appear once; otherwise nothing is written.",
+        "description": "Replace the whole scene of a diagram at once.\n\n`revision` is the one the client read; if somebody saved since, nothing is\nwritten and the answer is a 409 `diagram_revision_conflict`. Otherwise the\nnew revision comes back in `X-Diagram-Revision`. Each element must exist\nand appear once, and a route may only name a link joining two placed\nelements; otherwise nothing is written.",
         "operationId": "replace_diagram_layout_diagrams__diagram_id__layout_put",
         "parameters": [
           {
@@ -5997,6 +8185,16 @@
               }
             },
             "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {
@@ -6094,6 +8292,214 @@
           }
         ],
         "summary": "Render Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/source-diff": {
+      "get": {
+        "description": "What a frozen view would gain and lose if it followed its source again. Writes nothing.",
+        "operationId": "read_source_diff_diagrams__diagram_id__source_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDiffRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Source Diff",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/diagrams/{diagram_id}/unfreeze": {
+      "post": {
+        "description": "Back to a live view. Refused (409) while notes, groups or routes would be lost,\nunless `discard_annotations` is true.",
+        "operationId": "unfreeze_diagram_diagrams__diagram_id__unfreeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramUnfreeze"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unfreeze Diagram",
         "tags": [
           "diagrams"
         ]
@@ -7801,6 +10207,105 @@
         "summary": "Read Element Relations",
         "tags": [
           "architecture"
+        ]
+      }
+    },
+    "/elements/{element_id}/stereotypes": {
+      "put": {
+        "description": "Replace the set of stereotypes an element carries.\n\nA stereotype of another base type is a 422, and so is a set of stereotypes\ndeclaring one key twice or a stored value that breaks a declared format.",
+        "operationId": "set_element_stereotypes_elements__element_id__stereotypes_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "element_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Element Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ElementStereotypesSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Element Stereotypes",
+        "tags": [
+          "profiles"
         ]
       }
     },
@@ -10510,6 +13015,659 @@
         ]
       }
     },
+    "/profiles": {
+      "get": {
+        "description": "Every profile with its stereotypes, sorted by name.",
+        "operationId": "list_profiles_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileRead"
+                  },
+                  "title": "Response List Profiles Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Profiles",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "post": {
+        "operationId": "create_profile_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/profiles/import": {
+      "post": {
+        "description": "Create a profile from an exported document (at most 256 KB, `profile_format: 1`).\n\nThe body is read and measured here rather than parsed by FastAPI, so the\nsize ceiling is checked on the bytes and a malformed document is a typed\n422 rather than a validation report naming the server's models.",
+        "operationId": "import_profile_profiles_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/profiles/{profile_id}": {
+      "delete": {
+        "description": "Delete a profile \u2014 refused while one of its stereotypes is applied to an element.",
+        "operationId": "delete_profile_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Profile",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "get": {
+        "operationId": "read_profile_profiles__profile_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Profile",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "put": {
+        "operationId": "update_profile_profiles__profile_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/profiles/{profile_id}/export": {
+      "get": {
+        "description": "The profile as a versioned document that `POST /profiles/import` accepts.",
+        "operationId": "export_profile_profiles__profile_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Profile",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/profiles/{profile_id}/stereotypes": {
+      "post": {
+        "operationId": "add_stereotype_profiles__profile_id__stereotypes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StereotypeWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StereotypeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Stereotype",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
     "/quality": {
       "get": {
         "description": "Run the quality rules over the catalogue and page through the findings.\n\nComputed on every call \u2014 nothing is stored. The counts describe the whole\nrun; `severity` and `code` narrow the findings only.",
@@ -12044,6 +15202,235 @@
         "summary": "Read Roadmap",
         "tags": [
           "timeline"
+        ]
+      }
+    },
+    "/stereotypes": {
+      "get": {
+        "description": "Every stereotype, flat \u2014 what the SPA needs to draw and to offer them.",
+        "operationId": "list_stereotypes_stereotypes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StereotypeRead"
+                  },
+                  "title": "Response List Stereotypes Stereotypes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Stereotypes",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
+    "/stereotypes/{stereotype_id}": {
+      "delete": {
+        "description": "Delete a stereotype \u2014 refused, with the count, while elements carry it.",
+        "operationId": "delete_stereotype_stereotypes__stereotype_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stereotype_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Stereotype Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Stereotype",
+        "tags": [
+          "profiles"
+        ]
+      },
+      "put": {
+        "operationId": "replace_stereotype_stereotypes__stereotype_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stereotype_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Stereotype Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StereotypeWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StereotypeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Stereotype",
+        "tags": [
+          "profiles"
         ]
       }
     }

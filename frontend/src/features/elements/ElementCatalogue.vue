@@ -366,6 +366,7 @@ function day(iso: string): string {
         :type-label="metamodel.labelOf(detail.element.value.element_type)"
         :package-path="packagePath"
         @close="closeDetail"
+        @changed="detail.open(detail.element.value.id)"
       />
 
       <RelationshipPanel

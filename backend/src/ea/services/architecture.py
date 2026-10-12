@@ -32,7 +32,8 @@ from ea.domain.errors import CyclicContainmentError, ElementNotFoundError
 from ea.domain.ipam import validate_ipam_properties
 from ea.domain.junctions import JUNCTION_TYPE_PROPERTY, validate_junction_properties
 from ea.domain.model import Element, Relationship, reject_nul
-from ea.domain.ports import ElementChange, EndsReview, RelationshipChange
+from ea.domain.ports import ElementChange, EndsReview, GraphView, RelationshipChange, Transaction
+from ea.domain.profiles import validate_stereotype_properties
 from ea.domain.requirements import validate_requirement_properties
 from ea.domain.timeline import validate_lifespan_properties
 from ea.services.audit import AuditTrail
@@ -40,12 +41,14 @@ from ea.services.caller import logged, require_approver, require_caller, require
 from ea.services.refusals import logged_refusal
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from ea.domain.audit import AuditEvent
     from ea.domain.ports import (
         ArchitectureRepository,
         ElementFilter,
         ElementRemoval,
-        GraphView,
+        StereotypeSource,
     )
 
 logger = logging.getLogger(__name__)
@@ -79,8 +82,10 @@ class ArchitectureService:
         *,
         clock: Clock = _utc_now,
         separate_duties: bool = True,
+        stereotypes: StereotypeSource | None = None,
     ) -> None:
         self._repository = repository
+        self._stereotypes = stereotypes
         self._now = clock
         self._trail = AuditTrail(clock)
         self._separate_duties = separate_duties
@@ -90,6 +95,13 @@ class ArchitectureService:
                 "may approve what they changed last",
                 extra={"action": "separation_disabled"},
             )
+
+    async def _decorated(self, elements: Sequence[Element]) -> tuple[Element, ...]:
+        """The elements with the stereotypes they carry - a label, shown wherever they are read."""
+        if self._stereotypes is None or not elements:
+            return tuple(elements)
+        refs = await self._stereotypes.refs_of([element.id for element in elements])
+        return tuple(replace(element, stereotypes=refs.get(element.id, ())) for element in elements)
 
     def _review_of_ends(self) -> EndsReview:
         """What a link change does to its two ends, applied by the repository under their locks.
@@ -116,6 +128,13 @@ class ArchitectureService:
             )
 
         return EndsReview(change=change, audit=audit)
+
+    def transaction(self, *, commit: bool = True) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases that each call this service (docs/adr/0052).
+
+        Every use case inside still asks who is calling; nothing is written by entering it.
+        """
+        return self._repository.transaction(commit=commit)
 
     # --- Elements ---------------------------------------------------------
 
@@ -174,11 +193,11 @@ class ArchitectureService:
         if element is None:
             msg = f"no element with id {element_id}"
             raise ElementNotFoundError(msg)
-        return element
+        return (await self._decorated([element]))[0]
 
     async def list_elements(self, criteria: ElementFilter) -> tuple[Element, ...]:
         require_caller()
-        return await self._repository.list_elements(criteria)
+        return await self._decorated(await self._repository.list_elements(criteria))
 
     async def count_elements(self, criteria: ElementFilter) -> int:
         require_caller()
@@ -212,6 +231,13 @@ class ArchitectureService:
                 ),
             )
         )
+        if properties is not None and self._stereotypes is not None:
+            # The same rule behind every door (docs/adr/0020): a value that breaks the format
+            # a carried stereotype declares is refused here as it is by `apply_stereotypes`.
+            # `required` is never checked.
+            validate_stereotype_properties(
+                properties, await self._stereotypes.stereotypes_of(element_id)
+            )
 
         def patch(stored: Element) -> Element:
             """Pure; the repository applies it to the row it holds under lock.
@@ -319,7 +345,7 @@ class ArchitectureService:
                 "element_type": stored.element_type.value,
             },
         )
-        return stored
+        return (await self._decorated([stored]))[0]
 
     async def delete_element(self, element_id: UUID) -> None:
         """Remove an element together with everything attached to it.
@@ -424,7 +450,7 @@ class ArchitectureService:
                 "transition": transition.value,
             },
         )
-        return stored
+        return (await self._decorated([stored]))[0]
 
     # --- Relationships ----------------------------------------------------
 
@@ -610,7 +636,10 @@ class ArchitectureService:
     ) -> GraphView:
         """The elements among these ids that still exist, and the links between them."""
         require_caller()
-        return await self._repository.view_of(element_ids, link_limit=link_limit)
+        graph = await self._repository.view_of(element_ids, link_limit=link_limit)
+        return GraphView(
+            elements=await self._decorated(graph.elements), relationships=graph.relationships
+        )
 
     # --- Analysis ---------------------------------------------------------
 

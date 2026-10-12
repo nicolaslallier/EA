@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { BOX_TEXT, LAYER_COLOURS } from '../src/features/metamodel/useMetamodel'
-import { CANVAS_MARGIN, canvasExtent, edgeSegment, shorten } from '../src/lib/diagramGeometry'
+import { CANVAS_MARGIN, canvasExtent, edgeSegment, shortenToWidth } from '../src/lib/diagramGeometry'
 import fixture from './fixtures/diagram-parity.json'
 
 const SVG = new DOMParser().parseFromString(fixture.svg, 'image/svg+xml')
@@ -65,7 +65,7 @@ describe('the server drawing and the editor agree', () => {
     for (const element of fixture.elements) {
       const width = rects.get(element.id)?.width ?? 0
       const text = SVG.querySelector(`g[data-element-id="${element.id}"] text.name`)?.textContent
-      expect(text).toBe(shorten(element.name, width))
+      expect(text).toBe(shortenToWidth(element.name, width))
     }
   })
 

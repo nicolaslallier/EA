@@ -112,10 +112,21 @@ async def a_diagram(
     diagram = await client.post("/diagrams", json={"name": title}, headers=headers)
     assert diagram.status_code == 201, diagram.text
     layout = {
+        "revision": 0,
         "nodes": [
-            {"element_id": i, "x": 10.0 * n, "y": 20.0, "width": 200.0, "height": 80.0}
+            {
+                "element_id": i,
+                "x": 10.0 * n,
+                "y": 20.0,
+                "width": 200.0,
+                "height": 80.0,
+                "parent_object_id": None,
+                "z": 0,
+            }
             for n, i in enumerate(ids)
-        ]
+        ],
+        "objects": [],
+        "edges": [],
     }
     placed = await client.put(
         f"/diagrams/{diagram.json()['id']}/layout", json=layout, headers=headers
@@ -238,7 +249,9 @@ class TestRendering:
             for i in range(MAX_REPORT_ELEMENTS + 1)
         ]
         await use_cases.replace_layout(
-            diagram.id, [DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)]
+            diagram.id,
+            revision=0,
+            nodes=[DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)],
         )
 
         response = await client.post(
@@ -385,6 +398,9 @@ class TestPackageReports:
             await client.put(
                 f"/diagrams/{diagram['id']}/layout",
                 json={
+                    "revision": 0,
+                    "objects": [],
+                    "edges": [],
                     "nodes": [
                         {
                             "element_id": element["id"],
@@ -392,8 +408,10 @@ class TestPackageReports:
                             "y": 10,
                             "width": 132,
                             "height": 46,
+                            "parent_object_id": None,
+                            "z": 0,
                         }
-                    ]
+                    ],
                 },
             )
 

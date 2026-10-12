@@ -37,8 +37,13 @@ if TYPE_CHECKING:
     # Only for annotations: `diagrams` imports `GraphView` from here.
     from ea.domain.audit import AuditEvent, AuditOf
     from ea.domain.baselines import Baseline, ModelSnapshot, RestorePlan
+    from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
+    from ea.domain.diagram_templates import DiagramTemplate
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
+    from ea.domain.generated_views import SourceMembers, ViewSource
+    from ea.domain.model import StereotypeRef
+    from ea.domain.profiles import Profile, Stereotype
 
 
 @dataclass(slots=True)
@@ -363,6 +368,10 @@ class ArchitectureRepository(Protocol):
         """
         ...
 
+    def transaction(self, *, commit: bool) -> AbstractAsyncContextManager[Transaction]:
+        """One transaction for several use cases that each call the architecture service."""
+        ...
+
 
 class DocumentRepository(Protocol):
     """Persistence for the markdown attached to elements, and for its index.
@@ -459,15 +468,164 @@ class DiagramRepository(Protocol):
 
     async def delete(self, diagram_id: UUID, *, audit: AuditOf[Diagram]) -> bool: ...
 
+    async def objects_of(self, diagram_id: UUID) -> tuple[DiagramObject, ...]: ...
+
+    async def edges_of(self, diagram_id: UUID) -> tuple[DiagramEdge, ...]: ...
+
     async def replace_layout(
+        self,
+        diagram_id: UUID,
+        scene: DiagramScene,
+        *,
+        revision: int,
+        now: datetime,
+        audit: AuditOf[DiagramScene],
+    ) -> int | None:
+        """Replace boxes, notes, groups and routes in one transaction.
+
+        The diagram row is locked first. If its stored revision is not
+        `revision` the write is refused with `DiagramRevisionConflictError`;
+        otherwise the revision moves on by one and is returned. `None` means
+        the diagram is gone. `audit` is given the scene it replaces.
+        A live view has no scene of its own: `DiagramLiveError`.
+        """
+        ...
+
+    async def freeze(
         self,
         diagram_id: UUID,
         nodes: Sequence[DiagramNode],
         *,
+        revision: int,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]],
-    ) -> bool:
-        """Replace every node of a diagram in one transaction; `False` if it is gone."""
+        audit: AuditOf[Diagram],
+    ) -> int | None:
+        """Store the boxes of a live view and make it frozen, in one transaction.
+
+        Under the row's lock: a view that is not live is `DiagramNotLiveError`, a stale
+        `revision` a `DiagramRevisionConflictError`. Returns the new revision, or `None`
+        if the diagram is gone. `audit` is given the diagram as it was.
+        """
+        ...
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, now: datetime, audit: AuditOf[Diagram]
+    ) -> int | None:
+        """Delete every box, note, group and route and make the view live again.
+
+        Same locking and refusals as `freeze` (a view that is not frozen is `DiagramLiveError`).
+        """
+        ...
+
+    async def names_using_source(
+        self, *, query_id: UUID | None = None, package_id: UUID | None = None
+    ) -> tuple[str, ...]:
+        """The diagrams that read this query or package."""
+        ...
+
+
+class TemplateRepository(Protocol):
+    """Persistence for diagram templates. Every write names its audit, with no default."""
+
+    async def list_all(self) -> tuple[DiagramTemplate, ...]: ...
+
+    async def get(self, template_id: UUID) -> DiagramTemplate | None: ...
+
+    async def add(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        """Store a template, or refuse a name already taken."""
+        ...
+
+    async def save(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        """`audit` is given the template as the transaction read it."""
+        ...
+
+    async def delete(self, template_id: UUID, *, audit: AuditOf[DiagramTemplate]) -> bool: ...
+
+
+class ViewSourceResolver(Protocol):
+    """Whatever answers "which elements does this query or package hold"."""
+
+    async def members(self, source: ViewSource, *, limit: int) -> SourceMembers:
+        """The first `limit` elements and the total; a missing source is a not-found."""
+        ...
+
+
+class StereotypeSource(Protocol):
+    """What the architecture service needs of the profiles: tags to show, rules to check."""
+
+    async def refs_of(self, element_ids: Sequence[UUID]) -> dict[UUID, tuple[StereotypeRef, ...]]:
+        """The stereotypes each element carries; an element with none may be absent."""
+        ...
+
+    async def stereotypes_of(self, element_id: UUID) -> tuple[Stereotype, ...]:
+        """The full stereotypes (with their property rules) one element carries."""
+        ...
+
+
+class ProfileRepository(StereotypeSource, Protocol):
+    """Persistence for profiles, their stereotypes and where they are applied.
+
+    Every write names its audit, with no default (`tests/unit/test_audit_coverage.py`):
+    the events of a profile write are given the profile as the transaction read it.
+    """
+
+    async def list_profiles(self) -> tuple[Profile, ...]: ...
+
+    async def get_profile(self, profile_id: UUID) -> Profile | None: ...
+
+    async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        """Store a profile and every stereotype it holds in one transaction."""
+        ...
+
+    async def save_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        """Overwrite the name, description and update time only."""
+        ...
+
+    async def delete_profile(self, profile_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        """Refused (`StereotypeInUseError`) while one of its stereotypes is applied."""
+        ...
+
+    async def list_stereotypes(self) -> tuple[Stereotype, ...]: ...
+
+    async def get_stereotype(self, stereotype_id: UUID) -> Stereotype | None: ...
+
+    async def add_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        """`audit` is given the profile as it was before the stereotype joined it."""
+        ...
+
+    async def replace_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        """Replace a stereotype and, in the same transaction, all its properties.
+
+        Re-typing a stereotype that is applied is refused (`StereotypeInUseError`).
+        """
+        ...
+
+    async def delete_stereotype(self, stereotype_id: UUID, *, audit: AuditOf[Profile]) -> bool: ...
+
+    async def applied_counts(self, stereotype_ids: Sequence[UUID]) -> dict[UUID, int]:
+        """How many elements carry each stereotype; those carried by none are absent."""
+        ...
+
+    async def set_for_element(
+        self,
+        element_id: UUID,
+        stereotype_ids: Sequence[UUID],
+        *,
+        audit: AuditOf[tuple[StereotypeRef, ...]],
+    ) -> None:
+        """Make the set of stereotypes an element carries exactly this one.
+
+        The element is locked and put to `guard_element_write` in the same
+        transaction, and touched (a new revision, an author) like any other write to it.
+        """
         ...
 
 

@@ -44,19 +44,26 @@ from ea.domain.audit import (
 )
 from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
+from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
+from ea.domain.diagram_templates import MAX_TEMPLATES, DiagramTemplate
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     BaselineNotFoundError,
+    DiagramLiveError,
     DiagramNotFoundError,
+    DiagramNotLiveError,
+    DiagramRevisionConflictError,
     DocumentNotFoundError,
     DomainError,
     DuplicateBaselineError,
     DuplicateDiagramError,
     DuplicateDocumentError,
     DuplicatePackageError,
+    DuplicateProfileError,
     DuplicateSavedQueryError,
+    DuplicateTemplateError,
     ElementNotFoundError,
     ImportInProgressError,
     InvalidQueryError,
@@ -64,10 +71,15 @@ from ea.domain.errors import (
     NotAuthorisedError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    ProfileNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
     SavedQueryNotFoundError,
+    StereotypeInUseError,
+    StereotypeNotFoundError,
     StoredFileNotFoundError,
+    TemplateLimitError,
+    TemplateNotFoundError,
     TooManyRefusedRowsError,
     WriteConflictError,
 )
@@ -80,8 +92,15 @@ from ea.domain.exchange import (
     identifier_of,
 )
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
+from ea.domain.generated_views import (
+    Generation,
+    PackageSource,
+    QuerySource,
+    SourceMembers,
+    ViewSource,
+)
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
-from ea.domain.model import Element, Relationship
+from ea.domain.model import Element, Relationship, StereotypeRef
 from ea.domain.packages import Package, PackageCounts, name_key
 from ea.domain.ports import (
     ElementChange,
@@ -96,6 +115,7 @@ from ea.domain.ports import (
     RowRefusal,
     Transaction,
 )
+from ea.domain.profiles import Profile, Stereotype
 from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
@@ -117,8 +137,10 @@ from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.reports import ReportService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 
 #: Every suite that needs a timestamp uses this one, so nothing depends on
@@ -1053,9 +1075,14 @@ class InMemoryDiagrams:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
         self.diagrams: dict[UUID, Diagram] = {}
         self.nodes: dict[UUID, tuple[DiagramNode, ...]] = {}
+        self.objects: dict[UUID, tuple[DiagramObject, ...]] = {}
+        self.edges: dict[UUID, tuple[DiagramEdge, ...]] = {}
+        self.revisions: dict[UUID, int] = {}
 
     def _counted(self, diagram: Diagram) -> Diagram:
-        return diagram.with_node_count(len(self.nodes.get(diagram.id, ())))
+        return diagram.with_node_count(len(self.nodes.get(diagram.id, ()))).with_revision(
+            self.revisions.get(diagram.id, 0)
+        )
 
     def _refuse_a_taken_name(self, diagram: Diagram) -> None:
         if any(d.name == diagram.name and d.id != diagram.id for d in self.diagrams.values()):
@@ -1101,26 +1128,352 @@ class InMemoryDiagrams:
             return False
         events = events_for(audit, stored)
         self.nodes.pop(diagram_id, None)
+        self.objects.pop(diagram_id, None)
+        self.edges.pop(diagram_id, None)
+        self.revisions.pop(diagram_id, None)
         del self.diagrams[diagram_id]
         self.audit_log.append(events)
         return True
 
+    async def objects_of(self, diagram_id: UUID) -> tuple[DiagramObject, ...]:
+        return self.objects.get(diagram_id, ())
+
+    async def edges_of(self, diagram_id: UUID) -> tuple[DiagramEdge, ...]:
+        return self.edges.get(diagram_id, ())
+
     async def replace_layout(
+        self,
+        diagram_id: UUID,
+        scene: DiagramScene,
+        *,
+        revision: int,
+        now: datetime,
+        audit: AuditOf[DiagramScene],
+    ) -> int | None:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        if stored.generation is Generation.LIVE:
+            msg = "a live view cannot be edited"
+            raise DiagramLiveError(msg)
+        before = DiagramScene(
+            nodes=self.nodes.get(diagram_id, ()),
+            objects=self.objects.get(diagram_id, ()),
+            edges=self.edges.get(diagram_id, ()),
+        )
+        events = events_for(audit, before)
+        self.nodes[diagram_id] = scene.nodes
+        self.objects[diagram_id] = scene.objects
+        self.edges[diagram_id] = scene.edges
+        self.revisions[diagram_id] = current + 1
+        self.diagrams[diagram_id] = stored.touched(now)
+        self.audit_log.append(events)
+        return current + 1
+
+    async def freeze(
         self,
         diagram_id: UUID,
         nodes: Sequence[DiagramNode],
         *,
+        revision: int,
         now: datetime,
-        audit: AuditOf[tuple[DiagramNode, ...]],
-    ) -> bool:
+        audit: AuditOf[Diagram],
+    ) -> int | None:
         stored = self.diagrams.get(diagram_id)
         if stored is None:
-            return False
-        events = events_for(audit, self.nodes.get(diagram_id, ()))
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        if stored.generation is not Generation.LIVE:
+            raise DiagramNotLiveError("not a live view")
+        events = events_for(audit, self._counted(stored))
         self.nodes[diagram_id] = tuple(nodes)
-        self.diagrams[diagram_id] = stored.touched(now)
+        self.revisions[diagram_id] = current + 1
+        self.diagrams[diagram_id] = replace(stored.touched(now), generation=Generation.FROZEN)
+        self.audit_log.append(events)
+        return current + 1
+
+    async def unfreeze(
+        self, diagram_id: UUID, *, revision: int, now: datetime, audit: AuditOf[Diagram]
+    ) -> int | None:
+        stored = self.diagrams.get(diagram_id)
+        if stored is None:
+            return None
+        current = self.revisions.get(diagram_id, 0)
+        if revision != current:
+            msg = f"the diagram is at revision {current}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
+        if stored.generation is not Generation.FROZEN:
+            raise DiagramLiveError("not a frozen view")
+        events = events_for(audit, self._counted(stored))
+        for table in (self.nodes, self.objects, self.edges):
+            table.pop(diagram_id, None)
+        self.revisions[diagram_id] = current + 1
+        self.diagrams[diagram_id] = replace(stored.touched(now), generation=Generation.LIVE)
+        self.audit_log.append(events)
+        return current + 1
+
+    async def names_using_source(
+        self, *, query_id: UUID | None = None, package_id: UUID | None = None
+    ) -> tuple[str, ...]:
+        def uses(diagram: Diagram) -> bool:
+            source = diagram.source
+            return (isinstance(source, QuerySource) and source.query_id == query_id) or (
+                isinstance(source, PackageSource) and source.package_id == package_id
+            )
+
+        return tuple(sorted(d.name for d in self.diagrams.values() if uses(d)))
+
+
+class InMemoryProfiles:
+    """A dictionary pretending to be the profile tables and the application of stereotypes.
+
+    It reproduces what the real store enforces by constraint or by lock: a taken name,
+    a stereotype still applied, and the guard every write to an element is put to.
+    """
+
+    def __init__(
+        self,
+        audit_log: InMemoryAuditLog | None = None,
+        graph: InMemoryRepository | None = None,
+    ) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        self.graph = graph
+        self.profiles: dict[UUID, Profile] = {}
+        self.applied: dict[UUID, tuple[UUID, ...]] = {}  # element id -> stereotype ids
+
+    def _all(self) -> tuple[Stereotype, ...]:
+        return tuple(s for p in self.profiles.values() for s in p.stereotypes)
+
+    def _used(self, stereotype_id: UUID) -> int:
+        return sum(stereotype_id in ids for ids in self.applied.values())
+
+    def _refuse_a_taken_name(self, profile: Profile) -> None:
+        if any(p.name == profile.name and p.id != profile.id for p in self.profiles.values()):
+            msg = f"the profile name {profile.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+
+    async def list_profiles(self) -> tuple[Profile, ...]:
+        return tuple(sorted(self.profiles.values(), key=lambda p: p.name))
+
+    async def get_profile(self, profile_id: UUID) -> Profile | None:
+        return self.profiles.get(profile_id)
+
+    async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        self._refuse_a_taken_name(profile)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = profile
+        self.audit_log.append(events)
+        return profile
+
+    async def save_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        stored = self.profiles.get(profile.id)
+        if stored is None:
+            raise ProfileNotFoundError(str(profile.id))
+        self._refuse_a_taken_name(profile)
+        events = events_for(audit, stored)
+        self.profiles[profile.id] = replace(profile, stereotypes=stored.stereotypes)
+        self.audit_log.append(events)
+        return profile
+
+    async def delete_profile(self, profile_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        stored = self.profiles.get(profile_id)
+        if stored is None:
+            return False
+        if any(self._used(s.id) for s in stored.stereotypes):
+            msg = f"the profile {stored.name!r} is applied to elements"
+            raise StereotypeInUseError(msg)
+        events = events_for(audit, stored)
+        del self.profiles[profile_id]
         self.audit_log.append(events)
         return True
+
+    async def list_stereotypes(self) -> tuple[Stereotype, ...]:
+        return tuple(sorted(self._all(), key=lambda s: s.name))
+
+    async def get_stereotype(self, stereotype_id: UUID) -> Stereotype | None:
+        return next((s for s in self._all() if s.id == stereotype_id), None)
+
+    async def add_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        profile = self.profiles[stereotype.profile_id]
+        if any(s.name == stereotype.name for s in profile.stereotypes):
+            msg = f"the stereotype name {stereotype.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = replace(profile, stereotypes=(*profile.stereotypes, stereotype))
+        self.audit_log.append(events)
+        return stereotype
+
+    async def replace_stereotype(
+        self, stereotype: Stereotype, *, audit: AuditOf[Profile]
+    ) -> Stereotype:
+        profile = self.profiles[stereotype.profile_id]
+        current = next(s for s in profile.stereotypes if s.id == stereotype.id)
+        if any(s.name == stereotype.name and s.id != stereotype.id for s in profile.stereotypes):
+            msg = f"the stereotype name {stereotype.name!r} is already taken"
+            raise DuplicateProfileError(msg)
+        if current.base_type is not stereotype.base_type and self._used(current.id):
+            msg = f"the stereotype {current.name!r} is applied to elements"
+            raise StereotypeInUseError(msg)
+        events = events_for(audit, profile)
+        self.profiles[profile.id] = replace(
+            profile,
+            stereotypes=tuple(
+                stereotype if s.id == stereotype.id else s for s in profile.stereotypes
+            ),
+        )
+        self.audit_log.append(events)
+        return stereotype
+
+    async def delete_stereotype(self, stereotype_id: UUID, *, audit: AuditOf[Profile]) -> bool:
+        for profile in self.profiles.values():
+            if any(s.id == stereotype_id for s in profile.stereotypes):
+                if self._used(stereotype_id):
+                    msg = "the stereotype is applied to elements"
+                    raise StereotypeInUseError(msg)
+                events = events_for(audit, profile)
+                self.profiles[profile.id] = replace(
+                    profile,
+                    stereotypes=tuple(s for s in profile.stereotypes if s.id != stereotype_id),
+                )
+                self.audit_log.append(events)
+                return True
+        return False
+
+    async def applied_counts(self, stereotype_ids: Sequence[UUID]) -> dict[UUID, int]:
+        counts = {sid: self._used(sid) for sid in stereotype_ids}
+        return {sid: n for sid, n in counts.items() if n}
+
+    async def set_for_element(
+        self,
+        element_id: UUID,
+        stereotype_ids: Sequence[UUID],
+        *,
+        audit: AuditOf[tuple[StereotypeRef, ...]],
+    ) -> None:
+        element = self.graph.elements.get(element_id) if self.graph is not None else None
+        if self.graph is not None and element is None:
+            raise ElementNotFoundError(str(element_id))
+        if element is not None:
+            guard_element_write(element, WriteKind.STEREOTYPES)
+        wanted = tuple(dict.fromkeys(stereotype_ids))
+        known = {s.id: s for s in self._all()}
+        for sid in wanted:
+            if sid not in known:
+                raise StereotypeNotFoundError(str(sid))
+            if element is not None and known[sid].base_type is not element.element_type:
+                msg = (
+                    f"stereotype {known[sid].name!r} does not apply to {element.element_type.value}"
+                )
+                raise ValueError(msg)
+        before = (await self.refs_of([element_id])).get(element_id, ())
+        events = events_for(audit, before)
+        self.applied[element_id] = wanted
+        self.audit_log.append(events)
+        if self.graph is not None and element_id in self.graph.elements:
+            self.graph.touch([element_id], events)
+
+    async def refs_of(self, element_ids: Sequence[UUID]) -> dict[UUID, tuple[StereotypeRef, ...]]:
+        found: dict[UUID, tuple[StereotypeRef, ...]] = {}
+        known = {s.id: s for s in self._all()}
+        for element_id in element_ids:
+            stereotypes = [known[sid] for sid in self.applied.get(element_id, ()) if sid in known]
+            if stereotypes:
+                found[element_id] = tuple(s.ref for s in sorted(stereotypes, key=lambda s: s.name))
+        return found
+
+    async def stereotypes_of(self, element_id: UUID) -> tuple[Stereotype, ...]:
+        known = {s.id: s for s in self._all()}
+        return tuple(known[sid] for sid in self.applied.get(element_id, ()) if sid in known)
+
+
+class InMemoryTemplates:
+    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+        self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        self.templates: dict[UUID, DiagramTemplate] = {}
+
+    def _refuse_a_full_library(self) -> None:
+        if len(self.templates) >= MAX_TEMPLATES:
+            msg = f"the library holds {MAX_TEMPLATES} templates at most"
+            raise TemplateLimitError(msg)
+
+    def _refuse_a_taken_name(self, template: DiagramTemplate) -> None:
+        if any(t.name == template.name and t.id != template.id for t in self.templates.values()):
+            msg = f"a template is already named {template.name!r}"
+            raise DuplicateTemplateError(msg)
+
+    async def list_all(self) -> tuple[DiagramTemplate, ...]:
+        return tuple(sorted(self.templates.values(), key=lambda t: t.name))
+
+    async def get(self, template_id: UUID) -> DiagramTemplate | None:
+        return self.templates.get(template_id)
+
+    async def add(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        self._refuse_a_full_library()
+        self._refuse_a_taken_name(template)
+        events = events_for(audit, template)
+        self.templates[template.id] = template
+        self.audit_log.append(events)
+        return template
+
+    async def save(
+        self, template: DiagramTemplate, *, audit: AuditOf[DiagramTemplate]
+    ) -> DiagramTemplate:
+        stored = self.templates.get(template.id)
+        if stored is None:
+            raise TemplateNotFoundError(str(template.id))
+        self._refuse_a_taken_name(template)
+        events = events_for(audit, stored)
+        self.templates[template.id] = template
+        self.audit_log.append(events)
+        return template
+
+    async def delete(self, template_id: UUID, *, audit: AuditOf[DiagramTemplate]) -> bool:
+        stored = self.templates.get(template_id)
+        if stored is None:
+            return False
+        events = events_for(audit, stored)
+        del self.templates[template_id]
+        self.audit_log.append(events)
+        return True
+
+
+class InMemoryViewSources:
+    """The queries and packages a generated view reads, as a dictionary of answers."""
+
+    def __init__(self) -> None:
+        self.answers: dict[ViewSource, list[UUID]] = {}
+
+    async def members(self, source: ViewSource, *, limit: int) -> SourceMembers:
+        if source not in self.answers:
+            msg = f"no such source: {source}"
+            raise ElementNotFoundError(msg)
+        ids = self.answers[source]
+        return SourceMembers(tuple(ids[:limit]), total=len(ids))
+
+
+async def lay_out(
+    service: DiagramService,
+    diagram_id: UUID,
+    nodes: Sequence[DiagramNode],
+    objects: Sequence[DiagramObject] = (),
+    edges: Sequence[DiagramEdge] = (),
+) -> int:
+    """Save a scene on the diagram's *current* revision — the single-writer case."""
+    current = await service.get(diagram_id)
+    return await service.replace_layout(
+        diagram_id, revision=current.revision, nodes=nodes, objects=objects, edges=edges
+    )
 
 
 class InMemoryBaselines:
@@ -2013,9 +2366,36 @@ def diagrams(audit_log: InMemoryAuditLog) -> InMemoryDiagrams:
 
 
 @pytest.fixture
-def service(repository: InMemoryRepository) -> ArchitectureService:
-    """The service wired to the in-memory graph and to a clock that never moves."""
-    return ArchitectureService(repository, clock=lambda: FIXED_NOW)
+def templates(audit_log: InMemoryAuditLog) -> InMemoryTemplates:
+    return InMemoryTemplates(audit_log)
+
+
+@pytest.fixture
+def template_service(
+    templates: InMemoryTemplates, service: ArchitectureService, diagram_service: DiagramService
+) -> TemplateService:
+    return TemplateService(templates, service, diagram_service, clock=lambda: FIXED_NOW)
+
+
+@pytest.fixture
+def view_sources() -> InMemoryViewSources:
+    return InMemoryViewSources()
+
+
+@pytest.fixture
+def profiles(audit_log: InMemoryAuditLog, repository: InMemoryRepository) -> InMemoryProfiles:
+    return InMemoryProfiles(audit_log, repository)
+
+
+@pytest.fixture
+def service(repository: InMemoryRepository, profiles: InMemoryProfiles) -> ArchitectureService:
+    """The service wired to the in-memory graph, a clock that never moves, and the profiles."""
+    return ArchitectureService(repository, clock=lambda: FIXED_NOW, stereotypes=profiles)
+
+
+@pytest.fixture
+def profile_service(profiles: InMemoryProfiles, service: ArchitectureService) -> ProfileService:
+    return ProfileService(profiles, service, clock=lambda: FIXED_NOW)
 
 
 @pytest.fixture
@@ -2084,9 +2464,14 @@ def exchange_service(
 
 @pytest.fixture
 def diagram_service(
-    diagrams: InMemoryDiagrams, service: ArchitectureService, packages: InMemoryPackages
+    diagrams: InMemoryDiagrams,
+    service: ArchitectureService,
+    packages: InMemoryPackages,
+    view_sources: InMemoryViewSources,
 ) -> DiagramService:
-    return DiagramService(diagrams, service, packages=packages, clock=lambda: FIXED_NOW)
+    return DiagramService(
+        diagrams, service, packages=packages, clock=lambda: FIXED_NOW, sources=view_sources
+    )
 
 
 @pytest.fixture

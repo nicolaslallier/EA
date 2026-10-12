@@ -17,6 +17,7 @@ from ea.db.models.chunk import DocumentChunk
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.archimate import RelationshipType as R
+from ea.domain.diagram_objects import DiagramScene
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.model import Element, Relationship
@@ -70,7 +71,8 @@ async def test_deleting_an_element_takes_its_links_documents_passages_and_boxes(
     )
     await diagrams.replace_layout(
         diagram.id,
-        [DiagramNode(doomed.id, 0, 0), DiagramNode(spared.id, 1, 1)],
+        DiagramScene(nodes=(DiagramNode(doomed.id, 0, 0), DiagramNode(spared.id, 1, 1))),
+        revision=0,
         now=FIXED_NOW,
         audit=(),
     )

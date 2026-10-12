@@ -5,12 +5,13 @@
 // (`?diagram=`, `?element=`), so an editor can be linked to and the back button
 // leaves a diagram. Opening a diagram pushes a history entry; selecting an
 // element only replaces one, or every click would bury the list under it.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { messageOf } from '../../lib/api'
+import { ApiError, api, messageOf, unwrap } from '../../lib/api'
 import { useMe } from '../../lib/me'
-import type { Point } from '../../lib/diagramGeometry'
+import { download, exportSize, rasterize, serializeSvg, type ExportFormat } from '../../lib/diagramExport'
+import type { AlignMode, DistributeAxis, Point } from '../../lib/diagramGeometry'
 import { BOX_HEIGHT } from '../../lib/graphLayout'
 import ElementDetail from '../elements/ElementDetail.vue'
 import { useElementDetail } from '../elements/useElementDetail'
@@ -20,11 +21,22 @@ import ReportDialog from '../reports/ReportDialog.vue'
 import { ALL, ROOT } from '../packages/packageTree'
 import { usePackages } from '../packages/usePackages'
 import { useAsOf } from '../../lib/asof'
+import { useSavedQueries } from '../search/useSavedQueries'
+import { verbOf } from '../relationships/labels'
+import AnnotationPalette from './AnnotationPalette.vue'
 import DiagramCanvas from './DiagramCanvas.vue'
+import ObjectInspector from './ObjectInspector.vue'
+import DiagramToolbar from './DiagramToolbar.vue'
+import { buildExportScene } from './exportScene'
+import { useSelection } from './useSelection'
 import ElementPalette from './ElementPalette.vue'
 import LinkPopover from './LinkPopover.vue'
-import { useDiagram, useElementPalette, type ElementRead } from './useDiagram'
+import InstantiateWizard from './InstantiateWizard.vue'
+import NewViewForm from './NewViewForm.vue'
+import TemplateLibrary from './TemplateLibrary.vue'
+import { useDiagram, useElementPalette, type ElementRead, type ViewSource } from './useDiagram'
 import { useDiagrams, type DiagramSummaryRead } from './useDiagrams'
+import { useTemplates, type DiagramTemplateRead, type InstantiateRequest } from './useTemplates'
 
 const route = useRoute()
 const { asOf } = useAsOf()
@@ -34,7 +46,42 @@ const editor = useDiagram()
 const palette = useElementPalette()
 const metamodel = useMetamodel()
 const detail = useElementDetail()
+const selection = useSelection()
+const exportError = ref('')
+const selectedObjectId = ref('')
+const selectedEdgeId = ref('')
+const selectedObject = computed(() => editor.objects.value.find((item) => item.id === selectedObjectId.value))
+const selectedEdge = computed(() => {
+  const link = editor.relationships.value.find((candidate) => candidate.id === selectedEdgeId.value)
+  if (!link) {
+    return undefined
+  }
+  return {
+    relationshipId: link.id,
+    label: verbOf(link.relationship_type, link.access_type),
+    bends: editor.edges.value.find((edge) => edge.relationship_id === link.id)?.waypoints.length ?? 0,
+  }
+})
+const childrenOfSelectedGroup = computed(() =>
+  editor.nodes.value
+    .filter((node) => node.parent_object_id === selectedObjectId.value)
+    .flatMap((node) => {
+      const element = editor.byId.value.get(node.element_id)
+      return element ? [{ id: element.id, name: element.name }] : []
+    }),
+)
+const anchorChoices = computed(() => editor.boxes.value.map((box) => ({ id: box.element.id, name: box.element.name })))
 const packages = usePackages()
+const savedQueries = useSavedQueries()
+const creatingView = ref(false)
+const removeGone = ref(false)
+const confirmingThaw = ref(false)
+const viewFailure = ref('')
+const templates = useTemplates()
+const savingTemplate = ref(false)
+const templateName = ref('')
+const wizardTemplate = ref<DiagramTemplateRead | null>(null)
+const wizardFailure = ref('')
 // The API refuses a reader's write anyway (docs/adr/0032); this only spares
 // them controls that could not work — every one below changes a stored diagram.
 const { canWrite } = useMe()
@@ -92,8 +139,40 @@ const saveState = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([metamodel.load(), packages.load()])
+  window.addEventListener('keydown', onShortcut)
+  await Promise.all([
+    metamodel.load(),
+    packages.load(),
+    templates.load(),
+    canWrite.value ? savedQueries.load() : undefined,
+  ])
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onShortcut)
+})
+
+/** Ctrl/Cmd+Z undoes, +Shift or Y redoes — never while typing in a field, never for a reader. */
+function onShortcut(event: KeyboardEvent): void {
+  if (!canWrite.value || editor.live.value || !(event.ctrlKey || event.metaKey)) {
+    return
+  }
+  const target = event.target as HTMLElement | null
+  if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+    return
+  }
+  const key = event.key.toLowerCase()
+  if (key === 'z' && event.shiftKey) {
+    event.preventDefault()
+    editor.redo()
+  } else if (key === 'z') {
+    event.preventDefault()
+    editor.undo()
+  } else if (key === 'y') {
+    event.preventDefault()
+    editor.redo()
+  }
+}
 
 watch([packageParam, withSubpackages], async () => {
   applyFilters()
@@ -106,6 +185,9 @@ watch(
   [diagramId, asOf],
   async ([id]) => {
     link.value = null
+    selection.clear()
+    selectedObjectId.value = ''
+    selectedEdgeId.value = ''
     if (!id) {
       editor.close()
       await list.load()
@@ -203,6 +285,203 @@ function onConnect(sourceId: string, targetId: string): void {
     link.value = { source, target }
   }
 }
+function onSelect(elementId: string): void {
+  selection.set([elementId])
+  select(elementId)
+}
+
+function onSelectMany(ids: string[]): void {
+  selection.set(ids)
+  if (ids.length === 1) {
+    select(ids[0])
+  } else {
+    deselect()
+  }
+}
+
+function removeSelected(ids: string[]): void {
+  editor.removeMany(ids)
+  selection.clear()
+  deselect()
+}
+
+function arrange(mode: AlignMode): void {
+  editor.align(selection.ids.value, mode)
+}
+
+function spread(axis: DistributeAxis): void {
+  editor.distribute(selection.ids.value, axis)
+}
+
+function addAnnotation(kind: 'note' | 'group'): void {
+  const offset = editor.objects.value.length * 24
+  selectedObjectId.value = editor.addObject(kind, { x: 40 + offset, y: 40 + offset })
+  selectedEdgeId.value = ''
+}
+
+function selectObject(id: string): void {
+  selectedObjectId.value = id
+  selectedEdgeId.value = ''
+}
+
+function selectEdge(id: string): void {
+  selectedEdgeId.value = id
+  selectedObjectId.value = ''
+}
+
+function removeSelectedObject(): void {
+  editor.removeObject(selectedObjectId.value)
+  selectedObjectId.value = ''
+}
+
+function onLinkContent(sourceId: string, targetId: string): void {
+  onConnect(sourceId, targetId)
+}
+
+/** A stereotype or one of its values changed: the detail and the boxes drawn from it are stale. */
+function refreshAfterStereotype(): void {
+  void detail.open(selectedId.value)
+  void editor.open(diagramId.value, asOf.value)
+}
+
+async function createView(payload: { name: string; source: ViewSource; frozen: boolean }): Promise<void> {
+  viewFailure.value = ''
+  try {
+    const created = unwrap(await api.POST('/diagrams/generate', { body: { name: payload.name, source: payload.source } }))
+    if (payload.frozen) {
+      await editor.open(created.id)
+      await editor.freeze()
+    }
+    creatingView.value = false
+    await router.push({ query: { diagram: created.id } })
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function thaw(discard: boolean): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await editor.unfreeze(discard)
+    confirmingThaw.value = false
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.code === 'has_annotations') {
+      confirmingThaw.value = true
+    } else {
+      viewFailure.value = messageOf(caught)
+    }
+  }
+}
+
+async function follow(): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await editor.applyDiff({ removeGone: removeGone.value })
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function saveTemplate(): Promise<void> {
+  const current = editor.diagram.value
+  if (!current || !templateName.value.trim()) {
+    return
+  }
+  viewFailure.value = ''
+  try {
+    await editor.flush()
+    await templates.saveFromDiagram(current.id, templateName.value.trim())
+    savingTemplate.value = false
+    templateName.value = ''
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+async function useTemplate(id: string): Promise<void> {
+  wizardFailure.value = ''
+  try {
+    wizardTemplate.value = await templates.read(id)
+  } catch (caught) {
+    listFailure.value = messageOf(caught)
+  }
+}
+
+async function removeTemplate(id: string): Promise<void> {
+  listFailure.value = ''
+  try {
+    await templates.remove(id)
+  } catch (caught) {
+    listFailure.value = messageOf(caught)
+  }
+}
+
+async function searchByType(term: string, elementType: string): Promise<ElementRead[]> {
+  const page = unwrap(
+    await api.GET('/elements', {
+      params: { query: { search: term, element_type: [elementType as never], limit: 10 } },
+    }),
+  )
+  return page.items
+}
+
+async function instantiate(payload: InstantiateRequest): Promise<void> {
+  const template = wizardTemplate.value
+  if (!template) {
+    return
+  }
+  wizardFailure.value = ''
+  try {
+    const created = await templates.instantiate(template.id, payload)
+    wizardTemplate.value = null
+    await router.push({ query: { diagram: created.id } })
+  } catch (caught) {
+    wizardFailure.value = messageOf(caught)
+  }
+}
+
+async function guarded(action: () => Promise<void>): Promise<void> {
+  viewFailure.value = ''
+  try {
+    await action()
+  } catch (caught) {
+    viewFailure.value = messageOf(caught)
+  }
+}
+
+function freezeView(): void {
+  void guarded(() => editor.freeze())
+}
+
+function refreshView(): void {
+  void guarded(() => editor.refresh())
+}
+
+function reload(): void {
+  void editor.reloadAfterConflict()
+}
+
+async function exportAs(format: ExportFormat): Promise<void> {
+  exportError.value = ''
+  const scene = buildExportScene(
+    editor.boxes.value,
+    editor.relationships.value,
+    metamodel.labelOf,
+    editor.edges.value,
+    editor.objects.value,
+  )
+  const svg = serializeSvg(scene)
+  const name = (editor.diagram.value?.name ?? 'diagramme').replace(/[^\p{L}\p{N}_-]+/gu, '-')
+  try {
+    if (format === 'svg') {
+      download(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${name}.svg`)
+    } else {
+      download(await rasterize(svg, exportSize(scene), format === 'png2' ? 2 : 1), `${name}.png`)
+    }
+  } catch (caught) {
+    exportError.value = messageOf(caught)
+  }
+}
 </script>
 
 <template>
@@ -239,6 +518,33 @@ function onConnect(sourceId: string, targetId: string): void {
         <button type="submit" :disabled="busy || !newName.trim()">Créer</button>
       </form>
 
+      <button v-if="canWrite" type="button" @click="creatingView = !creatingView">
+        Nouvelle vue
+      </button>
+      <NewViewForm
+        v-if="creatingView && canWrite"
+        :queries="savedQueries.queries.value.map((q) => ({ id: q.id, name: q.name }))"
+        :packages="packages.packages.value.map((p) => ({ id: p.id, path: p.path }))"
+        @create="createView"
+      />
+      <p v-if="viewFailure" class="banner banner--error" role="alert">{{ viewFailure }}</p>
+
+      <TemplateLibrary
+        :templates="templates.templates.value"
+        :can-write="canWrite"
+        @use="useTemplate"
+        @remove="removeTemplate"
+      />
+      <InstantiateWizard
+        v-if="wizardTemplate && canWrite"
+        :template="wizardTemplate"
+        :search="searchByType"
+        :type-label="metamodel.labelOf"
+        :failure="wizardFailure"
+        @submit="instantiate"
+        @cancel="wizardTemplate = null"
+      />
+
       <p v-if="listFailure" class="banner banner--error" role="alert">{{ listFailure }}</p>
       <p v-if="list.status.value === 'error'" class="banner banner--error" role="alert">
         {{ list.error.value }}
@@ -257,6 +563,9 @@ function onConnect(sourceId: string, targetId: string): void {
       <ul class="list">
         <li v-for="diagram in list.diagrams.value" :key="diagram.id">
           <RouterLink :to="{ query: { diagram: diagram.id } }">{{ diagram.name }}</RouterLink>
+          <span v-if="diagram.generation" class="hint">
+            {{ diagram.generation === 'live' ? 'vue vivante' : 'vue figée' }}
+          </span>
           <span class="hint">
             {{ diagram.node_count }} élément{{ diagram.node_count > 1 ? 's' : '' }}
           </span>
@@ -295,22 +604,61 @@ function onConnect(sourceId: string, targetId: string): void {
     <p v-if="editor.saveError.value" class="banner banner--error" role="alert">
       Disposition non enregistrée : {{ editor.saveError.value }}
     </p>
+    <p v-if="editor.conflict.value && !editor.reloaded.value" class="banner banner--error" role="alert">
+      Quelqu'un a enregistré ce diagramme avant toi : tes modifications n'ont pas été envoyées.
+      <button type="button" @click="reload">Recharger sa version</button>
+      <button type="button" class="secondary" @click="editor.discardMine()">
+        Abandonner mes modifications
+      </button>
+    </p>
+    <p v-if="editor.reloaded.value" class="banner" role="status">
+      Sa version est chargée.
+      <button type="button" @click="editor.pasteMine()">Recoller mes modifications</button>
+      <button type="button" class="secondary" @click="editor.discardMine()">Les abandonner</button>
+    </p>
+    <p v-if="editor.live.value" class="banner" role="status">
+      Vue vivante : recalculée à chaque ouverture depuis sa source, en lecture seule.
+      <button v-if="canWrite" type="button" @click="freezeView">Figer</button>
+    </p>
+    <p v-else-if="editor.generation.value === 'frozen'" class="banner" role="status">
+      Vue figée depuis sa source.
+      <template v-if="canWrite">
+        <button type="button" @click="refreshView">Rafraîchir</button>
+        <button type="button" class="secondary" @click="thaw(false)">Dégeler</button>
+      </template>
+    </p>
+    <p v-if="confirmingThaw" class="banner banner--confirm" role="alert">
+      Dégeler supprimera les notes, les groupes et les tracés dessinés sur cette vue.
+      <button type="button" @click="thaw(true)">Dégeler quand même</button>
+      <button type="button" class="secondary" @click="confirmingThaw = false">Renoncer</button>
+    </p>
+    <p v-if="editor.diff.value" class="banner" role="status">
+      {{ editor.diff.value.added.length }} à ajouter, {{ editor.diff.value.removed.length }}
+      disparu{{ editor.diff.value.removed.length > 1 ? 's' : '' }}.
+      <label v-if="editor.diff.value.removed.length > 0">
+        <input v-model="removeGone" type="checkbox" /> Retirer ceux qui ont disparu
+      </label>
+      <button type="button" @click="follow">Appliquer</button>
+    </p>
+    <p v-if="viewFailure" class="banner banner--error" role="alert">{{ viewFailure }}</p>
 
     <div
       v-if="editor.diagram.value"
       class="editor diagram-editor"
       :class="{ 'editor--reading': !canWrite }"
     >
-      <ElementPalette
-        v-if="canWrite"
-        :items="palette.items.value"
-        :total="palette.total.value"
-        :placed="editor.placed.value"
-        :error="palette.error.value"
-        :type-label="metamodel.labelOf"
-        @search="(term) => palette.search(term)"
-        @add="onAdd"
-      />
+      <div v-if="canWrite && !editor.live.value" class="editor__left">
+        <ElementPalette
+          :items="palette.items.value"
+          :total="palette.total.value"
+          :placed="editor.placed.value"
+          :error="palette.error.value"
+          :type-label="metamodel.labelOf"
+          @search="(term) => palette.search(term)"
+          @add="onAdd"
+        />
+        <AnnotationPalette @add-note="addAnnotation('note')" @add-group="addAnnotation('group')" />
+      </div>
 
       <div class="editor__centre">
         <LinkPopover
@@ -322,24 +670,75 @@ function onConnect(sourceId: string, targetId: string): void {
           @done="link = null"
           @cancel="link = null"
         />
+        <DiagramToolbar
+          :can-write="canWrite && !editor.live.value"
+          :can-undo="editor.canUndo.value"
+          :can-redo="editor.canRedo.value"
+          :selection-count="selection.ids.value.length"
+          @undo="editor.undo"
+          @redo="editor.redo"
+          @align="arrange"
+          @distribute="spread"
+          @export="exportAs"
+          @save-template="savingTemplate = true"
+        />
+        <form
+          v-if="savingTemplate && canWrite"
+          class="create"
+          aria-label="Enregistrer comme modèle"
+          @submit.prevent="saveTemplate"
+        >
+          <label for="template-name">Nom du modèle</label>
+          <input id="template-name" v-model="templateName" maxlength="200" autocomplete="off" />
+          <button type="submit" :disabled="!templateName.trim()">Enregistrer le modèle</button>
+          <button type="button" class="secondary" @click="savingTemplate = false">Renoncer</button>
+        </form>
+        <p v-if="exportError" class="banner banner--error" role="alert">{{ exportError }}</p>
         <DiagramCanvas
           :boxes="editor.boxes.value"
           :relationships="editor.relationships.value"
           :selected-id="selectedId"
           :type-label="metamodel.labelOf"
-          :readonly="!canWrite"
+          :readonly="!canWrite || editor.live.value"
           :inactive-ids="editor.inactiveIds.value"
+          :selection="selection.ids.value"
+          :objects="editor.objects.value"
+          :routed="editor.edges.value"
+          :selected-object-id="selectedObjectId"
+          :selected-edge-id="selectedEdgeId"
           @place="onPlace"
           @move="editor.move"
           @resize="editor.resize"
-          @moved="editor.persist"
-          @select="select"
+          @moved="editor.endGesture"
+          @select="onSelect"
+          @toggle="selection.toggle"
+          @select-many="onSelectMany"
+          @remove-many="removeSelected"
           @remove="removeBox"
           @connect="onConnect"
+          @select-object="selectObject"
+          @select-edge="selectEdge"
+          @move-object="editor.moveObject"
+          @resize-object="editor.resizeObject"
+          @remove-object="editor.removeObject"
+          @bend-add="editor.addWaypoint"
+          @bend-move="editor.moveWaypoint"
+          @bend-remove="editor.removeWaypoint"
         />
       </div>
 
       <aside class="editor__detail">
+        <ObjectInspector
+          :item="selectedObject"
+          :edge="selectedEdge"
+          :anchors="anchorChoices"
+          :children="childrenOfSelectedGroup"
+          :can-write="canWrite"
+          @update="(patch) => editor.updateObject(selectedObjectId, patch)"
+          @remove="removeSelectedObject"
+          @straighten="editor.straighten(selectedEdgeId)"
+          @link="onLinkContent"
+        />
         <p v-if="!selectedId" class="hint">
           Sélectionne un élément pour voir son détail. Tire la poignée d'un élément sélectionné
           jusqu'à un autre pour les relier.
@@ -358,6 +757,7 @@ function onConnect(sourceId: string, targetId: string): void {
             :element="detail.element.value"
             :type-label="metamodel.labelOf(detail.element.value.element_type)"
             @close="deselect"
+            @changed="refreshAfterStereotype"
           />
         </template>
       </aside>
@@ -407,6 +807,12 @@ header h2 {
   grid-template-columns: minmax(0, 1fr) 16rem;
 }
 .editor__centre,
+.editor__left {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  align-content: start;
+}
 .editor__detail {
   display: grid;
   gap: 0.6rem;

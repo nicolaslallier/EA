@@ -113,6 +113,7 @@ async def test_a_save_and_a_link_write_their_events_with_them(engine_at_head: As
 async def test_a_removal_names_what_the_foreign_keys_take(
     engine_at_head: AsyncEngine,
 ) -> None:
+    from ea.domain.diagram_objects import DiagramScene
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.domain.documents import Document
     from ea.domain.ports import ElementRemoval
@@ -128,7 +129,13 @@ async def test_a_removal_names_what_the_foreign_keys_take(
     )
     diagrams = PostgresDiagramRepository(sessions)
     diagram = await diagrams.add(Diagram.create(name="Vue", now=NOW), audit=())
-    await diagrams.replace_layout(diagram.id, [DiagramNode(element.id, 0, 0)], now=NOW, audit=())
+    await diagrams.replace_layout(
+        diagram.id,
+        DiagramScene(nodes=(DiagramNode(element.id, 0, 0),)),
+        revision=0,
+        now=NOW,
+        audit=(),
+    )
     seen: list[ElementRemoval] = []
 
     def record(removal: ElementRemoval) -> tuple[()]:
@@ -172,6 +179,7 @@ async def test_a_document_and_its_event_commit_or_fail_together(
 
 
 async def test_a_diagram_layout_and_its_event_commit_together(engine_at_head: AsyncEngine) -> None:
+    from ea.domain.diagram_objects import DiagramScene
     from ea.domain.diagrams import Diagram, DiagramNode
     from ea.repositories.diagram_store import PostgresDiagramRepository
 
@@ -185,15 +193,21 @@ async def test_a_diagram_layout_and_its_event_commit_together(engine_at_head: As
         audit=(event_for(AuditAction.DIAGRAM_CREATED, None),),
     )
 
-    assert not await diagrams.replace_layout(
-        uuid4(),
-        [DiagramNode(element.id, 0, 0)],
-        now=NOW,
-        audit=(event_for(AuditAction.DIAGRAM_LAYOUT_REPLACED, None),),
+    scene = DiagramScene(nodes=(DiagramNode(element.id, 0, 0),))
+    assert (
+        await diagrams.replace_layout(
+            uuid4(),
+            scene,
+            revision=0,
+            now=NOW,
+            audit=(event_for(AuditAction.DIAGRAM_LAYOUT_REPLACED, None),),
+        )
+        is None
     )
     assert await diagrams.replace_layout(
         diagram.id,
-        [DiagramNode(element.id, 0, 0)],
+        scene,
+        revision=0,
         now=NOW,
         audit=(event_for(AuditAction.DIAGRAM_LAYOUT_REPLACED, diagram.id),),
     )

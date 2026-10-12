@@ -13,6 +13,7 @@ from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.audit import AuditAction, AuditEvent, AuditFilter
 from ea.domain.baselines import RestorePlan
+from ea.domain.diagram_objects import DiagramScene
 from ea.domain.errors import RestoreBlockedError, RestoreConflictError
 from ea.domain.model import Element
 from ea.repositories.baseline_store import PostgresBaselineRepository
@@ -52,7 +53,9 @@ async def test_a_restoration_recreates_reverts_deletes_and_leaves_one_trace(
         model.left.id, lambda e: e.rename("renamed", now=LATER), audit=()
     )
     await model.packages.move_elements([model.left.id], None, audit=())
-    await model.diagrams.replace_layout(model.diagram.id, [], now=LATER, audit=())
+    await model.diagrams.replace_layout(
+        model.diagram.id, DiagramScene(), revision=1, now=LATER, audit=()
+    )
     fresh = await model.graph.add_element(
         Element.create(element_type=E.NODE, name="fresh", now=LATER), audit=()
     )
@@ -69,6 +72,9 @@ async def test_a_restoration_recreates_reverts_deletes_and_leaves_one_trace(
         (model.left.id, 5.0)
     ]
     assert await events(model) == [AuditAction.BASELINE_RESTORED, AuditAction.BASELINE_CREATED]
+    # The boxes moved under the editors' feet: their copy is stale, so their next save is a 409.
+    diagram = await model.diagrams.get(model.diagram.id)
+    assert diagram is not None and diagram.revision == 3
 
 
 async def test_a_vanished_package_sends_the_element_to_the_root_and_violates_nothing(

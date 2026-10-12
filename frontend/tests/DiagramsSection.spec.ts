@@ -37,9 +37,12 @@ const READ: Route = {
   path: `/diagrams/${DIAGRAM_ID}`,
   body: {
     ...SUMMARY,
-    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46 }],
+    nodes: [{ element_id: A.id, x: 10, y: 20, width: 132, height: 46, parent_object_id: null, z: 0 }],
     elements: [A],
     relationships: [],
+    revision: 0,
+    objects: [],
+    edges: [],
   },
 }
 const PALETTE: Route = { path: '/elements', body: aPage([A, B]) }
@@ -50,7 +53,18 @@ const SAVE: Route = { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, sta
 const FINANCE = aPackage({ id: 'f', name: 'Finance', path: 'Finance' })
 const PACKAGES: Route = { path: '/packages', body: [FINANCE] }
 
-const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES]
+const TEMPLATES: Route = { path: '/diagram-templates', body: [] }
+
+const ROUTES = [LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL, SAVE, PACKAGES, TEMPLATES]
+
+function asAReader(): void {
+  vi.mocked(useMe).mockReturnValueOnce({
+    me: ref({ username: 'reader', can_write: false, can_approve: false }),
+    canWrite: computed(() => false),
+    error: ref(null),
+    load: vi.fn(() => Promise.resolve()),
+  })
+}
 
 async function open(query = ''): Promise<Router> {
   const router = createAppRouter(createMemoryHistory())
@@ -187,16 +201,80 @@ describe('DiagramsSection — the editor', () => {
   })
 })
 
-describe('DiagramsSection — a reader', () => {
-  function asAReader(): void {
-    vi.mocked(useMe).mockReturnValueOnce({
-      me: ref({ username: 'reader', can_write: false, can_approve: false }),
-      canWrite: computed(() => false),
-      error: ref(null),
-      load: vi.fn(() => Promise.resolve()),
-    })
-  }
+describe('DiagramsSection — annotations', () => {
+  it('adds a note from the annotation palette and saves it', async () => {
+    const calls = stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}`)
 
+    await fireEvent.click(await screen.findByRole('button', { name: 'Ajouter une note' }))
+
+    expect(await screen.findByLabelText('Texte de la note')).toBeInTheDocument()
+    await waitFor(
+      () => {
+        const put = calls.find((call) => call.method === 'PUT')
+        expect((put?.body as { objects: unknown[] }).objects).toHaveLength(1)
+      },
+      { timeout: 2000 },
+    )
+  })
+
+  it('offers to reload when a colleague saved first, and pastes my work back on request', async () => {
+    const calls = stubApi([
+      { method: 'PUT', path: `/diagrams/${DIAGRAM_ID}/layout`, status: 409,
+        body: { error: 'diagram_revision_conflict', detail: 'the diagram is at revision 5, not 0' } },
+      LIST, READ, PALETTE, METAMODEL_ROUTE, DETAIL,
+    ])
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Ajouter une note' }))
+
+    const banner = (
+      await screen.findByText(/quelqu'un a enregistré/i, {}, { timeout: 2000 })
+    ).closest('p') as HTMLElement
+    await fireEvent.click(within(banner).getByRole('button', { name: 'Recharger sa version' }))
+    await waitFor(() => expect(calls.filter((call) => call.url.pathname === `/diagrams/${DIAGRAM_ID}`).length).toBeGreaterThan(1))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Recoller mes modifications' }))
+
+    expect(screen.queryByText(/quelqu'un a enregistré/i)).toBeNull()
+  })
+})
+
+describe('DiagramsSection — the toolbar', () => {
+  it('undoes a removal from the toolbar and saves the restored layout', async () => {
+    const calls = stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}&element=${A.id}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retirer du diagramme' }))
+    const canvas = screen.getByRole('group', { name: /zone de dessin/i })
+    expect(within(canvas).queryByRole('button', { name: /Facturation/ })).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+
+    expect(await within(canvas).findByRole('button', { name: /Facturation/ })).toBeInTheDocument()
+    // The removal and its undo fall in one pause: a single save, of the restored layout.
+    await waitFor(() => expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(1), {
+      timeout: 3000,
+    })
+    const saved = calls.find((call) => call.method === 'PUT')?.body as {
+      nodes: { element_id: string }[]
+    }
+    expect(saved.nodes.map((node) => node.element_id)).toEqual([A.id])
+  })
+
+  it('undoes with Ctrl+Z', async () => {
+    stubApi(ROUTES)
+    await open(`?diagram=${DIAGRAM_ID}&element=${A.id}`)
+    await fireEvent.click(await screen.findByRole('button', { name: 'Retirer du diagramme' }))
+
+    await fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+
+    expect(
+      await within(screen.getByRole('group', { name: /zone de dessin/i })).findByRole('button', {
+        name: /Facturation/,
+      }),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('DiagramsSection — a reader', () => {
   it('lists and opens the diagrams, but is offered no way to create or delete one', async () => {
     stubApi(ROUTES)
     asAReader()
@@ -220,6 +298,28 @@ describe('DiagramsSection — a reader', () => {
     expect(screen.queryByLabelText(/relier « Facturation »/i)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retirer du diagramme' })).toBeNull()
     expect(screen.queryByText('Enregistré automatiquement.')).toBeNull()
+  })
+
+  it('shows no annotation palette and no inspector controls', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await screen.findByRole('group', { name: /zone de dessin/i })
+
+    expect(screen.queryByRole('button', { name: 'Ajouter une note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ajouter un groupe' })).toBeNull()
+  })
+
+  it('hides the whole editing toolbar, and Ctrl+Z does nothing', async () => {
+    stubApi(ROUTES)
+    asAReader()
+    await open(`?diagram=${DIAGRAM_ID}`)
+    await screen.findByRole('group', { name: /zone de dessin/i })
+
+    expect(screen.queryByRole('button', { name: 'Annuler' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Exporter en SVG' })).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    expect(screen.getByRole('button', { name: /Facturation/ })).toBeInTheDocument()
   })
 })
 
@@ -302,5 +402,84 @@ describe('DiagramsSection — the package tree', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Paquet introuvable.')
     expect(select).toHaveValue('root')
+  })
+})
+
+describe('DiagramsSection — generated views', () => {
+  const VIEW_ID = 'vvvvvvvv-0000-4000-8000-000000000000'
+  const SRC = { query_id: 'qqqqqqqq-0000-4000-8000-000000000000', package_id: null, recursive: false }
+  const viewRead = (generation: 'live' | 'frozen') => ({
+    ...SUMMARY, id: VIEW_ID, name: 'Périmètre', generation, source: SRC, revision: generation === 'frozen' ? 1 : 0,
+    objects: [], edges: [],
+    nodes: generation === 'frozen' ? [{ element_id: A.id, x: 24, y: 24, width: 132, height: 46, parent_object_id: null, z: 0 }] : [],
+    elements: [A], relationships: [],
+  })
+  const VIEW = (generation: 'live' | 'frozen'): Route => ({ path: `/diagrams/${VIEW_ID}`, body: viewRead(generation) })
+
+  it('says a live view is live, locks the canvas and offers to freeze it', async () => {
+    const calls = stubApi([VIEW('live'), PALETTE, METAMODEL_ROUTE, LIST,
+      { method: 'POST', path: `/diagrams/${VIEW_ID}/freeze`, body: viewRead('frozen') }])
+    await open(`?diagram=${VIEW_ID}`)
+
+    expect(await screen.findByText(/vue vivante/i)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /palette/i })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Figer' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.pathname.endsWith('/freeze'))).toBe(true))
+    expect(await screen.findByText(/vue figée/i)).toBeInTheDocument()
+  })
+
+  it('asks before thawing a view that carries annotations, then discards them on request', async () => {
+    const calls = stubApi([
+      VIEW('frozen'), PALETTE, METAMODEL_ROUTE, LIST,
+      { method: 'POST', path: `/diagrams/${VIEW_ID}/unfreeze`, status: 409,
+        body: { error: 'has_annotations', detail: 'would delete notes' } },
+    ])
+    await open(`?diagram=${VIEW_ID}`)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Dégeler' }))
+
+    const confirmation = await screen.findByText(/supprimera les notes/i)
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    await fireEvent.click(within(confirmation.closest('p') as HTMLElement).getByRole('button', { name: 'Dégeler quand même' }))
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2))
+    expect(calls.filter((c) => c.method === 'POST')[1].body).toEqual({
+      revision: 1,
+      discard_annotations: true,
+    })
+  })
+
+  it('shows a reader the banner and none of the buttons', async () => {
+    stubApi([VIEW('frozen'), PALETTE, METAMODEL_ROUTE, LIST])
+    asAReader()
+    await open(`?diagram=${VIEW_ID}`)
+
+    expect(await screen.findByText(/vue figée/i)).toBeInTheDocument()
+    for (const name of ['Figer', 'Rafraîchir', 'Dégeler']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+  })
+})
+
+describe('DiagramsSection — templates', () => {
+  it('saves the open diagram as a template under a name', async () => {
+    const calls = stubApi([
+      ...ROUTES,
+      {
+        method: 'POST',
+        path: `/diagrams/${DIAGRAM_ID}/as-template`,
+        status: 201,
+        body: { id: 't1', name: 'Modèle', description: '', body: {}, created_at: '', updated_at: '' },
+      },
+    ])
+    await open(`?diagram=${DIAGRAM_ID}`)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Enregistrer comme modèle' }))
+    await fireEvent.update(screen.getByLabelText('Nom du modèle'), 'Modèle')
+    await fireEvent.click(screen.getByRole('button', { name: 'Enregistrer le modèle' }))
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'Modèle', description: '' }),
+    )
   })
 })

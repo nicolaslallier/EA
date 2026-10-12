@@ -13,12 +13,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import UUID, uuid4
 
+from ea.domain.generated_views import Generation, ViewSource
 from ea.domain.model import reject_nul
 from ea.domain.packages import UNSET, Unset
 from ea.domain.ports import GraphView
+
+if TYPE_CHECKING:
+    from ea.domain.diagram_objects import DiagramEdge, DiagramObject
 
 MAX_DIAGRAM_NAME_LENGTH: Final = 200
 #: The size a box is drawn at until someone resizes it — the rings' own box.
@@ -45,13 +49,20 @@ def _clean_name(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DiagramNode:
-    """One box: an element, the top-left corner it is drawn at, and its size."""
+    """One box: an element, the top-left corner it is drawn at, and its size.
+
+    `parent_object_id` names the group (docs/adr/0069) the box is drawn inside,
+    `z` its stacking order. Both are presentation: a group is not an element and
+    creates no relationship.
+    """
 
     element_id: UUID
     x: float
     y: float
     width: float = DEFAULT_BOX_WIDTH
     height: float = DEFAULT_BOX_HEIGHT
+    parent_object_id: UUID | None = None
+    z: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +75,11 @@ class Diagram:
     created_at: datetime
     updated_at: datetime
     node_count: int = 0
+    #: Moves on by one at every saved scene: the optimistic-concurrency token (docs/adr/0069).
+    revision: int = 0
+    #: `None`: drawn by hand. Otherwise a view generated from `source` (docs/adr/0071).
+    generation: Generation | None = None
+    source: ViewSource | None = None
     #: The package that files this view; `None` is "at the root".
     package_id: UUID | None = None
 
@@ -75,7 +91,12 @@ class Diagram:
         now: datetime,
         description: str = "",
         package_id: UUID | None = None,
+        generation: Generation | None = None,
+        source: ViewSource | None = None,
     ) -> Diagram:
+        if (generation is None) != (source is None):
+            msg = "a generated view has a source and a generation, a hand-drawn one has neither"
+            raise ValueError(msg)
         return cls(
             id=uuid4(),
             name=_clean_name(name),
@@ -83,6 +104,8 @@ class Diagram:
             created_at=now,
             updated_at=now,
             package_id=package_id,
+            generation=generation,
+            source=source,
         )
 
     def revise(
@@ -113,6 +136,9 @@ class Diagram:
     def with_node_count(self, node_count: int) -> Diagram:
         return replace(self, node_count=node_count)
 
+    def with_revision(self, revision: int) -> Diagram:
+        return replace(self, revision=revision)
+
 
 @dataclass(frozen=True, slots=True)
 class DiagramDetail:
@@ -121,6 +147,8 @@ class DiagramDetail:
     diagram: Diagram
     nodes: tuple[DiagramNode, ...]
     graph: GraphView
+    objects: tuple[DiagramObject, ...] = ()
+    edges: tuple[DiagramEdge, ...] = ()
     #: On the `as_of` day asked, what is out of period - greyed by the SPA, never removed.
     inactive_elements: frozenset[UUID] = frozenset()
     inactive_relationships: frozenset[UUID] = frozenset()

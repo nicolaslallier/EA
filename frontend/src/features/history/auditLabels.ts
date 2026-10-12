@@ -17,6 +17,13 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'element.reopened': 'Élément rouvert',
   'element.locked': 'Élément verrouillé',
   'element.unlocked': 'Élément déverrouillé',
+  'element.stereotypes_changed': 'Stéréotypes d\'un élément modifiés',
+  'profile.created': 'Profil créé',
+  'profile.updated': 'Profil modifié',
+  'profile.deleted': 'Profil supprimé',
+  'template.created': 'Modèle créé',
+  'template.updated': 'Modèle modifié',
+  'template.deleted': 'Modèle supprimé',
   'relationship.created': 'Relation créée',
   'relationship.updated': 'Relation modifiée',
   'relationship.deleted': 'Relation supprimée',
@@ -24,6 +31,9 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'diagram.updated': 'Diagramme renommé',
   'diagram.deleted': 'Diagramme supprimé',
   'diagram.layout_replaced': 'Diagramme mis en page',
+  'diagram.generated': 'Vue générée',
+  'diagram.frozen': 'Vue figée',
+  'diagram.unfrozen': 'Vue dégelée',
   'document.attached': 'Document attaché',
   'document.revised': 'Document révisé',
   'document.discarded': 'Document retiré',
@@ -47,6 +57,8 @@ export const KIND_LABELS: Record<EntityKind, string> = {
   diagram: 'Diagramme',
   document: 'Document',
   baseline: 'Baseline',
+  profile: 'Profil',
+  template: 'Modèle de diagramme',
 }
 
 /** A hand-written URL may name anything: only what the labels know is a filter. */

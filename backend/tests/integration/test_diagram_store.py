@@ -18,8 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ea.db.models.diagram import DiagramNodeRecord
 from ea.db.postgres import create_session_factory
+from ea.domain.diagram_objects import DiagramScene
 from ea.domain.diagrams import Diagram, DiagramNode
-from ea.domain.errors import DiagramNotFoundError, DuplicateDiagramError, PackageNotFoundError
+from ea.domain.errors import (
+    DiagramNotFoundError,
+    DiagramRevisionConflictError,
+    DuplicateDiagramError,
+    PackageNotFoundError,
+)
 from ea.domain.packages import Package
 from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.package_store import PostgresPackageRepository
@@ -38,15 +44,24 @@ class DiagramsOnStoredElements(PostgresDiagramRepository):
         super().__init__(create_session_factory(engine))
         self._engine = engine
 
-    async def replace_layout(
+    async def lay_out(
         self, diagram_id: UUID, nodes: Sequence[DiagramNode], *, now: datetime
     ) -> bool:
+        """Save `nodes` on the current revision; `False` if the diagram is gone."""
         await ensure_elements(self._engine, *(node.element_id for node in nodes))
-        return await super().replace_layout(diagram_id, nodes, now=now, audit=())
+        current = await self.get(diagram_id)
+        stored = await super().replace_layout(
+            diagram_id,
+            DiagramScene(nodes=tuple(nodes)),
+            revision=current.revision if current else 0,
+            now=now,
+            audit=(),
+        )
+        return stored is not None
 
 
 @pytest.fixture
-def diagrams(engine_at_head: AsyncEngine) -> PostgresDiagramRepository:
+def diagrams(engine_at_head: AsyncEngine) -> DiagramsOnStoredElements:
     return DiagramsOnStoredElements(engine_at_head)
 
 
@@ -54,7 +69,7 @@ def a_diagram(name: str = "Vente") -> Diagram:
     return Diagram.create(name=name, description="é", now=FIXED_NOW)
 
 
-async def test_a_diagram_survives_the_round_trip(diagrams: PostgresDiagramRepository) -> None:
+async def test_a_diagram_survives_the_round_trip(diagrams: DiagramsOnStoredElements) -> None:
     stored = await diagrams.add(a_diagram(), audit=())
 
     read = await diagrams.get(stored.id)
@@ -64,7 +79,7 @@ async def test_a_diagram_survives_the_round_trip(diagrams: PostgresDiagramReposi
 
 
 async def test_a_name_taken_twice_hits_the_constraint_and_leaves_the_store_usable(
-    diagrams: PostgresDiagramRepository,
+    diagrams: DiagramsOnStoredElements,
 ) -> None:
     await diagrams.add(a_diagram("Vente"), audit=())
 
@@ -76,7 +91,7 @@ async def test_a_name_taken_twice_hits_the_constraint_and_leaves_the_store_usabl
 
 
 async def test_a_rename_onto_a_taken_name_hits_the_constraint(
-    diagrams: PostgresDiagramRepository,
+    diagrams: DiagramsOnStoredElements,
 ) -> None:
     await diagrams.add(a_diagram("Vente"), audit=())
     other = await diagrams.add(a_diagram("Achat"), audit=())
@@ -85,17 +100,17 @@ async def test_a_rename_onto_a_taken_name_hits_the_constraint(
         await diagrams.save(other.revise(name="Vente", now=LATER), audit=())
 
 
-async def test_saving_a_diagram_that_is_gone_says_so(diagrams: PostgresDiagramRepository) -> None:
+async def test_saving_a_diagram_that_is_gone_says_so(diagrams: DiagramsOnStoredElements) -> None:
     with pytest.raises(DiagramNotFoundError):
         await diagrams.save(a_diagram(), audit=())
 
 
-async def test_a_layout_is_replaced_whole_and_counted(diagrams: PostgresDiagramRepository) -> None:
+async def test_a_layout_is_replaced_whole_and_counted(diagrams: DiagramsOnStoredElements) -> None:
     diagram = await diagrams.add(a_diagram(), audit=())
     first, second = uuid4(), uuid4()
-    await diagrams.replace_layout(diagram.id, [DiagramNode(first, 0, 0)], now=FIXED_NOW)
+    await diagrams.lay_out(diagram.id, [DiagramNode(first, 0, 0)], now=FIXED_NOW)
 
-    replaced = await diagrams.replace_layout(
+    replaced = await diagrams.lay_out(
         diagram.id, [DiagramNode(second, 1.25, -3.5, width=240, height=90.5)], now=LATER
     )
 
@@ -109,7 +124,7 @@ async def test_a_layout_is_replaced_whole_and_counted(diagrams: PostgresDiagramR
 
 
 async def test_concurrent_layouts_of_one_diagram_queue_instead_of_colliding(
-    diagrams: PostgresDiagramRepository,
+    diagrams: DiagramsOnStoredElements,
 ) -> None:
     """Autosave fires on every drag: two saves of the same boxes must not race.
 
@@ -119,33 +134,38 @@ async def test_concurrent_layouts_of_one_diagram_queue_instead_of_colliding(
     diagram = await diagrams.add(a_diagram(), audit=())
     moved = uuid4()
 
-    await asyncio.gather(
+    outcomes = await asyncio.gather(
         *(
-            diagrams.replace_layout(diagram.id, [DiagramNode(moved, step, step)], now=LATER)
+            diagrams.lay_out(diagram.id, [DiagramNode(moved, step, step)], now=LATER)
             for step in range(10)
-        )
+        ),
+        return_exceptions=True,
     )
 
+    # Each save either lands or is refused as stale (the revision is read before the
+    # lock): never a primary-key collision, and the last stored layout is whole.
+    assert all(o is True or isinstance(o, DiagramRevisionConflictError) for o in outcomes)
+    assert any(o is True for o in outcomes)
     assert len(await diagrams.nodes_of(diagram.id)) == 1
 
 
 async def test_a_layout_for_a_missing_diagram_writes_nothing(
-    diagrams: PostgresDiagramRepository,
+    diagrams: DiagramsOnStoredElements,
 ) -> None:
-    assert await diagrams.replace_layout(uuid4(), [DiagramNode(uuid4(), 0, 0)], now=LATER) is False
+    assert await diagrams.lay_out(uuid4(), [DiagramNode(uuid4(), 0, 0)], now=LATER) is False
 
 
 async def test_a_failed_layout_leaves_the_previous_one_in_place(
-    diagrams: PostgresDiagramRepository,
+    diagrams: DiagramsOnStoredElements,
 ) -> None:
     """One transaction: the delete of the old nodes is rolled back with the insert."""
     diagram = await diagrams.add(a_diagram(), audit=())
     kept = DiagramNode(uuid4(), 0, 0)
-    await diagrams.replace_layout(diagram.id, [kept], now=FIXED_NOW)
+    await diagrams.lay_out(diagram.id, [kept], now=FIXED_NOW)
     twice = uuid4()
 
     with pytest.raises(Exception):  # noqa: B017 - the primary key, whatever the driver calls it
-        await diagrams.replace_layout(
+        await diagrams.lay_out(
             diagram.id, [DiagramNode(twice, 0, 0), DiagramNode(twice, 1, 1)], now=LATER
         )
 
@@ -153,10 +173,10 @@ async def test_a_failed_layout_leaves_the_previous_one_in_place(
 
 
 async def test_deleting_a_diagram_takes_its_nodes_by_the_foreign_key(
-    diagrams: PostgresDiagramRepository, engine_at_head: AsyncEngine
+    diagrams: DiagramsOnStoredElements, engine_at_head: AsyncEngine
 ) -> None:
     diagram = await diagrams.add(a_diagram(), audit=())
-    await diagrams.replace_layout(diagram.id, [DiagramNode(uuid4(), 0, 0)], now=FIXED_NOW)
+    await diagrams.lay_out(diagram.id, [DiagramNode(uuid4(), 0, 0)], now=FIXED_NOW)
 
     assert await diagrams.delete(diagram.id, audit=()) is True
     assert await diagrams.delete(diagram.id, audit=()) is False
@@ -168,7 +188,7 @@ async def test_deleting_a_diagram_takes_its_nodes_by_the_foreign_key(
 
 class TestPackages:
     async def test_a_diagram_keeps_its_package_and_is_filtered_by_it(
-        self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
+        self, engine_at_head: AsyncEngine, diagrams: DiagramsOnStoredElements
     ) -> None:
         packages = PostgresPackageRepository(create_session_factory(engine_at_head))
         finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())
@@ -184,7 +204,7 @@ class TestPackages:
         assert (await packages.counts())[finance.id].diagrams == 1
 
     async def test_an_unknown_package_is_a_not_found_not_a_taken_name(
-        self, diagrams: PostgresDiagramRepository
+        self, diagrams: DiagramsOnStoredElements
     ) -> None:
         with pytest.raises(PackageNotFoundError):
             await diagrams.add(
@@ -192,7 +212,7 @@ class TestPackages:
             )
 
     async def test_deleting_a_package_moves_its_diagrams_up(
-        self, engine_at_head: AsyncEngine, diagrams: PostgresDiagramRepository
+        self, engine_at_head: AsyncEngine, diagrams: DiagramsOnStoredElements
     ) -> None:
         packages = PostgresPackageRepository(create_session_factory(engine_at_head))
         finance = await packages.add(Package.create(name="Finance", now=FIXED_NOW), audit=())

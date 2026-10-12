@@ -22,6 +22,7 @@ from ea.domain.baselines import (
     diff_snapshots,
     element_content,
 )
+from ea.domain.diagram_objects import DiagramScene
 from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import BaselineNotFoundError, BaselineTooLargeError, DuplicateBaselineError
@@ -96,7 +97,11 @@ class Model:
         )
         self.diagram = await self.diagrams.add(Diagram.create(name="Vue", now=NOW), audit=())
         await self.diagrams.replace_layout(
-            self.diagram.id, [DiagramNode(self.left.id, 5, 6)], now=NOW, audit=()
+            self.diagram.id,
+            DiagramScene(nodes=(DiagramNode(self.left.id, 5, 6),)),
+            revision=0,
+            now=NOW,
+            audit=(),
         )
         await self.documents.add(
             Document.create(element_id=self.left.id, filename="a.md", content="# A\n", now=NOW),

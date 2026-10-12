@@ -29,6 +29,7 @@ from ea.domain.errors import (
     ElementNotFoundError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    SourceInUseError,
     TooManyPackagesError,
 )
 from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
@@ -79,6 +80,8 @@ def _to_package(row: PackageRecord) -> Package:
 def _refusal(error: IntegrityError, name: str, *, deleting: bool = False) -> DomainError | None:
     """The refusal this constraint means, or `None` for one we do not know."""
     constraint = constraint_of(error)
+    if constraint == "fk_diagrams_source_package_id_packages":
+        return SourceInUseError("a generated view reads this package: delete the view first")
     if constraint in NAME_TAKEN:
         return DuplicatePackageError(f"a package is already named {name!r} in that place")
     if constraint in REFERENCES:

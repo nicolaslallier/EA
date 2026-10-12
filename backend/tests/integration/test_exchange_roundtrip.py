@@ -699,7 +699,8 @@ async def a_filed_catalogue(whole: Any) -> dict[str, Any]:
     view = await diagrams.create(name="Vue d'ensemble", description="La vue\nen deux lignes")
     await diagrams.replace_layout(
         view.id,
-        [
+        revision=0,
+        nodes=[
             DiagramNode(elements["Billing"].id, 10.4, 20, 120, 55),
             DiagramNode(elements["Invoice"].id, -30, 400, 200, 80),
         ],

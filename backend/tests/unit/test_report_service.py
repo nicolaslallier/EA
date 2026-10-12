@@ -84,7 +84,9 @@ async def a_diagram(
     ]
     diagram = await diagrams.create(name=title)
     await diagrams.replace_layout(
-        diagram.id, [DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)]
+        diagram.id,
+        revision=0,
+        nodes=[DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)],
     )
     return diagram, elements
 
@@ -459,7 +461,9 @@ class TestPackages:
         )
         await package_service.move_elements([inside.id], package.package.id)
         diagram = await diagram_service.create(name="Vue finance", package_id=package.package.id)
-        await diagram_service.replace_layout(diagram.id, [DiagramNode(inside.id, 10.0, 10.0)])
+        await diagram_service.replace_layout(
+            diagram.id, revision=0, nodes=[DiagramNode(inside.id, 10.0, 10.0)]
+        )
         reports = ReportService(
             diagram_service, service, None, file_service, packages=package_service
         )
@@ -661,7 +665,9 @@ class TestTheOutputIsBoundedBeforeItIsSerialised:
             for i in range(10)
         ]
         await diagram_service.replace_layout(
-            diagram.id, [DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)]
+            diagram.id,
+            revision=0,
+            nodes=[DiagramNode(e.id, 10.0 * i, 10.0) for i, e in enumerate(elements)],
         )
         ran: list[int] = []
 

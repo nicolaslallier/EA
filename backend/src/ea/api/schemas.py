@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date, datetime
 from itertools import islice
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -43,6 +43,18 @@ from ea.domain.baselines import (
     EntityRef,
     Modified,
 )
+from ea.domain.diagram_objects import MAX_OBJECT_TEXT, MAX_WAYPOINTS, ObjectKind
+from ea.domain.diagram_objects import DiagramEdge as PlacedEdge
+from ea.domain.diagram_objects import DiagramObject as PlacedObject
+from ea.domain.diagram_objects import Point as PlacedPoint
+from ea.domain.diagram_templates import (
+    MAX_SLOTS,
+    MAX_TEMPLATE_LINKS,
+    MAX_TEMPLATE_OBJECTS,
+    Binding,
+    DiagramTemplate,
+    body_to_json,
+)
 from ea.domain.diagrams import Diagram, DiagramDetail
 from ea.domain.diagrams import DiagramNode as PlacedNode
 from ea.domain.documents import Document, DocumentSummary
@@ -65,6 +77,8 @@ from ea.domain.files import (
     FileDetails,
     FileMetadata,
 )
+from ea.domain.generated_views import Generation, PackageSource, QuerySource, SourceDiff
+from ea.domain.generated_views import ViewSource as PlacedSource
 from ea.domain.ipam import (
     DEFAULT_VRF,
     RESERVED_PROPERTY,
@@ -75,8 +89,20 @@ from ea.domain.ipam import (
 )
 from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
+from ea.domain.model import StereotypeRef as StereotypeRefModel
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
+from ea.domain.profiles import (
+    MAX_NAME_LENGTH,
+    MAX_PROPERTIES_PER_STEREOTYPE,
+    MAX_STEREOTYPES_PER_PROFILE,
+    MAX_TEMPLATE_LENGTH,
+    IconKey,
+    Profile,
+    PropertyKind,
+    Stereotype,
+    StereotypeProperty,
+)
 from ea.domain.quality import MAX_FINDINGS, Finding, QualityPage, RuleCode
 from ea.domain.query import (
     MAX_PROPERTY_TESTS,
@@ -247,6 +273,23 @@ class ElementUpdate(_Input):
     properties: Properties | None = None
 
 
+#: `#rrggbb` only: a colour ends up in an SVG attribute, so anything else is an injection.
+Colour = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+
+class StereotypeRef(BaseModel):
+    """The stereotype an element carries - enough to draw it, none of its rules."""
+
+    id: UUID
+    name: str
+    colour: Colour | None
+    icon_key: IconKey
+
+    @classmethod
+    def of(cls, ref: StereotypeRefModel) -> StereotypeRef:
+        return cls(id=ref.id, name=ref.name, colour=ref.colour, icon_key=IconKey(ref.icon_key))
+
+
 class ElementRead(BaseModel):
     """An element as the API exposes it, layer and aspect resolved for the caller."""
 
@@ -258,6 +301,7 @@ class ElementRead(BaseModel):
     description: str
     documentation: str
     properties: dict[str, str]
+    stereotypes: list[StereotypeRef]
     package_id: UUID | None
     created_at: datetime
     updated_at: datetime
@@ -288,6 +332,7 @@ class ElementRead(BaseModel):
             description=element.description,
             documentation=element.documentation,
             properties=dict(element.properties),
+            stereotypes=[StereotypeRef.of(ref) for ref in element.stereotypes],
             package_id=element.package_id,
             created_at=element.created_at,
             updated_at=element.updated_at,
@@ -869,6 +914,13 @@ Coordinate = Annotated[float, Field(ge=-MAX_COORDINATE, le=MAX_COORDINATE, allow
 MIN_BOX_SIZE: Final = 20
 MAX_BOX_SIZE: Final = 5_000
 BoxSize = Annotated[float, Field(ge=MIN_BOX_SIZE, le=MAX_BOX_SIZE, allow_inf_nan=False)]
+#: Notes and groups on one diagram, and the links whose route was changed.
+MAX_DIAGRAM_OBJECTS: Final = 500
+MAX_DIAGRAM_EDGES: Final = 2_000
+#: Stacking order, either way. Only the order matters, not the number.
+ZIndex = Annotated[int, Field(ge=-10_000, le=10_000)]
+Revision = Annotated[int, Field(ge=0)]
+ObjectText = Annotated[str, Field(max_length=MAX_OBJECT_TEXT)]
 
 
 class DiagramCreate(_Input):
@@ -899,23 +951,181 @@ class DiagramNode(_Input):
     # and an output schema, and rename the type the SPA imports.
     width: BoxSize
     height: BoxSize
+    parent_object_id: UUID | None
+    z: ZIndex
 
     @classmethod
     def of(cls, node: PlacedNode) -> DiagramNode:
         return cls(
-            element_id=node.element_id, x=node.x, y=node.y, width=node.width, height=node.height
+            element_id=node.element_id,
+            x=node.x,
+            y=node.y,
+            width=node.width,
+            height=node.height,
+            parent_object_id=node.parent_object_id,
+            z=node.z,
         )
 
     def placed(self) -> PlacedNode:
         return PlacedNode(
-            element_id=self.element_id, x=self.x, y=self.y, width=self.width, height=self.height
+            element_id=self.element_id,
+            x=self.x,
+            y=self.y,
+            width=self.width,
+            height=self.height,
+            parent_object_id=self.parent_object_id,
+            z=self.z,
+        )
+
+
+class DiagramPoint(_Input):
+    x: Coordinate
+    y: Coordinate
+
+
+class DiagramEdge(_Input):
+    """The route of one link on this diagram. A link with no row is drawn straight."""
+
+    relationship_id: UUID
+    waypoints: Annotated[list[DiagramPoint], Field(max_length=MAX_WAYPOINTS)]
+
+    @classmethod
+    def of(cls, edge: PlacedEdge) -> DiagramEdge:
+        return cls(
+            relationship_id=edge.relationship_id,
+            waypoints=[DiagramPoint(x=p.x, y=p.y) for p in edge.waypoints],
+        )
+
+    def placed(self) -> PlacedEdge:
+        return PlacedEdge(
+            relationship_id=self.relationship_id,
+            waypoints=tuple(PlacedPoint(x=p.x, y=p.y) for p in self.waypoints),
+        )
+
+
+class DiagramObject(_Input):
+    """A note (its text is the body) or a group (its text is the title). Never a fact."""
+
+    id: UUID
+    kind: ObjectKind
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    text: ObjectText
+    colour: Colour | None
+    z: ZIndex
+    parent_id: UUID | None
+    anchor_element_id: UUID | None
+
+    @classmethod
+    def of(cls, item: PlacedObject) -> DiagramObject:
+        return cls(
+            id=item.id,
+            kind=item.kind,
+            x=item.x,
+            y=item.y,
+            width=item.width,
+            height=item.height,
+            text=item.text,
+            colour=item.colour,
+            z=item.z,
+            parent_id=item.parent_id,
+            anchor_element_id=item.anchor_element_id,
+        )
+
+    def placed(self) -> PlacedObject:
+        return PlacedObject(
+            id=self.id,
+            kind=self.kind,
+            x=self.x,
+            y=self.y,
+            width=self.width,
+            height=self.height,
+            text=self.text,
+            colour=self.colour,
+            z=self.z,
+            parent_id=self.parent_id,
+            anchor_element_id=self.anchor_element_id,
         )
 
 
 class DiagramLayout(_Input):
-    """Every box of a diagram. It replaces the stored layout whole."""
+    """The whole scene of a diagram, replacing the stored one — against the revision the client saw.
 
+    Every field is required, empty lists included: an optional one would split
+    this model into `-Input` and `-Output` schemas (docs/adr/0035).
+    """
+
+    revision: Revision
     nodes: Annotated[list[DiagramNode], Field(max_length=MAX_DIAGRAM_NODES)]
+    objects: Annotated[list[DiagramObject], Field(max_length=MAX_DIAGRAM_OBJECTS)]
+    edges: Annotated[list[DiagramEdge], Field(max_length=MAX_DIAGRAM_EDGES)]
+
+
+class ViewSource(_Input):
+    """Where a generated view reads its members: a saved query, or a package.
+
+    Exactly one of the two ids. Both fields are required (nullable) so the
+    model is one schema for the request and for the answer.
+    """
+
+    query_id: UUID | None
+    package_id: UUID | None
+    recursive: bool
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> Self:
+        if (self.query_id is None) == (self.package_id is None):
+            msg = "name a saved query or a package, not both and not neither"
+            raise ValueError(msg)
+        if self.query_id is not None and self.recursive:
+            msg = "`recursive` applies to a package"
+            raise ValueError(msg)
+        return self
+
+    @classmethod
+    def of(cls, source: PlacedSource) -> ViewSource:
+        if isinstance(source, QuerySource):
+            return cls(query_id=source.query_id, package_id=None, recursive=False)
+        return cls(query_id=None, package_id=source.package_id, recursive=source.recursive)
+
+    def placed(self) -> PlacedSource:
+        if self.query_id is not None:
+            return QuerySource(self.query_id)
+        if self.package_id is None:
+            msg = "a source names a saved query or a package"
+            raise ValueError(msg)
+        return PackageSource(self.package_id, self.recursive)
+
+
+class DiagramGenerate(_Input):
+    name: Name
+    source: ViewSource
+
+
+class DiagramFreeze(_Input):
+    """The layout the SPA computed for a live view, stored when it is frozen.
+
+    `revision` is the one the client read: a view somebody froze or thawed meanwhile is a 409.
+    """
+
+    revision: Revision
+    nodes: Annotated[list[DiagramNode], Field(max_length=MAX_DIAGRAM_NODES)]
+
+
+class DiagramUnfreeze(_Input):
+    revision: Revision
+    discard_annotations: bool
+
+
+class SourceDiffRead(BaseModel):
+    added: list[ElementRead]
+    removed: list[UUID]
+
+    @classmethod
+    def of(cls, diff: SourceDiff) -> SourceDiffRead:
+        return cls(added=[ElementRead.of(e) for e in diff.added], removed=list(diff.removed))
 
 
 class DiagramSummaryRead(BaseModel):
@@ -924,6 +1134,7 @@ class DiagramSummaryRead(BaseModel):
     description: str
     node_count: int
     package_id: UUID | None
+    generation: Generation | None
     created_at: datetime
     updated_at: datetime
 
@@ -935,6 +1146,7 @@ class DiagramSummaryRead(BaseModel):
             description=diagram.description,
             node_count=diagram.node_count,
             package_id=diagram.package_id,
+            generation=diagram.generation,
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
         )
@@ -949,7 +1161,14 @@ class DiagramRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     package_id: UUID | None
+    generation: Generation | None
+    source: ViewSource | None
+    revision: int = Field(
+        description="Send it back with the next PUT /layout: a stale one is a 409."
+    )
     nodes: list[DiagramNode]
+    objects: list[DiagramObject]
+    edges: list[DiagramEdge]
     elements: list[ElementRead]
     relationships: list[RelationshipRead] = Field(
         description="Only the relationships whose two ends are both on the diagram."
@@ -973,7 +1192,12 @@ class DiagramRead(BaseModel):
             created_at=diagram.created_at,
             updated_at=diagram.updated_at,
             package_id=diagram.package_id,
+            generation=diagram.generation,
+            source=ViewSource.of(diagram.source) if diagram.source else None,
+            revision=diagram.revision,
             nodes=[DiagramNode.of(node) for node in detail.nodes],
+            objects=[DiagramObject.of(item) for item in detail.objects],
+            edges=[DiagramEdge.of(edge) for edge in detail.edges],
             elements=[ElementRead.of(element) for element in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
             inactive_element_ids=sorted(detail.inactive_elements, key=str),
@@ -1935,6 +2159,285 @@ class RoadmapRead(BaseModel):
             data_from=roadmap.data_from,
             data_to=roadmap.data_to,
         )
+
+
+# --- Profiles and stereotypes (docs/adr/0070) --------------
+
+#: The size of a profile document an import accepts.
+MAX_PROFILE_DOCUMENT_BYTES: Final = 256 * 1024
+_ProfileName = Annotated[str, Field(min_length=1, max_length=MAX_NAME_LENGTH)]
+
+
+class StereotypePropertySchema(_Input):
+    """One declared property. Every field is required: no default, no `-Input` twin."""
+
+    key: Annotated[str, Field(min_length=1, max_length=63)]
+    label: Annotated[str, Field(min_length=1, max_length=100)]
+    required: bool
+    kind: PropertyKind
+    allowed_values: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=500)]], Field(max_length=50)
+    ]
+    template: Annotated[str, Field(max_length=MAX_TEMPLATE_LENGTH)] | None
+    help: Annotated[str, Field(max_length=300)]
+
+    @classmethod
+    def of(cls, prop: StereotypeProperty) -> StereotypePropertySchema:
+        return cls(
+            key=prop.key,
+            label=prop.label,
+            required=prop.required,
+            kind=prop.kind,
+            allowed_values=list(prop.allowed_values),
+            template=prop.template,
+            help=prop.help,
+        )
+
+    def declared(self) -> StereotypeProperty:
+        return StereotypeProperty(
+            key=self.key,
+            label=self.label,
+            required=self.required,
+            kind=self.kind,
+            allowed_values=tuple(self.allowed_values),
+            template=self.template,
+            help=self.help,
+        )
+
+
+class StereotypeWrite(_Input):
+    name: _ProfileName
+    base_type: ElementType
+    colour: Colour | None
+    icon_key: IconKey
+    properties: Annotated[
+        list[StereotypePropertySchema], Field(max_length=MAX_PROPERTIES_PER_STEREOTYPE)
+    ]
+
+
+class StereotypeRead(BaseModel):
+    id: UUID
+    profile_id: UUID
+    name: str
+    base_type: ElementType
+    colour: str | None
+    icon_key: IconKey
+    properties: list[StereotypePropertySchema]
+
+    @classmethod
+    def of(cls, stereotype: Stereotype) -> StereotypeRead:
+        return cls(
+            id=stereotype.id,
+            profile_id=stereotype.profile_id,
+            name=stereotype.name,
+            base_type=stereotype.base_type,
+            colour=stereotype.colour,
+            icon_key=stereotype.icon_key,
+            properties=[StereotypePropertySchema.of(p) for p in stereotype.properties],
+        )
+
+
+class ProfileCreate(_Input):
+    name: _ProfileName
+    description: Description = ""
+
+
+class ProfileUpdate(_Input):
+    name: _ProfileName | None = None
+    description: Description | None = None
+
+
+class ProfileRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+    stereotypes: list[StereotypeRead]
+
+    @classmethod
+    def of(cls, profile: Profile) -> ProfileRead:
+        return cls(
+            id=profile.id,
+            name=profile.name,
+            description=profile.description,
+            created_at=profile.created_at,
+            updated_at=profile.updated_at,
+            stereotypes=[StereotypeRead.of(s) for s in profile.stereotypes],
+        )
+
+
+class ProfileDocument(_Input):
+    """A profile as a portable document: no ids, no dates, a version."""
+
+    profile_format: Literal[1]
+    name: _ProfileName
+    description: Description
+    stereotypes: Annotated[list[StereotypeWrite], Field(max_length=MAX_STEREOTYPES_PER_PROFILE)]
+
+
+class ElementStereotypesSet(_Input):
+    """The whole set of stereotypes an element carries: it replaces the previous one."""
+
+    stereotype_ids: Annotated[list[UUID], Field(max_length=20)]
+
+
+# --- Diagram templates (docs/adr/0072) -----------------------------------------
+# A body is a typed skeleton with no element in it. Every field is required
+# (nullable where it may be empty): the same models serve the request and the
+# answer, so no `-Input`/`-Output` twin.
+
+TemplateKey = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")]
+
+
+class TemplateSlotSchema(_Input):
+    key: TemplateKey
+    element_type: ElementType
+    label: Annotated[str, Field(min_length=1, max_length=100)]
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    stereotype: Annotated[str, Field(min_length=1, max_length=100)] | None
+    parent_key: TemplateKey | None
+
+
+class TemplateGroupSchema(_Input):
+    key: TemplateKey
+    text: ObjectText
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    colour: Colour | None
+    parent_key: TemplateKey | None
+
+
+class TemplateNoteSchema(_Input):
+    key: TemplateKey
+    text: ObjectText
+    x: Coordinate
+    y: Coordinate
+    width: BoxSize
+    height: BoxSize
+    colour: Colour | None
+    parent_key: TemplateKey | None
+    anchor_key: TemplateKey | None
+
+
+class TemplateLinkSchema(_Input):
+    source_key: TemplateKey
+    target_key: TemplateKey
+    relationship_type: RelationshipType
+
+
+class TemplateBodySchema(_Input):
+    version: Literal[1]
+    slots: Annotated[list[TemplateSlotSchema], Field(max_length=MAX_SLOTS)]
+    groups: Annotated[list[TemplateGroupSchema], Field(max_length=MAX_TEMPLATE_OBJECTS)]
+    notes: Annotated[list[TemplateNoteSchema], Field(max_length=MAX_TEMPLATE_OBJECTS)]
+    links: Annotated[list[TemplateLinkSchema], Field(max_length=MAX_TEMPLATE_LINKS)]
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> TemplateBodySchema:
+        return cls.model_validate(body_to_json(template.body))
+
+    def raw(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class DiagramTemplateCreate(_Input):
+    name: Name
+    description: Description = ""
+    body: TemplateBodySchema
+
+
+class DiagramTemplateUpdate(_Input):
+    name: Name | None = None
+    description: Description | None = None
+    body: TemplateBodySchema | None = None
+
+
+class DiagramTemplateRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    body: TemplateBodySchema
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> DiagramTemplateRead:
+        return cls(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            body=TemplateBodySchema.of(template),
+            created_at=template.created_at,
+            updated_at=template.updated_at,
+        )
+
+
+class DiagramTemplateSummaryRead(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    slot_count: int
+    group_count: int
+    note_count: int
+    link_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, template: DiagramTemplate) -> DiagramTemplateSummaryRead:
+        body = template.body
+        return cls(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            slot_count=len(body.slots),
+            group_count=len(body.groups),
+            note_count=len(body.notes),
+            link_count=len(body.links),
+            created_at=template.created_at,
+            updated_at=template.updated_at,
+        )
+
+
+class CreateElementSchema(_Input):
+    name: Name
+
+
+class InstantiateBinding(_Input):
+    """What fills one slot: an existing element, one to create, or neither (slot left out)."""
+
+    slot_key: TemplateKey
+    element_id: UUID | None
+    create: CreateElementSchema | None
+
+    def placed(self) -> Binding:
+        return Binding(
+            slot_key=self.slot_key,
+            element_id=self.element_id,
+            create_name=self.create.name if self.create else None,
+        )
+
+
+#: One binding per slot at most: shared by the HTTP body and the MCP tool.
+InstantiateBindings = Annotated[list[InstantiateBinding], Field(max_length=MAX_SLOTS)]
+
+
+class InstantiateRequest(_Input):
+    name: Name
+    bindings: InstantiateBindings
+    # Off unless asked for: a template's links are what its author drew, not facts nobody decided.
+    create_relationships: bool = False
+
+
+class AsTemplateRequest(_Input):
+    name: Name
+    description: Description = ""
 
 
 # --- Reports (docs/adr/0062) -------------------------------------------------

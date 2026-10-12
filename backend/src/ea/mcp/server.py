@@ -57,6 +57,9 @@ from ea.api.schemas import (
     CursorToken,
     Depth,
     Description,
+    DiagramRead,
+    DiagramSummaryRead,
+    DiagramTemplateSummaryRead,
     DimensionParam,
     Documentation,
     DocumentRead,
@@ -74,6 +77,7 @@ from ea.api.schemas import (
     FindingsLimit,
     GraphRead,
     ImportReportRead,
+    InstantiateBindings,
     Limit,
     LinkName,
     MatrixRead,
@@ -86,6 +90,7 @@ from ea.api.schemas import (
     PassageRead,
     PlateauGapRead,
     PlateauRead,
+    ProfileRead,
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
@@ -138,6 +143,7 @@ from ea.domain.exchange import (
     Severity,
 )
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
+from ea.domain.generated_views import PackageSource, QuerySource
 from ea.domain.ipam import DEFAULT_VRF
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
@@ -157,14 +163,17 @@ from ea.services.architecture import ArchitectureService
 from ea.services.audit import AuditService
 from ea.services.baselines import BaselineService
 from ea.services.caller import require_editor
+from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.exchanges import ExchangeService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
+from ea.services.profiles import ProfileService
 from ea.services.reports import ReportService
 from ea.services.requirements import RequirementService
 from ea.services.saved_queries import SavedQueryService
+from ea.services.templates import TemplateService
 from ea.services.timeline import TimelineService
 
 #: Where the transport is served. The SPA's base URL and this share a host, so
@@ -338,6 +347,22 @@ them by date, `gap_between` says what leaves, arrives and stays from one to
 another. Never work that out by hand. `create_gap` draws the `gap` element
 between two plateaus — it writes, so ask first.
 
+A diagram is a saved *view* of the catalogue: `list_diagrams` names them and
+`get_diagram` opens one with its boxes, notes, groups and routed links. A group on
+a diagram means "drawn together", never a relationship, and there is no tool that
+moves a box: a layout is a person's gesture, not data to compute. To draw a perimeter,
+generate a view from a saved query or a package (`create_generated_diagram`) rather than
+placing boxes: it follows the catalogue by itself.
+
+An element may carry *stereotypes* - labels from a profile such as "database" or
+"external API", each with the properties expected on such an element. `list_profiles`
+names them; `apply_stereotype` tags an element. A stereotype never changes the
+element's type or what it may be linked to.
+
+For a recurring schema (an application, its host and its database),
+`list_diagram_templates` then `instantiate_diagram_template`: it binds typed slots to
+elements and creates no relationship unless you ask.
+
 Reports are dated documents built from the catalogue. `list_report_templates`
 names the templates, the kind of subject each takes (a diagram or a package) and
 the formats this server can produce (html is always there; pdf and docx only
@@ -361,6 +386,9 @@ BaselineProvider = Callable[[], BaselineService]
 ExchangeProvider = Callable[[], ExchangeService]
 AnalysisProvider = Callable[[], AnalysisService]
 TimelineProvider = Callable[[], TimelineService]
+DiagramProvider = Callable[[], DiagramService]
+ProfileProvider = Callable[[], ProfileService]
+TemplateProvider = Callable[[], TemplateService]
 RequirementProvider = Callable[[], RequirementService]
 ReportProvider = Callable[[], ReportService]
 
@@ -400,6 +428,12 @@ AsOfArgument = Annotated[
 Properties = Annotated[
     dict[str, str] | None,
     Field(description="Free-form attributes, e.g. owner or criticality. Keys are identifiers."),
+]
+StereotypeId = Annotated[
+    UUID, Field(description="The id of a stereotype, as `list_profiles` reports it.")
+]
+DiagramId = Annotated[
+    UUID, Field(description="The id of a saved diagram, as `list_diagrams` reports it.")
 ]
 DocumentId = Annotated[
     UUID, Field(description="The id of a document, as `list_documents` reports it.")
@@ -677,6 +711,9 @@ def build_mcp_server(
     get_exchanges: ExchangeProvider,
     get_analysis: AnalysisProvider,
     get_timeline: TimelineProvider,
+    get_diagrams: DiagramProvider,
+    get_profiles: ProfileProvider,
+    get_templates: TemplateProvider,
     get_requirements: RequirementProvider,
     get_reports: ReportProvider,
     *,
@@ -684,11 +721,11 @@ def build_mcp_server(
     token_verifier: TokenVerifier | None = None,
     auth: AuthSettings | None = None,
 ) -> MCPServer[Any]:
-    """Assemble the tool set over the twelve services.
+    """Assemble the tool set over the seventeen services.
 
     They are the graph, the documents, the IP addressing, the files, the packages, the saved
-    queries, the audit trail, the baselines, the exchanges, the analyses, the time and the
-    reports.
+    queries, the audit trail, the baselines, the exchanges, the analyses, the time, the
+    diagrams, the profiles, the diagram templates, the requirements and the reports.
 
     Taking providers rather than the services keeps this callable before the
     application has opened its databases, and lets a test hand over the same
@@ -700,7 +737,8 @@ def build_mcp_server(
     and `ipam_service_of` state — instead of quietly offering an agent a
     shorter tool list than the one this module documents. `get_files`,
     `get_packages`, `get_queries`, `get_audit`, `get_baselines`, `get_exchanges` and
-    `get_analysis`, `get_timeline` and `get_requirements` are required for the same reason.
+    `get_analysis`, `get_timeline`, `get_diagrams`, `get_profiles`, `get_templates` and
+    `get_requirements` are required for the same reason.
 
     `token_verifier` and `auth` make the transport a resource server of the
     realm `ea` (`ea.mcp.auth`); left out, it authenticates nobody.
@@ -1017,6 +1055,142 @@ def build_mcp_server(
         )
 
     # --- Time (docs/adr/0061) ---------------------------------------------
+
+    # --- Diagrams (read only: geometry is not an agent's work) -------------
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def create_generated_diagram(
+        name: Name,
+        query_id: Annotated[
+            UUID | None, Field(description="A saved query, as `list_saved_queries` reports it.")
+        ] = None,
+        package_id: Annotated[
+            UUID | None, Field(description="A package, as `list_packages` reports it.")
+        ] = None,
+        recursive: Annotated[
+            bool, Field(description="With a package: include its sub-packages.")
+        ] = False,
+    ) -> DiagramRead:
+        """Draw a perimeter: a live view of everything a saved query or a package holds.
+
+        Prefer this to placing boxes one by one. The view follows the catalogue by itself
+        - an element created tomorrow that answers the query appears - and the application
+        arranges it by ArchiMate layer. Name exactly one of `query_id` and `package_id`; a
+        source that yields more than 500 elements is refused with its count, so narrow the
+        filter. It writes a diagram, not a fact: no element and no relationship changes.
+        """
+        if (query_id is None) == (package_id is None):
+            msg = "name a saved query or a package, not both and not neither"
+            raise ValueError(msg)
+        source = (
+            QuerySource(query_id) if query_id is not None else PackageSource(package_id, recursive)  # type: ignore[arg-type]
+        )
+        return DiagramRead.of(await get_diagrams().generate(name=name, source=source))
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_diagrams() -> list[DiagramSummaryRead]:
+        """The saved diagrams: id, name, description and how many boxes each holds.
+
+        A diagram is a *view* of the catalogue - which elements are drawn and
+        where - and owns no fact. Start here to find the id `get_diagram` wants.
+        """
+        return [DiagramSummaryRead.of(d) for d in await get_diagrams().list_diagrams()]
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def get_diagram(diagram_id: DiagramId) -> DiagramRead:
+        """One diagram opened: its boxes with the elements they show, its notes, groups and
+        routed links, and the relationships between the elements drawn.
+
+        Read it to answer "what does this schema show". There is no tool that
+        moves a box: a layout is a person's gesture, not data to compute.
+        """
+        return DiagramRead.of(await get_diagrams().open(diagram_id))
+
+    # --- Profiles and stereotypes -----------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_profiles() -> list[ProfileRead]:
+        """The profiles, each with its stereotypes and the properties they expect.
+
+        A stereotype is a label for one ArchiMate type ("database" on an
+        application component) with the properties people expect on such an
+        element. Read this before tagging an element: `apply_stereotype` only
+        accepts a stereotype made for the element's own type.
+        """
+        return [ProfileRead.of(p) for p in await get_profiles().list_profiles()]
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def apply_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
+        """Tag an element with a stereotype made for its type.
+
+        Idempotent. A stereotype of another type is refused, saying which, and
+        so is one whose declared property would conflict with another one the
+        element already carries. An approved or locked element takes no label
+        until an approver reopens it. The property *values* stay the element's
+        own: write them with `update_element`.
+        """
+        return ElementRead.of(await get_profiles().apply_stereotype(element_id, stereotype_id))
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def remove_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
+        """Take a stereotype's label off an element. Its properties are left untouched."""
+        return ElementRead.of(await get_profiles().remove_stereotype(element_id, stereotype_id))
+
+    # --- Diagram templates ----------------------------------------------------
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_diagram_templates() -> list[DiagramTemplateSummaryRead]:
+        """The diagram templates: recurring schemas, each a typed skeleton.
+
+        A template holds no element, only slots of an ArchiMate type (an
+        application component, a node…) with the groups and notes around them.
+        Read this to find the `template_id` and the slot keys that
+        `instantiate_diagram_template` binds.
+        """
+        return [DiagramTemplateSummaryRead.of(t) for t in await get_templates().list_templates()]
+
+    @server.tool(annotations=ADDS)
+    @speaking_plainly
+    async def instantiate_diagram_template(
+        template_id: Annotated[
+            UUID, Field(description="A template, as `list_diagram_templates` reports it.")
+        ],
+        name: Name,
+        bindings: Annotated[
+            InstantiateBindings,
+            Field(
+                description=(
+                    "One per slot to fill: an existing `element_id` of the slot's type, "
+                    "or `create` with a name. A slot with neither is left out."
+                )
+            ),
+        ],
+        create_relationships: Annotated[
+            bool,
+            Field(description="Also create the relationships the template draws. Off by default."),
+        ] = False,
+    ) -> DiagramRead:
+        """Build a diagram from a template.
+
+        Elements are created and linked by the same rules as everywhere else,
+        so a slot bound to an element of another type is refused, saying which.
+        Relationships are created **only** when `create_relationships` is true.
+        """
+        return DiagramRead.of(
+            await get_templates().instantiate(
+                template_id,
+                name=name,
+                bindings=[binding.placed() for binding in bindings],
+                create_relationships=create_relationships,
+            )
+        )
 
     @server.tool(annotations=READS)
     @speaking_plainly

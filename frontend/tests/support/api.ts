@@ -89,7 +89,7 @@ export function stubApi(routes: Route[]): RecordedCall[] {
       }
       const status = route.status ?? 200
       if (status === 204) {
-        return new Response(null, { status })
+        return new Response(null, { status, headers: route.headers })
       }
       return new Response(JSON.stringify(route.body ?? {}), {
         status,
@@ -204,6 +204,7 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     description: '',
     documentation: '',
     properties: {},
+    stereotypes: [],
     package_id: null,
     created_at: '2026-09-07T12:00:00Z',
     updated_at: '2026-09-07T12:00:00Z',

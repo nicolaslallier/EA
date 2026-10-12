@@ -18,6 +18,7 @@ import html
 import math
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Final
 
@@ -99,9 +100,12 @@ def _n(value: float) -> str:
 
 def _finite(node: DiagramNode) -> DiagramNode:
     """The box with any non-finite number read as 0: SVG has no `inf`, and a row can hold one."""
-    return DiagramNode(
-        node.element_id,
-        *(v if math.isfinite(v) else 0.0 for v in (node.x, node.y, node.width, node.height)),
+
+    def clean(value: float) -> float:
+        return value if math.isfinite(value) else 0.0
+
+    return replace(
+        node, x=clean(node.x), y=clean(node.y), width=clean(node.width), height=clean(node.height)
     )
 
 

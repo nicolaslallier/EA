@@ -8,7 +8,7 @@ no diagram-specific way to change the graph.
 from __future__ import annotations
 
 from hashlib import sha256
-from typing import Annotated
+from typing import Annotated, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response, status
@@ -17,16 +17,23 @@ from ea.api.dependencies import Diagrams
 from ea.api.schemas import (
     AsOf,
     DiagramCreate,
+    DiagramFreeze,
+    DiagramGenerate,
     DiagramLayout,
     DiagramRead,
     DiagramSummaryRead,
+    DiagramUnfreeze,
     DiagramUpdate,
     ErrorResponse,
+    SourceDiffRead,
 )
 from ea.domain.diagram_render import render_svg
 from ea.domain.packages import UNSET
 
 router = APIRouter(tags=["diagrams"])
+
+#: The revision a save returns, which the SPA keeps for the next one.
+REVISION_HEADER: Final = "X-Diagram-Revision"
 
 _ERROR = {"model": ErrorResponse}
 NOT_FOUND: dict[int | str, dict[str, type[ErrorResponse]]] = {status.HTTP_404_NOT_FOUND: _ERROR}
@@ -35,8 +42,15 @@ REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: _ERROR,
     status.HTTP_409_CONFLICT: _ERROR,
 }
+GENERATE_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
+    status.HTTP_404_NOT_FOUND: _ERROR,
+    status.HTTP_409_CONFLICT: _ERROR,
+    status.HTTP_422_UNPROCESSABLE_CONTENT: _ERROR,
+    status.HTTP_503_SERVICE_UNAVAILABLE: _ERROR,
+}
 LAYOUT_REJECTED: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status.HTTP_404_NOT_FOUND: _ERROR,
+    status.HTTP_409_CONFLICT: _ERROR,
     status.HTTP_422_UNPROCESSABLE_CONTENT: _ERROR,
 }
 
@@ -108,12 +122,72 @@ async def delete_diagram(diagram_id: UUID, diagrams: Diagrams) -> Response:
 async def replace_diagram_layout(
     diagram_id: UUID, body: DiagramLayout, diagrams: Diagrams
 ) -> Response:
-    """Replace every box of a diagram at once.
+    """Replace the whole scene of a diagram at once.
 
-    Each element must exist and appear once; otherwise nothing is written.
+    `revision` is the one the client read; if somebody saved since, nothing is
+    written and the answer is a 409 `diagram_revision_conflict`. Otherwise the
+    new revision comes back in `X-Diagram-Revision`. Each element must exist
+    and appear once, and a route may only name a link joining two placed
+    elements; otherwise nothing is written.
     """
-    await diagrams.replace_layout(diagram_id, [node.placed() for node in body.nodes])
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    revision = await diagrams.replace_layout(
+        diagram_id,
+        revision=body.revision,
+        nodes=[node.placed() for node in body.nodes],
+        objects=[item.placed() for item in body.objects],
+        edges=[edge.placed() for edge in body.edges],
+    )
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT, headers={REVISION_HEADER: str(revision)}
+    )
+
+
+@router.post(
+    "/diagrams/generate",
+    response_model=DiagramRead,
+    status_code=status.HTTP_201_CREATED,
+    responses=GENERATE_REJECTED,
+)
+async def generate_diagram(body: DiagramGenerate, diagrams: Diagrams) -> DiagramRead:
+    """A new **live** view: everything a saved query or a package yields, at each opening.
+
+    It stores no box. To edit it, freeze it; to see it frozen from the start,
+    freeze it right after (the layout is the SPA's, the server computes none).
+    """
+    return DiagramRead.of(await diagrams.generate(name=body.name, source=body.source.placed()))
+
+
+@router.get(
+    "/diagrams/{diagram_id}/source-diff", response_model=SourceDiffRead, responses=GENERATE_REJECTED
+)
+async def read_source_diff(diagram_id: UUID, diagrams: Diagrams) -> SourceDiffRead:
+    """What a frozen view would gain and lose if it followed its source again. Writes nothing."""
+    return SourceDiffRead.of(await diagrams.source_diff(diagram_id))
+
+
+@router.post(
+    "/diagrams/{diagram_id}/freeze", response_model=DiagramRead, responses=GENERATE_REJECTED
+)
+async def freeze_diagram(diagram_id: UUID, body: DiagramFreeze, diagrams: Diagrams) -> DiagramRead:
+    """Store the layout and make the live view an ordinary editable diagram."""
+    await diagrams.freeze(
+        diagram_id, [node.placed() for node in body.nodes], revision=body.revision
+    )
+    return DiagramRead.of(await diagrams.open(diagram_id))
+
+
+@router.post(
+    "/diagrams/{diagram_id}/unfreeze", response_model=DiagramRead, responses=GENERATE_REJECTED
+)
+async def unfreeze_diagram(
+    diagram_id: UUID, body: DiagramUnfreeze, diagrams: Diagrams
+) -> DiagramRead:
+    """Back to a live view. Refused (409) while notes, groups or routes would be lost,
+    unless `discard_annotations` is true."""
+    await diagrams.unfreeze(
+        diagram_id, revision=body.revision, discard_annotations=body.discard_annotations
+    )
+    return DiagramRead.of(await diagrams.open(diagram_id))
 
 
 _SVG_HEADERS = {
