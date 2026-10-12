@@ -30,6 +30,7 @@ from ea.domain.errors import (
     AnalysisTimeoutError,
     ApprovalStaleError,
     BaselineNotFoundError,
+    BaselineScopedError,
     BaselineTooLargeError,
     CyclicContainmentError,
     CyclicPackageError,
@@ -167,6 +168,7 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     BaselineNotFoundError: (status.HTTP_404_NOT_FOUND, "not_found"),
     DuplicateBaselineError: (status.HTTP_409_CONFLICT, "duplicate"),
     BaselineTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "baseline_too_large"),
+    BaselineScopedError: (status.HTTP_409_CONFLICT, "baseline_scoped"),
     # --- Review and locking (docs/adr/0048) ---
     ApprovalStaleError: (status.HTTP_409_CONFLICT, "approval_stale"),
     WriteConflictError: (status.HTTP_409_CONFLICT, "write_conflict"),

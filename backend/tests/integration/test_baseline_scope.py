@@ -9,8 +9,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from ea.domain.baselines import Baseline
-from ea.repositories.baseline_store import capture_scope, scope_size
+from ea.domain.baselines import Baseline, BaselineLimits, refuse_oversize
+from ea.domain.errors import BaselineScopedError, BaselineTooLargeError
+from ea.repositories.baseline_store import PostgresBaselineRepository, capture_scope, scope_size
 from tests.integration.test_package_freeze_triggers import (
     AT,
     a_diagram,
@@ -98,3 +99,41 @@ async def test_an_empty_subtree_gives_an_empty_baseline(engine_at_head: AsyncEng
             session, baseline, frozenset({root}), package_id=root, path="Vide"
         )
     assert (stored.element_count, stored.relationship_count, stored.box_count) == (0, 0, 0)
+
+
+async def test_a_scoped_baseline_is_not_restorable_and_the_bytes_are_measured(
+    engine_at_head: AsyncEngine,
+) -> None:
+    async with engine_at_head.begin() as connection:
+        root = await a_package(connection, "Finance", None)
+        await an_element(connection, "a", root)
+        outside = await an_element(connection, "outside", None)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    baseline = Baseline.create(
+        name="Finance v1",
+        description="",
+        created_by_sub="s",
+        created_by="n",
+        now=datetime(2026, 10, 12, tzinfo=UTC),
+    )
+    async with sessions.begin() as session:
+        size = await scope_size(session, frozenset({root}))
+        empty = await scope_size(session, frozenset({uuid4()}))
+        await capture_scope(session, baseline, frozenset({root}), package_id=root, path="Finance")
+
+    assert size.bytes > 0
+    assert empty.bytes == 0
+    refuse_oversize(size, BaselineLimits())
+    with pytest.raises(BaselineTooLargeError):
+        refuse_oversize(size, BaselineLimits(bytes=1))
+
+    repository = PostgresBaselineRepository(sessions)
+    with pytest.raises(BaselineScopedError):
+        await repository.restore_plan(baseline.id, keep_new=False)
+    async with engine_at_head.connect() as connection:
+        left = (
+            await connection.execute(
+                text("SELECT count(*) FROM elements WHERE id = :i"), {"i": outside}
+            )
+        ).scalar_one()
+    assert left == 1

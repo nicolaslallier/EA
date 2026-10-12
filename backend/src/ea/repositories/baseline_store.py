@@ -51,6 +51,7 @@ from ea.domain.baselines import (
 )
 from ea.domain.errors import (
     BaselineNotFoundError,
+    BaselineScopedError,
     DuplicateBaselineError,
     RestoreBlockedError,
     RestoreConflictError,
@@ -74,7 +75,7 @@ from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -318,6 +319,7 @@ async def _measure(
     *,
     baseline_id: UUID | None = None,
     diagrams: bool = False,
+    clauses: Mapping[Any, Any] | None = None,
 ) -> ModelSize:
     """Row counts and bytes of text, as aggregates: no row reaches Python.
 
@@ -327,7 +329,8 @@ async def _measure(
     """
 
     def where(model: Any) -> list[Any]:
-        return [model.baseline_id == baseline_id] if baseline_id is not None else []
+        found = [model.baseline_id == baseline_id] if baseline_id is not None else []
+        return [*found, clauses[model]] if clauses and model in clauses else found
 
     element_count, element_text = (
         await session.execute(
@@ -395,20 +398,22 @@ def _scope_filters(scope: Sequence[UUID]) -> tuple[Any, Any, Any]:
 async def scope_size(session: AsyncSession, scope: frozenset[UUID]) -> ModelSize:
     """What a subtree holds, counted by the server before anything is copied.
 
-    # ponytail: counts only, bytes are not measured — the count ceilings bound the copy;
-    # measure the text too if a subtree of huge documents ever appears.
+    Rows and bytes of text, by the same aggregates as the whole model (`_measure`).
     """
-    in_scope, linked, boxed = _scope_filters(sorted(scope))
-
-    async def count(table: Any, clause: Any) -> int:
-        return int(await session.scalar(select(func.count()).select_from(table).where(clause)) or 0)
-
-    return ModelSize(
-        elements=await count(ElementRecord, in_scope),
-        relationships=await count(RelationshipRecord, linked),
-        boxes=await count(DiagramNodeRecord, boxed),
-        diagrams=await count(DiagramRecord, DiagramRecord.package_id.in_(sorted(scope))),
+    ids = sorted(scope)
+    in_scope, linked, boxed = _scope_filters(ids)
+    size = await _measure(
+        session,
+        ElementRecord,
+        RelationshipRecord,
+        DiagramNodeRecord,
+        clauses={ElementRecord: in_scope, RelationshipRecord: linked, DiagramNodeRecord: boxed},
     )
+    filed = DiagramRecord.package_id.in_(ids)
+    diagrams = int(
+        await session.scalar(select(func.count()).select_from(DiagramRecord).where(filed)) or 0
+    )
+    return replace(size, diagrams=diagrams)
 
 
 async def capture_scope(
@@ -604,9 +609,13 @@ class PostgresBaselineRepository:
         self, session: AsyncSession, baseline_id: UUID, *, keep_new: bool
     ) -> RestorePlan:
         """The plan, from one instant of the model, the protection and the documents."""
-        if await session.get(BaselineRecord, baseline_id) is None:
+        record = await session.get(BaselineRecord, baseline_id)
+        if record is None:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
+        if record.scope_package_id is not None:
+            msg = "a baseline of one package's subtree cannot be restored yet"
+            raise BaselineScopedError(msg)
         # Counted before any row is loaded, in the instant the plan reads.
         await self._guard_baseline(session, baseline_id)
         await self._guard_live(session, diagrams=True)

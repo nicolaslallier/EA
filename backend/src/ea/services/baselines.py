@@ -37,7 +37,12 @@ from ea.domain.baselines import (
     plan_digest,
     refusal_context,
 )
-from ea.domain.errors import BaselineNotFoundError, RestoreBlockedError, RestoreConflictError
+from ea.domain.errors import (
+    BaselineNotFoundError,
+    BaselineScopedError,
+    RestoreBlockedError,
+    RestoreConflictError,
+)
 from ea.services.audit import AuditTrail
 from ea.services.caller import logged, require_caller, require_editor
 
@@ -51,6 +56,14 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def refuse_scoped(baseline: Baseline) -> Baseline:
+    """Diff and restore read a baseline as the whole model: not yet for a subtree."""
+    if baseline.scope_package_id is not None:
+        msg = "a baseline of one package's subtree cannot be diffed or restored yet"
+        raise BaselineScopedError(msg)
+    return baseline
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,12 +138,12 @@ class BaselineService:
     async def diff(self, baseline_id: UUID, against: UUID | None = None) -> BaselineDiff:
         """The baseline against another one, or against the model as it is now."""
         require_caller()
-        await self.get(baseline_id)
+        refuse_scoped(await self.get(baseline_id))
         older = await self._repository.snapshot_of(baseline_id)
         if against is None:
             newer = await self._repository.current_snapshot()
         else:
-            await self.get(against)
+            refuse_scoped(await self.get(against))
             newer = await self._repository.snapshot_of(against)
         return diff_snapshots(older, newer)
 
@@ -160,7 +173,7 @@ class BaselineService:
                 "as expected_digest"
             )
             raise ValueError(msg)
-        baseline = await self.get(baseline_id)
+        baseline = refuse_scoped(await self.get(baseline_id))
         wanted = bool(keep_new)
         plan = await self._repository.restore_plan(baseline_id, keep_new=wanted)
         digest = plan_digest(plan)

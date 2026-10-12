@@ -294,6 +294,14 @@ class BaselineTooLargeError(DomainError):
     """
 
 
+class BaselineScopedError(DomainError):
+    """A baseline of one package's subtree cannot be diffed or restored yet.
+
+    Both read a baseline as the whole model: restoring it would plan the deletion of
+    everything outside its scope.
+    """
+
+
 class RestoreBlockedError(DomainError):
     """A restoration would change an element that is locked — unlock it first."""
 
