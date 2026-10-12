@@ -70,7 +70,7 @@ def resolve_members(
     if found.total > limit:
         msg = (
             f"the source yields {found.total} elements; a diagram holds at most {limit} — "
-            "narrow the filter"
+            "narrow the saved query or the package it follows, or delete this view"
         )
         raise GeneratedViewTooLargeError(msg)
     return tuple(dict.fromkeys(found.ids))

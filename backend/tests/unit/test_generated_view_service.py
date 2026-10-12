@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -62,6 +63,43 @@ class TestLive:
             await diagram_service.generate(name="Trop", source=source)
 
         assert await diagram_service.list_diagrams() == ()
+
+    async def test_a_live_view_whose_source_outgrew_the_limit_says_how_out_and_can_be_deleted(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+    ) -> None:
+        a = await element(service, "A")
+        source = QuerySource(uuid4())
+        view_sources.answers[source] = [a.id]
+        opened = await diagram_service.generate(name="Grandit", source=source)
+        view_sources.answers[source] = [uuid4() for _ in range(501)]
+
+        with pytest.raises(GeneratedViewTooLargeError, match=r"501.*delete this view"):
+            await diagram_service.open(opened.diagram.id)
+
+        await diagram_service.delete(opened.diagram.id)  # reading it is not needed to remove it
+        assert await diagram_service.list_diagrams() == ()
+
+    async def test_as_of_marks_what_is_out_of_period_on_a_live_view_too(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+    ) -> None:
+        old = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT,
+            name="Old",
+            properties={"valid_until": "2020-12-31"},
+        )
+        source = QuerySource(uuid4())
+        view_sources.answers[source] = [old.id]
+        opened = await diagram_service.generate(name="Vivante", source=source)
+
+        later = await diagram_service.open(opened.diagram.id, as_of=date(2026, 1, 1))
+
+        assert old.id in later.inactive_elements
 
     async def test_a_live_view_cannot_be_laid_out(
         self, diagram_service: DiagramService, view_sources: InMemoryViewSources

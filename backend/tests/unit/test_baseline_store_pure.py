@@ -162,7 +162,7 @@ class TestApplyingAPlan:
             "expunge",
             "SELECT relationships.target_id",  # who the deleted elements' links reach...
             "UPDATE SET",  # ...a link changing is a change to its ends: a new revision
-            "UPDATE SET",  # the diagrams showing what is deleted: a new revision, before the cascade
+            "UPDATE SET",  # the diagrams showing what is deleted: a new revision
             "DELETE relationships",
             "DELETE elements",
             "flush",  # every element to put back steps aside under its id...
