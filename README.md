@@ -11,6 +11,41 @@ parcours : « si ce serveur tombe, quels processus métier s'arrêtent ? ». Le
 graphe est stocké en tables et parcouru par des requêtes récursives — voir
 [`docs/adr/0033`](docs/adr/0033-postgresql-seul-pour-le-graphe.md).
 
+## Fonctionnalités
+
+Le menu de l'application est généré depuis `frontend/src/router/sections.ts` ; chaque section ci-dessous a son écran.
+
+**Modèle**
+- **Éléments** — catalogue des éléments ArchiMate : parcours, création, édition, suppression, fiche détaillée (`?element=`), documents markdown rattachés (cherchables par sens, pgvector), références vers des tickets ou pages d'outils tiers (GitHub, Jira, Confluence, ServiceNow) via des cibles nommées, cycle de revue (brouillon, en revue, approuvé, verrouillé), dates de validité, rangement en arbre de packages.
+- **Relations** — liens d'un élément ; seuls les liens permis par le métamodèle sont proposés (modifiables via `PATCH /relationships/{id}`).
+- **Métamodèle** — référence ArchiMate 3.2 complète : 61 types par couche, 11 relations, matrice 61×61. Les jonctions ET/OU sont gérées.
+- **Diagrammes** — vues composées depuis le catalogue (notes, groupes, liens routés, révision optimiste), vues générées depuis une requête ou un package, gabarits, historique, export SVG/PNG, disposition automatique.
+- **Profils** — stéréotypes qui indiquent les propriétés attendues sur un type d'élément.
+- **Adressage IP** — sous-réseaux et taux d'occupation, prochaine adresse libre, « 10.0.1.12, c'est quoi ? ».
+- **Échanges** — export et import d'ArchiMate Exchange XML ou de CSV style Archi, import en deux temps (simulation, puis confirmation).
+
+**Analyse** (calculée à la demande, rien n'est stocké)
+- **Voisinage** et **Analyse d'impact** — sous-graphe dessiné en anneaux, une couche par saut ; l'impact lit la propagation d'une panne.
+- **Matrice** — croise deux ensembles d'éléments et crée ou supprime un lien par cellule.
+- **Qualité** — sept règles de contrôle, avec un code stable.
+- **Tableau de bord** — agrégats par couche, type, package ou attribut, avec une carte de chaleur.
+- **Feuille de route** — plateaux, lots de travaux et livrables, comparaison de deux plateaux et élément `gap`.
+- **Couverture des exigences** — exigences sans conception qui les réalise ni test qui les vérifie.
+- **Recherche** — requêtes structurées, enregistrables et partagées.
+- Un jour de lecture global (`?asof=`) rejoue le catalogue à une date donnée.
+
+**Stockage et gouvernance**
+- **Fichiers** — dépôt, navigation et téléchargement dans un bucket S3, avec titre, description et tags en base.
+- **Historique** — journal d'audit de toute écriture, pour tout le catalogue ou un élément.
+- **Baselines** — captures du modèle entier, comparaison et restauration (plan d'abord, application ensuite).
+- **Rapports** — HTML, PDF et DOCX d'un diagramme ou d'un package (`GET /reports/render`, dépôt sous `reports/`).
+- **Consultation** (`/view`) — mode lecture seule de la même application.
+
+**Autour**
+- **Authentification Keycloak** (realm `ea`) : tout appelant est identifié ; l'écriture demande le rôle `ea-editor`, l'approbation `ea-approver`.
+- **Serveur MCP** — 76 outils pour un agent, sur les mêmes services que l'API.
+- **Pipelines** (`pipelines/`) — Prefect et LiteLLM ; le flux `alimenter-catalogue` extrait des éléments et relations d'un fichier source par un LLM et les écrit par l'API.
+
 ## Prérequis
 
 Sur macOS :
@@ -106,15 +141,22 @@ cp frontend/.env.example frontend/.env.local
 
 ## L'API
 
+La documentation complète est sur `/docs` (OpenAPI). Les routes principales :
+
 | Route | Ce qu'elle fait |
 |---|---|
-| `POST /elements` | Ajoute un élément d'architecture |
-| `GET /elements` | Parcourt le catalogue (filtres type, couche, recherche) |
-| `POST /relationships` | Relie deux éléments, si ArchiMate l'autorise |
+| `/elements` | Catalogue : création, parcours, édition, suppression, `search`, `history` |
+| `/relationships` | Liens entre éléments, si ArchiMate l'autorise |
 | `GET /elements/{id}/neighbourhood` | Le sous-graphe autour d'un élément |
 | `GET /elements/{id}/impact` | Ce qui dépend d'un élément, transitivement |
-| `GET /metamodel` | Les 61 types d'éléments et les 11 relations |
-| `GET /metamodel/relationships` | Les liens légaux entre deux types donnés |
+| `/metamodel` | Les 61 types, les 11 relations, la matrice |
+| `/diagrams`, `/profils` | Diagrammes et profils |
+| `/ipam` | Adressage IP |
+| `/files` | Fichiers du bucket |
+| `/exchanges` | Export et import ArchiMate |
+| `/reports` | Rapports HTML, PDF, DOCX |
+| `/audit`, `/baselines` | Journal et captures du modèle |
+| `GET /me`, `GET /health` | Appelant courant, état du service |
 
 Un lien interdit par le métamodèle est refusé en 422 avec la règle enfreinte :
 
@@ -126,9 +168,11 @@ access: business_process -> application_service is not permitted
 ## Le serveur MCP
 
 Le backend sert aussi le référentiel **à un agent**, en MCP, sur `/mcp` — voir
-[`docs/adr/0014`](docs/adr/0014-serveur-mcp-pour-les-agents.md). Vingt-huit
+[`docs/adr/0014`](docs/adr/0014-serveur-mcp-pour-les-agents.md). Soixante-seize
 outils : le CRUD des éléments, les liens, les deux parcours, le métamodèle, les
-documents et l'adressage IP.
+documents, l'adressage IP, les fichiers, les packages, la recherche, l'audit, les
+baselines, la revue, les échanges, les analyses, les rapports, les diagrammes et
+les références externes.
 Ce ne sont pas des règles réécrites pour l'occasion : chaque outil appelle le
 même service que l'API, donc un agent se voit refuser exactement ce qu'un
 humain se verrait refuser.
@@ -141,8 +185,8 @@ Un agent qui découvre le référentiel commence par `describe_metamodel` : les
 61 types d'éléments et les 11 relations sont des listes fermées, et un nom qui
 n'y figure pas est refusé.
 
-> **`/mcp` n'est pas authentifié**, parce que rien ne l'est encore ici. Il ne
-> répond donc, par défaut, qu'aux clients de **cette machine** : une requête
+> **`/mcp` exige un jeton Keycloak** ([`docs/adr/0032`](docs/adr/0032-authentification-par-keycloak.md)). Il ne
+> répond en plus, par défaut, qu'aux clients de **cette machine** : une requête
 > venue d'ailleurs reçoit un 403, quels que soient ses en-têtes. Un agent
 > distant passe par un tunnel SSH (`ssh -L 8000:127.0.0.1:8000 hôte`), ou
 > `EA_MCP_ALLOW_REMOTE_CLIENTS=true` ouvre l'écriture à tout le réseau — voir
