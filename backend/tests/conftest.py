@@ -2769,6 +2769,7 @@ class FakeExternalSystem:
         self.created: list[tuple[str, str, str]] = []
         self.create_attempts = 0
         self.write_failure: Exception | None = None
+        self.created_identifier: str | None = None
 
     @property
     def name(self) -> str:
@@ -2808,7 +2809,7 @@ class FakeExternalSystem:
         if self.write_failure is not None:
             raise self.write_failure
         self.created.append((scope, draft.title, draft.body))
-        return f"{scope}#{100 + len(self.created)}"
+        return self.created_identifier or f"{scope}#{100 + len(self.created)}"
 
 
 @pytest.fixture

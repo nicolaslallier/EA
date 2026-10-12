@@ -33,6 +33,7 @@ from ea.domain.audit import AuditAction, external_reference_view
 from ea.domain.errors import (
     DuplicateExternalReferenceError,
     ElementLockedError,
+    ExternalLinkFailedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
@@ -384,20 +385,35 @@ class ExternalReferenceService:
             "a ticket was opened at a provider",
             extra={"action": "external_issue_opened", "target": system.kind.value},
         )
-        parsed = parse_reference(system.kind, external_id, web_base=system.web_url)
-        created = ExternalReference.create(
-            element_id=element_id,
-            kind=system.kind,
-            target=system.name,
-            external_id=parsed.external_id,
-            url=parsed.url,
-            snapshot=ExternalSnapshot.of(draft.title, ExternalStatus.OPEN),
-            created_by=caller.username or caller.subject,
-            now=self._now(),
-        )
+        # From here the ticket exists at the provider. Whatever goes wrong next -- the address,
+        # the database, an element deleted meanwhile -- must not look like "nothing happened":
+        # a retry would open a second ticket.
         try:
+            parsed = parse_reference(system.kind, external_id, web_base=system.web_url)
+            created = ExternalReference.create(
+                element_id=element_id,
+                kind=system.kind,
+                target=system.name,
+                external_id=parsed.external_id,
+                url=parsed.url,
+                snapshot=ExternalSnapshot.of(draft.title, ExternalStatus.OPEN),
+                created_by=caller.username or caller.subject,
+                now=self._now(),
+            )
             view = await self._store(created)
-        except DuplicateExternalReferenceError:
-            msg = f"the ticket was opened ({parsed.external_id}) but is already cited here"
-            raise DuplicateExternalReferenceError(msg) from None
+        except Exception as failure:
+            logger.error(
+                "a ticket was opened and could not be linked",
+                extra={
+                    "action": "external_ticket_orphaned",
+                    "target": system.kind.value,
+                    "element_id": str(element_id),
+                    "reason": type(failure).__name__,
+                },
+            )
+            msg = (
+                f"the ticket was opened ({external_id}) but could not be linked here: "
+                "link it by hand, do not open it again"
+            )
+            raise ExternalLinkFailedError(msg) from None
         return IssuePlan(False, system.name, clean, draft.title, draft.body, view)

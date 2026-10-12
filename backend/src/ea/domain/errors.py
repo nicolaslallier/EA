@@ -554,3 +554,11 @@ class AdrRequiredError(DomainError):
 
 class InvalidPublicationError(DomainError):
     """Notes, ADR, reason or version that do not read. The message never echoes the value."""
+
+
+class ExternalLinkFailedError(DomainError):
+    """The ticket was opened at the provider but could not be linked here (a 502).
+
+    The message names the ticket's identifier — never its content — and says to link it by hand:
+    opening it again would create a second one.
+    """

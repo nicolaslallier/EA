@@ -19,6 +19,7 @@ from ea.domain.errors import (
     DuplicateExternalReferenceError,
     ElementNotFoundError,
     ExternalBusyError,
+    ExternalLinkFailedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
@@ -625,22 +626,55 @@ class TestOpeningAnIssue:
         assert external_system.create_attempts == 1
         assert await external_service.list_for_element(element) == ()
 
-    async def test_a_ticket_that_cannot_be_linked_afterwards_is_reported_not_hidden(
+    @pytest.mark.parametrize("failure", ["duplicate", "repository", "element_gone", "unparsable"])
+    async def test_a_ticket_that_cannot_be_linked_afterwards_names_the_ticket_in_a_typed_error(
         self,
         external_service: ExternalReferenceService,
         external_references: InMemoryExternalReferences,
         external_system: FakeExternalSystem,
         service: ArchitectureService,
+        caplog: pytest.LogCaptureFixture,
+        failure: str,
     ) -> None:
         element = await an_element(service)
-        await cite(external_references, element, 101)  # the number the provider will return
+        if failure == "duplicate":
+            await cite(external_references, element, 101)
+        elif failure == "repository":
 
-        with pytest.raises(DuplicateExternalReferenceError):
+            async def broken(*args: object, **kwargs: object) -> None:
+                raise ConnectionError("database is down with secret-words")
+
+            external_references.add = broken  # type: ignore[method-assign]
+        elif failure == "element_gone":
+            original = external_references.add
+
+            async def gone(reference: ExternalReference, **kwargs: object) -> ExternalReference:
+                raise ElementNotFoundError("deleted meanwhile")
+
+            external_references.add = gone  # type: ignore[assignment,method-assign]
+            assert original
+        else:
+            external_system.created_identifier = "not-an-identifier"
+
+        with caplog.at_level(logging.INFO), pytest.raises(ExternalLinkFailedError) as raised:
             await external_service.open_issue(
-                element, target="main", scope="acme/billing", title="t", body="", dry_run=False
+                element,
+                target="main",
+                scope="acme/billing",
+                title="Secret title",
+                body="secret body",
+                dry_run=False,
             )
 
-        assert external_system.created  # the ticket exists: the error is the caller's cue
+        assert external_system.created, "the ticket exists"
+        message = str(raised.value)
+        assert "link it by hand" in message
+        if failure != "unparsable":
+            assert "acme/billing#101" in message
+        for private in ("secret-words", "Secret title", "secret body"):
+            assert private not in message + caplog.text
+        assert "external_ticket_orphaned" in [getattr(r, "action", None) for r in caplog.records]
+        assert external_system.create_attempts == 1
 
     async def test_the_draft_is_bounded_before_anything_else(
         self, external_service: ExternalReferenceService, service: ArchitectureService
