@@ -290,7 +290,6 @@ class ProfileService:
                     f"not to {element.element_type.value}"
                 )
                 raise ValueError(msg)
-        validate_stereotype_properties(element.properties, chosen)
         after = tuple(sorted((s.ref for s in chosen), key=lambda ref: ref.name))
 
         def changed(before: tuple[StereotypeRef, ...]) -> tuple[AuditEvent, ...]:
@@ -303,7 +302,13 @@ class ProfileService:
                 ),
             )
 
-        await self._repository.set_for_element(element_id, [s.id for s in chosen], audit=changed)
+        def check(properties: Mapping[str, Any]) -> None:
+            # Judged by the store on the row as locked: a property removed meanwhile is seen.
+            validate_stereotype_properties(properties, chosen)
+
+        await self._repository.set_for_element(
+            element_id, [s.id for s in chosen], audit=changed, check=check
+        )
         # Counts and ids only: a property value may be sensitive.
         logger.info(
             "stereotypes of an element set: %r",

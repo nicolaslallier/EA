@@ -627,8 +627,11 @@ class ProfileRepository(StereotypeSource, Protocol):
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
+        check: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         """Make the set of stereotypes an element carries exactly this one.
+
+        `check` is given the element's properties as read under its lock, and raises to refuse.
 
         The element is locked and put to `guard_element_write` in the same
         transaction, and touched (a new revision, an author) like any other write to it.

@@ -13,7 +13,7 @@ is locked, put to the one guard every way into an element asks, and touched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -50,7 +50,7 @@ from ea.repositories.architecture_store import author_of, constraint_of, element
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -337,11 +337,14 @@ class PostgresProfileRepository:
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
+        check: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         wanted = list(dict.fromkeys(stereotype_ids))
         async with work(self._sessions) as session:
             # The element first, locked the way every write to it is (docs/adr/0048), then
-            # the guard on the row as it is *now*, in the transaction that writes.
+            # the guard and the properties check on the row as it is *now*, in the transaction
+            # that writes. `key_share` renders FOR NO KEY UPDATE: it waits for a concurrent edit
+            # of the properties, so the check below sees the committed row.
             element = await session.get(
                 ElementRecord,
                 element_id,
@@ -352,6 +355,8 @@ class PostgresProfileRepository:
                 msg = f"no element with id {element_id}"
                 raise ElementNotFoundError(msg)
             guard_element_write(element_from_row(element), WriteKind.STEREOTYPES)
+            if check is not None:
+                check(element.properties)
             # The definitions are held while the label goes on, so none is re-typed or removed
             # between the service's check and this write.
             definitions = {
