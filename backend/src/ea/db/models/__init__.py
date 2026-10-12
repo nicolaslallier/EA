@@ -29,6 +29,7 @@ from ea.db.models.document import ElementDocument
 from ea.db.models.external import ExternalReferenceRecord
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
+from ea.db.models.package_version import PackageVersionRecord
 from ea.db.models.profile import (
     ElementStereotypeRecord,
     ProfileRecord,
@@ -56,6 +57,7 @@ __all__ = [
     "ExternalReferenceRecord",
     "FileMetadataRecord",
     "PackageRecord",
+    "PackageVersionRecord",
     "ProfileRecord",
     "PropertyRecord",
     "RelationshipRecord",
