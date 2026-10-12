@@ -10,7 +10,9 @@ both find a name free.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, cast
+from uuid import uuid4
 
 from sqlalchemy import ARRAY, Text, bindparam, delete, func, select, text, update
 from sqlalchemy.engine import CursorResult
@@ -19,20 +21,44 @@ from sqlalchemy.exc import IntegrityError
 from ea.db.models.architecture import ElementRecord
 from ea.db.models.diagram import DiagramRecord
 from ea.db.models.package import PackageRecord
+from ea.db.models.package_version import PackageVersionRecord
 from ea.db.unit_of_work import reading, work
 from ea.domain.approval import WriteKind, guard_all
 from ea.domain.audit import AUDIT_LISTED_IDS, events_for
+from ea.domain.baselines import Baseline, BaselineLimits, refuse_oversize
 from ea.domain.errors import (
     CyclicPackageError,
     DomainError,
     DuplicatePackageError,
     ElementNotFoundError,
+    LiveViewInSubtreeError,
+    PackageAlreadyFrozenError,
+    PackageHasVersionsError,
     PackageNotEmptyError,
     PackageNotFoundError,
+    PackageNotFrozenError,
     SourceInUseError,
     TooManyPackagesError,
+    WriteConflictError,
 )
-from ea.domain.packages import MAX_PACKAGES, Package, PackageCounts, check_tree, descendants_of
+from ea.domain.package_versions import (
+    Bump,
+    PackageVersion,
+    Publication,
+    PublicationPreview,
+    effective_freezes,
+    latest_version,
+    next_version,
+    parse_version,
+)
+from ea.domain.packages import (
+    MAX_PACKAGES,
+    Package,
+    PackageCounts,
+    check_tree,
+    descendants_of,
+    path_of,
+)
 from ea.domain.ports import Held, PackageRemoval
 from ea.repositories.architecture_store import (
     author_of,
@@ -42,7 +68,9 @@ from ea.repositories.architecture_store import (
     lock_elements,
 )
 from ea.repositories.audit_store import write_events
+from ea.repositories.baseline_store import capture_scope, scope_size
 from ea.repositories.conflicts import replayable
+from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -82,6 +110,8 @@ def _refusal(error: IntegrityError, name: str, *, deleting: bool = False) -> Dom
     constraint = constraint_of(error)
     if constraint == "fk_diagrams_source_package_id_packages":
         return SourceInUseError("a generated view reads this package: delete the view first")
+    if constraint == "fk_package_versions_package_id_packages":
+        return PackageHasVersionsError("a package that was ever published cannot be deleted")
     if constraint in NAME_TAKEN:
         return DuplicatePackageError(f"a package is already named {name!r} in that place")
     if constraint in REFERENCES:
@@ -106,6 +136,59 @@ async def _locked_tree(session: AsyncSession) -> dict[UUID, Package]:
     return {row.id: _to_package(row) for row in rows}
 
 
+# A publication waits for the writers in flight, and stops the new ones, so the copy and the
+# freeze see the same state. Deliberate: the same bound as the API's own lock wait (10 s), set
+# here so that it does not depend on how the engine was configured.
+_WAIT_FOR_WRITERS: Final = "SET LOCAL lock_timeout = '10s'"
+# A constant statement over our own table names, nothing a caller wrote.
+_LOCK_GUARDED: Final = lock_guarded("SHARE")
+
+
+async def _latest(session: AsyncSession, package_id: UUID) -> str | None:
+    """The highest version ever published for this package, reopened or not."""
+    rows = await session.scalars(
+        select(PackageVersionRecord.version).where(PackageVersionRecord.package_id == package_id)
+    )
+    return latest_version(rows)
+
+
+def _to_version(row: PackageVersionRecord) -> PackageVersion:
+    return PackageVersion(
+        id=row.id,
+        package_id=row.package_id,
+        version=row.version,
+        bump=Bump(row.bump),
+        notes=row.notes,
+        adr=row.adr,
+        baseline_id=row.baseline_id,
+        element_count=row.element_count,
+        relationship_count=row.relationship_count,
+        box_count=row.box_count,
+        published_by_sub=row.published_by_sub,
+        published_by=row.published_by,
+        published_at=row.published_at,
+        publish_audit_event_id=row.publish_audit_event_id,
+        reopened_by_sub=row.reopened_by_sub,
+        reopened_by=row.reopened_by,
+        reopened_at=row.reopened_at,
+        reopen_reason=row.reopen_reason,
+        reopen_audit_event_id=row.reopen_audit_event_id,
+    )
+
+
+async def _in_force(session: AsyncSession) -> dict[UUID, str]:
+    rows = await session.execute(
+        select(PackageVersionRecord.package_id, PackageVersionRecord.version).where(
+            PackageVersionRecord.reopened_at.is_(None)
+        )
+    )
+    return dict(rows.all())
+
+
+def _subtree(package_id: UUID, tree: Mapping[UUID, Package]) -> frozenset[UUID]:
+    return frozenset({package_id, *descendants_of(package_id, tree)})
+
+
 async def _count_by(session: AsyncSession, column: Any) -> dict[UUID, int]:
     """`{package id: rows}` for a column that names a package."""
     statement = select(column, func.count()).where(column.is_not(None)).group_by(column)
@@ -123,8 +206,14 @@ async def _held_by(session: AsyncSession, column: Any, package_id: UUID) -> Held
 
 
 class PostgresPackageRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        limits: BaselineLimits = BaselineLimits(),  # noqa: B008 - frozen, shared on purpose
+    ) -> None:
         self._sessions = sessions
+        self._limits = limits
 
     async def list_all(self) -> tuple[Package, ...]:
         statement = select(PackageRecord).order_by(func.lower(PackageRecord.name), PackageRecord.id)
@@ -372,3 +461,185 @@ class PostgresPackageRepository:
                     raise
                 raise refusal from error
             write_events(session, events)
+
+    async def in_force(self) -> dict[UUID, str]:
+        async with reading(self._sessions) as session:
+            return await _in_force(session)
+
+    async def versions(self, package_id: UUID) -> tuple[PackageVersion, ...]:
+        statement = select(PackageVersionRecord).where(
+            PackageVersionRecord.package_id == package_id
+        )
+        async with reading(self._sessions) as session:
+            found = [_to_version(row) for row in await session.scalars(statement)]
+        # By number, the latest first: a clock that stepped back must not reorder them.
+        return tuple(sorted(found, key=lambda v: parse_version(v.version), reverse=True))
+
+    async def _check_publishable(
+        self, session: AsyncSession, package_id: UUID, tree: Mapping[UUID, Package]
+    ) -> frozenset[UUID]:
+        if package_id not in tree:
+            msg = f"no package with id {package_id}"
+            raise PackageNotFoundError(msg)
+        if package_id in effective_freezes(tree, await _in_force(session)):
+            msg = "this package is published, or lies under a package that is: reopen it first"
+            raise PackageAlreadyFrozenError(msg)
+        scope = _subtree(package_id, tree)
+        live = await session.scalar(
+            select(func.count())
+            .select_from(DiagramRecord)
+            .where(DiagramRecord.package_id.in_(scope), DiagramRecord.generation == "live")
+        )
+        if live:
+            msg = "a generated view of this subtree is live: freeze the generated view first"
+            raise LiveViewInSubtreeError(msg)
+        return scope
+
+    async def preview_publication(self, package_id: UUID, *, bump: Bump) -> PublicationPreview:
+        async with reading(self._sessions) as session:
+            rows = await session.scalars(select(PackageRecord))
+            tree = {row.id: _to_package(row) for row in rows}
+            scope = await self._check_publishable(session, package_id, tree)
+            size = await scope_size(session, scope)
+            refuse_oversize(size, self._limits, what="the package")
+            last = await _latest(session, package_id)
+        return PublicationPreview(
+            version=next_version(last, bump),
+            bump=bump,
+            elements=size.elements,
+            relationships=size.relationships,
+            boxes=size.boxes,
+            diagrams=size.diagrams,
+        )
+
+    # `replayable` only turns a lock timeout or a deadlock into a 409: the caller replays.
+    @replayable
+    async def publish(
+        self,
+        package_id: UUID,
+        *,
+        publication: Publication,
+        by_sub: str,
+        by: str,
+        now: datetime,
+        audit: AuditOf[PackageVersion],
+    ) -> PackageVersion:
+        async with work(self._sessions) as session:
+            await session.execute(text(_WAIT_FOR_WRITERS))
+            tree = await _locked_tree(session)
+            # Waits for the writers in flight, then stops the new ones until this commits: what is
+            # copied below is exactly what the freeze will protect.
+            await session.execute(text(_LOCK_GUARDED))
+            scope = await self._check_publishable(session, package_id, tree)
+            refuse_oversize(await scope_size(session, scope), self._limits, what="the package")
+            last = await _latest(session, package_id)
+            version = next_version(last, publication.bump)
+            path = path_of(tree[package_id], tree)
+            label = path if len(path) <= 120 else "…" + path[-119:]
+            # The name carries a fresh random id: nobody can pre-create a baseline under it
+            # (names are unique) and make the approver's publication fail.
+            baseline_id = uuid4()
+            baseline = Baseline.create(
+                name=f"{label} {version} [{baseline_id}]",
+                description=f"Publication {version} of {label}",
+                created_by_sub=by_sub,
+                created_by=by,
+                now=now,
+            )
+            baseline = replace(baseline, id=baseline_id)
+            captured = await capture_scope(
+                session, baseline, scope, package_id=package_id, path=path
+            )
+            draft = PackageVersion(
+                id=uuid4(),
+                package_id=package_id,
+                version=version,
+                bump=publication.bump,
+                notes=publication.notes,
+                adr=publication.adr,
+                baseline_id=captured.id,
+                element_count=captured.element_count,
+                relationship_count=captured.relationship_count,
+                box_count=captured.box_count,
+                published_by_sub=by_sub,
+                published_by=by,
+                published_at=now,
+            )
+            events = events_for(audit, draft)
+            stored = replace(draft, publish_audit_event_id=events[0].id)
+            session.add(
+                PackageVersionRecord(
+                    id=stored.id,
+                    package_id=stored.package_id,
+                    version=stored.version,
+                    bump=stored.bump.value,
+                    notes=stored.notes,
+                    adr=stored.adr,
+                    baseline_id=stored.baseline_id,
+                    element_count=stored.element_count,
+                    relationship_count=stored.relationship_count,
+                    box_count=stored.box_count,
+                    published_by_sub=stored.published_by_sub,
+                    published_by=stored.published_by,
+                    published_at=stored.published_at,
+                    publish_audit_event_id=events[0].id,
+                )
+            )
+            try:
+                await session.flush()
+            except IntegrityError as error:
+                # Two publications of one package: the unique index of the version in force.
+                if constraint_of(error) == "uq_package_versions_in_force":
+                    msg = "this package was published meanwhile: reopen it first"
+                    raise PackageAlreadyFrozenError(msg) from error
+                if constraint_of(error) == "uq_package_versions_package_version":
+                    msg = "another publication of this package got in the way: read it again"
+                    raise WriteConflictError(msg) from error
+                raise
+            write_events(session, events)
+        return stored
+
+    # `replayable` only turns a lock timeout or a deadlock into a 409: the caller replays.
+    @replayable
+    async def reopen(
+        self,
+        package_id: UUID,
+        *,
+        reason: str,
+        by_sub: str,
+        by: str,
+        now: datetime,
+        audit: AuditOf[PackageVersion],
+    ) -> PackageVersion:
+        async with work(self._sessions) as session:
+            tree = await _locked_tree(session)
+            if package_id not in tree:
+                msg = f"no package with id {package_id}"
+                raise PackageNotFoundError(msg)
+            row = await session.scalar(
+                select(PackageVersionRecord)
+                .where(
+                    PackageVersionRecord.package_id == package_id,
+                    PackageVersionRecord.reopened_at.is_(None),
+                )
+                .with_for_update()
+            )
+            if row is None:
+                msg = "this package has no version in force"
+                raise PackageNotFrozenError(msg)
+            closed = replace(
+                _to_version(row),
+                reopened_by_sub=by_sub,
+                reopened_by=by,
+                reopened_at=now,
+                reopen_reason=reason,
+            )
+            events = events_for(audit, closed)
+            row.reopened_by_sub = by_sub
+            row.reopened_by = by
+            row.reopened_at = now
+            row.reopen_reason = reason
+            row.reopen_audit_event_id = events[0].id
+            await session.flush()
+            write_events(session, events)
+        return replace(closed, reopen_audit_event_id=events[0].id)

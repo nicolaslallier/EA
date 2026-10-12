@@ -13,10 +13,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import UUID, uuid4
 
 from ea.domain.errors import CyclicPackageError, PackageTooDeepError
+
+if TYPE_CHECKING:
+    from ea.domain.package_versions import FrozenBy
 
 #: A root package is level 1.
 MAX_PACKAGE_DEPTH: Final = 12
@@ -144,6 +147,12 @@ class PackageSummary:
     package: Package
     path: str
     counts: PackageCounts
+    #: The publication that freezes this package (itself or an ancestor), docs/adr/0074.
+    frozen_by: FrozenBy | None = None
+    #: The version in force on *this* package, if it was published on its own.
+    own_version: str | None = None
+    #: The gestures offered to the caller who read it: "publish", "reopen".
+    actions: tuple[str, ...] = ()
 
 
 def check_tree(packages: Mapping[UUID, Package]) -> None:

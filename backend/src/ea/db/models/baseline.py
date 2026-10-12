@@ -31,6 +31,10 @@ class BaselineRecord(Base):
     created_by_sub: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Set when the baseline copies one package's subtree rather than the whole model
+    # (docs/adr/0074). No foreign key: the copy outlives the package; the path is copied.
+    scope_package_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    scope_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class BaselineElementRecord(Base):

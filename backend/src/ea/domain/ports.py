@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from ea.domain.exchange import ExportedView, ExportScope, PackageNode
     from ea.domain.generated_views import SourceMembers, ViewSource
     from ea.domain.model import StereotypeRef
+    from ea.domain.package_versions import Bump, PackageVersion, Publication, PublicationPreview
     from ea.domain.profiles import Profile, Stereotype
 
 
@@ -1035,6 +1036,46 @@ class PackageRepository(Protocol):
         Raises `ElementNotFoundError` naming an absent id and
         `PackageNotFoundError` for an absent package; nothing is moved then.
         """
+        ...
+
+    async def versions(self, package_id: UUID) -> tuple[PackageVersion, ...]:
+        """Every version this package was published under, the latest first."""
+        ...
+
+    async def in_force(self) -> dict[UUID, str]:
+        """`{package id: version}` for each package that is published right now."""
+        ...
+
+    async def preview_publication(self, package_id: UUID, *, bump: Bump) -> PublicationPreview:
+        """What publishing would do now. Raises `PackageNotFoundError`,
+        `PackageAlreadyFrozenError` (itself or an ancestor is published) or
+        `BaselineTooLargeError`; writes nothing."""
+        ...
+
+    async def publish(
+        self,
+        package_id: UUID,
+        *,
+        publication: Publication,
+        by_sub: str,
+        by: str,
+        now: datetime,
+        audit: AuditOf[PackageVersion],
+    ) -> PackageVersion:
+        """Freeze the subtree: its baseline, its version and its audit event in one transaction."""
+        ...
+
+    async def reopen(
+        self,
+        package_id: UUID,
+        *,
+        reason: str,
+        by_sub: str,
+        by: str,
+        now: datetime,
+        audit: AuditOf[PackageVersion],
+    ) -> PackageVersion:
+        """Close the version in force. Raises `PackageNotFoundError` or `PackageNotFrozenError`."""
         ...
 
 

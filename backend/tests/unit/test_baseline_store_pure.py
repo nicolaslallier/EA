@@ -138,7 +138,7 @@ class TestApplyingAPlan:
         with pytest.raises(RestoreBlockedError, match="locked"):
             await apply(repository(session, blocked), RestorePlan())
 
-        assert session.calls == ["connection"]
+        assert session.calls == ["connection", "LOCK elements,"]  # the freeze lock comes first
 
     async def test_a_plan_that_is_not_the_one_expected_writes_nothing(self) -> None:
         session = RecordingSession()
@@ -146,7 +146,7 @@ class TestApplyingAPlan:
         with pytest.raises(RestoreConflictError, match="since the plan"):
             await apply(repository(session, the_whole_plan()), RestorePlan())
 
-        assert session.calls == ["connection"]
+        assert session.calls == ["connection", "LOCK elements,"]  # the freeze lock comes first
 
     async def test_the_write_order_of_a_plan(
         self,
@@ -158,6 +158,7 @@ class TestApplyingAPlan:
 
         assert session.calls == [
             "connection",
+            "LOCK elements,",  # before any read: the snapshot must not predate a freeze
             "expunge",
             "SELECT relationships.target_id",  # who the deleted elements' links reach...
             "UPDATE SET",  # ...a link changing is a change to its ends: a new revision

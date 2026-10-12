@@ -9,9 +9,10 @@ payload by being added to a dataclass.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import asdict
 from datetime import date, datetime
 from itertools import islice
-from typing import Annotated, Any, Final, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -103,6 +104,15 @@ from ea.domain.ipam import (
 from ea.domain.matrix import MAX_MATRIX_AXIS, AxisSelection, Matrix, MatrixCell
 from ea.domain.model import Element, Relationship
 from ea.domain.model import StereotypeRef as StereotypeRefModel
+from ea.domain.package_versions import (
+    MAX_ADR_LENGTH,
+    MAX_NOTES_LENGTH,
+    MAX_REASON_LENGTH,
+    Bump,
+    FrozenBy,
+    PackageVersion,
+    PublishOutcome,
+)
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_NAME_LENGTH, PackageSummary
 from ea.domain.ports import GraphView
 from ea.domain.profiles import (
@@ -1273,6 +1283,16 @@ class PackageUpdate(_Input):
     parent_id: UUID | None = None
 
 
+class FrozenByRead(BaseModel):
+    package_id: UUID
+    path: str
+    version: str
+
+    @classmethod
+    def of(cls, frozen: FrozenBy) -> FrozenByRead:
+        return cls(package_id=frozen.package_id, path=frozen.path, version=frozen.version)
+
+
 class PackageRead(BaseModel):
     id: UUID
     parent_id: UUID | None
@@ -1282,6 +1302,15 @@ class PackageRead(BaseModel):
     element_count: int = Field(description="Elements filed directly in this package.")
     diagram_count: int = Field(description="Diagrams filed directly in this package.")
     child_count: int = Field(description="Packages directly below this one.")
+    frozen_version: str | None = Field(
+        description="The version in force on this very package, if it was published on its own."
+    )
+    frozen_by: FrozenByRead | None = Field(
+        description="The publication that freezes this package: itself or an ancestor."
+    )
+    allowed_actions: list[Literal["publish", "reopen"]] = Field(
+        description="The gestures offered to the caller; the server decides, the client draws."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -1297,8 +1326,91 @@ class PackageRead(BaseModel):
             element_count=summary.counts.elements,
             diagram_count=summary.counts.diagrams,
             child_count=summary.counts.children,
+            frozen_version=summary.own_version,
+            frozen_by=FrozenByRead.of(summary.frozen_by) if summary.frozen_by else None,
+            allowed_actions=cast("list[Literal['publish', 'reopen']]", list(summary.actions)),
             created_at=package.created_at,
             updated_at=package.updated_at,
+        )
+
+
+PublicationNotes = Annotated[str, Field(max_length=MAX_NOTES_LENGTH)]
+PublicationAdr = Annotated[str, Field(max_length=MAX_ADR_LENGTH)]
+ReopeningReason = Annotated[str, Field(max_length=MAX_REASON_LENGTH)]
+
+
+class PublishPackage(_Input):
+    bump: Bump
+    notes: PublicationNotes
+    adr: PublicationAdr | None = None
+    dry_run: bool = Field(default=True, description="A preview unless told otherwise.")
+
+
+class ReopenPackage(_Input):
+    reason: ReopeningReason
+
+
+class PublicationPreviewRead(BaseModel):
+    version: str
+    bump: Bump
+    elements: int
+    relationships: int
+    boxes: int
+    diagrams: int
+
+
+class PackageVersionRead(BaseModel):
+    id: UUID
+    package_id: UUID
+    version: str
+    bump: Bump
+    notes: str
+    adr: str | None
+    baseline_id: UUID
+    elements: int
+    relationships: int
+    boxes: int
+    published_by: str
+    published_at: datetime
+    publish_audit_event_id: UUID | None
+    reopened_by: str | None
+    reopened_at: datetime | None
+    reopen_reason: str | None
+    reopen_audit_event_id: UUID | None
+
+    @classmethod
+    def of(cls, version: PackageVersion) -> PackageVersionRead:
+        return cls(
+            id=version.id,
+            package_id=version.package_id,
+            version=version.version,
+            bump=version.bump,
+            notes=version.notes,
+            adr=version.adr,
+            baseline_id=version.baseline_id,
+            elements=version.element_count,
+            relationships=version.relationship_count,
+            boxes=version.box_count,
+            published_by=version.published_by,
+            published_at=version.published_at,
+            publish_audit_event_id=version.publish_audit_event_id,
+            reopened_by=version.reopened_by,
+            reopened_at=version.reopened_at,
+            reopen_reason=version.reopen_reason,
+            reopen_audit_event_id=version.reopen_audit_event_id,
+        )
+
+
+class PublishResult(BaseModel):
+    preview: PublicationPreviewRead
+    published: PackageVersionRead | None
+
+    @classmethod
+    def of(cls, outcome: PublishOutcome) -> PublishResult:
+        # The stored version is authoritative once published; the preview is advisory.
+        return cls(
+            preview=PublicationPreviewRead(**asdict(outcome.preview)),
+            published=PackageVersionRead.of(outcome.published) if outcome.published else None,
         )
 
 

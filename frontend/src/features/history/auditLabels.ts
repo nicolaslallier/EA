@@ -50,6 +50,9 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   'external_reference.linked': 'Référence externe liée',
   'external_reference.unlinked': 'Référence externe retirée',
   'external_reference.refreshed': 'Référence externe actualisée',
+  'package.published': 'Package publié',
+  'package.reopened': 'Package rouvert',
+  'package.write_refused_frozen': 'Écriture refusée : package gelé',
 }
 
 export const KIND_LABELS: Record<EntityKind, string> = {

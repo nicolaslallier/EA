@@ -67,6 +67,7 @@ class TestCreatingAndReading:
         assert set(budget) == {
             "id", "parent_id", "name", "description", "path",
             "element_count", "diagram_count", "child_count", "created_at", "updated_at",
+            "frozen_version", "frozen_by", "allowed_actions",
         }  # fmt: skip
         assert (budget["path"], budget["parent_id"]) == ("Finance / Budget", finance["id"])
 

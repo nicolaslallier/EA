@@ -297,7 +297,14 @@ def test_the_expected_writes_are_found() -> None:
         "freeze",
         "unfreeze",
     }
-    assert found["PostgresPackageRepository"] == {"add", "save", "delete", "move_elements"}
+    assert found["PostgresPackageRepository"] == {
+        "add",
+        "save",
+        "delete",
+        "move_elements",
+        "publish",
+        "reopen",
+    }
     assert found["PostgresProfileRepository"] == {
         "add_profile",
         "save_profile",

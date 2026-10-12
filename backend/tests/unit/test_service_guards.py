@@ -91,6 +91,9 @@ WRITES = {
 }
 
 
+APPROVALS = {PackageService: {"publish", "reopen"}}  # the approver's gestures (docs/adr/0048)
+
+
 def first_call(method: object) -> str | None:
     """The name called by the first statement, whether or not it is kept.
 
@@ -126,7 +129,13 @@ def public_coroutines(service: type) -> list[str]:
 @pytest.mark.parametrize("service", list(WRITES), ids=lambda s: s.__name__)
 def test_every_public_use_case_starts_by_checking_its_caller(service: type) -> None:
     for name in public_coroutines(service):
-        expected = "require_editor" if name in WRITES[service] else "require_caller"
+        expected = (
+            "require_approver"
+            if name in APPROVALS.get(service, set())
+            else "require_editor"
+            if name in WRITES[service]
+            else "require_caller"
+        )
         assert first_call(getattr(service, name)) == expected, f"{service.__name__}.{name}"
 
 

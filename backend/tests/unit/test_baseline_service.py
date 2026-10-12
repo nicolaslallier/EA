@@ -17,6 +17,7 @@ from ea.domain.diagrams import Diagram, DiagramNode
 from ea.domain.documents import Document
 from ea.domain.errors import (
     BaselineNotFoundError,
+    BaselineScopedError,
     DuplicateBaselineError,
     ElementNotFoundError,
     NotAuthorisedError,
@@ -436,3 +437,32 @@ class TestApprovedAndLockedElements:
         assert [e.name for e in planned.plan.blocked] == ["invoicing"]
         assert repository.elements[element.id].name == "invoicing"
         assert audit_log.events == []
+
+
+class TestASubtreeBaselineIsNotTheWholeModel:
+    async def scoped(
+        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> UUID:
+        stored = await baseline_service.create(name="v1")
+        baseline_store.baselines[stored.id] = replace(
+            stored, scope_package_id=uuid4(), scope_path="Finance"
+        )
+        return stored.id
+
+    async def test_diff_and_restore_are_refused_and_list_and_get_still_work(
+        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        ordinary = await baseline_service.create(name="whole")
+        scoped = await self.scoped(baseline_service, baseline_store)
+
+        with pytest.raises(BaselineScopedError):
+            await baseline_service.diff(scoped)
+        with pytest.raises(BaselineScopedError):
+            await baseline_service.diff(ordinary.id, against=scoped)
+        with pytest.raises(BaselineScopedError):
+            await baseline_service.restore(scoped)
+        with pytest.raises(BaselineScopedError):
+            await baseline_service.restore(scoped, dry_run=False, expected_digest="x")
+        assert (await baseline_service.get(scoped)).scope_path == "Finance"
+        assert len(await baseline_service.list_baselines()) == 2
+        assert (await baseline_service.diff(ordinary.id)).is_empty

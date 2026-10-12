@@ -1354,6 +1354,69 @@ export interface paths {
         patch: operations["update_package_packages__package_id__patch"];
         trace?: never;
     };
+    "/packages/{package_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish Package
+         * @description Freeze the package and everything below it under a new version (an approver's gesture).
+         *
+         *     A preview unless `dry_run` is false: the version it would take and what it would freeze.
+         *     A MAJOR names its ADR. Nothing below a published package can be written until it is reopened.
+         */
+        post: operations["publish_package_packages__package_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/packages/{package_id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reopen Package
+         * @description Close the version in force, with a reason (an approver's gesture).
+         */
+        post: operations["reopen_package_packages__package_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/packages/{package_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Package Versions
+         * @description Every version the package was published under, the latest first.
+         */
+        get: operations["list_package_versions_packages__package_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plateaus": {
         parameters: {
             query?: never;
@@ -1926,7 +1989,7 @@ export interface components {
          * @description The closed list of things the trail can say. Never a free string.
          * @enum {string}
          */
-        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored" | "external_reference.linked" | "external_reference.unlinked" | "external_reference.refreshed";
+        AuditAction: "element.created" | "element.updated" | "element.deleted" | "element.submitted" | "element.approved" | "element.rejected" | "element.reopened" | "element.locked" | "element.unlocked" | "element.stereotypes_changed" | "profile.created" | "profile.updated" | "profile.deleted" | "template.created" | "template.updated" | "template.deleted" | "relationship.created" | "relationship.updated" | "relationship.deleted" | "diagram.created" | "diagram.updated" | "diagram.deleted" | "diagram.layout_replaced" | "diagram.generated" | "diagram.frozen" | "diagram.unfrozen" | "document.attached" | "document.revised" | "document.discarded" | "package.created" | "package.updated" | "package.deleted" | "package.elements_moved" | "package.published" | "package.reopened" | "package.write_refused_frozen" | "saved_query.created" | "saved_query.updated" | "saved_query.deleted" | "baseline.created" | "baseline.deleted" | "baseline.restored" | "external_reference.linked" | "external_reference.unlinked" | "external_reference.refreshed";
         /**
          * AuditChannel
          * @description Which door the caller came through — said by the adapter, never by the caller.
@@ -2198,6 +2261,11 @@ export interface components {
              */
             value: number | null;
         };
+        /**
+         * Bump
+         * @enum {string}
+         */
+        Bump: "major" | "minor" | "patch";
         /**
          * ConflictPolicy
          * @enum {string}
@@ -3147,6 +3215,18 @@ export interface components {
             rule: components["schemas"]["RuleCode"];
             severity: components["schemas"]["Severity"];
         };
+        /** FrozenByRead */
+        FrozenByRead: {
+            /**
+             * Package Id
+             * Format: uuid
+             */
+            package_id: string;
+            /** Path */
+            path: string;
+            /** Version */
+            version: string;
+        };
         /**
          * Gap
          * @description What is missing around a requirement, if anything.
@@ -3489,6 +3569,11 @@ export interface components {
         /** PackageRead */
         PackageRead: {
             /**
+             * Allowed Actions
+             * @description The gestures offered to the caller; the server decides, the client draws.
+             */
+            allowed_actions: ("publish" | "reopen")[];
+            /**
              * Child Count
              * @description Packages directly below this one.
              */
@@ -3510,6 +3595,13 @@ export interface components {
              * @description Elements filed directly in this package.
              */
             element_count: number;
+            /** @description The publication that freezes this package: itself or an ancestor. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
+            /**
+             * Frozen Version
+             * @description The version in force on this very package, if it was published on its own.
+             */
+            frozen_version: string | null;
             /**
              * Id
              * Format: uuid
@@ -3545,6 +3637,54 @@ export interface components {
             name?: string | null;
             /** Parent Id */
             parent_id?: string | null;
+        };
+        /** PackageVersionRead */
+        PackageVersionRead: {
+            /** Adr */
+            adr: string | null;
+            /**
+             * Baseline Id
+             * Format: uuid
+             */
+            baseline_id: string;
+            /** Boxes */
+            boxes: number;
+            bump: components["schemas"]["Bump"];
+            /** Elements */
+            elements: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Notes */
+            notes: string;
+            /**
+             * Package Id
+             * Format: uuid
+             */
+            package_id: string;
+            /** Publish Audit Event Id */
+            publish_audit_event_id: string | null;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Published By */
+            published_by: string;
+            /** Relationships */
+            relationships: number;
+            /** Reopen Audit Event Id */
+            reopen_audit_event_id: string | null;
+            /** Reopen Reason */
+            reopen_reason: string | null;
+            /** Reopened At */
+            reopened_at: string | null;
+            /** Reopened By */
+            reopened_by: string | null;
+            /** Version */
+            version: string;
         };
         /**
          * PlateauGapRead
@@ -3679,6 +3819,39 @@ export interface components {
             op: components["schemas"]["PropertyOp"];
             /** Value */
             value: string | null;
+        };
+        /** PublicationPreviewRead */
+        PublicationPreviewRead: {
+            /** Boxes */
+            boxes: number;
+            bump: components["schemas"]["Bump"];
+            /** Diagrams */
+            diagrams: number;
+            /** Elements */
+            elements: number;
+            /** Relationships */
+            relationships: number;
+            /** Version */
+            version: string;
+        };
+        /** PublishPackage */
+        PublishPackage: {
+            /** Adr */
+            adr?: string | null;
+            bump: components["schemas"]["Bump"];
+            /**
+             * Dry Run
+             * @description A preview unless told otherwise.
+             * @default true
+             */
+            dry_run?: boolean;
+            /** Notes */
+            notes: string;
+        };
+        /** PublishResult */
+        PublishResult: {
+            preview: components["schemas"]["PublicationPreviewRead"];
+            published: components["schemas"]["PackageVersionRead"] | null;
         };
         /**
          * QualityReportRead
@@ -3891,6 +4064,11 @@ export interface components {
             properties?: {
                 [key: string]: string;
             } | null;
+        };
+        /** ReopenPackage */
+        ReopenPackage: {
+            /** Reason */
+            reason: string;
         };
         /** ReportCreate */
         ReportCreate: {
@@ -9755,6 +9933,206 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    publish_package_packages__package_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishPackage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishResult"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reopen_package_packages__package_id__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReopenPackage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageVersionRead"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_package_versions_packages__package_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackageVersionRead"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

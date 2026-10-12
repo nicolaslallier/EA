@@ -6,6 +6,11 @@ error envelope, `services/` raises them.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ea.domain.package_versions import FrozenRefusal
+
 
 class DomainError(Exception):
     """Base class for every rule this domain enforces."""
@@ -289,6 +294,14 @@ class BaselineTooLargeError(DomainError):
     """
 
 
+class BaselineScopedError(DomainError):
+    """A baseline of one package's subtree cannot be diffed or restored yet.
+
+    Both read a baseline as the whole model: restoring it would plan the deletion of
+    everything outside its scope.
+    """
+
+
 class RestoreBlockedError(DomainError):
     """A restoration would change an element that is locked — unlock it first."""
 
@@ -496,3 +509,48 @@ class UnknownReportTemplateError(DomainError):
 
 class UnsupportedReportSubjectError(DomainError):
     """This template does not take this kind of subject."""
+
+
+class PackageFrozenError(DomainError):
+    """A write reached a package that is published, or lies under one: reopen it first.
+
+    Raised from the database's own refusal (SQLSTATE EA001), translated once in
+    `ea.db.unit_of_work`. It names ids, a version, a table and an operation, never
+    a name or a text.
+    """
+
+    def __init__(self, message: str, refusal: FrozenRefusal | None = None) -> None:
+        super().__init__(message)
+        self.refusal = refusal
+
+
+class PackageAlreadyFrozenError(DomainError):
+    """A publication aimed at a package that is already published, or under one that is."""
+
+
+class LiveViewInSubtreeError(DomainError):
+    """A subtree that holds a live generated view cannot be published: freeze the view first.
+
+    A live view stores no box, it is recomputed at every opening, so a version could not
+    say what it shows.
+    """
+
+
+class PackageHasVersionsError(DomainError):
+    """A package that was ever published cannot be deleted: its versions point at it."""
+
+
+class BaselineInUseError(DomainError):
+    """This baseline is the copy of a published version: it can never be deleted."""
+
+
+class PackageNotFrozenError(DomainError):
+    """A reopening aimed at a package that has no version in force."""
+
+
+class AdrRequiredError(DomainError):
+    """A MAJOR publication that names no ADR."""
+
+
+class InvalidPublicationError(DomainError):
+    """Notes, ADR, reason or version that do not read. The message never echoes the value."""

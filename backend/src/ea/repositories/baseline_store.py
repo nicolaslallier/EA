@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
+from sqlalchemy import ARRAY, Text, Uuid, and_, any_, delete, func, literal, select, text
 from sqlalchemy import cast as sql_cast
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as upsert
@@ -50,7 +50,9 @@ from ea.domain.baselines import (
     refuse_oversize,
 )
 from ea.domain.errors import (
+    BaselineInUseError,
     BaselineNotFoundError,
+    BaselineScopedError,
     DuplicateBaselineError,
     RestoreBlockedError,
     RestoreConflictError,
@@ -72,9 +74,10 @@ from ea.repositories.architecture_store import (
 )
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
+from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -160,6 +163,8 @@ def _baseline(row: BaselineRecord, elements: int, relationships: int, boxes: int
         element_count=elements,
         relationship_count=relationships,
         box_count=boxes,
+        scope_package_id=row.scope_package_id,
+        scope_path=row.scope_path,
     )
 
 
@@ -316,6 +321,7 @@ async def _measure(
     *,
     baseline_id: UUID | None = None,
     diagrams: bool = False,
+    clauses: Mapping[Any, Any] | None = None,
 ) -> ModelSize:
     """Row counts and bytes of text, as aggregates: no row reaches Python.
 
@@ -325,7 +331,8 @@ async def _measure(
     """
 
     def where(model: Any) -> list[Any]:
-        return [model.baseline_id == baseline_id] if baseline_id is not None else []
+        found = [model.baseline_id == baseline_id] if baseline_id is not None else []
+        return [*found, clauses[model]] if clauses and model in clauses else found
 
     element_count, element_text = (
         await session.execute(
@@ -374,6 +381,102 @@ async def _measure(
         + int(link_text)
         + ROW_BYTES * (element_count + link_count + box_count),
     )
+
+
+def _scope_filters(scope: Sequence[UUID]) -> tuple[Any, Any, Any]:
+    """The three WHERE clauses of a subtree: its elements, the links with both ends in it,
+    and the boxes of the diagrams filed in it."""
+    in_scope = ElementRecord.package_id.in_(scope)
+    members = select(ElementRecord.id).where(in_scope)
+    linked = and_(
+        RelationshipRecord.source_id.in_(members), RelationshipRecord.target_id.in_(members)
+    )
+    boxed = DiagramNodeRecord.diagram_id.in_(
+        select(DiagramRecord.id).where(DiagramRecord.package_id.in_(scope))
+    )
+    return in_scope, linked, boxed
+
+
+async def scope_size(session: AsyncSession, scope: frozenset[UUID]) -> ModelSize:
+    """What a subtree holds, counted by the server before anything is copied.
+
+    Rows and bytes of text, by the same aggregates as the whole model (`_measure`).
+    """
+    ids = sorted(scope)
+    in_scope, linked, boxed = _scope_filters(ids)
+    size = await _measure(
+        session,
+        ElementRecord,
+        RelationshipRecord,
+        DiagramNodeRecord,
+        clauses={ElementRecord: in_scope, RelationshipRecord: linked, DiagramNodeRecord: boxed},
+    )
+    filed = DiagramRecord.package_id.in_(ids)
+    diagrams = int(
+        await session.scalar(select(func.count()).select_from(DiagramRecord).where(filed)) or 0
+    )
+    return replace(size, diagrams=diagrams)
+
+
+async def capture_scope(
+    session: AsyncSession,
+    baseline: Baseline,
+    scope: frozenset[UUID],
+    *,
+    package_id: UUID,
+    path: str,
+) -> Baseline:
+    """Copy one subtree under this baseline, in the caller's transaction.
+
+    The caller holds the locks that keep the subtree still (docs/adr/0074): this copies
+    what is committed, with the same three `INSERT … SELECT` as a whole-model capture.
+    """
+    id_column = literal(baseline.id, Uuid())
+    in_scope, linked, boxed = _scope_filters(sorted(scope))
+    paths = _paths()
+    session.add(
+        BaselineRecord(
+            id=baseline.id,
+            name=baseline.name,
+            description=baseline.description,
+            created_by_sub=baseline.created_by_sub,
+            created_by=baseline.created_by,
+            created_at=baseline.created_at,
+            scope_package_id=package_id,
+            scope_path=path,
+        )
+    )
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        if constraint_of(error) != NAME_TAKEN:
+            raise
+        msg = f"a baseline is already named {baseline.name!r}"
+        raise DuplicateBaselineError(msg) from error
+    await session.execute(
+        insert(BaselineElementRecord).from_select(
+            ["baseline_id", *_ELEMENT_COLUMNS, "package_path"],
+            select(
+                id_column,
+                *(getattr(ElementRecord, name) for name in _ELEMENT_COLUMNS),
+                paths.c.path,
+            )
+            .outerjoin(paths, paths.c.id == ElementRecord.package_id)
+            .where(in_scope),
+        )
+    )
+    for target, source, columns, clause in (
+        (BaselineRelationshipRecord, RelationshipRecord, _RELATIONSHIP_COLUMNS, linked),
+        (BaselineBoxRecord, DiagramNodeRecord, _BOX_COLUMNS, boxed),
+    ):
+        await session.execute(
+            insert(target).from_select(
+                ["baseline_id", *columns],
+                select(id_column, *(getattr(source, name) for name in columns)).where(clause),
+            )
+        )
+    stored = baseline.with_counts(*await _counts(session, baseline.id))
+    return replace(stored, scope_package_id=package_id, scope_path=path)
 
 
 class PostgresBaselineRepository:
@@ -490,7 +593,16 @@ class PostgresBaselineRepository:
             if row is None:
                 return False
             events = events_for(audit, _baseline(row, *await _counts(session, baseline_id)))
-            await session.execute(delete(BaselineRecord).where(BaselineRecord.id == baseline_id))
+            try:
+                await session.execute(
+                    delete(BaselineRecord).where(BaselineRecord.id == baseline_id)
+                )
+                await session.flush()
+            except IntegrityError as error:
+                if constraint_of(error) != "fk_package_versions_baseline_id_baselines":
+                    raise
+                msg = "this baseline is the copy of a published version"
+                raise BaselineInUseError(msg) from error
             write_events(session, events)
         return True
 
@@ -508,9 +620,13 @@ class PostgresBaselineRepository:
         self, session: AsyncSession, baseline_id: UUID, *, keep_new: bool
     ) -> RestorePlan:
         """The plan, from one instant of the model, the protection and the documents."""
-        if await session.get(BaselineRecord, baseline_id) is None:
+        record = await session.get(BaselineRecord, baseline_id)
+        if record is None:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
+        if record.scope_package_id is not None:
+            msg = "a baseline of one package's subtree cannot be restored yet"
+            raise BaselineScopedError(msg)
         # Counted before any row is loaded, in the instant the plan reads.
         await self._guard_baseline(session, baseline_id)
         await self._guard_live(session, diagrams=True)
@@ -563,6 +679,10 @@ class PostgresBaselineRepository:
             try:
                 async with work(self._sessions, alone=True) as session:
                     await session.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+                    # The very first statement, so before the snapshot: it waits for a
+                    # publication in flight (SHARE), whose freeze the triggers then see. Without
+                    # it the snapshot predates the freeze and the writes slip past it.
+                    await session.execute(text(lock_guarded("ROW EXCLUSIVE")))
                     plan = await self._plan(session, baseline_id, keep_new=keep_new)
                     blocked = plan.blocked
                     if plan.is_blocked:

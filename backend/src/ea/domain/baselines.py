@@ -84,6 +84,9 @@ class Baseline:
     element_count: int = 0
     relationship_count: int = 0
     box_count: int = 0
+    #: Set when the baseline copies one package's subtree rather than the whole model.
+    scope_package_id: UUID | None = None
+    scope_path: str | None = None
 
     @classmethod
     def create(
@@ -110,16 +113,8 @@ class Baseline:
         )
 
     def with_counts(self, elements: int, relationships: int, boxes: int) -> Baseline:
-        return Baseline(
-            self.id,
-            self.name,
-            self.description,
-            self.created_by_sub,
-            self.created_by,
-            self.created_at,
-            elements,
-            relationships,
-            boxes,
+        return replace(
+            self, element_count=elements, relationship_count=relationships, box_count=boxes
         )
 
 
@@ -131,6 +126,7 @@ def baseline_view(baseline: Baseline) -> dict[str, Any]:
         "elements": baseline.element_count,
         "relationships": baseline.relationship_count,
         "boxes": baseline.box_count,
+        "scope_path": baseline.scope_path,
     }
 
 

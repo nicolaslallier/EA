@@ -86,6 +86,23 @@ l'autre, ni aucune restauration.
    « Avant mise en service <date> » ; la garder tant que le service n'a pas un
    historique qui la remplace.
 
+## Procédure : les versions de package et les refus de gel
+
+`docs/adr/0074`. Rien de ceci n'est purgé.
+
+- `package_versions` n'est **jamais purgée** : elle est append-only (triggers
+  `package_versions_append_only` et `package_versions_no_truncate`), seule la
+  fermeture d'une ligne, par une réouverture, est un `UPDATE` permis. Elle est
+  l'historique des versions ; la vider ferait oublier ce qui a été publié.
+- Les événements `package.write_refused_frozen` sont **bornés** à la source par
+  l'enregistreur (30 par minute et par `sub`, compteur en mémoire du processus),
+  mais **jamais purgés**. Ils suivent la procédure du journal ci-dessus.
+- Une baseline désignée par une version ne peut **jamais** être supprimée : la ligne
+  de version la référence (`RESTRICT`) et la table est append-only, rouvrir la
+  version n'y change rien (409 `baseline_in_use`). De même un package publié une
+  fois ne peut plus être supprimé (409 `package_has_versions`). On ne contourne
+  pas la contrainte.
+
 ## Limites
 
 - Aucune chaîne de hachage : un opérateur de la base peut réécrire le journal, et

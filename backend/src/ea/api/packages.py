@@ -21,6 +21,10 @@ from ea.api.schemas import (
     PackageRead,
     PackageTarget,
     PackageUpdate,
+    PackageVersionRead,
+    PublishPackage,
+    PublishResult,
+    ReopenPackage,
     package_target,
 )
 from ea.domain.packages import UNSET, Unset
@@ -84,6 +88,40 @@ async def delete_package(
         target = package_target(move_contents_to)
     await packages.delete(package_id, move_contents_to=target)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/packages/{package_id}/publish", response_model=PublishResult, responses=REJECTED)
+async def publish_package(
+    package_id: UUID, body: PublishPackage, packages: Packages
+) -> PublishResult:
+    """Freeze the package and everything below it under a new version (an approver's gesture).
+
+    A preview unless `dry_run` is false: the version it would take and what it would freeze.
+    A MAJOR names its ADR. Nothing below a published package can be written until it is reopened.
+    """
+    return PublishResult.of(
+        await packages.publish(
+            package_id, bump=body.bump, notes=body.notes, adr=body.adr, dry_run=body.dry_run
+        )
+    )
+
+
+@router.post("/packages/{package_id}/reopen", response_model=PackageVersionRead, responses=REJECTED)
+async def reopen_package(
+    package_id: UUID, body: ReopenPackage, packages: Packages
+) -> PackageVersionRead:
+    """Close the version in force, with a reason (an approver's gesture)."""
+    return PackageVersionRead.of(await packages.reopen(package_id, reason=body.reason))
+
+
+@router.get(
+    "/packages/{package_id}/versions",
+    response_model=list[PackageVersionRead],
+    responses=NOT_FOUND,
+)
+async def list_package_versions(package_id: UUID, packages: Packages) -> list[PackageVersionRead]:
+    """Every version the package was published under, the latest first."""
+    return [PackageVersionRead.of(v) for v in await packages.versions(package_id)]
 
 
 @router.post(
