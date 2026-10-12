@@ -128,3 +128,92 @@ class TestTheService:
         views = await external_service.refresh_element(element.id)  # a change: skipped, no error
 
         assert [v.reference.title for v in views] == ["Fix invoice rounding"]
+
+
+@pytest.mark.asyncio
+class TestTheOrderOfARiskyWrite:
+    """The review guard is read BEFORE anything leaves the system (docs/adr/0065)."""
+
+    @pytest.mark.parametrize(
+        "state",
+        [{"approval_state": ApprovalState.APPROVED}, {"locked": True}],
+        ids=["approved", "locked"],
+    )
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_a_frozen_element_refuses_a_ticket_before_any_call_to_the_provider(
+        self,
+        external_service: ExternalReferenceService,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+        state: dict[str, object],
+        dry_run: bool,
+    ) -> None:
+        from dataclasses import replace
+
+        element = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT, name="Billing"
+        )
+        repository.elements[element.id] = replace(repository.elements[element.id], **state)  # type: ignore[arg-type]
+
+        with pytest.raises(ElementLockedError):
+            await external_service.open_issue(
+                element.id,
+                target="main",
+                scope="acme/billing",
+                title="t",
+                body="",
+                dry_run=dry_run,
+            )
+
+        assert external_system.created == [] and external_system.create_attempts == 0
+
+    async def test_linking_to_a_frozen_element_costs_the_provider_nothing(
+        self,
+        external_service: ExternalReferenceService,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+    ) -> None:
+        from dataclasses import replace
+
+        element = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT, name="Billing"
+        )
+        repository.elements[element.id] = replace(repository.elements[element.id], locked=True)
+
+        with pytest.raises(ElementLockedError):
+            await external_service.link(element.id, kind=GITHUB, reference="acme/billing#12")
+
+        assert external_system.calls == []
+
+    async def test_an_element_approved_during_the_call_leaves_a_typed_error_naming_the_ticket(
+        self,
+        external_service: ExternalReferenceService,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+        repository: InMemoryRepository,
+    ) -> None:
+        from dataclasses import replace
+
+        from ea.domain.errors import ExternalLinkFailedError
+
+        element = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT, name="Billing"
+        )
+        original = external_system.create_issue
+
+        async def approved_meanwhile(scope: str, draft: object) -> str:
+            repository.elements[element.id] = replace(
+                repository.elements[element.id], approval_state=ApprovalState.APPROVED
+            )
+            return await original(scope, draft)  # type: ignore[arg-type]
+
+        external_system.create_issue = approved_meanwhile  # type: ignore[method-assign]
+
+        with pytest.raises(ExternalLinkFailedError, match="acme/billing#101"):
+            await external_service.open_issue(
+                element.id, target="main", scope="acme/billing", title="t", body="", dry_run=False
+            )
+
+        assert len(external_system.created) == 1

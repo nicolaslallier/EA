@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import AuditAction, external_reference_view
 from ea.domain.errors import (
     DuplicateExternalReferenceError,
@@ -184,7 +185,10 @@ class ExternalReferenceService:
         none. A free link (`kind=url`) is stored as written and never called.
         """
         caller = require_editor()
-        await self._architecture.get_element(element_id)
+        element = await self._architecture.get_element(element_id)
+        # Review is asked on the row just read, before anything leaves the system; the store asks
+        # it again under the lock, which is the one that decides a race.
+        guard_element_write(element, WriteKind.EXTERNAL_REFERENCE, caller)
         if kind is ExternalKind.URL:
             if target:
                 msg = "a free link has no target"
@@ -367,7 +371,10 @@ class ExternalReferenceService:
         and visible in the plan; the trail records the link, never the text.
         """
         caller = require_editor()
-        await self._architecture.get_element(element_id)
+        element = await self._architecture.get_element(element_id)
+        # Before the writable check, before the dry run, before the provider: a ticket opened
+        # for an element that review will not let us link is an orphan nobody can undo.
+        guard_element_write(element, WriteKind.EXTERNAL_REFERENCE, caller)
         system = self._writable_system(ExternalKind.GITHUB_ISSUE, target)
         clean = clean_scope(system.kind, scope)
         draft = IssueDraft.of(title, body)
