@@ -151,6 +151,6 @@ La revue n'est pas facultative : elle est une **tâche du plan** et une **condit
 
 Je lance les étapes 3 et 4 et j'en rapporte le résultat tel quel ; elles ne sont pas faites tant que je ne l'ai pas dit.
 
-## 11. Points à trancher
+## 11. Décisions tranchées
 
-- **Séparation des tâches à la publication.** L'ADR 0048 interdit à celui qui a fait le dernier changement d'approuver. Étendre la règle : un approbateur ne publie pas un sous-arbre dont il est le dernier auteur ? Par défaut je ne l'applique pas en v1 (elle est coûteuse sur un grand sous-arbre et un dépôt à peu d'utilisateurs la contourne) ; à confirmer.
+- **Pas de séparation des tâches à la publication** (décision du 2026-10-12). Un approbateur peut publier un sous-arbre qu'il a lui-même modifié en dernier. La publication, le motif et l'acteur restent tracés (§ 9) ; l'ADR 0074 le consigne comme choix explicite, à rouvrir si le dépôt passe à plusieurs approbateurs.
