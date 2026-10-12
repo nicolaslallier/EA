@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import ARRAY, Text, Uuid, any_, delete, func, literal, select
+from sqlalchemy import ARRAY, Text, Uuid, and_, any_, delete, func, literal, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as upsert
@@ -160,6 +160,8 @@ def _baseline(row: BaselineRecord, elements: int, relationships: int, boxes: int
         element_count=elements,
         relationship_count=relationships,
         box_count=boxes,
+        scope_package_id=row.scope_package_id,
+        scope_path=row.scope_path,
     )
 
 
@@ -374,6 +376,100 @@ async def _measure(
         + int(link_text)
         + ROW_BYTES * (element_count + link_count + box_count),
     )
+
+
+def _scope_filters(scope: Sequence[UUID]) -> tuple[Any, Any, Any]:
+    """The three WHERE clauses of a subtree: its elements, the links with both ends in it,
+    and the boxes of the diagrams filed in it."""
+    in_scope = ElementRecord.package_id.in_(scope)
+    members = select(ElementRecord.id).where(in_scope)
+    linked = and_(
+        RelationshipRecord.source_id.in_(members), RelationshipRecord.target_id.in_(members)
+    )
+    boxed = DiagramNodeRecord.diagram_id.in_(
+        select(DiagramRecord.id).where(DiagramRecord.package_id.in_(scope))
+    )
+    return in_scope, linked, boxed
+
+
+async def scope_size(session: AsyncSession, scope: frozenset[UUID]) -> ModelSize:
+    """What a subtree holds, counted by the server before anything is copied.
+
+    # ponytail: counts only, bytes are not measured — the count ceilings bound the copy;
+    # measure the text too if a subtree of huge documents ever appears.
+    """
+    in_scope, linked, boxed = _scope_filters(sorted(scope))
+
+    async def count(table: Any, clause: Any) -> int:
+        return int(await session.scalar(select(func.count()).select_from(table).where(clause)) or 0)
+
+    return ModelSize(
+        elements=await count(ElementRecord, in_scope),
+        relationships=await count(RelationshipRecord, linked),
+        boxes=await count(DiagramNodeRecord, boxed),
+        diagrams=await count(DiagramRecord, DiagramRecord.package_id.in_(sorted(scope))),
+    )
+
+
+async def capture_scope(
+    session: AsyncSession,
+    baseline: Baseline,
+    scope: frozenset[UUID],
+    *,
+    package_id: UUID,
+    path: str,
+) -> Baseline:
+    """Copy one subtree under this baseline, in the caller's transaction.
+
+    The caller holds the locks that keep the subtree still (docs/adr/0074): this copies
+    what is committed, with the same three `INSERT … SELECT` as a whole-model capture.
+    """
+    id_column = literal(baseline.id, Uuid())
+    in_scope, linked, boxed = _scope_filters(sorted(scope))
+    paths = _paths()
+    session.add(
+        BaselineRecord(
+            id=baseline.id,
+            name=baseline.name,
+            description=baseline.description,
+            created_by_sub=baseline.created_by_sub,
+            created_by=baseline.created_by,
+            created_at=baseline.created_at,
+            scope_package_id=package_id,
+            scope_path=path,
+        )
+    )
+    try:
+        await session.flush()
+    except IntegrityError as error:
+        if constraint_of(error) != NAME_TAKEN:
+            raise
+        msg = f"a baseline is already named {baseline.name!r}"
+        raise DuplicateBaselineError(msg) from error
+    await session.execute(
+        insert(BaselineElementRecord).from_select(
+            ["baseline_id", *_ELEMENT_COLUMNS, "package_path"],
+            select(
+                id_column,
+                *(getattr(ElementRecord, name) for name in _ELEMENT_COLUMNS),
+                paths.c.path,
+            )
+            .outerjoin(paths, paths.c.id == ElementRecord.package_id)
+            .where(in_scope),
+        )
+    )
+    for target, source, columns, clause in (
+        (BaselineRelationshipRecord, RelationshipRecord, _RELATIONSHIP_COLUMNS, linked),
+        (BaselineBoxRecord, DiagramNodeRecord, _BOX_COLUMNS, boxed),
+    ):
+        await session.execute(
+            insert(target).from_select(
+                ["baseline_id", *columns],
+                select(id_column, *(getattr(source, name) for name in columns)).where(clause),
+            )
+        )
+    stored = baseline.with_counts(*await _counts(session, baseline.id))
+    return replace(stored, scope_package_id=package_id, scope_path=path)
 
 
 class PostgresBaselineRepository:

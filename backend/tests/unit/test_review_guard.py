@@ -128,6 +128,7 @@ ELEMENT_WRITERS = {
     "baseline_store.py": {
         "_write": "plan_restore blocks on approved_or_locked, read in the same transaction",
         "PostgresBaselineRepository.create": "copies FROM elements into baseline_*: no write to it",
+        "capture_scope": "copies FROM elements into baseline_*: no write to it",
     },
     "profile_store.py": {
         "PostgresProfileRepository.set_for_element": "guard_element_write(STEREOTYPES) on the "
