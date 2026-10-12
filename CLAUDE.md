@@ -866,6 +866,7 @@ what they changed last — fail-closed when that is unknown; only
 `EA_APPROVAL_SEPARATION=false` lifts it, and logs `separation_disabled`. On an
 approved element, changing its content is the approver's and sends it back to
 review; adding or removing a link is any editor's and does the same; documents,
+external references (`WriteKind.EXTERNAL_REFERENCE`, which never moves the revision),
 filing in a package and restoring a baseline are nobody's until it is reopened;
 a locked one accepts nothing. The SPA draws one button per entry of
 `allowed_transitions` and decides nothing.
