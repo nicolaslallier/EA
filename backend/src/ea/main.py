@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
@@ -28,6 +29,7 @@ from ea.api.dependencies import (
     diagram_service_of,
     document_service_of,
     exchange_service_of,
+    external_service_of,
     file_service_of,
     ipam_service_of,
     package_service_of,
@@ -44,6 +46,7 @@ from ea.api.diagrams import router as diagrams_router
 from ea.api.documents import router as documents_router
 from ea.api.errors import AnsweringUnexpectedFailures, register_error_handlers
 from ea.api.exchanges import router as exchanges_router
+from ea.api.external import router as external_router
 from ea.api.files import router as files_router
 from ea.api.health import router as health_router
 from ea.api.ipam import router as ipam_router
@@ -62,6 +65,8 @@ from ea.core.logging import configure_logging
 from ea.db.postgres import check_connectivity as check_relational_store
 from ea.db.postgres import create_api_engine, create_session_factory
 from ea.domain.auth import Caller
+from ea.domain.errors import ExternalBusyError
+from ea.domain.external import ExternalKind
 from ea.domain.ports import (
     AccessTokenVerifier,
     AnalysisRepository,
@@ -71,6 +76,8 @@ from ea.domain.ports import (
     DocumentRepository,
     ElementFilter,
     ExchangeRepository,
+    ExternalReferenceRepository,
+    ExternalSystem,
     FileMetadataRepository,
     IpamRepository,
     ObjectStore,
@@ -95,6 +102,8 @@ from ea.repositories.diagram_store import PostgresDiagramRepository
 from ea.repositories.document_store import PostgresDocumentRepository
 from ea.repositories.embeddings import HttpEmbedder
 from ea.repositories.exchange_store import PostgresExchangeRepository
+from ea.repositories.external_providers import build_provider
+from ea.repositories.external_store import PostgresExternalReferenceRepository
 from ea.repositories.file_metadata_store import PostgresFileMetadataRepository
 from ea.repositories.keycloak import JwtVerifier, http_client_for
 from ea.repositories.object_store import MinioObjectStore, minio_client
@@ -111,6 +120,7 @@ from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
 from ea.services.exchange_admission import Admission
 from ea.services.exchanges import MAX_PARSES_QUEUED, ExchangeService
+from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.indexing import DocumentIndexer
 from ea.services.ipam import IpamService
@@ -133,8 +143,12 @@ logger = logging.getLogger(__name__)
 #: `FILES` is the MinIO bucket behind the *Fichiers* section; without it the
 #: `/files` routes and the four MCP file tools answer 503, exactly as they do
 #: where `EA_S3_ENABLED` is off.
+#: `EXTERNAL` is the third-party systems behind the references of an element (docs/adr/0073):
+#: it is named when any declared target failed its boot probe; that target is then not
+#: asked, its references are served from the cache and linking to it answers 503.
 SEARCH: Final = "search"
 FILES: Final = "files"
+EXTERNAL: Final = "external"
 
 
 async def _reachable(name: str, probe: Callable[[], Awaitable[None]], degraded: list[str]) -> bool:
@@ -225,6 +239,27 @@ def build_verifier(settings: Settings) -> JwtVerifier:
     )
 
 
+def build_external_systems(settings: Settings) -> dict[str, ExternalSystem]:
+    """One provider per *active* declared target — token, scope and (if needed) account present.
+
+    The tokens are read from the settings here and handed to the provider's egress client; no
+    other object ever holds one. A declared target that is not active is reported by
+    `ExternalReferenceService.targets()` as inactive.
+    """
+    return {
+        name: build_provider(
+            name,
+            target,
+            token=settings.external_tokens[name].get_secret_value(),
+            timeout=settings.external_timeout_seconds,
+            total_timeout=settings.external_total_timeout_seconds,
+            max_bytes=settings.external_max_response_bytes,
+            ca_cert=settings.external_ca_cert or None,
+        )
+        for name, target in settings.external_active_targets().items()
+    }
+
+
 def build_object_store(settings: Settings) -> MinioObjectStore:
     """The bucket of `s3_bucket` on `s3_endpoint` — see docs/adr/0036."""
     return MinioObjectStore(minio_client(settings), settings.s3_bucket)
@@ -243,6 +278,8 @@ def _lifespan(
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
+    external: ExternalReferenceRepository | None = None,
+    external_systems: Mapping[str, ExternalSystem] | None = None,
     profiles: ProfileRepository | None = None,
     templates: TemplateRepository | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
@@ -317,6 +354,7 @@ def _lifespan(
             profile_store = profiles
             template_store = templates
             exchange_store: ExchangeRepository | None = None
+            external_store = external
             if settings.postgres_enabled:
                 engine = create_api_engine(settings)
                 stack.push_async_callback(engine.dispose)
@@ -336,6 +374,8 @@ def _lifespan(
                     audit_store = PostgresAuditRepository(app.state.db_sessions)
                 if baseline_store is None:
                     baseline_store = PostgresBaselineRepository(app.state.db_sessions)
+                if external_store is None:
+                    external_store = PostgresExternalReferenceRepository(app.state.db_sessions)
                 if profile_store is None:
                     profile_store = PostgresProfileRepository(app.state.db_sessions)
                 if template_store is None:
@@ -448,6 +488,38 @@ def _lifespan(
                     exports_per_caller=settings.exchange_exports_per_caller,
                     export_lease_seconds=settings.exchange_export_lease_s,
                     imports=app.state.import_admission,
+                )
+            if external_store is not None:
+                declared = dict(external_systems) if external_systems is not None else None
+                systems = declared if declared is not None else build_external_systems(settings)
+                for provider in systems.values():
+                    aclose = getattr(provider, "aclose", None)
+                    if aclose is not None:
+                        stack.push_async_callback(aclose)
+                # Every target is probed at boot, together: a target that cannot be reached is
+                # left out and the section is named, but the API starts (docs/adr/0037).
+                probes = await asyncio.gather(
+                    *(_reachable(EXTERNAL, provider.probe, []) for provider in systems.values())
+                )
+                inactive = {
+                    name: target.kind
+                    for name, target in settings.external_targets.items()
+                    if name not in settings.external_active_targets()
+                }
+                active: dict[str, ExternalSystem] = {}
+                for (name, provider), reachable in zip(systems.items(), probes, strict=True):
+                    if reachable:
+                        active[name] = provider
+                    else:
+                        inactive[name] = provider.kind
+                        if EXTERNAL not in degraded:
+                            degraded.append(EXTERNAL)
+                app.state.external_service = ExternalReferenceService(
+                    external_store,
+                    architecture_service_of(app),
+                    active,
+                    inactive=inactive,
+                    admission=app.state.external_admission,
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -631,6 +703,7 @@ def _mount_mcp(app: FastAPI, settings: Settings) -> None:
         lambda: exchange_service_of(app),
         lambda: analysis_service_of(app),
         lambda: timeline_service_of(app),
+        lambda: external_service_of(app),
         lambda: diagram_service_of(app),
         lambda: profile_service_of(app),
         lambda: template_service_of(app),
@@ -684,6 +757,9 @@ def create_app(
     audit: AuditRepository | None = None,
     baselines: BaselineRepository | None = None,
     exchanges: ExchangeRepository | None = None,
+    external: ExternalReferenceRepository | None = None,
+    external_systems: Mapping[str, ExternalSystem] | None = None,
+    external_inactive: Mapping[str, ExternalKind] | None = None,
     profiles: ProfileRepository | None = None,
     templates: TemplateRepository | None = None,
     view_sources: ViewSourceResolver | None = None,
@@ -740,6 +816,8 @@ def create_app(
             audit=audit,
             baselines=baselines,
             exchanges=exchanges,
+            external=external,
+            external_systems=external_systems,
             profiles=profiles,
             templates=templates,
         ),
@@ -760,6 +838,14 @@ def create_app(
         lease_seconds=settings.exchange_import_lease_s,
     )
     app.state.import_admission = admission
+    # And one for the calls out to third parties (docs/adr/0073), global and per caller.
+    app.state.external_admission = Admission(
+        settings.external_max_in_flight,
+        per_caller=settings.external_per_caller,
+        lease_seconds=settings.external_total_timeout_seconds * 4,
+        refusal=lambda: ExternalBusyError("calls to third parties are all in flight: try again"),
+        kind="external",
+    )
     if verifier is not None:
         app.state.token_verifier = verifier
     if architecture_service is not None:
@@ -770,6 +856,14 @@ def create_app(
             )
         if ipam is not None:
             app.state.ipam_service = IpamService(architecture_service, ipam)
+        if external is not None:
+            app.state.external_service = ExternalReferenceService(
+                external,
+                architecture_service,
+                external_systems or {},
+                inactive=external_inactive,
+                admission=app.state.external_admission,
+            )
         if requirements is not None:
             app.state.requirement_service = RequirementService(
                 requirements, admission=app.state.analysis_admission
@@ -880,6 +974,7 @@ def create_app(
     app.include_router(analysis_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(timeline_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(files_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
+    app.include_router(external_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(reports_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(exchanges_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)
     app.include_router(audit_router, dependencies=[Authenticated], responses=AUTH_RESPONSES)

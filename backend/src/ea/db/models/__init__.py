@@ -26,6 +26,7 @@ from ea.db.models.diagram import (
 )
 from ea.db.models.diagram_template import DiagramTemplateRecord
 from ea.db.models.document import ElementDocument
+from ea.db.models.external import ExternalReferenceRecord
 from ea.db.models.file import FileMetadataRecord
 from ea.db.models.package import PackageRecord
 from ea.db.models.profile import (
@@ -52,6 +53,7 @@ __all__ = [
     "ElementDocument",
     "ElementRecord",
     "ElementStereotypeRecord",
+    "ExternalReferenceRecord",
     "FileMetadataRecord",
     "PackageRecord",
     "ProfileRecord",

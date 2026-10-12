@@ -386,3 +386,21 @@ def test_the_runner_no_longer_holds_the_docker_socket_and_the_workflow_agrees() 
     assert "PORTAINER_CA_CERT: /etc/ea/infra-ca.crt" in workflow
     assert "docker " not in workflow
     assert "pull_request" not in workflow
+
+
+def test_the_deployed_api_takes_the_third_party_targets_from_optional_variables() -> None:
+    """A token in the stack file would be committed; an empty one must not block `app-up`."""
+    environment = api_environment()
+
+    for name in ("EA_EXTERNAL_TARGETS", "EA_EXTERNAL_TOKENS"):
+        assert environment[name] == "${" + name + ":-}", name
+
+
+def test_no_third_party_secret_or_host_is_written_in_the_stack_or_its_example() -> None:
+    text = (REPO_ROOT / "deploy" / "ea.stack.yml").read_text(encoding="utf-8")
+    example = (REPO_ROOT / "deploy" / "ea.env.example").read_text(encoding="utf-8")
+
+    assert "api.github.com" not in text
+    assert "ghp_" not in text + example
+    assert "github_pat_" not in text + example
+    assert "EA_EXTERNAL_TOKENS=\n" in example

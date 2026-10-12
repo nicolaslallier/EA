@@ -25,6 +25,7 @@ from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
 from ea.services.documents import DocumentService
+from ea.services.external import ExternalReferenceService
 from ea.services.files import FileService
 from ea.services.ipam import IpamService
 from ea.services.packages import PackageService
@@ -57,6 +58,7 @@ def mcp_over(
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
+    external_service: ExternalReferenceService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
     template_service: TemplateService,
@@ -73,6 +75,7 @@ def mcp_over(
         lambda: app.state.exchange_service,
         lambda: AnalysisService(service, InMemoryRepository()),
         lambda: TimelineService(service, InMemoryRepository()),
+        lambda: external_service,
         lambda: diagram_service,
         lambda: profile_service,
         lambda: template_service,
@@ -90,6 +93,7 @@ def parts(
     saved_query_service: SavedQueryService,
     audit_log: InMemoryAuditLog,
     baseline_service: BaselineService,
+    external_service: ExternalReferenceService,
     diagram_service: DiagramService,
     profile_service: ProfileService,
     template_service: TemplateService,
@@ -102,6 +106,7 @@ def parts(
         saved_query_service,
         audit_log,
         baseline_service,
+        external_service,
         diagram_service,
         profile_service,
         template_service,

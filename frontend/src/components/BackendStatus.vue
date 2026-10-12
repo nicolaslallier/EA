@@ -12,6 +12,7 @@ type State = { kind: 'loading' } | { kind: 'ready'; health: Health } | { kind: '
 const SECTION_LABELS: Record<string, string> = {
   files: 'fichiers',
   search: 'recherche documentaire',
+  external: 'systèmes tiers',
 }
 
 const state = ref<State>({ kind: 'loading' })

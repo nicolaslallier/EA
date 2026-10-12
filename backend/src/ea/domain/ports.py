@@ -26,6 +26,12 @@ from ea.domain.archimate import ElementType, Layer, RelationshipType
 from ea.domain.audit import AuditFilter, AuditPage
 from ea.domain.auth import Caller
 from ea.domain.documents import Document, DocumentSummary
+from ea.domain.external import (
+    ExternalKind,
+    ExternalReference,
+    ExternalSnapshot,
+    IssueDraft,
+)
 from ea.domain.files import FileDetails, FileListing, FileMetadata, StoredFile
 from ea.domain.model import Element, Relationship
 from ea.domain.packages import Package, PackageCounts
@@ -1142,5 +1148,84 @@ class ExchangeRepository(Protocol):
 
         Done before the first write so that an import and an ordinary write meet the
         elements in the same order (docs/adr/0052, the interlock limit).
+        """
+        ...
+
+
+class ExternalSystem(Protocol):
+    """A named target: a tool outside the catalogue that can say what an identifier names.
+
+    One implementation per kind of object (`repositories/external_*.py`), built from a
+    target the configuration declares — the host is the configuration's, never a caller's.
+    `resolve` raises `ExternalRefusedError` when the provider answers that the object is not
+    there (or not in the target's allow-list), and `ExternalUnavailableError` for every other
+    way it could not be asked. Writing to the provider is `create_issue`, offered only by a
+    target declared `writable`; it is never retried (docs/adr/0073).
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def kind(self) -> ExternalKind: ...
+
+    @property
+    def web_url(self) -> str:
+        """The site the *displayed* address of a reference is built on."""
+        ...
+
+    @property
+    def writable(self) -> bool: ...
+
+    def allows(self, scope: str) -> bool:
+        """Whether the target may read — and open tickets in — this scope (a repository...)."""
+        ...
+
+    async def resolve(self, external_id: str) -> ExternalSnapshot: ...
+
+    async def probe(self) -> None:
+        """Fail at boot rather than at the first click — see `main._reachable`."""
+        ...
+
+    async def create_issue(self, scope: str, draft: IssueDraft) -> str:
+        """Open a ticket in `scope` (a repository, a project) and return its identifier.
+
+        `ExternalWriteFailedError` for a refusal, `ExternalWriteTimeoutError` when the
+        provider did not answer in time. Not idempotent, and not retried.
+        """
+        ...
+
+
+class ExternalReferenceRepository(Protocol):
+    """Persistence for the links, and for the title and state cached with them."""
+
+    async def add(
+        self, reference: ExternalReference, *, audit: AuditOf[ExternalReference]
+    ) -> ExternalReference:
+        """Store a link; `DuplicateExternalReferenceError` if the element already cites it."""
+        ...
+
+    async def list_for(self, element_id: UUID) -> tuple[ExternalReference, ...]: ...
+
+    async def list_stale(self, *, before: datetime, limit: int) -> tuple[ExternalReference, ...]:
+        """References of a resolved kind never synced or last synced before `before`."""
+        ...
+
+    async def get(self, reference_id: UUID) -> ExternalReference | None: ...
+
+    async def delete(self, reference_id: UUID, *, audit: AuditOf[ExternalReference]) -> bool: ...
+
+    async def update_snapshot(
+        self,
+        reference_id: UUID,
+        snapshot: ExternalSnapshot,
+        *,
+        now: datetime,
+        audit: AuditOf[ExternalReference],
+    ) -> ExternalReference | None:
+        """Replace the cached title and state; `None` when no row holds the id.
+
+        The events are a function of the row replaced: a refresh that changes nothing
+        writes no line in the trail.
         """
         ...

@@ -4,12 +4,24 @@ No literal secret, DSN or key lives in this file — see `.env.example` for the
 shape of a local environment.
 """
 
+import json
 import logging
+import re
 from typing import Annotated
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from ea.domain.egress import networks_from
 from ea.domain.exchange import (
     EXPORT_LEASE_SECONDS,
     EXPORT_SEND_TIMEOUT_SECONDS,
@@ -21,7 +33,130 @@ from ea.domain.exchange import (
     MAX_IMPORTS_PER_CALLER,
     MAX_NEW_FOLDERS,
 )
+from ea.domain.external import (
+    GITHUB_REPO_PATTERN,
+    JIRA_PROJECT_PATTERN,
+    SERVICENOW_TABLES,
+    TARGET_NAME_PATTERN,
+    WRITABLE_KINDS,
+    ExternalKind,
+)
 from ea.domain.packages import MAX_PACKAGES
+
+_CONFLUENCE_SPACE = re.compile(r"[1-9][0-9]{0,15}")
+_NEEDS_A_USER = frozenset({ExternalKind.JIRA_ISSUE, ExternalKind.SERVICENOW_TICKET})
+MAX_TOKEN_LENGTH = 4096
+
+
+class ExternalTargetSettings(BaseModel):
+    """One third-party system EA may call, as the deployment declares it.
+
+    The caller of an API never writes any of this: it names the target, and the host, the
+    scope and the account are these (docs/adr/0073). The secret is not here: it is in
+    `Settings.external_tokens`, under the same name.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    kind: ExternalKind
+    #: Where the server calls — the only host it ever contacts for this target.
+    api_url: str
+    #: The site the *displayed* address is built on; the only host a pasted address is read from.
+    web_url: str
+    #: What may be read: repositories, projects, table prefixes, space ids. Empty = inactive.
+    allow: list[str] = []
+    #: The account the token belongs to (Jira's e-mail, ServiceNow's user). Not a secret.
+    user: str = Field(default="", max_length=320)
+    #: Whether the server may open tickets here — the token must then be allowed to write.
+    writable: bool = False
+    #: The ports the host may be reached on; 443 unless the deployment says otherwise.
+    ports: list[int] = [443]
+    #: Private networks (CIDR) the host may resolve into. Loopback and link-local never.
+    allow_networks: list[str] = []
+
+    @field_validator("kind", mode="after")
+    @classmethod
+    def _a_link_has_no_connector(cls, value: ExternalKind) -> ExternalKind:
+        if value is ExternalKind.URL:
+            msg = "a target has a kind with a connector; a free link needs none"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("writable", mode="before")
+    @classmethod
+    def _writable_only_when_really_true(cls, value: object) -> bool:
+        """Fail closed: a string, a number or anything else that is not `true` is read-only."""
+        return value is True
+
+    @field_validator("ports", mode="after")
+    @classmethod
+    def _ports_are_ports(cls, value: list[int]) -> list[int]:
+        if not value or any(not 0 < port < 65536 for port in value):
+            msg = "ports must be a non-empty list of TCP ports"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("allow_networks", mode="after")
+    @classmethod
+    def _networks_are_declarable(cls, value: list[str]) -> list[str]:
+        networks_from(value)  # raises a ValueError that names the rule, never the value
+        return value
+
+    @model_validator(mode="after")
+    def _allow_names_things_of_this_kind(self) -> "ExternalTargetSettings":
+        normal: list[str] = []
+        for entry in self.allow:
+            if self.kind is ExternalKind.GITHUB_ISSUE:
+                found = entry.strip().lower()
+                ok = bool(re.fullmatch(GITHUB_REPO_PATTERN, found)) and not found.endswith(
+                    ("/.", "/..")
+                )
+            elif self.kind is ExternalKind.JIRA_ISSUE:
+                found = entry.strip().upper()
+                ok = bool(re.fullmatch(JIRA_PROJECT_PATTERN, found))
+            elif self.kind is ExternalKind.SERVICENOW_TICKET:
+                found = entry.strip().upper()
+                ok = found in SERVICENOW_TABLES
+            else:
+                found = entry.strip()
+                ok = bool(_CONFLUENCE_SPACE.fullmatch(found))
+            if not ok:
+                msg = f"an allow entry is not a valid scope for a {self.kind.value} target"
+                raise ValueError(msg)
+            normal.append(found)
+        object.__setattr__(self, "allow", normal)
+        return self
+
+    @model_validator(mode="after")
+    def _only_some_kinds_can_open_tickets(self) -> "ExternalTargetSettings":
+        if self.writable and self.kind not in WRITABLE_KINDS:
+            msg = f"a {self.kind.value} target cannot be writable: it has no way to open tickets"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def needs_a_user(self) -> bool:
+        return self.kind in _NEEDS_A_USER
+
+
+def _site_problem(url: str, *, ports: list[int]) -> str | None:
+    """What is wrong with a target's address, in words that do not repeat it."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return "is not an address"
+    if parts.scheme != "https":
+        return "must be https"
+    if not parts.hostname:
+        return "has no host"
+    if parts.username is not None or parts.password is not None:
+        return "must not carry credentials"
+    if parts.query or parts.fragment:
+        return "must not carry a query or a fragment"
+    if (port or 443) not in ports:
+        return "uses a port the target does not declare (port)"
+    return None
 
 
 class Settings(BaseSettings):
@@ -32,6 +167,9 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # A validation error must never repeat what it refused: a malformed
+        # EA_EXTERNAL_TOKENS holds the tokens themselves (docs/adr/0073).
+        hide_input_in_errors=True,
     )
 
     app_name: str = "EA API"
@@ -258,6 +396,26 @@ class Settings(BaseSettings):
     #: The Infra CA, when the endpoint is reached through the Infra NGINX.
     s3_ca_cert: str | None = None
 
+    # --- Third-party systems, by NAMED targets — see docs/adr/0073 ---
+    # A caller never gives an address: it names a target declared here, and the host, the
+    # scope (repositories, projects) and the account are the deployment's. `EA_EXTERNAL_TARGETS`
+    # is JSON, `{"name": {"kind": ..., "api_url": ..., "web_url": ..., "allow": [...]}}`;
+    # `EA_EXTERNAL_TOKENS` is JSON too, `{"name": "secret"}`, and is the only place a
+    # secret is written. A target with no token or no allow-list is declared but inactive.
+    external_targets: Annotated[dict[str, ExternalTargetSettings], NoDecode] = {}
+    external_tokens: Annotated[dict[str, SecretStr], NoDecode] = {}
+    #: Connection and read timeouts per request, and the ceiling for the whole call.
+    external_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    external_total_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    #: A response is read up to this size, in a stream, and refused beyond it.
+    external_max_response_bytes: int = Field(default=1_000_000, gt=0, le=5_000_000)
+    #: Calls to third parties in flight in this process, and per caller (`Admission`).
+    external_max_in_flight: int = Field(default=8, ge=1, le=64)
+    external_per_caller: int = Field(default=2, ge=1)
+    #: The CA that vouches for the providers' certificates when the system store does not
+    #: (an on-premises Jira); TLS is always verified.
+    external_ca_cert: str | None = None
+
     # --- Model quality checks — see docs/adr/0057 ---
     #: How alike two names of one type must be to be reported as probable
     #: duplicates (0 = anything, 1 = identical once normalised).
@@ -272,6 +430,38 @@ class Settings(BaseSettings):
         """Accept `A,B` from the environment as well as a real list."""
         if isinstance(value, str):
             return [entry.strip() for entry in value.split(",") if entry.strip()]
+        return value
+
+    @field_validator("external_targets", "external_tokens", mode="before")
+    @classmethod
+    def _json_from_the_environment(cls, value: object, info: ValidationInfo) -> object:
+        """The environment carries a JSON object; blank means none (a stack may leave it empty)."""
+        if not isinstance(value, str):
+            return value
+        if not value.strip():
+            return {}
+        try:
+            return json.loads(value)
+        except ValueError:
+            msg = f"{info.field_name} is not valid JSON"  # never the text: it may hold tokens
+            raise ValueError(msg) from None
+
+    @field_validator("external_tokens", mode="before")
+    @classmethod
+    def _tokens_are_text(cls, value: object) -> object:
+        if isinstance(value, dict) and not all(isinstance(token, str) for token in value.values()):
+            msg = "external_tokens must map a target name to a text token"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("external_tokens", mode="after")
+    @classmethod
+    def _tokens_cannot_split_a_header(cls, value: dict[str, SecretStr]) -> dict[str, SecretStr]:
+        for token in value.values():
+            secret = token.get_secret_value()
+            if not secret or len(secret) > MAX_TOKEN_LENGTH or not secret.isprintable():
+                msg = "external_tokens: a token is empty, too long, or holds a control character"
+                raise ValueError(msg)
         return value
 
     @field_validator("cors_origins", "mcp_allowed_hosts", mode="after")
@@ -320,6 +510,36 @@ class Settings(BaseSettings):
             msg = "postgres_password is required when postgres_enabled is on and debug is off"
             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def _external_targets_are_declared_soundly(self) -> "Settings":
+        """Names, addresses and tokens are checked here — and none of them is repeated."""
+        for name, target in self.external_targets.items():
+            if not re.fullmatch(TARGET_NAME_PATTERN, name):
+                msg = "a target name is a short lowercase slug (letters, digits, hyphens)"
+                raise ValueError(msg)
+            for label, url in (("api_url", target.api_url), ("web_url", target.web_url)):
+                problem = _site_problem(url, ports=target.ports)
+                if problem:
+                    msg = f"external target {label} {problem}"
+                    raise ValueError(msg)
+        if set(self.external_tokens) - set(self.external_targets):
+            msg = "external_tokens names a target that external_targets does not declare"
+            raise ValueError(msg)
+        if self.external_per_caller > self.external_max_in_flight:
+            msg = "external_per_caller cannot exceed external_max_in_flight"
+            raise ValueError(msg)
+        return self
+
+    def external_active_targets(self) -> dict[str, ExternalTargetSettings]:
+        """The declared targets that can be called: a token, a scope, and the account if needed."""
+        return {
+            name: target
+            for name, target in self.external_targets.items()
+            if name in self.external_tokens
+            and target.allow
+            and (target.user or not target.needs_a_user)
+        }
 
     @model_validator(mode="after")
     def _a_caller_never_has_more_places_than_exist(self) -> "Settings":

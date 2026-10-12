@@ -17,6 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { messageOf } from '../../lib/api'
 import { useMe } from '../../lib/me'
 import DocumentPanel from '../documents/DocumentPanel.vue'
+import ExternalReferencesPanel from '../external/ExternalReferencesPanel.vue'
 import { LAYER_LABELS, useMetamodel } from '../metamodel/useMetamodel'
 import PackageManager from '../packages/PackageManager.vue'
 import ReportDialog from '../reports/ReportDialog.vue'
@@ -104,6 +105,7 @@ const confirming = ref<ElementRead | null>(null)
 const relating = ref<ElementRead | null>(null)
 /** The element whose attached markdown is on screen, or nothing. */
 const documenting = ref<ElementRead | null>(null)
+const referencing = ref<ElementRead | null>(null)
 const failure = ref('')
 const busy = ref(false)
 
@@ -189,6 +191,7 @@ function closeEverything(): void {
   editing.value = null
   relating.value = null
   documenting.value = null
+  referencing.value = null
   filing.value = null
 }
 
@@ -209,6 +212,13 @@ async function openRelations(element: ElementRead): Promise<void> {
 async function openDocuments(element: ElementRead): Promise<void> {
   closeEverything()
   documenting.value = element
+  await closeDetail()
+}
+
+/** Show what the row cites in other tools — same rule, its own panel. */
+async function openReferences(element: ElementRead): Promise<void> {
+  closeEverything()
+  referencing.value = element
   await closeDetail()
 }
 
@@ -383,6 +393,13 @@ function day(iso: string): string {
         @close="documenting = null"
       />
 
+      <ExternalReferencesPanel
+        v-if="referencing"
+        :key="referencing.id"
+        :element="referencing"
+        @close="referencing = null"
+      />
+
       <p v-if="failure && !creating && !editing" class="banner banner--error" role="alert">
         {{ failure }}
       </p>
@@ -473,6 +490,13 @@ function day(iso: string): string {
                 @click="openDocuments(element)"
               >
                 Documents
+              </button>
+              <button
+                type="button"
+                :aria-label="`Références de ${element.name}`"
+                @click="openReferences(element)"
+              >
+                Références
               </button>
               <button
                 v-if="canWrite"

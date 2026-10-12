@@ -77,6 +77,13 @@ services:
       EA_S3_BUCKET: ${EA_S3_BUCKET:-ea-catalogue}
       EA_S3_ACCESS_KEY: ${EA_S3_ACCESS_KEY:?EA_S3_ACCESS_KEY est obligatoire (identité SeaweedFS ea)}
       EA_S3_SECRET_KEY: ${EA_S3_SECRET_KEY:?EA_S3_SECRET_KEY est obligatoire (EA_S3_SECRET_KEY de l'Infra)}
+
+      # Les systèmes tiers (GitHub, Jira, Confluence, ServiceNow), par cibles NOMMÉES
+      # (docs/adr/0073). Facultatives : vides, aucune cible, et le reste démarre.
+      # Les cibles (hôte, périmètre) et les jetons (le seul secret) vivent dans
+      # deploy/ea.env, deux objets JSON — jamais dans ce fichier.
+      EA_EXTERNAL_TARGETS: ${EA_EXTERNAL_TARGETS:-}
+      EA_EXTERNAL_TOKENS: ${EA_EXTERNAL_TOKENS:-}
     volumes:
       - ${INFRA_CA_CERT:?INFRA_CA_CERT est obligatoire, le chemin du CA de l'Infra, vu de l'hôte Docker}:/etc/ssl/certs/infra-ca.pem:ro
     networks:

@@ -197,6 +197,23 @@ describe('ElementCatalogue', () => {
     expect(screen.queryByRole('region', { name: /relations de l'élément/i })).toBeNull()
   })
 
+  it('opens the references of a row in its own panel', async () => {
+    const element = anElement({ name: 'Facturation' })
+    await renderCatalogue([
+      { path: '/elements', body: aPage([element]) },
+      { path: '/external/targets', body: [] },
+      { path: `/elements/${element.id}/external-references`, body: [] },
+    ])
+
+    const row = await rowFor(/Facturation/)
+    await fireEvent.click(row.getByRole('button', { name: /références de Facturation/i }))
+
+    expect(
+      await screen.findByRole('region', { name: /références de l'élément/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /documents de l'élément/i })).toBeNull()
+  })
+
   it('opens the detail of an element when its name is clicked', async () => {
     const element = anElement({ name: 'Facturation', description: 'Émet les factures' })
     const { calls } = await renderCatalogue([
