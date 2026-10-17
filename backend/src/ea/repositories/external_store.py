@@ -4,7 +4,7 @@ Like the other stores it takes the session factory and opens one unit of work pe
 write and its audit events are one transaction. Like `document_store`, it locks the element a
 reference hangs from before writing and puts the locked row to `guard_element_write` with
 `WriteKind.EXTERNAL_REFERENCE`: a locked element accepts nothing, an approved one nothing until
-an approver reopens it (docs/adr/0065). Unlike a document, it does not `touch` the element: a
+an approver reopens it (docs/adr/0076). Unlike a document, it does not `touch` the element: a
 pointer to a ticket is not content a reviewer approved, so the revision does not move.
 """
 
@@ -22,8 +22,13 @@ from ea.db.models.external import ExternalReferenceRecord as Row
 from ea.db.unit_of_work import reading, work
 from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import events_for
-from ea.domain.errors import DuplicateExternalReferenceError, ElementNotFoundError
+from ea.domain.errors import (
+    DuplicateExternalReferenceError,
+    ElementNotFoundError,
+    TooManyExternalReferencesError,
+)
 from ea.domain.external import (
+    MAX_REFERENCES_PER_ELEMENT,
     RESOLVED_KINDS,
     ExternalKind,
     ExternalReference,
@@ -48,8 +53,10 @@ ONE_CITATION: str = "uq_external_references_element_id_target_external_id"
 async def _hold_the_element(session: AsyncSession, element_id: UUID) -> ElementRecord | None:
     """Lock the element a reference hangs from, in the reference's own transaction, before writing.
 
-    `FOR KEY SHARE` is enough to hold the element's review state still (a transition's `UPDATE`
-    waits for it); a missing element is left to the foreign key.
+    `FOR NO KEY UPDATE` (what `key_share=True` compiles to): it holds the element's review
+    state still (a transition's `UPDATE` waits for it) and makes two reference writes on one
+    element take turns, so the cap counted after it holds. A missing element is left to the
+    foreign key.
     """
     return await session.get(
         ElementRecord, element_id, with_for_update={"key_share": True}, populate_existing=True
@@ -113,6 +120,12 @@ class PostgresExternalReferenceRepository:
         events = events_for(audit, reference)
         async with work(self._sessions) as session:
             _guard_the_element(await _hold_the_element(session, reference.element_id))
+            cited = await session.scalar(
+                select(func.count()).select_from(Row).where(Row.element_id == reference.element_id)
+            )
+            if (cited or 0) >= MAX_REFERENCES_PER_ELEMENT:
+                msg = f"an element cites at most {MAX_REFERENCES_PER_ELEMENT} objects"
+                raise TooManyExternalReferencesError(msg)
             session.add(row)
             try:
                 await session.flush()
