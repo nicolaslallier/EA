@@ -302,9 +302,10 @@ class ProfileService:
                 ),
             )
 
-        def check(properties: Mapping[str, Any]) -> None:
-            # Judged by the store on the row as locked: a property removed meanwhile is seen.
-            validate_stereotype_properties(properties, chosen)
+        def check(properties: Mapping[str, Any], definitions: Sequence[Stereotype]) -> None:
+            # Judged by the store on the element and the definitions as locked: a property
+            # removed meanwhile, or a pattern tightened meanwhile, is seen.
+            validate_stereotype_properties(properties, definitions)
 
         await self._repository.set_for_element(
             element_id, [s.id for s in chosen], audit=changed, check=check

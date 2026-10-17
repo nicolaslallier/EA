@@ -337,7 +337,7 @@ class PostgresProfileRepository:
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
-        check: Callable[[Mapping[str, Any]], None] | None = None,
+        check: Callable[[Mapping[str, Any], Sequence[Stereotype]], None] | None = None,
     ) -> None:
         wanted = list(dict.fromkeys(stereotype_ids))
         async with work(self._sessions) as session:
@@ -355,10 +355,8 @@ class PostgresProfileRepository:
                 msg = f"no element with id {element_id}"
                 raise ElementNotFoundError(msg)
             guard_element_write(element_from_row(element), WriteKind.STEREOTYPES)
-            if check is not None:
-                check(element.properties)
-            # The definitions are held while the label goes on, so none is re-typed or removed
-            # between the service's check and this write.
+            # The definitions are held while the label goes on, so none is re-typed, removed or
+            # re-patterned between the check below and this write.
             definitions = {
                 row.id: row
                 for row in await session.scalars(
@@ -379,6 +377,8 @@ class PostgresProfileRepository:
                         f"not to {element.element_type}"
                     )
                     raise ValueError(msg)
+            if check is not None:
+                check(element.properties, await _stereotypes(session, ids=wanted))
             carried = await self._refs(session, [element_id])
             events = events_for(audit, carried.get(element_id, ()))
             await session.execute(

@@ -1399,15 +1399,13 @@ class InMemoryProfiles:
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
-        check: Callable[[Mapping[str, Any]], None] | None = None,
+        check: Callable[[Mapping[str, Any], Sequence[Stereotype]], None] | None = None,
     ) -> None:
         element = self.graph.elements.get(element_id) if self.graph is not None else None
         if self.graph is not None and element is None:
             raise ElementNotFoundError(str(element_id))
         if element is not None:
             guard_element_write(element, WriteKind.STEREOTYPES)
-            if check is not None:
-                check(element.properties)
         wanted = tuple(dict.fromkeys(stereotype_ids))
         known = {s.id: s for s in self._all()}
         for sid in wanted:
@@ -1418,6 +1416,8 @@ class InMemoryProfiles:
                     f"stereotype {known[sid].name!r} does not apply to {element.element_type.value}"
                 )
                 raise ValueError(msg)
+        if element is not None and check is not None:
+            check(element.properties, [known[sid] for sid in wanted])
         before = (await self.refs_of([element_id])).get(element_id, ())
         events = events_for(audit, before)
         self.applied[element_id] = wanted

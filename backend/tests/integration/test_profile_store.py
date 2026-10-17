@@ -259,7 +259,9 @@ async def test_the_properties_are_checked_on_the_row_as_locked_not_as_read_befor
             element.id,
             [stereotype.id],
             audit=(),
-            check=lambda properties: validate_stereotype_properties(properties, [stereotype]),
+            check=lambda properties, definitions: validate_stereotype_properties(
+                properties, definitions
+            ),
         )
     )
     await asyncio.sleep(0.5)  # the application is now waiting on the element, or has gone past it

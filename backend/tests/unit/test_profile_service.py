@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -22,7 +23,7 @@ from ea.domain.profiles import MAX_PROFILES, IconKey, PropertyKind, StereotypePr
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.profiles import ProfileService
-from tests.conftest import InMemoryAuditLog, a_reader, an_approver
+from tests.conftest import InMemoryAuditLog, InMemoryProfiles, a_reader, an_approver
 
 TIER = StereotypeProperty(
     key="tier", label="Niveau", kind=PropertyKind.ENUM, allowed_values=("1", "2")
@@ -115,6 +116,27 @@ class TestApplying:
     ) -> None:
         stereotype = await a_stereotype(profile_service, TIER)
         element = await an_element(service, properties={"tier": "9"})
+
+        with pytest.raises(ValueError, match="tier"):
+            await profile_service.apply_stereotype(element.id, stereotype.id)
+        assert (await service.get_element(element.id)).stereotypes == ()
+
+    async def test_the_properties_are_judged_by_the_definitions_as_locked_not_as_read_before(
+        self,
+        profile_service: ProfileService,
+        service: ArchitectureService,
+        profiles: InMemoryProfiles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The service read the stereotype before an editor tightened it: the store's copy wins."""
+        stereotype = await a_stereotype(profile_service, TIER)
+        element = await an_element(service, properties={"tier": "9"})
+        loose = replace(stereotype, properties=())
+
+        async def read_before_the_change(_: object) -> object:
+            return loose
+
+        monkeypatch.setattr(profiles, "get_stereotype", read_before_the_change)
 
         with pytest.raises(ValueError, match="tier"):
             await profile_service.apply_stereotype(element.id, stereotype.id)
