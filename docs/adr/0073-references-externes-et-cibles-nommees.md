@@ -8,7 +8,7 @@ affects: backend/src/ea/domain/external.py, backend/src/ea/domain/egress.py, bac
 # 73. Références externes — des cibles nommées, une seule porte de sortie, des écritures chez un tiers fermées par défaut
 
 Date : 2026-10-11
-Statut : Proposition
+Statut : Proposition — amendée par [`0076`](0076-references-externes-sous-revue.md) (revue, file de rafraîchissement)
 
 ## Contexte
 
@@ -65,7 +65,7 @@ approuvé.
 **Journal.** `external_reference.linked|unlinked|refreshed` dans `audit_events` (dans la transaction de
 l'écriture) ; un `refresh` qui ne change rien n'écrit rien ; le titre n'y figure que comme longueur et empreinte.
 
-**Persistance.** Table `external_references` (migration `0015`, table neuve : aucune donnée existante lue ni
+**Persistance.** Table `external_references` (migration `0019`, table neuve : aucune donnée existante lue ni
 convertie), clé étrangère `ON DELETE CASCADE`, unicité `(element_id, target, external_id)`.
 
 **Prefect.** Le flow `rafraichir-references` (`pipelines/`) liste les références périmées et demande à l'API de les

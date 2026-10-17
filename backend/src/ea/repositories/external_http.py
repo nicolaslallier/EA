@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 Resolver = Callable[[str, int], Awaitable[list[str]]]
 
 #: Characters of a request path: no query, no fragment, no whitespace, no control.
-_PATH: Final = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,2000}")
+_PATH: Final = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@/-]{0,2000}")
 #: More addresses than any real name has: a longer list is an attack on the loop below.
 _MAX_ADDRESSES: Final = 32
 
@@ -79,7 +79,10 @@ async def system_resolver(host: str, port: int) -> list[str]:  # pragma: no cove
 
 def _tls(ca_cert: str | None) -> ssl.SSLContext:
     """The system trust store, plus the configured CA when there is one. Always verifying."""
-    return ssl.create_default_context(cafile=ca_cert or None)
+    context = ssl.create_default_context()
+    if ca_cert:
+        context.load_verify_locations(cafile=ca_cert)
+    return context
 
 
 class EgressClient:
@@ -170,7 +173,13 @@ class EgressClient:
     async def _send(
         self, method: str, path: str, *, params: Mapping[str, str] | None, body: Any
     ) -> EgressResponse:
-        if not _PATH.fullmatch(path) or path.startswith("//"):
+        # No `%` (nothing here needs an encoded segment, and `%2e%2e` is a way up), no `//`,
+        # and no `.` or `..` segment.
+        if (
+            not _PATH.fullmatch(path)
+            or path.startswith("//")
+            or any(segment in {".", ".."} for segment in path.split("/"))
+        ):
             raise EgressError("the request path is not a plain path")
         try:
             async with asyncio.timeout(self._total):
@@ -189,14 +198,17 @@ class EgressClient:
     ) -> EgressResponse:
         netloc = f"[{address}]" if ":" in address else address
         host = self._host if self._port == 443 else f"{self._host}:{self._port}"
-        request = self._client.build_request(
-            method,
-            f"https://{netloc}:{self._port}{path}",
-            params=dict(params) if params else None,
-            json=body,
-            headers={**self._headers, "Host": host},
-            extensions={"sni_hostname": self._host},
-        )
+        try:
+            request = self._client.build_request(
+                method,
+                f"https://{netloc}:{self._port}{path}",
+                params=dict(params) if params else None,
+                json=body,
+                headers={**self._headers, "Host": host},
+                extensions={"sni_hostname": self._host},
+            )
+        except (UnicodeError, ValueError):  # a header or a body that cannot be encoded
+            raise EgressError("the request could not be built") from None
         received = bytearray()
         try:
             response = await self._client.send(request, stream=True, follow_redirects=False)

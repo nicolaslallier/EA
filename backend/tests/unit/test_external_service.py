@@ -19,6 +19,7 @@ from ea.domain.errors import (
     DuplicateExternalReferenceError,
     ElementNotFoundError,
     ExternalBusyError,
+    ExternalLinkFailedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
@@ -26,6 +27,7 @@ from ea.domain.errors import (
     InvalidExternalReferenceError,
     NotAuthenticatedError,
     NotAuthorisedError,
+    PackageFrozenError,
     UnknownExternalTargetError,
 )
 from ea.domain.external import (
@@ -35,14 +37,17 @@ from ea.domain.external import (
     ExternalSnapshot,
     ExternalStatus,
 )
+from ea.domain.package_versions import Bump, FrozenRefusal, PackageVersion
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.external import ExternalReferenceService
+from ea.services.packages import PackageService
 from tests.conftest import (
     FIXED_NOW,
     FakeExternalSystem,
     InMemoryAuditLog,
     InMemoryExternalReferences,
+    InMemoryPackages,
     a_reader,
 )
 
@@ -262,6 +267,59 @@ class TestLinking:
             await external_service.list_for_element(uuid4())
 
 
+class TestBounds:
+    async def test_an_element_cites_at_most_so_many_objects(
+        self,
+        external_service: ExternalReferenceService,
+        service: ArchitectureService,
+    ) -> None:
+        from ea.domain.errors import TooManyExternalReferencesError
+        from ea.domain.external import MAX_REFERENCES_PER_ELEMENT
+
+        element = await an_element(service)
+        for number in range(MAX_REFERENCES_PER_ELEMENT):
+            await external_service.link(
+                element, kind=ExternalKind.URL, reference=f"https://wiki.test/{number}"
+            )
+
+        with pytest.raises(TooManyExternalReferencesError):
+            await external_service.link(
+                element, kind=ExternalKind.URL, reference="https://wiki.test/one-more"
+            )
+
+    async def test_a_batch_refresh_stops_when_its_time_budget_is_spent(
+        self,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        slow = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": external_system},
+            clock=lambda: FIXED_NOW,
+            refresh_budget_seconds=0.05,
+        )
+        element = await an_element(service)
+        for number in range(1, 6):
+            await cite(external_references, element, number, age_minutes=number)
+            external_system.snapshots[f"acme/billing#{number}"] = ExternalSnapshot.of(
+                "new", ExternalStatus.OPEN
+            )
+        original = external_system.resolve
+
+        async def slowly(external_id: str) -> ExternalSnapshot:
+            await asyncio.sleep(0.03)
+            return await original(external_id)
+
+        external_system.resolve = slowly  # type: ignore[method-assign]
+
+        views = await slow.refresh_element(element)
+
+        assert 1 <= len(external_system.calls) < 5
+        assert len(views) == 5  # every line is still reported, as it stands
+
+
 class TestListing:
     async def test_listing_makes_no_outbound_call_and_flags_what_is_old(
         self,
@@ -319,6 +377,65 @@ class TestListing:
             await external_service.list_stale(limit=0)
         with pytest.raises(ValueError, match="limit"):
             await external_service.list_stale(limit=10_000)
+
+
+class TestTheQueueOfStaleLinesTurns:
+    """Lines that stay stale (provider down, element frozen) must not starve the others."""
+
+    async def test_a_hundred_lines_that_stay_stale_do_not_hide_the_ones_behind_them(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+    ) -> None:
+        element = await an_element(service)
+        for number in range(1, 151):
+            await cite(external_references, element, number, age_minutes=60 * 48 + (200 - number))
+            external_system.snapshots[f"acme/billing#{number}"] = ExternalSnapshot.of(
+                "new", ExternalStatus.OPEN
+            )
+        down = {f"acme/billing#{n}" for n in range(1, 101)}  # the 100 oldest, durably failing
+        original = external_system.resolve
+
+        async def resolve(external_id: str) -> ExternalSnapshot:
+            if external_id in down:
+                raise ExternalUnavailableError("down")
+            return await original(external_id)
+
+        external_system.resolve = resolve  # type: ignore[method-assign]
+        refreshed: set[str] = set()
+
+        for _ in range(3):
+            for view in await external_service.list_stale(limit=100):
+                done = await external_service.refresh(view.reference.id)
+                if not done.stale:
+                    refreshed.add(done.reference.external_id)
+
+        assert refreshed == {f"acme/billing#{n}" for n in range(101, 151)}
+
+    async def test_a_line_of_a_target_that_is_not_active_is_never_offered(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+    ) -> None:
+        element = await an_element(service)
+        await external_references.add(
+            ExternalReference.create(
+                element_id=element,
+                kind=ExternalKind.JIRA_ISSUE,
+                target="gone",
+                external_id="PROJ-1",
+                url="https://j.test/browse/PROJ-1",
+                snapshot=None,
+                created_by="e",
+                now=FIXED_NOW - timedelta(days=9),
+            ),
+            audit=(),
+        )
+
+        assert await external_service.list_stale(limit=10) == ()
 
 
 class TestRefreshing:
@@ -408,6 +525,48 @@ class TestRefreshing:
 
         assert view.stale is True
 
+    async def test_a_target_now_serving_another_kind_still_counts_as_an_attempt(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        """Else the line stays first in the stale queue forever, hiding the ones behind it."""
+        jira = FakeExternalSystem("main", kind=ExternalKind.JIRA_ISSUE)
+        svc = ExternalReferenceService(
+            external_references, service, {"main": jira}, clock=lambda: FIXED_NOW
+        )
+        element = await an_element(service)
+        row = await cite(external_references, element, 12, age_minutes=60 * 30)
+        before = len(audit_log.events)
+
+        view = await svc.refresh(row.id)
+
+        assert view.stale is True
+        assert jira.calls == []
+        assert external_references.attempts[row.id] == FIXED_NOW
+        assert len(audit_log.events) == before
+
+    async def test_an_attempt_is_a_clock_for_the_queue_and_writes_no_audit_event(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        """Deliberately silent (docs/adr/0076): a failed refresh changed nothing a reader sees."""
+        element = await an_element(service)
+        row = await cite(external_references, element, 12, age_minutes=60 * 30)
+        external_system.failure = ExternalUnavailableError("down")
+        before = len(audit_log.events)
+
+        view = await external_service.refresh(row.id)
+
+        assert view.stale is True
+        assert external_references.attempts[row.id] == FIXED_NOW
+        assert len(audit_log.events) == before
+
     async def test_a_free_link_has_nothing_to_refresh(
         self,
         external_service: ExternalReferenceService,
@@ -486,6 +645,30 @@ class TestUnlinking:
         assert audit_log.events[-1].action is AuditAction.EXTERNAL_REFERENCE_UNLINKED
         with pytest.raises(ExternalReferenceNotFoundError):
             await external_service.unlink(view.reference.id)
+
+    async def test_a_link_removed_by_someone_else_meanwhile_is_not_found_and_not_audited(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        element = await an_element(service)
+        view = await external_service.link(element, kind=GITHUB, reference="acme/billing#12")
+        delete = external_references.delete
+
+        async def raced(reference_id: UUID, *, audit: object) -> bool:
+            await delete(reference_id, audit=lambda _: ())  # the other caller won
+            return await delete(reference_id, audit=audit)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(external_references, "delete", raced)
+
+        with pytest.raises(ExternalReferenceNotFoundError):
+            await external_service.unlink(view.reference.id)
+        assert not [
+            e for e in audit_log.events if e.action is AuditAction.EXTERNAL_REFERENCE_UNLINKED
+        ]
 
 
 class TestWhoMayDoWhat:
@@ -625,22 +808,55 @@ class TestOpeningAnIssue:
         assert external_system.create_attempts == 1
         assert await external_service.list_for_element(element) == ()
 
-    async def test_a_ticket_that_cannot_be_linked_afterwards_is_reported_not_hidden(
+    @pytest.mark.parametrize("failure", ["duplicate", "repository", "element_gone", "unparsable"])
+    async def test_a_ticket_that_cannot_be_linked_afterwards_names_the_ticket_in_a_typed_error(
         self,
         external_service: ExternalReferenceService,
         external_references: InMemoryExternalReferences,
         external_system: FakeExternalSystem,
         service: ArchitectureService,
+        caplog: pytest.LogCaptureFixture,
+        failure: str,
     ) -> None:
         element = await an_element(service)
-        await cite(external_references, element, 101)  # the number the provider will return
+        if failure == "duplicate":
+            await cite(external_references, element, 101)
+        elif failure == "repository":
 
-        with pytest.raises(DuplicateExternalReferenceError):
+            async def broken(*args: object, **kwargs: object) -> None:
+                raise ConnectionError("database is down with secret-words")
+
+            external_references.add = broken  # type: ignore[method-assign]
+        elif failure == "element_gone":
+            original = external_references.add
+
+            async def gone(reference: ExternalReference, **kwargs: object) -> ExternalReference:
+                raise ElementNotFoundError("deleted meanwhile")
+
+            external_references.add = gone  # type: ignore[assignment,method-assign]
+            assert original
+        else:
+            external_system.created_identifier = "not-an-identifier"
+
+        with caplog.at_level(logging.INFO), pytest.raises(ExternalLinkFailedError) as raised:
             await external_service.open_issue(
-                element, target="main", scope="acme/billing", title="t", body="", dry_run=False
+                element,
+                target="main",
+                scope="acme/billing",
+                title="Secret title",
+                body="secret body",
+                dry_run=False,
             )
 
-        assert external_system.created  # the ticket exists: the error is the caller's cue
+        assert external_system.created, "the ticket exists"
+        message = str(raised.value)
+        assert "link it by hand" in message
+        if failure != "unparsable":
+            assert "acme/billing#101" in message
+        for private in ("secret-words", "Secret title", "secret body"):
+            assert private not in message + caplog.text
+        assert "external_ticket_orphaned" in [getattr(r, "action", None) for r in caplog.records]
+        assert external_system.create_attempts == 1
 
     async def test_the_draft_is_bounded_before_anything_else(
         self, external_service: ExternalReferenceService, service: ArchitectureService
@@ -710,6 +926,22 @@ class TestReadOnlyTargets:
         return ExternalReferenceService(
             external_references, service, {system.name: system}, clock=lambda: FIXED_NOW
         )
+
+    async def test_a_writable_target_opens_the_ticket_once_with_no_admission_configured(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+    ) -> None:
+        writable = FakeExternalSystem("main", writable=True)
+        svc = self._service(external_references, service, writable)
+        element = await an_element(service)
+
+        done = await svc.open_issue(
+            element, target="main", scope="acme/billing", title="t", body="b", dry_run=False
+        )
+
+        assert writable.create_attempts == 1
+        assert done.view is not None and done.view.reference.element_id == element
 
     @pytest.mark.parametrize("dry_run", [True, False])
     async def test_a_read_only_target_refuses_before_any_call_even_for_an_editor(
@@ -792,3 +1024,88 @@ class TestLogs:
 
         assert "acme/billing" not in caplog.text
         assert "Fix invoice rounding" not in caplog.text
+
+
+class TestATicketForAnElementUnderAPublishedPackage:
+    """docs/adr/0076: refused before anything leaves, like the review guard — dry run too."""
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_it_is_package_frozen_and_the_provider_is_never_called(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        package_service: PackageService,
+        packages: InMemoryPackages,
+        dry_run: bool,
+    ) -> None:
+        recorded: list[FrozenRefusal] = []
+
+        async def recorder(refusal: FrozenRefusal) -> None:
+            recorded.append(refusal)
+
+        system = FakeExternalSystem("main", writable=True)
+        svc = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": system},
+            clock=lambda: FIXED_NOW,
+            packages=package_service,
+            refusals=recorder,
+        )
+        root = await package_service.create(name="Finance")
+        child = await package_service.create(name="Budget", parent_id=root.package.id)
+        element = await an_element(service)
+        await package_service.move_elements([element], child.package.id)
+        packages.published.append(a_version_of(root.package.id))
+
+        with pytest.raises(PackageFrozenError, match=r"published as v1\.0\.0"):
+            await svc.open_issue(
+                element, target="main", scope="acme/billing", title="t", body="", dry_run=dry_run
+            )
+
+        assert system.calls == [] and system.create_attempts == 0
+        assert recorded == [
+            FrozenRefusal(root.package.id, "v1.0.0", "external_references", "INSERT")
+        ]
+
+    async def test_an_element_in_no_package_or_an_unpublished_one_is_not_refused(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        package_service: PackageService,
+    ) -> None:
+        svc = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": FakeExternalSystem("main", writable=True)},
+            clock=lambda: FIXED_NOW,
+            packages=package_service,
+        )
+        loose = await an_element(service)
+        filed = await an_element(service)
+        draft = await package_service.create(name="Brouillon")
+        await package_service.move_elements([filed], draft.package.id)
+
+        for element in (loose, filed):
+            plan = await svc.open_issue(
+                element, target="main", scope="acme/billing", title="t", body=""
+            )
+            assert plan.dry_run is True
+
+
+def a_version_of(package_id: UUID) -> PackageVersion:
+    return PackageVersion(
+        id=uuid4(),
+        package_id=package_id,
+        version="v1.0.0",
+        bump=Bump.MINOR,
+        notes="",
+        adr=None,
+        baseline_id=uuid4(),
+        element_count=0,
+        relationship_count=0,
+        box_count=0,
+        published_by_sub="approver",
+        published_by="approver",
+        published_at=FIXED_NOW,
+    )

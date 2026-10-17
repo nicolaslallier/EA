@@ -39,6 +39,10 @@ MAX_ISSUE_BODY_LENGTH: Final = 8000
 #: How many references one `refresh` of an element resolves — a provider's quota is not ours
 #: to spend in one click.
 MAX_REFRESH_BATCH: Final = 20
+#: How many objects one element may cite, and how long one batch refresh may take in all.
+MAX_REFERENCES_PER_ELEMENT: Final = 50
+REFRESH_BUDGET_SECONDS: Final = 60.0
+
 #: How many stale references one listing returns (the Prefect flow pages through them).
 MAX_STALE_PAGE: Final = 100
 

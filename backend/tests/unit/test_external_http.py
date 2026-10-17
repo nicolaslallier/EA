@@ -8,8 +8,11 @@ sent, what is read — not the network.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import ssl
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import pytest
@@ -19,6 +22,7 @@ from ea.repositories.external_http import (
     EgressClient,
     EgressError,
     EgressResponse,
+    _tls,
 )
 
 PUBLIC = "93.184.216.34"
@@ -118,6 +122,11 @@ class TestWhereItConnects:
             "/a#f",
             "/a\x00",
             "/" + "a" * 3000,
+            "/a/../b",
+            "/..",
+            "/a/./b",
+            "/a%2e%2e/b",
+            "/a%2fb",
         ],
     )
     async def test_a_path_that_is_not_a_plain_path_is_refused_before_anything_happens(
@@ -220,6 +229,8 @@ class TestWhatItIsBuiltOn:
             "https://api.provider.test:8443",
             "api.provider.test",
             "https:///x",
+            "https://api.provider.test:99999",
+            "https://[api.provider.test",
         ],
     )
     def test_only_an_https_address_on_a_declared_port_is_a_target(self, url: str) -> None:
@@ -331,6 +342,29 @@ class TestWhenItFails:
 
 
 @pytest.mark.asyncio
+class TestAHeaderThatCannotBeEncoded:
+    async def test_it_is_a_failure_of_the_call_not_a_crash_and_the_value_stays_out_of_it(
+        self,
+    ) -> None:
+        egress = EgressClient(
+            API,
+            headers={"Authorization": "Bearer tok\u00e9n-secret"},
+            ports=(443,),
+            allowed_networks=(),
+            timeout=1,
+            total_timeout=2,
+            max_bytes=100,
+            resolver=resolving(PUBLIC),  # type: ignore[arg-type]
+            transport=httpx.MockTransport(ok),
+        )
+
+        with pytest.raises(EgressError) as raised:
+            await egress.get("/x")
+
+        assert "secret" not in str(raised.value)
+
+
+@pytest.mark.asyncio
 class TestWriting:
     async def test_a_write_sends_its_json_once_and_is_never_retried(self) -> None:
         seen: list[httpx.Request] = []
@@ -349,3 +383,45 @@ class TestWriting:
 
 def test_the_response_type_carries_only_what_a_connector_reads() -> None:
     assert EgressResponse(200, b"{}").body == b"{}"
+
+
+class TestTheTrustStore:
+    """The configured CA is added to the system store, never in place of verifying."""
+
+    CA = Path(__file__).parents[3] / "deploy" / "infra-ca.crt"
+
+    def test_without_a_ca_it_verifies_against_the_system_store(self) -> None:
+        context = _tls(None)
+        assert context.verify_mode is ssl.CERT_REQUIRED
+        assert context.check_hostname is True
+
+    def test_a_configured_ca_is_trusted_as_well_and_still_verified(self) -> None:
+        context = _tls(str(self.CA))
+        assert context.verify_mode is ssl.CERT_REQUIRED
+        expected = ssl.PEM_cert_to_DER_cert(self.CA.read_text())
+        assert expected in {bytes(c) for c in context.get_ca_certs(binary_form=True)}
+
+    def test_a_ca_that_is_not_there_refuses_to_build_rather_than_trusting_less(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(OSError):
+            _tls(str(tmp_path / "missing.pem"))
+
+
+@pytest.mark.asyncio
+async def test_a_post_sends_its_json_through_the_same_door_and_the_client_closes() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"number": 7})
+
+    egress = client(handler)
+    response = await egress.post("/repos/a/b/issues", json={"title": "t"})
+    await egress.aclose()
+
+    assert response.status == 201
+    assert seen[0].method == "POST"
+    assert seen[0].url.host == PUBLIC
+    assert seen[0].headers["host"] == "api.provider.test"
+    assert json.loads(seen[0].content) == {"title": "t"}

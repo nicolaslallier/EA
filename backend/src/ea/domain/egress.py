@@ -35,14 +35,24 @@ NEVER: Final[tuple[IPNetwork, ...]] = tuple(
         "224.0.0.0/4",
         "240.0.0.0/4",
         "100.100.100.200/32",
-        "::/128",
-        "::1/128",
+        "::/96",
         "fe80::/10",
+        "fec0::/10",
         "ff00::/8",
         "fd00:ec2::254/128",
+        "::ffff:0:0:0/96",  # RFC 2765 IPv4-translated
         "64:ff9b::/96",
+        "64:ff9b:1::/48",  # local-use NAT64 (RFC 8215)
+        "2001::/32",  # Teredo
         "2002::/16",
     )
+)
+
+
+#: Single metadata addresses inside ranges a deployment may legitimately declare (CGNAT,
+#: unique-local): they stay unreachable, but do not stop their range from being declared.
+_METADATA: Final[tuple[IPNetwork, ...]] = tuple(
+    ipaddress.ip_network(cidr) for cidr in ("100.100.100.200/32", "fd00:ec2::254/128")
 )
 
 
@@ -80,7 +90,11 @@ def networks_from(cidrs: Iterable[str]) -> tuple[IPNetwork, ...]:
         except ValueError:
             msg = "a declared network is not a CIDR range"
             raise ValueError(msg) from None
-        if any(network.version == never.version and network.overlaps(never) for never in NEVER):
+        if any(
+            network.version == never.version and network.overlaps(never)
+            for never in NEVER
+            if never not in _METADATA
+        ):
             msg = "a declared network may not overlap loopback, link-local or reserved ranges"
             raise ValueError(msg)
         found.append(network)

@@ -176,6 +176,7 @@ class WriteKind(StrEnum):
     CONTENT = "content"  # its fields and properties; deleting it
     LINK = "link"  # a relationship added to or removed from it
     DOCUMENT = "document"  # a document attached, revised or discarded
+    EXTERNAL_REFERENCE = "external_reference"  # a link to another tool added, removed, re-cached
     FILING = "filing"  # moved to another package, or re-filed when its package is deleted
     RESTORE = "restore"  # rewritten or deleted by a baseline restoration
     STEREOTYPES = "stereotypes"  # the set of stereotype labels it carries (docs/adr/0070)

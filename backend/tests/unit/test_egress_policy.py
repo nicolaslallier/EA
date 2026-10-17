@@ -44,6 +44,11 @@ class TestAddressesNobodyMayReach:
             "255.255.255.255",
             "::ffff:127.0.0.1",
             "::ffff:169.254.169.254",
+            "::127.0.0.1",
+            "::7f00:1",
+            "::a00:1",
+            "fec0::1",
+            "100.100.100.200",
         ],
     )
     def test_they_are_refused_even_when_the_configuration_allows_everything_private(
@@ -97,5 +102,36 @@ class TestDeclaringNetworks:
 
         assert "not-a-cidr" not in str(raised.value)
 
+    def test_ranges_that_merely_contain_a_metadata_address_can_be_declared_without_it(self) -> None:
+        wide = net("100.64.0.0/10", "fd00::/8")
+
+        check_address(ipaddress.ip_address("100.64.0.9"), allowed=wide)
+        check_address(ipaddress.ip_address("fd12::1"), allowed=wide)
+        for metadata in ("100.100.100.200", "fd00:ec2::254"):
+            with pytest.raises(EgressRefusedError):
+                check_address(ipaddress.ip_address(metadata), allowed=wide)
+
     def test_a_private_range_can_be_declared(self) -> None:
         assert networks_from(["10.1.0.0/16", "fd12::/16"])
+
+
+class TestTranslatedAndTunnelledIpv6:
+    """IPv6 forms that carry an IPv4 address some gateway would reach on our behalf."""
+
+    CASES = (
+        ("::ffff:0:7f00:1", "::ffff:0:0:0/96"),  # RFC 2765 IPv4-translated
+        ("64:ff9b:1::a00:1", "64:ff9b:1::/48"),  # local-use NAT64 (RFC 8215)
+        ("2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001::/32"),  # Teredo
+    )
+
+    @pytest.mark.parametrize(("address", "covering"), CASES)
+    def test_refused_even_when_a_covering_network_is_handed_to_the_check(
+        self, address: str, covering: str
+    ) -> None:
+        with pytest.raises(EgressRefusedError, match="no outbound call"):
+            check_address(ipaddress.ip_address(address), allowed=(ipaddress.ip_network(covering),))
+
+    @pytest.mark.parametrize(("address", "covering"), CASES)
+    def test_a_covering_network_cannot_be_declared(self, address: str, covering: str) -> None:
+        with pytest.raises(ValueError, match="network"):
+            networks_from([covering])

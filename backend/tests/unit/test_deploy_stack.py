@@ -392,7 +392,7 @@ def test_the_deployed_api_takes_the_third_party_targets_from_optional_variables(
     """A token in the stack file would be committed; an empty one must not block `app-up`."""
     environment = api_environment()
 
-    for name in ("EA_EXTERNAL_TARGETS", "EA_EXTERNAL_TOKENS"):
+    for name in ("EA_EXTERNAL_TARGETS", "EA_EXTERNAL_TOKENS", "EA_EXTERNAL_CA_CERT"):
         assert environment[name] == "${" + name + ":-}", name
 
 

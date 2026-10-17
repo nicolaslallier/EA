@@ -1252,8 +1252,20 @@ class ExternalReferenceRepository(Protocol):
 
     async def list_for(self, element_id: UUID) -> tuple[ExternalReference, ...]: ...
 
-    async def list_stale(self, *, before: datetime, limit: int) -> tuple[ExternalReference, ...]:
-        """References of a resolved kind never synced or last synced before `before`."""
+    async def list_stale(
+        self, *, before: datetime, limit: int, targets: Collection[str]
+    ) -> tuple[ExternalReference, ...]:
+        """References of a resolved kind on one of `targets`, last synced before `before`.
+
+        Ordered by the last *attempt* (else the last sync), oldest first: a line that stays stale
+        because its provider is down goes to the back of the queue, it does not hold the front.
+        """
+        ...
+
+    async def note_attempt(
+        self, reference_id: UUID, *, now: datetime, audit: AuditOf[ExternalReference]
+    ) -> None:
+        """Record that a refresh was tried and did not change the line (a scheduling clock)."""
         ...
 
     async def get(self, reference_id: UUID) -> ExternalReference | None: ...

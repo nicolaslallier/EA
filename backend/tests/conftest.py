@@ -2673,13 +2673,27 @@ class InMemoryExternalReferences:
     `tests/integration/test_external_store.py`).
     """
 
-    def __init__(self, audit_log: InMemoryAuditLog | None = None) -> None:
+    def __init__(
+        self,
+        audit_log: InMemoryAuditLog | None = None,
+        graph: InMemoryRepository | None = None,
+    ) -> None:
         self.audit_log = audit_log if audit_log is not None else InMemoryAuditLog()
+        #: The graph double the references hang from: the freeze of an element is read there.
+        self.graph = graph
         self.rows: dict[UUID, ExternalReference] = {}
+        self.attempts: dict[UUID, datetime] = {}
+
+    def _refuse_a_frozen_element(self, element_id: UUID) -> None:
+        """Stand in for the repository reading the element under its lock (docs/adr/0065)."""
+        element = self.graph.elements.get(element_id) if self.graph is not None else None
+        if element is not None:
+            guard_element_write(element, WriteKind.EXTERNAL_REFERENCE)
 
     async def add(
         self, reference: ExternalReference, *, audit: AuditOf[ExternalReference]
     ) -> ExternalReference:
+        self._refuse_a_frozen_element(reference.element_id)
         taken = any(
             row.element_id == reference.element_id
             and row.target == reference.target
@@ -2700,22 +2714,37 @@ class InMemoryExternalReferences:
             )
         )
 
-    async def list_stale(self, *, before: datetime, limit: int) -> tuple[ExternalReference, ...]:
+    async def list_stale(
+        self, *, before: datetime, limit: int, targets: Collection[str]
+    ) -> tuple[ExternalReference, ...]:
         old = [
             row
             for row in self.rows.values()
-            if row.kind in RESOLVED_KINDS and (row.synced_at is None or row.synced_at < before)
+            if row.kind in RESOLVED_KINDS
+            and row.target in targets
+            and (row.synced_at is None or row.synced_at < before)
         ]
-        old.sort(key=lambda row: (row.synced_at or datetime.min.replace(tzinfo=UTC), str(row.id)))
+        floor = datetime.min.replace(tzinfo=UTC)
+        old.sort(key=lambda row: (self.attempts.get(row.id) or row.synced_at or floor, str(row.id)))
         return tuple(old[:limit])
+
+    async def note_attempt(
+        self, reference_id: UUID, *, now: datetime, audit: AuditOf[ExternalReference]
+    ) -> None:
+        row = self.rows.get(reference_id)
+        if row is not None:
+            self.attempts[reference_id] = now
+            self.audit_log.append(events_for(audit, row))
 
     async def get(self, reference_id: UUID) -> ExternalReference | None:
         return self.rows.get(reference_id)
 
     async def delete(self, reference_id: UUID, *, audit: AuditOf[ExternalReference]) -> bool:
-        row = self.rows.pop(reference_id, None)
-        if row is None:
+        stored = self.rows.get(reference_id)
+        if stored is None:
             return False
+        self._refuse_a_frozen_element(stored.element_id)
+        row = self.rows.pop(reference_id)
         self.audit_log.append(events_for(audit, row))
         return True
 
@@ -2730,7 +2759,10 @@ class InMemoryExternalReferences:
         row = self.rows.get(reference_id)
         if row is None:
             return None
+        if (row.title, row.status) != (snapshot.title, snapshot.status):
+            self._refuse_a_frozen_element(row.element_id)
         self.rows[reference_id] = row.with_snapshot(snapshot, now=now)
+        self.attempts[reference_id] = now
         self.audit_log.append(events_for(audit, row))
         return self.rows[reference_id]
 
@@ -2763,6 +2795,7 @@ class FakeExternalSystem:
         self.created: list[tuple[str, str, str]] = []
         self.create_attempts = 0
         self.write_failure: Exception | None = None
+        self.created_identifier: str | None = None
 
     @property
     def name(self) -> str:
@@ -2802,12 +2835,14 @@ class FakeExternalSystem:
         if self.write_failure is not None:
             raise self.write_failure
         self.created.append((scope, draft.title, draft.body))
-        return f"{scope}#{100 + len(self.created)}"
+        return self.created_identifier or f"{scope}#{100 + len(self.created)}"
 
 
 @pytest.fixture
-def external_references(audit_log: InMemoryAuditLog) -> InMemoryExternalReferences:
-    return InMemoryExternalReferences(audit_log)
+def external_references(
+    audit_log: InMemoryAuditLog, repository: InMemoryRepository
+) -> InMemoryExternalReferences:
+    return InMemoryExternalReferences(audit_log, repository)
 
 
 @pytest.fixture

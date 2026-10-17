@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -13,11 +14,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ea.db.postgres import create_session_factory
 from ea.domain.archimate import ElementType as E
 from ea.domain.audit import AuditAction, AuditChannel, AuditEvent, EntityKind
-from ea.domain.errors import DuplicateExternalReferenceError, ElementNotFoundError
-from ea.domain.external import ExternalKind, ExternalReference, ExternalSnapshot, ExternalStatus
+from ea.domain.errors import (
+    DuplicateExternalReferenceError,
+    ElementLockedError,
+    ElementNotFoundError,
+    PackageFrozenError,
+    TooManyExternalReferencesError,
+)
+from ea.domain.external import (
+    MAX_REFERENCES_PER_ELEMENT,
+    ExternalKind,
+    ExternalReference,
+    ExternalSnapshot,
+    ExternalStatus,
+)
 from ea.domain.model import Element
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.external_store import PostgresExternalReferenceRepository
+from tests.integration.test_package_freeze_triggers import a_package, publish
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -186,10 +200,13 @@ async def test_the_stale_ones_come_oldest_first_and_only_of_a_resolved_kind(
         audit=(),
     )
 
-    stale = await store.list_stale(before=NOW - timedelta(hours=24), limit=10)
+    stale = await store.list_stale(before=NOW - timedelta(hours=24), limit=10, targets={"main"})
 
     assert [r.id for r in stale] == [never.id, old.id]  # never-synced first
-    assert len(await store.list_stale(before=NOW - timedelta(hours=24), limit=1)) == 1
+    assert (
+        len(await store.list_stale(before=NOW - timedelta(hours=24), limit=1, targets={"main"}))
+        == 1
+    )
 
 
 async def test_a_hostile_stored_row_still_reads_back(engine_at_head: AsyncEngine) -> None:
@@ -208,3 +225,128 @@ async def test_a_hostile_stored_row_still_reads_back(engine_at_head: AsyncEngine
 
     assert row.external_id == "../../etc#x"  # read as text; the connector re-validates it
     assert row.title == "<script>"
+
+
+async def put_in_state(
+    engine: AsyncEngine, element_id: object, state: str, *, locked: bool = False
+) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE elements SET approval_state = :s, locked = :l WHERE id = :id"),
+            {"s": state, "l": locked, "id": element_id},
+        )
+
+
+async def revision_of(engine: AsyncEngine, element_id: object) -> int:
+    async with engine.connect() as connection:
+        return int(
+            await connection.scalar(
+                text("SELECT revision FROM elements WHERE id = :id"), {"id": element_id}
+            )
+            or 0
+        )
+
+
+@pytest.mark.parametrize(("state", "locked"), [("approved", False), ("approved", True)])
+async def test_a_frozen_element_accepts_no_link_no_unlink_and_no_changing_refresh(
+    engine_at_head: AsyncEngine, state: str, locked: bool
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    row = await store.add(reference(element_id), audit=())
+    await put_in_state(engine_at_head, element_id, state, locked=locked)
+    revision = await revision_of(engine_at_head, element_id)
+    changed = ExternalSnapshot.of("Renamed", ExternalStatus.CLOSED)
+
+    with pytest.raises(ElementLockedError):
+        await store.add(reference(element_id, 13), audit=())
+    with pytest.raises(ElementLockedError):
+        await store.delete(row.id, audit=())
+    with pytest.raises(ElementLockedError):
+        await store.update_snapshot(row.id, changed, now=NOW, audit=lambda b: ())
+
+    assert await store.get(row.id) == row
+    # a refresh that changes nothing is only a clock: it goes through
+    same = ExternalSnapshot.of(row.title, row.status)
+    assert await store.update_snapshot(row.id, same, now=NOW, audit=lambda b: ()) is not None
+    assert await revision_of(engine_at_head, element_id) == revision
+
+
+async def test_a_reopened_element_accepts_references_again_without_a_new_revision(
+    engine_at_head: AsyncEngine,
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    await put_in_state(engine_at_head, element_id, "in_review")
+    before = await revision_of(engine_at_head, element_id)
+
+    await store.add(reference(element_id), audit=())
+
+    assert await revision_of(engine_at_head, element_id) == before
+
+
+async def test_a_line_that_was_tried_goes_to_the_back_and_other_targets_are_not_offered(
+    engine_at_head: AsyncEngine,
+) -> None:
+    store, element_id, _ = await make(engine_at_head)
+    first = await store.add(reference(element_id, 1, now=NOW - timedelta(days=9)), audit=())
+    second = await store.add(reference(element_id, 2, now=NOW - timedelta(days=8)), audit=())
+    await store.add(
+        reference(element_id, 3, target="other", now=NOW - timedelta(days=30)), audit=()
+    )
+    before = NOW - timedelta(hours=24)
+
+    assert [r.id for r in await store.list_stale(before=before, limit=10, targets={"main"})] == [
+        first.id,
+        second.id,
+    ]
+    await store.note_attempt(first.id, now=NOW, audit=lambda row: ())
+
+    assert [r.id for r in await store.list_stale(before=before, limit=10, targets={"main"})] == [
+        second.id,
+        first.id,
+    ]
+    assert await store.list_stale(before=before, limit=10, targets=set()) == ()
+
+
+async def test_two_links_racing_for_the_last_place_cannot_both_take_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """The cap is counted under the element's lock, in the transaction that inserts."""
+    store, element_id, _ = await make(engine_at_head)
+    for number in range(MAX_REFERENCES_PER_ELEMENT - 1):
+        await store.add(reference(element_id, number), audit=())
+
+    outcomes = await asyncio.gather(
+        store.add(reference(element_id, 1000), audit=()),
+        store.add(reference(element_id, 1001), audit=()),
+        return_exceptions=True,
+    )
+
+    refused = [o for o in outcomes if isinstance(o, TooManyExternalReferencesError)]
+    assert len(refused) == 1, outcomes
+    assert len(await store.list_for(element_id)) == MAX_REFERENCES_PER_ELEMENT  # type: ignore[arg-type]
+
+
+async def test_under_a_published_package_a_reference_is_frozen_but_its_cache_still_refreshes(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """docs/adr/0076: link and unlink are 409 package_frozen; title and state are the provider's."""
+    store, element_id, _ = await make(engine_at_head)
+    row = await store.add(reference(element_id), audit=())
+    async with engine_at_head.begin() as connection:
+        package = await a_package(connection, "Finance", None)
+        await connection.execute(
+            text("UPDATE elements SET package_id = :p WHERE id = :id"),
+            {"p": package, "id": element_id},
+        )
+        await publish(connection, package)
+
+    with pytest.raises(PackageFrozenError):
+        await store.add(reference(element_id, 13), audit=())
+    with pytest.raises(PackageFrozenError):
+        await store.delete(row.id, audit=())
+    changed = ExternalSnapshot.of("Renamed", ExternalStatus.CLOSED)
+    refreshed = await store.update_snapshot(row.id, changed, now=NOW, audit=lambda b: ())
+    await store.note_attempt(row.id, now=NOW, audit=lambda b: ())
+
+    assert refreshed is not None
+    assert refreshed.status is ExternalStatus.CLOSED

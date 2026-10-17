@@ -50,6 +50,7 @@ class FakeEa:
     stale: list[dict[str, object]] = field(default_factory=list)
     refused: set[str] = field(default_factory=set)
     down: set[str] = field(default_factory=set)
+    locked: set[str] = field(default_factory=set)
     calls: list[tuple[str, str]] = field(default_factory=list)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -60,6 +61,10 @@ class FakeEa:
             return httpx.Response(200, json=self.stale[:limit])
         if path.startswith("/external-references/") and path.endswith("/refresh"):
             identifier = path.split("/")[2]
+            if identifier in self.locked:
+                return httpx.Response(
+                    409, json={"error": "element_locked", "detail": "a locked element"}
+                )
             if identifier in self.refused:
                 return httpx.Response(404, json={"error": "not_found", "detail": "gone"})
             fresh = identifier not in self.down
@@ -192,3 +197,16 @@ def test_the_run_is_bounded(world: FakeEa) -> None:
     assert len(rows(state)) == 2
     with pytest.raises(ValueError, match="limit"):
         references.rafraichir_references(limit=references.MAX_PER_RUN + 1)
+
+
+def test_a_line_whose_element_is_under_review_is_recorded_and_the_run_still_completes(
+    world: FakeEa,
+) -> None:
+    frozen, fine = a_reference(), a_reference()
+    world.stale = [frozen, fine]
+    world.locked = {str(frozen["id"])}
+
+    state = run()
+
+    assert state.is_completed()
+    assert sorted(row["outcome"] for row in rows(state)) == ["element_locked", "refreshed"]

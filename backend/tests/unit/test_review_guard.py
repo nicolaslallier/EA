@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from ea.domain import approval
-from ea.repositories import document_store, package_store, profile_store
+from ea.repositories import document_store, external_store, package_store, profile_store
 from ea.services.architecture import ArchitectureService
 
 #: (where, route) -> a name the route's body must call.
@@ -46,6 +46,21 @@ ROUTES = {
     (
         "PostgresDocumentRepository.delete",
         document_store.PostgresDocumentRepository.delete,
+    ): "_guard_the_element",
+    ("external_store._guard_the_element", external_store._guard_the_element): (
+        "guard_element_write"
+    ),
+    (
+        "PostgresExternalReferenceRepository.add",
+        external_store.PostgresExternalReferenceRepository.add,
+    ): "_guard_the_element",
+    (
+        "PostgresExternalReferenceRepository.delete",
+        external_store.PostgresExternalReferenceRepository.delete,
+    ): "_guard_the_element",
+    (
+        "PostgresExternalReferenceRepository.update_snapshot",
+        external_store.PostgresExternalReferenceRepository.update_snapshot,
     ): "_guard_the_element",
     (
         "PostgresPackageRepository.move_elements",

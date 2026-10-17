@@ -133,6 +133,7 @@ class World:
     drawn: UUID
     link2: UUID
     free: UUID
+    reference: UUID
 
 
 async def build_world(connection: AsyncConnection) -> World:
@@ -232,6 +233,19 @@ async def build_world(connection: AsyncConnection) -> World:
         height=10,
     )
     await insert(connection, "diagram_edges", diagram_id=world.diagram, relationship_id=world.link)
+    world.reference = uuid4()
+    await insert(
+        connection,
+        "external_references",
+        id=world.reference,
+        element_id=world.inside,
+        kind="github_issue",
+        target="main",
+        external_id="acme/billing#12",
+        url="https://github.test/acme/billing/issues/12",
+        created_by="s",
+        created_at=AT,
+    )
     return world
 
 
@@ -269,6 +283,10 @@ EXPECTED: dict[str, tuple[str, str]] = {
     "sub-package created": ("packages", "INSERT"),
     "package deleted": ("packages", "DELETE"),
     "outside element deleted while a published diagram draws it": ("diagram_nodes", "DELETE"),
+    "reference linked": ("external_references", "INSERT"),
+    "reference unlinked": ("external_references", "DELETE"),
+    "reference pointed elsewhere": ("external_references", "UPDATE"),
+    "reference moved to another element": ("external_references", "UPDATE"),
 }
 
 
@@ -402,6 +420,24 @@ def refused(world: World) -> dict[str, tuple[str, dict[str, Any]]]:
             "DELETE FROM elements WHERE id = :id",
             {"id": world.drawn},
         ),
+        "reference linked": (
+            "INSERT INTO external_references (id, element_id, kind, target, external_id, url, "
+            "created_by, created_at) VALUES (:id, :e, 'github_issue', 'main', 'acme/billing#13', "
+            "'https://github.test/acme/billing/issues/13', 's', :at)",
+            {"id": uuid4(), "e": world.inside, "at": AT},
+        ),
+        "reference unlinked": (
+            "DELETE FROM external_references WHERE id = :id",
+            {"id": world.reference},
+        ),
+        "reference pointed elsewhere": (
+            "UPDATE external_references SET url = 'https://elsewhere.test/' WHERE id = :id",
+            {"id": world.reference},
+        ),
+        "reference moved to another element": (
+            "UPDATE external_references SET element_id = :e WHERE id = :id",
+            {"id": world.reference, "e": world.outside},
+        ),
     }
 
 
@@ -446,6 +482,31 @@ async def test_what_is_outside_a_published_subtree_stays_writable(
             {"id": world.outside_diagram},
         )
         await a_package(connection, "Ailleurs", None)
+
+
+async def test_refreshing_the_cached_copy_of_a_published_reference_stays_allowed(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """Title and state are the third party's: freezing them would fail every refresh forever."""
+    async with engine_at_head.begin() as connection:
+        world = await build_world(connection)
+        await publish(connection, world.root)
+    async with engine_at_head.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE external_references SET title = 'Fixed', status = 'closed', "
+                "synced_at = :at, attempted_at = :at WHERE id = :id"
+            ),
+            {"id": world.reference, "at": AT},
+        )
+    async with engine_at_head.connect() as connection:
+        status = (
+            await connection.execute(
+                text("SELECT status FROM external_references WHERE id = :id"),
+                {"id": world.reference},
+            )
+        ).scalar_one()
+    assert status == "closed"
 
 
 async def test_nothing_is_guarded_while_nothing_is_published(

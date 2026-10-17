@@ -362,7 +362,10 @@ def _lifespan(
                 stack.push_async_callback(engine.dispose)
                 await check_relational_store(engine)
                 app.state.db_sessions = create_session_factory(engine)
-                set_refusal_recorder(FrozenRefusalRecorder(to_database(app.state.db_sessions)))
+                app.state.refusal_recorder = FrozenRefusalRecorder(
+                    to_database(app.state.db_sessions)
+                )
+                set_refusal_recorder(app.state.refusal_recorder)
                 stack.callback(set_refusal_recorder, None)
                 if document_store is None:
                     document_store = PostgresDocumentRepository(app.state.db_sessions)
@@ -524,6 +527,8 @@ def _lifespan(
                     active,
                     inactive=inactive,
                     admission=app.state.external_admission,
+                    packages=getattr(app.state, "package_service", None),
+                    refusals=getattr(app.state, "refusal_recorder", None),
                 )
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
@@ -868,6 +873,7 @@ def create_app(
                 external_systems or {},
                 inactive=external_inactive,
                 admission=app.state.external_admission,
+                packages=PackageService(packages) if packages is not None else None,
             )
         if requirements is not None:
             app.state.requirement_service = RequirementService(

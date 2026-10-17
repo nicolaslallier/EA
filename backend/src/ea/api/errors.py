@@ -62,6 +62,7 @@ from ea.domain.errors import (
     ExportInProgressError,
     ExportTooLargeError,
     ExternalBusyError,
+    ExternalLinkFailedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
@@ -120,6 +121,7 @@ from ea.domain.errors import (
     TemplateBusyError,
     TemplateLimitError,
     TemplateNotFoundError,
+    TooManyExternalReferencesError,
     TooManyPackagesError,
     TooManyRefusedRowsError,
     UnknownExternalTargetError,
@@ -291,6 +293,11 @@ _STATUS: Final[dict[type[Exception], tuple[int, str]]] = {
     ExternalBusyError: (status.HTTP_429_TOO_MANY_REQUESTS, "external_busy"),
     ExternalWriteFailedError: (status.HTTP_502_BAD_GATEWAY, "external_write_failed"),
     ExternalWriteTimeoutError: (status.HTTP_504_GATEWAY_TIMEOUT, "external_write_timeout"),
+    ExternalLinkFailedError: (status.HTTP_502_BAD_GATEWAY, "external_link_failed"),
+    TooManyExternalReferencesError: (
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "too_many_external_references",
+    ),
     # --- Reports (docs/adr/0062) ---
     ReportTooLargeError: (status.HTTP_422_UNPROCESSABLE_CONTENT, "report_too_large"),
     ReportFormatUnavailableError: (status.HTTP_501_NOT_IMPLEMENTED, "format_unavailable"),

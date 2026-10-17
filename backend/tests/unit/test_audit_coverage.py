@@ -317,7 +317,15 @@ def test_the_expected_writes_are_found() -> None:
     assert found["PostgresTemplateRepository"] == {"add", "save", "delete"}
     assert found["PostgresSavedQueryRepository"] == {"add", "save", "delete"}
     assert found["PostgresBaselineRepository"] == {"create", "delete", "apply_restore"}
-    assert found["PostgresExternalReferenceRepository"] == {"add", "delete", "update_snapshot"}
+    assert found["PostgresExternalReferenceRepository"] == {
+        "add",
+        "delete",
+        # takes audit= like every writer, and the service hands it nothing on purpose (an
+        # attempt is a clock, docs/adr/0076) — pinned by test_external_service.py's
+        # test_an_attempt_is_a_clock_for_the_queue_and_writes_no_audit_event.
+        "note_attempt",
+        "update_snapshot",
+    }
 
 
 @pytest.mark.parametrize("store", list(AUDITED_STORES), ids=lambda c: c.__name__)

@@ -21,6 +21,7 @@ from ea.domain.external import (
     ExternalSnapshot,
     ExternalStatus,
     ParsedReference,
+    clean_scope,
     clean_title,
     parse_reference,
     scope_of,
@@ -203,11 +204,43 @@ class TestFreeUrls:
             "https://wiki.test/a b",
             "https://wiki.test/a\x00b",
             "https://wiki.test/" + "a" * 2048,
+            "https://wiki.test:99999/a",
+            "https://wiki.test:0/a",
+            "https://[::1/a",
         ],
     )
     def test_anything_that_is_not_a_plain_web_address_is_refused(self, raw: str) -> None:
         with pytest.raises(InvalidExternalReferenceError):
             parse_reference(ExternalKind.URL, raw, web_base=None)
+
+
+class TestWhatNeedsATarget:
+    def test_a_ticket_kind_without_a_target_is_refused(self) -> None:
+        with pytest.raises(InvalidExternalReferenceError, match="needs a target"):
+            parse_reference(GITHUB, "acme/billing#12", web_base=None)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "https://github.test:99999/acme/billing/issues/12",
+            "https://[github.test/acme/billing/issues/12",
+        ],
+    )
+    def test_an_address_that_does_not_parse_is_not_on_the_configured_site(self, raw: str) -> None:
+        with pytest.raises(InvalidExternalReferenceError):
+            parse_reference(GITHUB, raw, web_base=WEB)
+
+
+class TestTicketScopes:
+    def test_a_repository_is_compared_in_one_spelling(self) -> None:
+        assert clean_scope(GITHUB, "  Acme/Billing ") == "acme/billing"
+
+    @pytest.mark.parametrize(
+        ("kind", "scope"), [(GITHUB, "acme"), (GITHUB, "../etc"), (JIRA, "ACME")]
+    )
+    def test_anything_else_is_refused(self, kind: ExternalKind, scope: str) -> None:
+        with pytest.raises(InvalidExternalReferenceError, match="owner/repo"):
+            clean_scope(kind, scope)
 
 
 class TestTitlesFromThirdParties:

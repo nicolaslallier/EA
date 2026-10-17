@@ -23,24 +23,32 @@ What is decided here, and nowhere else:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ea.domain.approval import WriteKind, guard_element_write
 from ea.domain.audit import AuditAction, external_reference_view
 from ea.domain.errors import (
     DuplicateExternalReferenceError,
+    ElementLockedError,
+    ExternalLinkFailedError,
     ExternalReferenceNotFoundError,
     ExternalRefusedError,
     ExternalUnavailableError,
     InvalidExternalReferenceError,
+    PackageFrozenError,
+    TooManyExternalReferencesError,
     UnknownExternalTargetError,
 )
 from ea.domain.external import (
+    MAX_REFERENCES_PER_ELEMENT,
     MAX_REFRESH_BATCH,
     MAX_STALE_PAGE,
+    REFRESH_BUDGET_SECONDS,
     STALE_AFTER,
     ExternalKind,
     ExternalReference,
@@ -53,16 +61,21 @@ from ea.domain.external import (
     clean_scope,
     parse_reference,
 )
+from ea.domain.package_versions import FrozenRefusal
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
+    from ea.domain.model import Element
     from ea.domain.ports import ExternalReferenceRepository, ExternalSystem
     from ea.services.architecture import ArchitectureService
     from ea.services.exchange_admission import Admission
+    from ea.services.packages import PackageService
 
 Clock = Callable[[], datetime]
+#: The bounded recorder `work()` hands the database's refusals to (docs/adr/0074).
+RefusalRecorder = Callable[[FrozenRefusal], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +111,13 @@ class ExternalReferenceService:
         admission: Admission | None = None,
         inactive: Mapping[str, ExternalKind] | None = None,
         clock: Clock = _utc_now,
+        refresh_budget_seconds: float = REFRESH_BUDGET_SECONDS,
+        packages: PackageService | None = None,
+        refusals: RefusalRecorder | None = None,
     ) -> None:
+        self._packages = packages
+        self._refusals = refusals
+        self._budget = refresh_budget_seconds
         self._repository = repository
         self._architecture = architecture
         self._systems = dict(systems)
@@ -136,7 +155,9 @@ class ExternalReferenceService:
         if not 1 <= limit <= MAX_STALE_PAGE:
             msg = f"limit is between 1 and {MAX_STALE_PAGE}"
             raise ValueError(msg)
-        rows = await self._repository.list_stale(before=self._now() - STALE_AFTER, limit=limit)
+        rows = await self._repository.list_stale(
+            before=self._now() - STALE_AFTER, limit=limit, targets=frozenset(self._systems)
+        )
         return tuple(self._view(row) for row in rows)
 
     # --- resolving a target -------------------------------------------------------------
@@ -182,7 +203,10 @@ class ExternalReferenceService:
         none. A free link (`kind=url`) is stored as written and never called.
         """
         caller = require_editor()
-        await self._architecture.get_element(element_id)
+        element = await self._architecture.get_element(element_id)
+        # Review is asked on the row just read, before anything leaves the system; the store asks
+        # it again under the lock, which is the one that decides a race.
+        guard_element_write(element, WriteKind.EXTERNAL_REFERENCE, caller)
         if kind is ExternalKind.URL:
             if target:
                 msg = "a free link has no target"
@@ -193,8 +217,12 @@ class ExternalReferenceService:
             system = self._system_for(kind, target)
             target_name = system.name
             parsed = parse_reference(kind, reference, web_base=system.web_url)
+        existing = await self._repository.list_for(element_id)
+        if len(existing) >= MAX_REFERENCES_PER_ELEMENT:
+            msg = f"an element cites at most {MAX_REFERENCES_PER_ELEMENT} objects"
+            raise TooManyExternalReferencesError(msg)
         # The duplicate is found before the provider is asked: it costs a read, not a quota.
-        for row in await self._repository.list_for(element_id):
+        for row in existing:
             if (row.target, row.external_id) == (target_name, parsed.external_id):
                 msg = "this element already cites that object"
                 raise DuplicateExternalReferenceError(msg)
@@ -255,12 +283,14 @@ class ExternalReferenceService:
                 "a reference points at a target that is not active",
                 extra={"action": "external_target_inactive", "target": row.target},
             )
+            await self._note_attempt(row)  # else it heads the stale queue forever
             return ExternalView(reference=row, stale=True)
         try:
             snapshot = await self._ask(system, row.external_id)
         except ExternalRefusedError:
             snapshot = ExternalSnapshot(row.title, ExternalStatus.UNKNOWN)
         except ExternalUnavailableError:
+            await self._note_attempt(row)
             return ExternalView(reference=row, stale=True)
 
         def refreshed(before: ExternalReference) -> tuple[AuditEvent, ...]:
@@ -275,12 +305,28 @@ class ExternalReferenceService:
                 ),
             )
 
-        updated = await self._repository.update_snapshot(
-            row.id, snapshot, now=self._now(), audit=refreshed
-        )
+        try:
+            updated = await self._repository.update_snapshot(
+                row.id, snapshot, now=self._now(), audit=refreshed
+            )
+        except ElementLockedError:
+            await self._note_attempt(row)  # frozen by review: back of the queue, not the front
+            raise
         if updated is None:
             raise _not_found(row.id)
         return self._view(updated)
+
+    async def _note_attempt(self, row: ExternalReference) -> None:
+        """The line stays as it was, but goes to the back of the queue of stale lines.
+
+        Deliberately no audit event (docs/adr/0076): an attempt is a scheduling clock, it
+        changes nothing a reader of the reference sees.
+        """
+
+        def nothing_to_say(_: ExternalReference) -> tuple[AuditEvent, ...]:
+            return ()
+
+        await self._repository.note_attempt(row.id, now=self._now(), audit=nothing_to_say)
 
     async def refresh_element(self, element_id: UUID) -> tuple[ExternalView, ...]:
         """Refresh up to `MAX_REFRESH_BATCH` references of an element, the oldest first.
@@ -296,14 +342,33 @@ class ExternalReferenceService:
         )[:MAX_REFRESH_BATCH]
         down: set[str] = set()
         refreshed: dict[UUID, ExternalView] = {}
-        for row in due:
-            if row.target in down:
-                refreshed[row.id] = ExternalView(reference=row, stale=True)
-                continue
-            view = await self._refresh(row)
-            if view.reference is row:
-                down.add(row.target)
-            refreshed[row.id] = view
+        try:
+            async with asyncio.timeout(self._budget):
+                for row in due:
+                    if row.target in down:
+                        refreshed[row.id] = ExternalView(reference=row, stale=True)
+                        continue
+                    try:
+                        view = await self._refresh(row)
+                    except ElementLockedError:
+                        # Review froze the element: the line keeps what it had; the batch goes on.
+                        logger.info(
+                            "a reference was not refreshed: its element is under review",
+                            extra={
+                                "action": "external_refresh_blocked",
+                                "reference_id": str(row.id),
+                            },
+                        )
+                        refreshed[row.id] = self._view(row)
+                        continue
+                    if view.reference is row:
+                        down.add(row.target)
+                    refreshed[row.id] = view
+        except TimeoutError:
+            logger.warning(
+                "a batch refresh ran out of time: the lines left keep what they had",
+                extra={"action": "external_refresh_budget", "element_id": str(element_id)},
+            )
         return tuple(
             refreshed.get(row.id) or self._view(row)
             for row in await self._repository.list_for(element_id)
@@ -338,6 +403,30 @@ class ExternalReferenceService:
 
     # --- writing to a third party -------------------------------------------------------
 
+    async def _refuse_if_published(self, element: Element) -> None:
+        """`409 package_frozen` for an element under a published package, before any call out.
+
+        The trigger would refuse the link only after the ticket exists. Recorded through the
+        same bounded recorder as the database's refusals (`package.write_refused_frozen`)."""
+        if self._packages is None or element.package_id is None:
+            return
+        frozen = await self._packages.frozen_by(element.package_id)
+        if frozen is None:
+            return
+        refusal = FrozenRefusal(frozen.package_id, frozen.version, "external_references", "INSERT")
+        if self._refusals is not None:
+            try:
+                await self._refusals(refusal)
+            except Exception:  # the refusal must reach the caller whatever happens
+                logger.exception(
+                    "frozen refusal not recorded", extra={"action": "frozen_refusal_unrecorded"}
+                )
+        msg = (
+            f"package {frozen.package_id} is published as {frozen.version}: "
+            "an approver must reopen it first"
+        )
+        raise PackageFrozenError(msg, refusal)
+
     async def open_issue(
         self,
         element_id: UUID,
@@ -356,7 +445,11 @@ class ExternalReferenceService:
         and visible in the plan; the trail records the link, never the text.
         """
         caller = require_editor()
-        await self._architecture.get_element(element_id)
+        element = await self._architecture.get_element(element_id)
+        # Before the writable check, before the dry run, before the provider: a ticket opened
+        # for an element that review will not let us link is an orphan nobody can undo.
+        guard_element_write(element, WriteKind.EXTERNAL_REFERENCE, caller)
+        await self._refuse_if_published(element)  # same reason: the link would be refused
         system = self._writable_system(ExternalKind.GITHUB_ISSUE, target)
         clean = clean_scope(system.kind, scope)
         draft = IssueDraft.of(title, body)
@@ -374,20 +467,35 @@ class ExternalReferenceService:
             "a ticket was opened at a provider",
             extra={"action": "external_issue_opened", "target": system.kind.value},
         )
-        parsed = parse_reference(system.kind, external_id, web_base=system.web_url)
-        created = ExternalReference.create(
-            element_id=element_id,
-            kind=system.kind,
-            target=system.name,
-            external_id=parsed.external_id,
-            url=parsed.url,
-            snapshot=ExternalSnapshot.of(draft.title, ExternalStatus.OPEN),
-            created_by=caller.username or caller.subject,
-            now=self._now(),
-        )
+        # From here the ticket exists at the provider. Whatever goes wrong next -- the address,
+        # the database, an element deleted meanwhile -- must not look like "nothing happened":
+        # a retry would open a second ticket.
         try:
+            parsed = parse_reference(system.kind, external_id, web_base=system.web_url)
+            created = ExternalReference.create(
+                element_id=element_id,
+                kind=system.kind,
+                target=system.name,
+                external_id=parsed.external_id,
+                url=parsed.url,
+                snapshot=ExternalSnapshot.of(draft.title, ExternalStatus.OPEN),
+                created_by=caller.username or caller.subject,
+                now=self._now(),
+            )
             view = await self._store(created)
-        except DuplicateExternalReferenceError:
-            msg = f"the ticket was opened ({parsed.external_id}) but is already cited here"
-            raise DuplicateExternalReferenceError(msg) from None
+        except Exception as failure:
+            logger.error(
+                "a ticket was opened and could not be linked",
+                extra={
+                    "action": "external_ticket_orphaned",
+                    "target": system.kind.value,
+                    "element_id": str(element_id),
+                    "reason": type(failure).__name__,
+                },
+            )
+            msg = (
+                f"the ticket was opened ({external_id}) but could not be linked here: "
+                "link it by hand, do not open it again"
+            )
+            raise ExternalLinkFailedError(msg) from None
         return IssuePlan(False, system.name, clean, draft.title, draft.body, view)

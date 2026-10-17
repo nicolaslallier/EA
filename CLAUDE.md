@@ -10,7 +10,7 @@ PostgreSQL holds the whole model: the graph in `elements` and `relationships` (m
 
 Two more tables, `diagrams` and `diagram_nodes` (migration `0004`), hold the **saved diagrams** of the diagram builder: a diagram is an ArchiMate *view* — it records which elements are drawn, where, and at what size (`width`/`height`, migration `0007`, see `docs/adr/0035`), and owns no fact, so removing a box never deletes an element and a link drawn on one is a real relationship from `POST /relationships`. `/diagrams` lists, creates, renames and deletes them; `GET /diagrams/{id}` opens one with its elements and the relationships whose two ends are on it (one query, `view_of`); `PUT /diagrams/{id}/layout` replaces every box in one transaction. `diagram_nodes.element_id` is a foreign key to `elements`, like `element_documents.element_id`, so deleting an element takes its boxes and its documents in the same transaction (migration `0006`, see `docs/adr/0033`). The SPA's *Diagrammes* section builds them. **Diagrams v2** (`docs/adr/0068`–`0072`, migrations `0015`–`0018`): a diagram also holds a *scene* — notes, groups, routed links — and an optimistic `revision` that `PUT /layout` must present (a stale one is `409 diagram_revision_conflict`, judged under the row lock; the SPA sends the revision read *with the data it edits*, never a later one); a *generated view* is live (recomputed from a saved query or a package, source bounded to 500 elements, `RESTRICT` foreign keys) until frozen; *profiles and stereotypes* (`/profils`, `profiles`, `stereotypes`, `element_stereotypes`) label an element of one base type with the properties expected on it — a property pattern is a glob `template` (`*`, `?`, `#`) matched by a pure two-pointer function, **a user-written regular expression is never run in-process**; *diagram templates* (`diagram_templates`) are typed skeletons (slots, groups, notes, links, no element) instantiated in one transaction through `ArchitectureService`, creating relationships only when asked, with the library capped at 200 templates (checked under an advisory lock), 50 slots and 100 links per body (checked when read as well as written) and builds admitted per caller. History, SVG/PNG export and auto-layout are client-side (`lib/diagramHistory.ts`, `lib/diagramExport.ts`, `lib/autoLayout.ts`).
 
-**`audit_events`** (migration `0011`) is the history of every write; **`baselines`** and the `baseline_*` copies (`0012`) freeze the model; the review state is columns of `elements` (`0013`); the validity indexes are `0014`; the external references are `0015`. Their sections below say what is decided.
+**`audit_events`** (migration `0011`) is the history of every write; **`baselines`** and the `baseline_*` copies (`0012`) freeze the model; the review state is columns of `elements` (`0013`); the validity indexes are `0014`; the external references are `0019` (and `0021`, the time a refresh was last tried). Their sections below say what is decided.
 
 A second Python project, `pipelines/`, sits beside `backend/` with its own
 lockfile: Prefect 3 and LiteLLM, self-hosted, running one flow,
@@ -458,6 +458,15 @@ bounded, rendered as text in the SPA (`tests/noVHtml.spec.ts`), and given to an 
 a write 502/504 — never the provider's words. `pipelines/` refreshes the cache through the REST API only
 (`rafraichir-references`).
 
+**A reference is written under review, like a document** (`docs/adr/0076`, amending `0073`). Linking,
+unlinking and a refresh that changes the cached title or state go through `guard_element_write`
+(`WriteKind.EXTERNAL_REFERENCE`) on the element row locked by `external_store`, and never move the
+`revision`; `open_issue` asks the guard before the target, the dry run or the provider, and a ticket
+opened but not linked is `502 external_link_failed` naming it. The refresh queue is ordered by the last
+*attempt* (`attempted_at`, migration `0021`), so references that keep failing do not hide the others;
+the 50-reference cap is counted by the store under the element's row lock. Under a published package a
+reference is frozen like a document (migration `0022`), its cached title and state still refreshed.
+
 ## Adding a section to the SPA
 
 Sections live in one list: `frontend/src/router/sections.ts`. Add an entry to
@@ -804,7 +813,9 @@ by the repository, in the same `begin()` as the write it describes: `services/`
 builds one `AuditEvent` per use case — actor from `current_caller`, never a
 parameter; time from the injected clock; the channel (`http`, `mcp`, `system`)
 from a `ContextVar` like the caller — and hands it to the repository as
-`audit=`. A refused write (404, 409, 403, 422) writes no event — except a write refused by a published subtree (`package.write_refused_frozen`), which does write one, in a transaction of its own, bounded to 30 per minute and per `sub` (`docs/adr/0074`); otherwise it leaves a
+`audit=`. A refused write (404, 409, 403, 422) writes no event — except a write refused by a published subtree (`package.write_refused_frozen`), which does write one, in a transaction of its own, bounded to 30 per minute and per `sub` (`docs/adr/0074`). One write is silent on purpose: an
+external reference's refresh *attempt* (`note_attempt`, `attempted_at` only) is a scheduling clock and
+writes no event (`docs/adr/0076`). A refused write otherwise leaves a
 structured log line instead. The row has no foreign key to the entity, so it
 outlives a deletion, and triggers refuse `UPDATE`, `DELETE` and `TRUNCATE` — the
 `INSERT, SELECT`-only database role is still owed by the Infra. Events carry
@@ -841,8 +852,10 @@ baseline named by a version is never deleted (`docs/adr/0074`).
 
 The triggers are the rule (`docs/adr/0074`): `<table>_frozen` on `elements`, `relationships`,
 `element_documents`, `element_stereotypes`, `diagrams`, `diagram_nodes`, `diagram_objects`,
-`diagram_edges` and `packages` raise `SQLSTATE EA001` for a write whose old or new package is under a
-published one. There is **no Python guard to call**; a door that forgets one is still shut. A new table
+`diagram_edges`, `packages` and — since migration `0022`, only on an `INSERT`, a `DELETE` or an
+`UPDATE OF` what a reference *is*, never on its cached title and state — `external_references`
+(`docs/adr/0076`) raise `SQLSTATE EA001` for a write whose old or new package is under a
+published one. There is **no Python guard to call**; a door that forgets one is still shut. The one read ahead of it is `open_issue` (`PackageService.frozen_by`, `docs/adr/0076`), because it writes to a third party before it writes here. A new table
 that references elements, diagrams, packages or relationships must get its trigger (and join
 `repositories/frozen_tables.py`, which the publication and the restore lock), or be listed with its
 reason in `test_no_table_that_hangs_from_the_model_is_left_unguarded` — which fails otherwise.
@@ -866,6 +879,7 @@ what they changed last — fail-closed when that is unknown; only
 `EA_APPROVAL_SEPARATION=false` lifts it, and logs `separation_disabled`. On an
 approved element, changing its content is the approver's and sends it back to
 review; adding or removing a link is any editor's and does the same; documents,
+external references (`WriteKind.EXTERNAL_REFERENCE`, which never moves the revision, `docs/adr/0076`),
 filing in a package and restoring a baseline are nobody's until it is reopened;
 a locked one accepts nothing. The SPA draws one button per entry of
 `allowed_transitions` and decides nothing.

@@ -50,5 +50,7 @@ class ExternalReferenceRecord(Base):
     title: Mapped[str] = mapped_column(String(MAX_TITLE_LENGTH), nullable=False, server_default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="unknown")
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: When a refresh was last tried, whether or not it worked: it makes the queue turn.
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str] = mapped_column(String(MAX_CREATED_BY_LENGTH), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
