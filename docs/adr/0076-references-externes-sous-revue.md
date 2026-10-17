@@ -2,7 +2,7 @@
 titre: Les références externes s'écrivent sous revue, et la file de rafraîchissement tourne
 date: 2026-10-17
 statut: Proposition
-affects: backend/src/ea/domain/approval.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/db/models/external.py, backend/migrations/versions/0021_external_reference_attempts.py, backend/src/ea/mcp/server.py, backend/tests/unit/test_review_guard.py, backend/tests/unit/test_external_review.py, CLAUDE.md
+affects: backend/src/ea/domain/approval.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/db/models/external.py, backend/migrations/versions/0021_external_reference_attempts.py, backend/migrations/versions/0022_external_references_frozen.py, backend/src/ea/repositories/frozen_tables.py, backend/src/ea/domain/egress.py, backend/src/ea/mcp/server.py, backend/tests/unit/test_review_guard.py, backend/tests/unit/test_external_review.py, CLAUDE.md
 ---
 
 # 76. Les références externes s'écrivent sous revue, et la file de rafraîchissement tourne
@@ -48,8 +48,30 @@ strict en HTTP comme en MCP.
 **La file de rafraîchissement tourne.** `external_references.attempted_at` (migration **`0021`**, une colonne
 nullable — la `0019` est déjà appliquée à la base partagée et n'est pas réécrite) est mise à jour par toute
 tentative, réussie, ratée ou refusée par la revue ; `list_stale` ne propose que les cibles actives et classe par
-`coalesce(attempted_at, synced_at)`. Un lot `refresh_element` est borné à 20 lignes et à 60 s ; un élément cite
-au plus 50 objets.
+`coalesce(attempted_at, synced_at)`. Une ligne dont la cible ne sert plus son type (absente ou d'un autre
+type) est notée tentée elle aussi, sinon elle resterait en tête de la file. Un lot `refresh_element` est borné à
+20 lignes et à 60 s ; un élément cite au plus 50 objets, compté par le magasin dans la transaction qui insère,
+après le verrou `FOR NO KEY UPDATE` qu'il prend sur l'élément : deux liens concurrents se suivent, le second
+voit le premier (le service garde son contrôle d'avant l'appel au tiers, qui n'est qu'un raccourci).
+
+**Une tentative n'écrit rien au journal — exception assumée à « chaque écriture laisse une ligne ».**
+`note_attempt` ne change que `attempted_at`, une horloge d'ordonnancement : rien de ce qu'un lecteur voit de la
+référence. L'auditer écrirait une ligne par passage du flow et par ligne en échec, pour aucun fait. Le test
+`test_an_attempt_is_a_clock_for_the_queue_and_writes_no_audit_event` fige ce choix.
+
+**Une référence est gelée avec le sous-arbre publié de son élément, comme un document** (`docs/adr/0074`).
+La migration **`0022`** pose `external_references_frozen`, sur la fonction `ea_guard_of_element` de la `0020`
+(le package de l'élément décide, `SQLSTATE EA001`, `409 package_frozen` par `work()`, refus audité
+`package.write_refused_frozen`), et la table rejoint `repositories/frozen_tables.py`. Lier (`INSERT`) et délier
+(`DELETE`) sont refusés ; un `UPDATE` seulement s'il touche à ce que la référence *est* —
+`UPDATE OF element_id, kind, target, external_id, url`. Le rafraîchissement du cache (titre, état, `synced_at`,
+`attempted_at`) reste permis : c'est la donnée du tiers, la geler ferait échouer pour toujours le rafraîchissement
+d'un élément publié. Il n'y a pas de garde Python : `open_issue` sur un élément publié (et non approuvé) crée le
+ticket puis voit le lien refusé, ce qui donne le `502 external_link_failed` qui nomme le ticket.
+
+**Trois formes IPv6 de plus ne sont jamais joignables** (`domain/egress.py`, `NEVER`, non déclarables) :
+`::ffff:0:0:0/96` (IPv4 traduite, RFC 2765), `64:ff9b:1::/48` (NAT64 à usage local, RFC 8215) et `2001::/32`
+(Teredo) — chacune porte une adresse IPv4 qu'une passerelle joindrait à notre place.
 
 ## Alternatives envisagées et écartées
 

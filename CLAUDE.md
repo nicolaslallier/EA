@@ -463,7 +463,9 @@ unlinking and a refresh that changes the cached title or state go through `guard
 (`WriteKind.EXTERNAL_REFERENCE`) on the element row locked by `external_store`, and never move the
 `revision`; `open_issue` asks the guard before the target, the dry run or the provider, and a ticket
 opened but not linked is `502 external_link_failed` naming it. The refresh queue is ordered by the last
-*attempt* (`attempted_at`, migration `0021`), so references that keep failing do not hide the others.
+*attempt* (`attempted_at`, migration `0021`), so references that keep failing do not hide the others;
+the 50-reference cap is counted by the store under the element's row lock. Under a published package a
+reference is frozen like a document (migration `0022`), its cached title and state still refreshed.
 
 ## Adding a section to the SPA
 
@@ -811,7 +813,9 @@ by the repository, in the same `begin()` as the write it describes: `services/`
 builds one `AuditEvent` per use case — actor from `current_caller`, never a
 parameter; time from the injected clock; the channel (`http`, `mcp`, `system`)
 from a `ContextVar` like the caller — and hands it to the repository as
-`audit=`. A refused write (404, 409, 403, 422) writes no event — except a write refused by a published subtree (`package.write_refused_frozen`), which does write one, in a transaction of its own, bounded to 30 per minute and per `sub` (`docs/adr/0074`); otherwise it leaves a
+`audit=`. A refused write (404, 409, 403, 422) writes no event — except a write refused by a published subtree (`package.write_refused_frozen`), which does write one, in a transaction of its own, bounded to 30 per minute and per `sub` (`docs/adr/0074`). One write is silent on purpose: an
+external reference's refresh *attempt* (`note_attempt`, `attempted_at` only) is a scheduling clock and
+writes no event (`docs/adr/0076`). A refused write otherwise leaves a
 structured log line instead. The row has no foreign key to the entity, so it
 outlives a deletion, and triggers refuse `UPDATE`, `DELETE` and `TRUNCATE` — the
 `INSERT, SELECT`-only database role is still owed by the Infra. Events carry
@@ -848,7 +852,9 @@ baseline named by a version is never deleted (`docs/adr/0074`).
 
 The triggers are the rule (`docs/adr/0074`): `<table>_frozen` on `elements`, `relationships`,
 `element_documents`, `element_stereotypes`, `diagrams`, `diagram_nodes`, `diagram_objects`,
-`diagram_edges` and `packages` raise `SQLSTATE EA001` for a write whose old or new package is under a
+`diagram_edges`, `packages` and — since migration `0022`, only on an `INSERT`, a `DELETE` or an
+`UPDATE OF` what a reference *is*, never on its cached title and state — `external_references`
+(`docs/adr/0076`) raise `SQLSTATE EA001` for a write whose old or new package is under a
 published one. There is **no Python guard to call**; a door that forgets one is still shut. A new table
 that references elements, diagrams, packages or relationships must get its trigger (and join
 `repositories/frozen_tables.py`, which the publication and the restore lock), or be listed with its
