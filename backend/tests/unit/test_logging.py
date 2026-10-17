@@ -178,6 +178,20 @@ class TestRedaction:
         assert "hunter2" not in record.getMessage()
 
 
+def as_uvicorn_logs_it() -> logging.LogRecord:
+    """`uvicorn/server.py`: the message, plus an ANSI-coloured copy of it under `extra=`."""
+    return logging.getLogger("uvicorn.error").makeRecord(
+        "uvicorn.error",
+        logging.INFO,
+        "server.py",
+        103,
+        "Started server process [%d]",
+        (7,),
+        None,
+        extra={"color_message": "Started server process [\x1b[36m%d\x1b[0m]"},
+    )
+
+
 class TestJsonLines:
     def format(self, record: logging.LogRecord) -> dict[str, Any]:
         RequestIdFilter().filter(record)
@@ -219,6 +233,13 @@ class TestJsonLines:
 
         assert "hunter2" not in json.dumps(line)
 
+    def test_uvicorns_coloured_copy_of_the_message_is_not_a_second_message(self) -> None:
+        """A rendering hint for uvicorn's own formatter, not a fact: the line says it once."""
+        line = self.format(as_uvicorn_logs_it())
+
+        assert line["message"] == "Started server process [7]"
+        assert "color_message" not in line
+
 
 class TestSummarise:
     def test_a_short_value_is_itself(self) -> None:
@@ -258,3 +279,9 @@ class TestPlainLines:
         line = self.line(logging.makeLogRecord({"msg": "sent", "dsn": "db://u:hunter2@h/d"}))
 
         assert "hunter2" not in line
+
+    def test_uvicorns_coloured_copy_of_the_message_is_not_appended(self) -> None:
+        line = self.line(as_uvicorn_logs_it())
+
+        assert line.endswith("uvicorn.error: Started server process [7]")
+        assert line.count("Started server process") == 1
