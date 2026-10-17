@@ -1,24 +1,50 @@
+/* Light by default, whatever the OS prefers; dark only when the person picks it
+   with the toggle, which sets <html data-theme="dark"> (docs/adr/0075). */
 :root {
-  --text: #24202b;
-  --border: #d9d7de;
-  --bg: #ffffff;
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --border: #dde3ec;
+  --accent: #2563eb;
+  /* State inks, at least 4.5:1 on --surface. */
+  --success: #2e7d32;
+  --warning: #b45309;
+  --danger: #c62828;
+
+  /* The top bar keeps its deep blue in both themes. */
+  --bar-bg: #1e3a8a;
+  --bar-text: #ffffff;
+  --bar-border: rgb(255 255 255 / 35%);
+  --bar-hover: rgb(255 255 255 / 12%);
+  --bar-accent: #93c5fd;
 
   font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
-  color-scheme: light dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #ecebf0;
-    --border: #3a3742;
-    --bg: #17151c;
-  }
+/* Slate, not black. */
+:root[data-theme='dark'] {
+  --bg: #1e2433;
+  --surface: #262d3d;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --border: #3a4356;
+  --accent: #60a5fa;
+  --success: #4ade80;
+  --warning: #fb923c;
+  --danger: #f87171;
+
+  --bar-bg: #172554;
+
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
+  background: var(--bg);
 }
 
 code {

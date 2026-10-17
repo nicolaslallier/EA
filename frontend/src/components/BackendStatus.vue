@@ -50,17 +50,22 @@ onMounted(async () => {
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: 8px;
+  /* A chip of the page's surface, so the state colours read on the blue bar. */
+  background: var(--surface);
+}
+.status--loading {
+  color: var(--muted);
 }
 .status--ok {
-  border-color: #2e7d32;
-  color: #2e7d32;
+  border-color: var(--success);
+  color: var(--success);
 }
 .status--degraded {
-  border-color: #ef6c00;
-  color: #ef6c00;
+  border-color: var(--warning);
+  color: var(--warning);
 }
 .status--error {
-  border-color: #c62828;
-  color: #c62828;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 </style>

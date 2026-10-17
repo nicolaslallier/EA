@@ -958,13 +958,13 @@ svg {
   opacity: 0.75;
 }
 .canvas__handle {
-  fill: var(--bg);
+  fill: var(--surface);
   stroke: var(--text);
   stroke-width: 2;
   cursor: crosshair;
 }
 .canvas__resize {
-  fill: var(--bg);
+  fill: var(--surface);
   stroke: var(--text);
   stroke-width: 2;
   cursor: nwse-resize;
@@ -983,7 +983,7 @@ svg {
   opacity: 0.9;
 }
 .canvas__bend {
-  fill: var(--bg);
+  fill: var(--surface);
   stroke: var(--text);
   stroke-width: 1.5;
   cursor: move;

@@ -47,6 +47,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
+  color: inherit;
 }
 .secondary {
   background: transparent;

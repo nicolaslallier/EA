@@ -30,6 +30,14 @@ describe('the application shell', () => {
     expect(screen.getByRole('heading', { name: /introuvable/i })).toBeInTheDocument()
   })
 
+  it('offers the theme toggle in the top bar', async () => {
+    await renderApp('/une-section-qui-nexiste-pas')
+
+    expect(screen.getByRole('banner')).toContainElement(
+      screen.getByRole('button', { name: /^Thème/ }),
+    )
+  })
+
   it('drops the editing menu in the reader mode', async () => {
     await renderApp('/view')
 
