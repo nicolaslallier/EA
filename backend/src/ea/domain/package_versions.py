@@ -133,9 +133,9 @@ class FrozenBy:
 
 #: Each package that is published or lies under one, with the publication that freezes it.
 type Freezes = Mapping[UUID, FrozenBy]
-#: The publication in force that freezes a package, if any: what a service that knows
-#: nothing of packages is handed (`PackageService.frozen_by`), like a `ScopeResolver`.
-type FreezeLookup = Callable[[UUID], Awaitable[FrozenBy | None]]
+#: Every freeze in force, read when asked: what a service that knows nothing of packages is
+#: handed (`PackageService.freezes`), like a `ScopeResolver`.
+type FreezesLookup = Callable[[], Awaitable[Freezes]]
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,9 +42,7 @@ async def run(settings: Settings, name: str, description: str) -> Baseline:
         await check_connectivity(engine)
         sessions = create_session_factory(engine)
         packages = PackageService(PostgresPackageRepository(sessions))
-        service = BaselineService(
-            PostgresBaselineRepository(sessions), frozen_by=packages.frozen_by
-        )
+        service = BaselineService(PostgresBaselineRepository(sessions), freezes=packages.freezes)
         return await capture(service, name=name, description=description)
     finally:
         await engine.dispose()

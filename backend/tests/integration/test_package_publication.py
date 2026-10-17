@@ -480,7 +480,7 @@ async def test_restoring_a_published_version_is_refused_until_it_is_reopened(
     sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
     # Wired as main.py does: the real PackageService says what is frozen.
     baselines = BaselineService(
-        PostgresBaselineRepository(sessions), frozen_by=PackageService(repo).frozen_by
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
     )
     version = await publish_it(repo, finance)
 
@@ -505,7 +505,7 @@ async def test_the_triggers_still_refuse_when_the_prediction_is_bypassed(
         inside = await an_element(connection, "inside", finance)
     sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
     stale = BaselineService(
-        PostgresBaselineRepository(sessions), frozen_by=lambda _: _async(None)
+        PostgresBaselineRepository(sessions), freezes=lambda: _async({})
     )  # predicts nothing
     first = await publish_it(repo, finance)  # v1.0.0 copies Finance as it was
     await reopen_it(repo, finance)
@@ -516,5 +516,33 @@ async def test_the_triggers_still_refuse_when_the_prediction_is_bypassed(
     assert outcome.plan.elements_to_update  # there is something to write
     with pytest.raises(PackageFrozenError):
         await stale.restore(first.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+    assert await name_of(engine_at_head, inside) == "renamed"
+
+
+async def test_a_publication_nested_in_the_subtree_is_predicted_and_refused(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The scope is not published, its child is: the plan writes into the child."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        budget = await a_package(connection, "Budget", finance)
+        inside = await an_element(connection, "inside", budget)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
+    )
+    scoped_id = (await baselines.create(name="Finance", package_id=finance)).id
+    await rename(engine_at_head, inside, "renamed")
+    await publish_it(repo, budget)
+
+    outcome = await baselines.restore(scoped_id)
+    assert outcome.plan.frozen_by is not None and outcome.plan.is_blocked
+    assert (outcome.plan.frozen_by.package_id, outcome.plan.frozen_by.version) == (
+        budget,
+        "v1.0.0",
+    )
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
 
     assert await name_of(engine_at_head, inside) == "renamed"

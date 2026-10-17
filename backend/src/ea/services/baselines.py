@@ -34,6 +34,7 @@ from ea.domain.baselines import (
     baseline_view,
     blocked_message,
     diff_snapshots,
+    freeze_of,
     plan_digest,
     refusal_context,
 )
@@ -49,7 +50,7 @@ from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
-    from ea.domain.package_versions import FreezeLookup
+    from ea.domain.package_versions import FreezesLookup
     from ea.domain.ports import BaselineRepository
 
 Clock = Callable[[], datetime]
@@ -72,11 +73,11 @@ class BaselineService:
     """The single entry point `api/` and `mcp/` use to capture, compare and restore."""
 
     def __init__(
-        self, repository: BaselineRepository, *, frozen_by: FreezeLookup, clock: Clock = _utc_now
+        self, repository: BaselineRepository, *, freezes: FreezesLookup, clock: Clock = _utc_now
     ) -> None:
         # Required: a forgotten wiring is a type error, not a freeze nobody predicts.
         self._repository = repository
-        self._frozen_by = frozen_by
+        self._freezes = freezes
         self._now = clock
         self._trail = AuditTrail(clock)
 
@@ -175,7 +176,8 @@ class BaselineService:
         touches a protected element is returned by a dry run (its `blocked`
         list) and refused when applied; the repository checks the protection
         again inside its transaction. A subtree under a publication in force is
-        the same: `frozen_by` in the dry run, `PackageFrozenError` when applied
+        the same — the scope, a package nested in it, or one outside it that the
+        plan writes: `frozen_by` in the dry run, `PackageFrozenError` when applied
         — read again at that moment, before the digest, and the triggers still
         refuse whatever slips between this check and the write.
         """
@@ -190,7 +192,10 @@ class BaselineService:
         wanted = bool(keep_new)
         plan = await self._repository.restore_plan(baseline_id, keep_new=wanted)
         if baseline.scope_package_id is not None:
-            plan = replace(plan, frozen_by=await self._frozen_by(baseline.scope_package_id))
+            # Every package the plan writes, not only the scope: a publication nested in
+            # the subtree, or one outside that a moved element or a cascade reaches.
+            found = freeze_of(baseline.scope_package_id, plan, await self._freezes())
+            plan = replace(plan, frozen_by=found)
         digest = plan_digest(plan)
         if dry_run:
             return RestoreOutcome(plan, applied=False, digest=digest)
@@ -198,7 +203,7 @@ class BaselineService:
             # Nothing was attempted in the database: a log line, no audit event.
             frozen = plan.frozen_by
             logger.warning(
-                "restoration refused: the subtree is published",
+                "restoration refused: it writes into a published package",
                 extra={
                     "action": "restore_blocked_frozen",
                     "baseline_id": str(baseline_id),
@@ -207,8 +212,8 @@ class BaselineService:
                 },
             )
             msg = (
-                f"the subtree of this baseline is published (package {frozen.package_id}, "
-                f"{frozen.version}): reopen it first"
+                f"this restoration writes into a published package (package "
+                f"{frozen.package_id}, {frozen.version}): reopen it first"
             )
             raise PackageFrozenError(msg)
         if digest != expected_digest:

@@ -483,19 +483,19 @@ async def a_scoped_baseline(
 
 
 @pytest.fixture
-def lookups() -> list[UUID]:
+def lookups() -> list[str]:
     return []
 
 
 @pytest.fixture
-def frozen_service(baseline_store: InMemoryBaselines, lookups: list[UUID]) -> BaselineService:
-    """The same store, behind a `FreezeLookup` that says Finance is published."""
+def frozen_service(baseline_store: InMemoryBaselines, lookups: list[str]) -> BaselineService:
+    """The same store, behind a `FreezesLookup` that says Finance is published."""
 
-    async def frozen_by(package_id: UUID) -> FrozenBy | None:
-        lookups.append(package_id)
-        return FROZEN
+    async def freezes() -> dict[UUID, FrozenBy]:
+        lookups.append("freezes")
+        return {FINANCE: FROZEN}
 
-    return BaselineService(baseline_store, frozen_by=frozen_by, clock=lambda: FIXED_NOW)
+    return BaselineService(baseline_store, freezes=freezes, clock=lambda: FIXED_NOW)
 
 
 class TestASubtreeBaselineIsComparedInItsScope:
@@ -620,8 +620,8 @@ class TestAFrozenSubtreeIsPredictedNotOnlyRefused:
     async def test_the_freeze_is_read_again_when_applying(
         self, baseline_store: InMemoryBaselines
     ) -> None:
-        answers = iter([None, FROZEN])  # published between the two calls
-        service = BaselineService(baseline_store, frozen_by=lambda _: _async(next(answers)))
+        answers = iter([{}, {FINANCE: FROZEN}])  # published between the two calls
+        service = BaselineService(baseline_store, freezes=lambda: _async(next(answers)))
         scoped_id, _ = await a_scoped_baseline(service, baseline_store)
 
         digest = (await service.restore(scoped_id)).digest
@@ -630,9 +630,82 @@ class TestAFrozenSubtreeIsPredictedNotOnlyRefused:
         assert baseline_store.applied == []
 
     async def test_a_whole_model_baseline_never_asks_for_a_freeze(
-        self, frozen_service: BaselineService, lookups: list[UUID]
+        self, frozen_service: BaselineService, lookups: list[str]
     ) -> None:
         ordinary = await frozen_service.create(name="whole")
 
         assert (await frozen_service.restore(ordinary.id)).plan.frozen_by is None
         assert lookups == []
+
+
+BUDGET = UUID("00000000-0000-0000-0000-00000000b0d6")
+OTHER = UUID("00000000-0000-0000-0000-0000000007e4")
+
+
+class TestEveryPackageThePlanWritesIsChecked:
+    """Not only the scope: a nested publication, or a frozen package outside it."""
+
+    async def test_a_published_child_inside_the_subtree_blocks_the_plan_that_writes_it(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        child = FrozenBy(BUDGET, "Finance / Budget", "v1.0.0")
+        service = BaselineService(
+            baseline_store, freezes=lambda: _async({BUDGET: child}), clock=lambda: FIXED_NOW
+        )
+        assert baseline_store.packages is not None
+        finance = replace(Package.create(name="Finance", now=FIXED_NOW), id=FINANCE)
+        budget = replace(Package.create(name="Budget", now=FIXED_NOW), id=BUDGET, parent_id=FINANCE)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+        await baseline_store.packages.add(budget, audit=lambda p: ())
+        planned = replace(
+            Element.create(element_type=E.NODE, name="plan", now=FIXED_NOW), package_id=BUDGET
+        )
+        baseline_store.graph.elements[planned.id] = planned
+        scoped_id = (await service.create(name="Finance v1", package_id=FINANCE)).id
+        baseline_store.graph.elements[planned.id] = replace(planned, name="renamed")
+
+        outcome = await service.restore(scoped_id)
+        assert outcome.plan.frozen_by == child and outcome.plan.is_blocked
+        with pytest.raises(PackageFrozenError):
+            await service.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
+        assert baseline_store.applied == []
+
+    async def test_a_cascade_to_an_element_in_a_frozen_package_outside_is_predicted(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        other = FrozenBy(OTHER, "Other", "v2.0.0")
+        service = BaselineService(
+            baseline_store, freezes=lambda: _async({OTHER: other}), clock=lambda: FIXED_NOW
+        )
+        scoped_id, _ = await a_scoped_baseline(service, baseline_store)
+        assert baseline_store.packages is not None
+        await baseline_store.packages.add(
+            replace(Package.create(name="Other", now=FIXED_NOW), id=OTHER), audit=lambda p: ()
+        )
+        inside = replace(
+            Element.create(element_type=E.NODE, name="new inside", now=FIXED_NOW),
+            package_id=FINANCE,
+        )
+        outside = replace(
+            Element.create(element_type=E.NODE, name="frozen outside", now=FIXED_NOW),
+            package_id=OTHER,
+        )
+        crossing = Relationship.between(R.ASSOCIATION, inside, outside, now=FIXED_NOW)
+        baseline_store.graph.elements.update({inside.id: inside, outside.id: outside})
+        baseline_store.graph.relationships[crossing.id] = crossing
+
+        outcome = await service.restore(scoped_id)
+
+        assert outcome.plan.frozen_by == other and outcome.plan.is_blocked
+
+    async def test_an_untouched_frozen_package_does_not_block(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        service = BaselineService(
+            baseline_store,
+            freezes=lambda: _async({OTHER: FrozenBy(OTHER, "Other", "v2.0.0")}),
+            clock=lambda: FIXED_NOW,
+        )
+        scoped_id, _ = await a_scoped_baseline(service, baseline_store)
+
+        assert (await service.restore(scoped_id)).plan.frozen_by is None

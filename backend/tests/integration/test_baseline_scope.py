@@ -14,7 +14,7 @@ from ea.domain.baselines import Baseline, BaselineLimits, refuse_oversize
 from ea.domain.errors import BaselineScopedError, BaselineTooLargeError, PackageNotFoundError
 from ea.repositories.baseline_store import PostgresBaselineRepository, capture_scope, scope_size
 from ea.services.baselines import BaselineService
-from tests.conftest import never_frozen
+from tests.conftest import nothing_published
 from tests.integration.test_package_freeze_triggers import (
     AT,
     a_diagram,
@@ -124,7 +124,7 @@ async def test_the_bytes_of_a_subtree_are_measured(engine_at_head: AsyncEngine) 
 def a_service(engine: AsyncEngine) -> BaselineService:
     """Nothing is published in these tests: the freeze lookup answers `None`."""
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    return BaselineService(PostgresBaselineRepository(sessions), frozen_by=never_frozen)
+    return BaselineService(PostgresBaselineRepository(sessions), freezes=nothing_published)
 
 
 async def run(engine: AsyncEngine, statement: str, **values: object) -> None:

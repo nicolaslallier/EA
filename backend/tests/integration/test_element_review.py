@@ -21,7 +21,7 @@ from ea.domain.model import Relationship
 from ea.domain.ports import EndsReview
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.services.caller import acting_as
-from tests.conftest import an_approver, an_editor, never_frozen
+from tests.conftest import an_approver, an_editor, nothing_published
 from tests.integration.test_audit_registry import START, World
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -821,7 +821,7 @@ async def test_a_restoration_that_removes_or_adds_a_link_to_an_approved_element_
     world = World(engine_at_head)
     baselines = BaselineService(
         PostgresBaselineRepository(create_session_factory(engine_at_head)),
-        frozen_by=never_frozen,
+        freezes=nothing_published,
         clock=lambda: START,
     )
     left = await world.graph.create_element(element_type=E.NODE, name="l")
@@ -856,7 +856,7 @@ async def test_a_restoration_changing_a_link_bumps_the_revision_of_a_draft_end(
     world = World(engine_at_head)
     baselines = BaselineService(
         PostgresBaselineRepository(create_session_factory(engine_at_head)),
-        frozen_by=never_frozen,
+        freezes=nothing_published,
         clock=lambda: START,
     )
     left = await world.graph.create_element(element_type=E.NODE, name="l")
@@ -935,7 +935,7 @@ def baselines_of(engine: AsyncEngine):  # type: ignore[no-untyped-def]
 
     return BaselineService(
         PostgresBaselineRepository(create_session_factory(engine)),
-        frozen_by=never_frozen,
+        freezes=nothing_published,
         clock=lambda: START,
     )
 

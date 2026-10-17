@@ -25,7 +25,7 @@ from ea.domain.audit import AUDIT_LISTED_IDS, FieldChange, diff_fields
 from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
-from ea.domain.package_versions import FrozenBy
+from ea.domain.package_versions import Freezes, FrozenBy
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
 MAX_BASELINE_DESCRIPTION_LENGTH: Final = 2000
@@ -391,8 +391,12 @@ class RestorePlan:
     boxes_lost: int = 0
     warnings: tuple[str, ...] = ()
     blocked: tuple[Element, ...] = ()
-    #: The publication that freezes the subtree a scoped baseline restores. Left out of
-    #: `plan_digest`: a frozen plan is never applied, and the freeze is checked first.
+    #: Every package a write of this plan lands in: where an element is and where it goes
+    #: back, both ends of a link it writes or cascades away (the repository adds the
+    #: packages of the diagrams it writes). What the freeze prediction is checked against.
+    packages_written: frozenset[UUID] = frozenset()
+    #: The publication that freezes a package this plan writes, for a scoped baseline. Left
+    #: out of `plan_digest`: a frozen plan is never applied, and the freeze is checked first.
     frozen_by: FrozenBy | None = None
 
     @property
@@ -462,6 +466,15 @@ def plan_digest(plan: RestorePlan) -> str:
         "blocked": [str(e.id) for e in plan.blocked],
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+def freeze_of(scope: UUID, plan: RestorePlan, freezes: Freezes) -> FrozenBy | None:
+    """The publication that blocks restoring a subtree: its own, else the first (by path,
+    then id) that freezes a package the plan writes — a nested one, or one outside."""
+    if scope in freezes:
+        return freezes[scope]
+    hits = [freezes[p] for p in plan.packages_written if p in freezes]
+    return min(hits, key=lambda f: (f.path, str(f.package_id)), default=None)
 
 
 def _element_order(element: Element) -> tuple[str, str]:
@@ -730,6 +743,25 @@ def plan_restore(
             (cur_el[i] for i in touched if i in protected_ids and i in cur_el), key=_element_order
         )
     )
+    # What the writes reach: the elements written (updated, deleted, or `touch`ed as the end
+    # of a link that appears or goes), by where they are now and where they go back to.
+    reached = (
+        {u.current.id for u in updates}
+        | deleted_ids
+        | {
+            end
+            for link in (*links_to_delete, *links_to_create, *cascaded_links)
+            for end in (link.source_id, link.target_id)
+        }
+    )
+    packages_written = frozenset(
+        package
+        for package in (
+            *(cur_el[i].package_id for i in reached if i in cur_el),
+            *(e.package_id for e in to_write),
+        )
+        if package is not None
+    )
 
     return RestorePlan(
         elements_to_create=to_create,
@@ -744,4 +776,5 @@ def plan_restore(
         boxes_lost=boxes_lost,
         warnings=tuple(warnings),
         blocked=blocked,
+        packages_written=packages_written,
     )

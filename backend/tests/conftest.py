@@ -1666,11 +1666,12 @@ class InMemoryBaselines:
         if scope is not None and scope not in packages_present:
             raise BaselineScopedError("the package this baseline copies no longer exists")
         snapshot, current = self.copies[baseline_id], self._model()
-        diagrams_present = frozenset(self.diagrams.diagrams)
         deletable = None
         if scope is not None:
             below, diagrams_present = self._subtree(scope)
             deletable = frozenset(e.id for e in current.elements if e.package_id in below)
+        else:
+            diagrams_present = frozenset(self.diagrams.diagrams)
         plan = plan_restore(
             snapshot,
             current,
@@ -1681,6 +1682,24 @@ class InMemoryBaselines:
             diagrams_present=diagrams_present,
             deletable=deletable,
         )
+        if scope is not None:
+            # As the store does: the diagrams it writes (boxes put back, boxes of what it
+            # deletes) are packages it writes too.
+            gone = {e.id for e in plan.elements_to_delete}
+            written = {b.diagram_id for b in plan.boxes_to_restore} | {
+                diagram_id
+                for diagram_id, nodes in self.diagrams.nodes.items()
+                if any(n.element_id in gone for n in nodes)
+            }
+            plan = replace(
+                plan,
+                packages_written=plan.packages_written
+                | {
+                    package
+                    for d in written
+                    if (package := self.diagrams.diagrams[d].package_id) is not None
+                },
+            )
         held: dict[UUID, list[UUID]] = {}
         for d in sorted(
             self.documents.documents.values() if self.documents else (), key=lambda d: str(d.id)
@@ -2621,12 +2640,12 @@ def baseline_store(
 
 @pytest.fixture
 def baseline_service(baseline_store: InMemoryBaselines) -> BaselineService:
-    return BaselineService(baseline_store, frozen_by=never_frozen, clock=lambda: FIXED_NOW)
+    return BaselineService(baseline_store, freezes=nothing_published, clock=lambda: FIXED_NOW)
 
 
-async def never_frozen(package_id: UUID) -> FrozenBy | None:
-    """A `FreezeLookup` for a catalogue where nothing is published."""
-    return None
+async def nothing_published() -> dict[UUID, FrozenBy]:
+    """A `FreezesLookup` for a catalogue where nothing is published."""
+    return {}
 
 
 @pytest.fixture

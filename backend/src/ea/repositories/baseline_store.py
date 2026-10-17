@@ -76,7 +76,7 @@ from ea.repositories.architecture_store import (
 )
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
-from ea.repositories.diagram_revision import bump_diagrams_of
+from ea.repositories.diagram_revision import bump_diagrams_of, packages_of_diagrams
 from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
@@ -695,7 +695,6 @@ class PostgresBaselineRepository:
         await self._guard_live(session, diagrams=True)
         snapshot = await _snapshot_of(session, baseline_id)
         current = await _current_snapshot(session)
-        diagrams_present = frozenset(await session.scalars(select(DiagramRecord.id)))
         deletable = None
         if scope is not None:
             # It deletes only what is filed in its subtree now and writes no box outside it;
@@ -703,6 +702,8 @@ class PostgresBaselineRepository:
             # cascades to blocks it.
             below, diagrams_present = await _subtree(session, scope)
             deletable = frozenset(e.id for e in current.elements if e.package_id in below)
+        else:
+            diagrams_present = frozenset(await session.scalars(select(DiagramRecord.id)))
         plan = plan_restore(
             snapshot,
             current,
@@ -712,6 +713,18 @@ class PostgresBaselineRepository:
             diagrams_present=diagrams_present,
             deletable=deletable,
         )
+        if scope is not None:
+            # The diagrams it writes are packages it writes too, for the freeze prediction.
+            plan = replace(
+                plan,
+                packages_written=plan.packages_written
+                | await packages_of_diagrams(
+                    session,
+                    element_ids=[e.id for e in plan.elements_to_delete],
+                    relationship_ids=[r.id for r in plan.relationships_to_delete],
+                    diagram_ids={b.diagram_id for b in plan.boxes_to_restore},
+                ),
+            )
         held = await _documents_held(session, [e.id for e in plan.elements_to_delete])
         return replace(
             plan,
