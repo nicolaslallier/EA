@@ -113,3 +113,25 @@ class TestDeclaringNetworks:
 
     def test_a_private_range_can_be_declared(self) -> None:
         assert networks_from(["10.1.0.0/16", "fd12::/16"])
+
+
+class TestTranslatedAndTunnelledIpv6:
+    """IPv6 forms that carry an IPv4 address some gateway would reach on our behalf."""
+
+    CASES = (
+        ("::ffff:0:7f00:1", "::ffff:0:0:0/96"),  # RFC 2765 IPv4-translated
+        ("64:ff9b:1::a00:1", "64:ff9b:1::/48"),  # local-use NAT64 (RFC 8215)
+        ("2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001::/32"),  # Teredo
+    )
+
+    @pytest.mark.parametrize(("address", "covering"), CASES)
+    def test_refused_even_when_a_covering_network_is_handed_to_the_check(
+        self, address: str, covering: str
+    ) -> None:
+        with pytest.raises(EgressRefusedError, match="no outbound call"):
+            check_address(ipaddress.ip_address(address), allowed=(ipaddress.ip_network(covering),))
+
+    @pytest.mark.parametrize(("address", "covering"), CASES)
+    def test_a_covering_network_cannot_be_declared(self, address: str, covering: str) -> None:
+        with pytest.raises(ValueError, match="network"):
+            networks_from([covering])

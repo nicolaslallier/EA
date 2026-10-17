@@ -40,7 +40,10 @@ NEVER: Final[tuple[IPNetwork, ...]] = tuple(
         "fec0::/10",
         "ff00::/8",
         "fd00:ec2::254/128",
+        "::ffff:0:0:0/96",  # RFC 2765 IPv4-translated
         "64:ff9b::/96",
+        "64:ff9b:1::/48",  # local-use NAT64 (RFC 8215)
+        "2001::/32",  # Teredo
         "2002::/16",
     )
 )
