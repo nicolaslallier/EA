@@ -317,7 +317,12 @@ def test_the_expected_writes_are_found() -> None:
     assert found["PostgresTemplateRepository"] == {"add", "save", "delete"}
     assert found["PostgresSavedQueryRepository"] == {"add", "save", "delete"}
     assert found["PostgresBaselineRepository"] == {"create", "delete", "apply_restore"}
-    assert found["PostgresExternalReferenceRepository"] == {"add", "delete", "update_snapshot"}
+    assert found["PostgresExternalReferenceRepository"] == {
+        "add",
+        "delete",
+        "note_attempt",
+        "update_snapshot",
+    }
 
 
 @pytest.mark.parametrize("store", list(AUDITED_STORES), ids=lambda c: c.__name__)
