@@ -214,6 +214,7 @@ export function useDiagram() {
           // Invalid is not transient (an element of the scene is gone): resending the same
           // scene would fail the same way, so stop and let the user reload.
           refused.value = true
+          saveError.value = `${saveError.value} — tes modifications suivantes ne sont plus enregistrées : recharge le diagramme.`
           return
         }
         // Still unsaved: the next edit, close, switch or unmount sends it again.

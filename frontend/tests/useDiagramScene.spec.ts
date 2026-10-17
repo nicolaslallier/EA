@@ -319,6 +319,8 @@ describe('useDiagram — a save the server refuses as invalid (422)', () => {
     expect(saves(calls)).toHaveLength(1) // not one per edit
     expect(editor.refused.value).toBe(true)
     expect(editor.saveError.value).toContain('does not exist')
+    // Said plainly: nothing typed after this point reaches the server until a reload.
+    expect(editor.saveError.value).toContain('ne sont plus enregistrées')
 
     stubApi([READ({ revision: 7 }), SAVE])
     await editor.reloadAfterConflict()
