@@ -430,8 +430,11 @@ async def capture_scope(
 ) -> Baseline:
     """Copy one subtree under this baseline, in the caller's transaction.
 
-    The caller holds the locks that keep the subtree still (docs/adr/0074): this copies
-    what is committed, with the same three `INSERT … SELECT` as a whole-model capture.
+    The subtree must not move while it is copied, and the caller sees to that one of two
+    ways (docs/adr/0074). A publication holds the locks that keep it still, since it freezes
+    what it copies. A plain scoped capture holds none: it reads in one REPEATABLE READ
+    snapshot, so the three `INSERT … SELECT` (the same as a whole-model capture) all see the
+    same committed state, which is a consistent copy even if the model moves afterwards.
     """
     id_column = literal(baseline.id, Uuid())
     in_scope, linked, boxed = _scope_filters(sorted(scope))

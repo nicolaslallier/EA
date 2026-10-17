@@ -2246,6 +2246,23 @@ class TestTheSameBoundsAsTheHttpAdapter:
         assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
         assert sent_to_the_agent == served_over_http
 
+    async def test_the_baseline_scope_is_the_same_uuid_with_the_same_words(
+        self, server: MCPServer[Any]
+    ) -> None:
+        # A UUID has no numeric bound for `bounds_of` to compare: pin what the shared type
+        # (`BaselineScope`) carries instead, its format and its description.
+        tools = {listed.name: listed for listed in await server.list_tools()}
+
+        def described(schema: dict[str, Any]) -> tuple[Any, ...]:
+            branches = [schema, *schema.get("anyOf", ())]
+            return tuple(
+                sorted({(b.get("format"), b.get("description")) for b in branches if "format" in b})
+            )
+
+        sent = described(tools["create_baseline"].input_schema["properties"]["package_id"])
+        served = described(BaselineCreate.model_json_schema()["properties"]["package_id"])
+        assert sent and sent == served
+
     @pytest.mark.parametrize(
         ("tool", "argument", "path", "parameter"),
         [
