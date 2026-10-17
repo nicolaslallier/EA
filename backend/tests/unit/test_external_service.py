@@ -600,6 +600,30 @@ class TestUnlinking:
         with pytest.raises(ExternalReferenceNotFoundError):
             await external_service.unlink(view.reference.id)
 
+    async def test_a_link_removed_by_someone_else_meanwhile_is_not_found_and_not_audited(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        element = await an_element(service)
+        view = await external_service.link(element, kind=GITHUB, reference="acme/billing#12")
+        delete = external_references.delete
+
+        async def raced(reference_id: UUID, *, audit: object) -> bool:
+            await delete(reference_id, audit=lambda _: ())  # the other caller won
+            return await delete(reference_id, audit=audit)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(external_references, "delete", raced)
+
+        with pytest.raises(ExternalReferenceNotFoundError):
+            await external_service.unlink(view.reference.id)
+        assert not [
+            e for e in audit_log.events if e.action is AuditAction.EXTERNAL_REFERENCE_UNLINKED
+        ]
+
 
 class TestWhoMayDoWhat:
     async def test_a_reader_cannot_link_unlink_or_refresh(
