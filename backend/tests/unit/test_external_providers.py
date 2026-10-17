@@ -619,3 +619,19 @@ class TestAuthentication:
             ConfluencePages.kind,
             ServiceNowTickets.kind,
         }
+
+
+@pytest.mark.asyncio
+async def test_a_provider_states_what_the_deployment_declared_and_closes_its_client() -> None:
+    def never(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no call")
+
+    provider = github(never)
+
+    assert (provider.name, provider.web_url, provider.writable) == (
+        "main",
+        "https://github.test",
+        True,
+    )
+    assert provider.allows("acme/billing") and not provider.allows("acme/other")
+    await provider.aclose()
