@@ -63,7 +63,8 @@ def _aside(properties: str, key: str, value: str) -> str:
 
     The name is `legacy_<key>`, else `legacy_<key>_2` ... `_9`, the first not already a key of the
     row. Only when all nine are taken is the value appended (after a newline) to the last one -
-    nothing is lost. Every identifier here is built from the two constants above, never from data.
+    nothing is lost (`coalesce`: a JSON null there would make the whole `||` NULL). Every
+    identifier here is built from the two constants above, never from data.
     """
     value = f"({value})"
     names = [f"legacy_{key}"] + [f"legacy_{key}_{n}" for n in range(2, _LEGACY_SLOTS + 1)]
@@ -74,7 +75,8 @@ def _aside(properties: str, key: str, value: str) -> str:
     )
     all_taken = " AND ".join(f"({properties} ? '{n}')" for n in names)
     stored = (
-        f"CASE WHEN {all_taken} THEN ({properties} ->> '{names[-1]}') || chr(10) || {value} "
+        f"CASE WHEN {all_taken} "
+        f"THEN coalesce({properties} ->> '{names[-1]}', '') || chr(10) || {value} "
         f"ELSE {value} END"
     )
     return f"jsonb_build_object({name}, {stored})"

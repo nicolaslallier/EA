@@ -236,3 +236,27 @@ async def test_0014_never_overwrites_a_legacy_key_that_is_already_there(
         assert (await _properties_of(postgres_engine, "one"))["legacy_valid_from"] == "keep me"
     finally:
         await asyncio.to_thread(command.downgrade, alembic_config, "base")
+
+
+@pytest.mark.parametrize("too_long", [False, True], ids=["read in python", "moved by sql"])
+async def test_0014_a_null_in_the_last_slot_does_not_lose_the_value(
+    postgres_engine: AsyncEngine, alembic_config: Config, too_long: bool
+) -> None:
+    """`NULL || chr(10) || value` is NULL: the last slot is read through `coalesce`."""
+    value = "9" * 40 if too_long else "x"
+    taken: dict[str, object] = {
+        "legacy_valid_from": "a",
+        **{f"legacy_valid_from_{n}": str(n) for n in range(2, 9)},
+        "legacy_valid_from_9": None,
+    }
+    await asyncio.to_thread(command.upgrade, alembic_config, "0013")
+    try:
+        await _insert_element(postgres_engine, "null", {"valid_from": value, **taken})
+
+        await asyncio.to_thread(command.upgrade, alembic_config, "0014")
+
+        stored = await _properties_of(postgres_engine, "null")
+        assert stored["legacy_valid_from_9"] == f"\n{value}"
+        assert "valid_from" not in stored
+    finally:
+        await asyncio.to_thread(command.downgrade, alembic_config, "base")

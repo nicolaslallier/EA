@@ -98,7 +98,8 @@ def _set_aside(out: dict[str, str], key: str, value: str) -> None:
     names = [f"legacy_{key}"] + [f"legacy_{key}_{n}" for n in range(2, LEGACY_SLOTS + 1)]
     free = next((name for name in names if name not in out), None)
     if free is None:
-        out[names[-1]] = f"{out[names[-1]]}\n{value}"
+        last = out[names[-1]]
+        out[names[-1]] = f"{'' if last is None else last}\n{value}"  # as 0014's coalesce
     else:
         out[free] = value
 
@@ -108,7 +109,12 @@ def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str
 
     For what is *read back* from a copy that predates revision 0014 (a baseline): a
     day is canonicalised, a blank removed, and whatever is not a day — or an end that
-    precedes its start — is set aside under `legacy_<key>`, exactly as the migration does.
+    precedes its start — is set aside under `legacy_<key>` (the same slots as 0014).
+
+    Three known differences from the migration: an end before its start is set aside here and
+    not there; the length test here is on the stripped value, there on the stored one; and a
+    non-string JSON value is set aside here as Python's `str()` (`True`, `5.0`), where SQL's
+    `->>` would give its JSON text (`true`, `5.0`).
     """
     out = dict(properties)
     days: dict[str, date] = {}

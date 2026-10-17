@@ -149,6 +149,16 @@ class TestReadingWhatWasStoredBeforeTheRule:
         assert full["legacy_valid_from_9"] == "9\nx"
         assert VALID_FROM not in full
 
+    def test_a_null_in_the_last_slot_does_not_swallow_the_value(self) -> None:
+        """As revision 0014's `coalesce`: a JSON null there reads as empty, not as "None"."""
+        taken: dict[str, object] = {
+            "legacy_valid_from": "a",
+            **{f"legacy_valid_from_{n}": str(n) for n in range(2, 9)},
+            "legacy_valid_from_9": None,
+        }
+        full = readable_lifespan_properties({VALID_FROM: "x", **taken})  # type: ignore[dict-item]
+        assert full["legacy_valid_from_9"] == "\nx"
+
 
 class TestAValueThatIsNotAStringNeverRaisesWhenReadBack:
     @pytest.mark.parametrize(
