@@ -8,7 +8,7 @@ affects: backend/migrations/versions/0020_package_versions.py, backend/src/ea/db
 # 74. Gel par package — une version en vigueur, des triggers en base, une seule traduction
 
 Date : 2026-10-12
-Statut : Proposition
+Statut : Proposition (remplacé en partie par [0077](0077-gel-par-package-lectures-mcp-et-baselines-scopees.md), sur les baselines scopées)
 
 ## Contexte
 
@@ -102,7 +102,7 @@ Repris de la spec § 10 ; chaque ligne a son test. Les lignes MCP sont celles du
 - Un script qui écrit **hors `work()`** reçoit l'`EA001` brut, sans traduction ni événement.
 - `TRUNCATE` n'est pas gardé sur les neuf tables (l'application n'en émet jamais ; un propriétaire de la base peut
   de toute façon retirer les triggers). À durcir si un rôle d'écriture sans `TRUNCATE` n'est pas provisionné.
-- Les baselines scopées ne se comparent ni ne se restaurent jusqu'au plan 2 ; la liste des baselines n'expose pas
+- Remplacé en partie par [0077](0077-gel-par-package-lectures-mcp-et-baselines-scopees.md) : les baselines scopées ne se comparent ni ne se restaurent jusqu'au plan 2 ; la liste des baselines n'expose pas
   encore leur périmètre.
 - L'enregistreur garde ses compteurs par `sub` **en mémoire du processus**, sans les élaguer : un redémarrage
   remet le budget à zéro, plusieurs processus ont chacun le leur, et `suppressed` est un cumul de vie.

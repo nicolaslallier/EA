@@ -48,6 +48,7 @@ async def client(engine_at_head: AsyncEngine) -> AsyncIterator[httpx.AsyncClient
     app = create_app(
         Settings(debug=True, auth_enabled=False),
         architecture_service=ArchitectureService(graph, clock=lambda: NOW),
+        packages=packages,
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

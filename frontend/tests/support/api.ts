@@ -481,6 +481,8 @@ export function aBaseline(overrides: Partial<BaselineRead> = {}): BaselineRead {
     element_count: 12,
     relationship_count: 20,
     box_count: 5,
+    scope_package_id: null,
+    scope_path: null,
     ...overrides,
   }
 }
@@ -517,6 +519,7 @@ export function aRestorePlan(overrides: Partial<RestorePlanRead> = {}): RestoreP
     warnings: [],
     blocked_count: 0,
     blocked: [],
+    frozen_by: null,
     ...overrides,
   }
 }

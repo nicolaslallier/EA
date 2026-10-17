@@ -686,13 +686,13 @@ class PostgresBaselineRepository:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
         scope = record.scope_package_id
+        # Counted before any row is loaded, in the instant the plan reads.
+        await self._guard_baseline(session, baseline_id)
+        await self._guard_live(session, diagrams=True)
         packages_present = frozenset(await session.scalars(select(PackageRecord.id)))
         if scope is not None and scope not in packages_present:
             msg = "the package this baseline copies no longer exists: it cannot be restored"
             raise BaselineScopedError(msg)
-        # Counted before any row is loaded, in the instant the plan reads.
-        await self._guard_baseline(session, baseline_id)
-        await self._guard_live(session, diagrams=True)
         snapshot = await _snapshot_of(session, baseline_id)
         current = await _current_snapshot(session)
         deletable = None
