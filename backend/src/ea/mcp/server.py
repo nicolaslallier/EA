@@ -90,6 +90,7 @@ from ea.api.schemas import (
     PackageName,
     PackageRead,
     PackageTarget,
+    PackageVersionRead,
     PassageRead,
     PlateauGapRead,
     PlateauRead,
@@ -97,10 +98,14 @@ from ea.api.schemas import (
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
+    PublicationAdr,
+    PublicationNotes,
+    PublishResult,
     QualityReportRead,
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    ReopeningReason,
     ReportTemplateId,
     ReportTemplateRead,
     RequestIdFilter,
@@ -155,6 +160,7 @@ from ea.domain.external import ExternalKind, ExternalView, IssuePlan
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.generated_views import PackageSource, QuerySource
 from ea.domain.ipam import DEFAULT_VRF
+from ea.domain.package_versions import Bump
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
 from ea.domain.quality import RuleCode
@@ -262,6 +268,14 @@ id; `update_package` (`parent_id`), `delete_package` (`move_contents_to`) and
 `move_elements` (`package_id`) also take the word `root` for the top of the
 tree. `create_package` leaves `parent_id` out for the top, and
 `search_elements` takes `root_only` for the elements filed nowhere.
+
+A package can be *published* under a version (`vX.Y.Z`), which freezes it and
+everything below it. `list_package_versions` shows the history; `publish_package`
+is a `dry_run` unless told otherwise — call it once as is, show the person the
+version and the counts, and only then call it again with `dry_run=false`;
+`reopen_package` needs a reason and the person's confirmation. Both need the
+`ea-approver` role. An element or diagram that carries `frozen_by` cannot be
+written: ask for the package to be reopened rather than retrying.
 
 To find elements, prefer `search_elements` to paging through `list_elements`:
 it combines types, layers, a name fragment, a package (with or without its
@@ -1928,6 +1942,53 @@ def build_mcp_server(
         """
         moved = await get_packages().move_elements(element_ids, package_target(package_id))
         return f"{moved} element(s) filed in {package_id}"
+
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_package_versions(package_id: PackageId) -> list[PackageVersionRead]:
+        """Every version a package was published under, the latest first: who published it,
+        when, the notes, the ADR of a major, and who reopened it and why. A package with a
+        version in force freezes everything below it.
+        """
+        return [PackageVersionRead.of(v) for v in await get_packages().versions(package_id)]
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def publish_package(
+        package_id: PackageId,
+        bump: Bump,
+        notes: PublicationNotes,
+        adr: PublicationAdr | None = None,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description=(
+                    "True previews the version and what it would freeze, and writes nothing. "
+                    "Set it to false to publish."
+                )
+            ),
+        ] = True,
+    ) -> PublishResult:
+        """Publish a version of a package (vX.Y.Z) and freeze it and everything below it: no
+        element, link, document, diagram or sub-package there can be changed until an approver
+        reopens it. Needs the ea-approver role. A dry run unless `dry_run` is false: call it
+        once as is, show the person the version and the counts, and only then call it again
+        with `dry_run=false`. Notes are required; a major names its ADR.
+        """
+        return PublishResult.of(
+            await get_packages().publish(
+                package_id, bump=bump, notes=notes, adr=adr, dry_run=dry_run
+            )
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def reopen_package(package_id: PackageId, reason: ReopeningReason) -> PackageVersionRead:
+        """Close the version in force so the subtree can be changed again. Needs the ea-approver
+        role and a reason, which is kept in the history. Confirm with the person you are
+        working for before calling it.
+        """
+        return PackageVersionRead.of(await get_packages().reopen(package_id, reason=reason))
 
     # --- Structured search and saved queries ------------------------------
 
