@@ -324,3 +324,29 @@ async def test_two_links_racing_for_the_last_place_cannot_both_take_it(
     refused = [o for o in outcomes if isinstance(o, TooManyExternalReferencesError)]
     assert len(refused) == 1, outcomes
     assert len(await store.list_for(element_id)) == MAX_REFERENCES_PER_ELEMENT  # type: ignore[arg-type]
+
+
+async def test_under_a_published_package_a_reference_is_frozen_but_its_cache_still_refreshes(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """docs/adr/0076: link and unlink are 409 package_frozen; title and state are the provider's."""
+    store, element_id, _ = await make(engine_at_head)
+    row = await store.add(reference(element_id), audit=())
+    async with engine_at_head.begin() as connection:
+        package = await a_package(connection, "Finance", None)
+        await connection.execute(
+            text("UPDATE elements SET package_id = :p WHERE id = :id"),
+            {"p": package, "id": element_id},
+        )
+        await publish(connection, package)
+
+    with pytest.raises(PackageFrozenError):
+        await store.add(reference(element_id, 13), audit=())
+    with pytest.raises(PackageFrozenError):
+        await store.delete(row.id, audit=())
+    changed = ExternalSnapshot.of("Renamed", ExternalStatus.CLOSED)
+    refreshed = await store.update_snapshot(row.id, changed, now=NOW, audit=lambda b: ())
+    await store.note_attempt(row.id, now=NOW, audit=lambda b: ())
+
+    assert refreshed is not None
+    assert refreshed.status is ExternalStatus.CLOSED
