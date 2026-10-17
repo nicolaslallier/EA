@@ -48,18 +48,20 @@ from ea.domain.baselines import (
     plan_restore,
     refusal_context,
     refuse_oversize,
+    restricted_to,
 )
 from ea.domain.errors import (
     BaselineInUseError,
     BaselineNotFoundError,
     BaselineScopedError,
     DuplicateBaselineError,
+    PackageNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY
 from ea.domain.model import Element, Relationship
-from ea.domain.packages import PATH_SEPARATOR
+from ea.domain.packages import PATH_SEPARATOR, Package, descendants_of, path_of
 from ea.domain.timeline import readable_lifespan_properties
 from ea.repositories.architecture_store import (
     author_of,
@@ -74,7 +76,7 @@ from ea.repositories.architecture_store import (
 )
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
-from ea.repositories.diagram_revision import bump_diagrams_of
+from ea.repositories.diagram_revision import bump_diagrams_of, packages_of_diagrams
 from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
@@ -261,6 +263,31 @@ async def _current_snapshot(session: AsyncSession) -> ModelSnapshot:
     )
 
 
+async def _tree(session: AsyncSession) -> dict[UUID, Package]:
+    return {
+        row.id: Package(
+            id=row.id,
+            parent_id=row.parent_id,
+            name=row.name,
+            description=row.description,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in (await session.execute(select(PackageRecord))).scalars()
+    }
+
+
+async def _subtree(
+    session: AsyncSession, package_id: UUID
+) -> tuple[frozenset[UUID], frozenset[UUID]]:
+    """The packages of this subtree *now* (itself and its descendants), and its diagrams."""
+    below = frozenset({package_id, *descendants_of(package_id, await _tree(session))})
+    diagrams = frozenset(
+        await session.scalars(select(DiagramRecord.id).where(DiagramRecord.package_id.in_(below)))
+    )
+    return below, diagrams
+
+
 async def _documents_held(
     session: AsyncSession, element_ids: Sequence[UUID]
 ) -> dict[UUID, tuple[int, tuple[UUID, ...]]]:
@@ -429,8 +456,11 @@ async def capture_scope(
 ) -> Baseline:
     """Copy one subtree under this baseline, in the caller's transaction.
 
-    The caller holds the locks that keep the subtree still (docs/adr/0074): this copies
-    what is committed, with the same three `INSERT … SELECT` as a whole-model capture.
+    The subtree must not move while it is copied, and the caller sees to that one of two
+    ways (docs/adr/0074). A publication holds the locks that keep it still, since it freezes
+    what it copies. A plain scoped capture holds none: it reads in one REPEATABLE READ
+    snapshot, so the three `INSERT … SELECT` (the same as a whole-model capture) all see the
+    same committed state, which is a consistent copy even if the model moves afterwards.
     """
     id_column = literal(baseline.id, Uuid())
     in_scope, linked, boxed = _scope_filters(sorted(scope))
@@ -540,7 +570,31 @@ class PostgresBaselineRepository:
             found = (await session.execute(statement)).first()
             return _baseline(*found) if found is not None else None
 
-    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+    async def _create_scoped(
+        self, baseline: Baseline, audit: AuditOf[Baseline], package_id: UUID
+    ) -> Baseline:
+        async with work(self._sessions, alone=True) as session:
+            await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+            tree = await _tree(session)
+            if package_id not in tree:
+                raise PackageNotFoundError(str(package_id))
+            scope = frozenset({package_id, *descendants_of(package_id, tree)})
+            refuse_oversize(await scope_size(session, scope), self._limits, what="the package")
+            stored = await capture_scope(
+                session,
+                baseline,
+                scope,
+                package_id=package_id,
+                path=path_of(tree[package_id], tree),
+            )
+            write_events(session, events_for(audit, stored))
+        return stored
+
+    async def create(
+        self, baseline: Baseline, *, audit: AuditOf[Baseline], scope: UUID | None = None
+    ) -> Baseline:
+        if scope is not None:
+            return await self._create_scoped(baseline, audit, scope)
         id_column = literal(baseline.id, Uuid())
         paths = _paths()
         async with work(self._sessions, alone=True) as session:
@@ -612,10 +666,16 @@ class PostgresBaselineRepository:
             await self._guard_baseline(session, baseline_id)
             return await _snapshot_of(session, baseline_id)
 
-    async def current_snapshot(self) -> ModelSnapshot:
+    async def current_snapshot(
+        self, scope: UUID | None = None, *, known: frozenset[UUID] = frozenset()
+    ) -> ModelSnapshot:
         async with self._at_one_instant() as session:
             await self._guard_live(session, diagrams=False)
-            return await _current_snapshot(session)
+            current = await _current_snapshot(session)
+            if scope is None:
+                return current
+            below, diagrams = await _subtree(session, scope)
+            return restricted_to(current, packages=below, diagrams=diagrams, known=known)
 
     async def _plan(
         self, session: AsyncSession, baseline_id: UUID, *, keep_new: bool
@@ -625,20 +685,48 @@ class PostgresBaselineRepository:
         if record is None:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
-        if record.scope_package_id is not None:
-            msg = "a baseline of one package's subtree cannot be restored yet"
-            raise BaselineScopedError(msg)
+        scope = record.scope_package_id
         # Counted before any row is loaded, in the instant the plan reads.
         await self._guard_baseline(session, baseline_id)
         await self._guard_live(session, diagrams=True)
+        packages_present = frozenset(await session.scalars(select(PackageRecord.id)))
+        if scope is not None and scope not in packages_present:
+            msg = "the package this baseline copies no longer exists: it cannot be restored"
+            raise BaselineScopedError(msg)
+        snapshot = await _snapshot_of(session, baseline_id)
+        current = await _current_snapshot(session)
+        deletable = None
+        if scope is not None:
+            # It deletes only what is filed in its subtree now (and was created since the
+            # capture: `captured_at`, docs/adr/0077) and writes no box outside it;
+            # the plan still sees the whole model, so a protected element anywhere a deletion
+            # cascades to blocks it.
+            below, diagrams_present = await _subtree(session, scope)
+            deletable = frozenset(e.id for e in current.elements if e.package_id in below)
+        else:
+            diagrams_present = frozenset(await session.scalars(select(DiagramRecord.id)))
         plan = plan_restore(
-            await _snapshot_of(session, baseline_id),
-            await _current_snapshot(session),
+            snapshot,
+            current,
             keep_new=keep_new,
-            packages_present=frozenset(await session.scalars(select(PackageRecord.id))),
+            packages_present=packages_present,
             protected_ids=await self._protected(session),
-            diagrams_present=frozenset(await session.scalars(select(DiagramRecord.id))),
+            diagrams_present=diagrams_present,
+            deletable=deletable,
+            captured_at=record.created_at,
         )
+        if scope is not None:
+            # The diagrams it writes are packages it writes too, for the freeze prediction.
+            plan = replace(
+                plan,
+                packages_written=plan.packages_written
+                | await packages_of_diagrams(
+                    session,
+                    element_ids=[e.id for e in plan.elements_to_delete],
+                    relationship_ids=[r.id for r in plan.relationships_to_delete],
+                    diagram_ids={b.diagram_id for b in plan.boxes_to_restore},
+                ),
+            )
         held = await _documents_held(session, [e.id for e in plan.elements_to_delete])
         return replace(
             plan,

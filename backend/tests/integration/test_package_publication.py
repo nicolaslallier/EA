@@ -27,6 +27,8 @@ from ea.domain.errors import (
 from ea.domain.package_versions import Bump, PackageVersion, publication
 from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.services.baselines import BaselineService
+from ea.services.packages import PackageService
 from tests.integration.test_package_freeze_triggers import a_diagram, a_package, an_element
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -448,3 +450,135 @@ async def test_a_restore_planned_before_a_publication_cannot_write_into_the_froz
     assert all(o is None or isinstance(o, PackageVersion | PackageFrozenError) for o in outcomes), (
         outcomes
     )
+
+
+async def _async[T](value: T) -> T:
+    return value
+
+
+async def name_of(engine: AsyncEngine, element_id: UUID) -> str:
+    async with engine.connect() as connection:
+        found = await connection.execute(
+            text("SELECT name FROM elements WHERE id = :i"), {"i": element_id}
+        )
+        return str(found.scalar_one())
+
+
+async def rename(engine: AsyncEngine, element_id: UUID, name: str) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE elements SET name = :n WHERE id = :i"), {"n": name, "i": element_id}
+        )
+
+
+async def test_restoring_a_published_version_is_refused_until_it_is_reopened(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        await an_element(connection, "inside", finance)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    # Wired as main.py does: the real PackageService says what is frozen.
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
+    )
+    version = await publish_it(repo, finance)
+
+    outcome = await baselines.restore(version.baseline_id)
+    assert outcome.plan.frozen_by is not None
+    assert outcome.plan.frozen_by.version == version.version and outcome.plan.is_blocked
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(version.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+    await reopen_it(repo, finance)
+    outcome = await baselines.restore(version.baseline_id)
+    assert outcome.plan.frozen_by is None
+    await baselines.restore(version.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+
+async def test_the_triggers_still_refuse_when_the_prediction_is_bypassed(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The race: the service checked before the publication; the database is the authority."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        inside = await an_element(connection, "inside", finance)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    stale = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=lambda: _async({})
+    )  # predicts nothing
+    first = await publish_it(repo, finance)  # v1.0.0 copies Finance as it was
+    await reopen_it(repo, finance)
+    await rename(engine_at_head, inside, "renamed")  # the plan back to v1.0.0 is not a no-op
+    await publish_it(repo, finance)  # v1.1.0 in force
+
+    outcome = await stale.restore(first.baseline_id)
+    assert outcome.plan.elements_to_update  # there is something to write
+    with pytest.raises(PackageFrozenError):
+        await stale.restore(first.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+    assert await name_of(engine_at_head, inside) == "renamed"
+
+
+async def test_a_publication_nested_in_the_subtree_is_predicted_and_refused(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The scope is not published, its child is: the plan writes into the child."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        budget = await a_package(connection, "Budget", finance)
+        inside = await an_element(connection, "inside", budget)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
+    )
+    scoped_id = (await baselines.create(name="Finance", package_id=finance)).id
+    await rename(engine_at_head, inside, "renamed")
+    await publish_it(repo, budget)
+
+    outcome = await baselines.restore(scoped_id)
+    assert outcome.plan.frozen_by is not None and outcome.plan.is_blocked
+    assert (outcome.plan.frozen_by.package_id, outcome.plan.frozen_by.version) == (
+        budget,
+        "v1.0.0",
+    )
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
+
+    assert await name_of(engine_at_head, inside) == "renamed"
+
+
+async def test_a_deletion_whose_box_is_on_a_frozen_outside_diagram_is_predicted_blocked(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The diagram half: the box of a deleted element sits on a diagram filed in a published
+    package outside the subtree; only `packages_of_diagrams` sees that package."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        other = await a_package(connection, "Autre", None)
+        drawing = await a_diagram(connection, "Vue", other)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
+    )
+    scoped_id = (await baselines.create(name="Finance", package_id=finance)).id
+    async with engine_at_head.begin() as connection:
+        drawn = await an_element(connection, "new inside", finance)
+        await connection.execute(
+            text("UPDATE elements SET created_at = :t WHERE id = :i"),
+            {"t": datetime.now(UTC) + timedelta(hours=1), "i": drawn},
+        )
+        await connection.execute(
+            text("INSERT INTO diagram_nodes (diagram_id, element_id, x, y) VALUES (:d, :e, 0, 0)"),
+            {"d": drawing, "e": drawn},
+        )
+    await publish_it(repo, other)
+
+    outcome = await baselines.restore(scoped_id)
+
+    assert [e.id for e in outcome.plan.elements_to_delete] == [drawn]
+    assert other in outcome.plan.packages_written
+    assert outcome.plan.frozen_by is not None and outcome.plan.is_blocked
+    assert outcome.plan.frozen_by.package_id == other
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)

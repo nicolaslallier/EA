@@ -81,7 +81,7 @@ export interface paths {
         put?: never;
         /**
          * Create Baseline
-         * @description Freeze a copy of the whole model under a name.
+         * @description Freeze a copy of the whole model, or of one package's subtree, under a name.
          */
         post: operations["create_baseline_baselines_post"];
         delete?: never;
@@ -118,6 +118,10 @@ export interface paths {
         /**
          * Read Baseline Diff
          * @description What separates a baseline from another one, or from the model as it is now.
+         *
+         *     A baseline of one package's subtree is compared with that subtree as it is now, plus
+         *     the elements it holds wherever they went (one moved out is modified, not removed). Two
+         *     baselines compare only when they have the same scope (`409 baseline_scoped`).
          */
         get: operations["read_baseline_diff_baselines__baseline_id__diff_get"];
         put?: never;
@@ -144,6 +148,14 @@ export interface paths {
          *     Applying needs `dry_run=false` **and** the `digest` of the dry run you read,
          *     as `expected_digest`. One transaction: a conflict (`restore_conflict`, read
          *     the plan again) or a locked element (`restore_blocked`) changes nothing.
+         *
+         *     A baseline of one package's subtree restores within it and deletes no element outside
+         *     it; a link to the outside, or a box on another diagram, goes with an element it deletes
+         *     (`relationships_cascaded`, `boxes_lost`). An element moved into the subtree since the
+         *     capture, older than it, is kept (`plan.kept_moved_in`). Its package must still exist
+         *     (`409 baseline_scoped`). When a package the plan writes is under a publication in force
+         *     the dry run says so (`plan.frozen_by`, `plan.is_blocked`) and applying is
+         *     `409 package_frozen`: reopen first.
          */
         post: operations["restore_baseline_baselines__baseline_id__restore_post"];
         delete?: never;
@@ -2082,6 +2094,8 @@ export interface components {
             description?: string;
             /** Name */
             name: string;
+            /** Package Id */
+            package_id?: string | null;
         };
         /** BaselineDiffRead */
         BaselineDiffRead: {
@@ -2122,6 +2136,16 @@ export interface components {
             name: string;
             /** Relationship Count */
             relationship_count: number;
+            /**
+             * Scope Package Id
+             * @description The subtree this baseline copies, as its path was then; null for the whole model.
+             */
+            scope_package_id: string | null;
+            /**
+             * Scope Path
+             * @description The subtree this baseline copies, as its path was then; null for the whole model.
+             */
+            scope_path: string | null;
         };
         /** BlockedCellRead */
         BlockedCellRead: {
@@ -2468,6 +2492,8 @@ export interface components {
             edges: components["schemas"]["DiagramEdge"][];
             /** Elements */
             elements: components["schemas"]["ElementRead"][];
+            /** @description The publication that freezes this diagram's package: nothing below it can be written until it is reopened. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
             generation: components["schemas"]["Generation"] | null;
             /**
              * Id
@@ -2830,6 +2856,8 @@ export interface components {
             /** Documentation */
             documentation: string;
             element_type: components["schemas"]["ElementType"];
+            /** @description The publication that freezes this element's package: nothing below it can be written until it is reopened. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
             /**
              * Id
              * Format: uuid
@@ -4175,6 +4203,23 @@ export interface components {
             elements_to_delete: number;
             /** Elements To Update */
             elements_to_update: number;
+            /** @description The publication that freezes a package this plan writes into: the subtree, a package below it, or a package outside it (a sub-package moved out since the capture, the other end of a link, a diagram). Reopen it first. A frozen plan is blocked with `blocked_count` at 0: check `is_blocked` or `frozen_by`, not the count. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
+            /**
+             * Is Blocked
+             * @description The plan cannot be applied: a protected element blocks it, or a freeze.
+             */
+            is_blocked: boolean;
+            /**
+             * Kept Moved In
+             * @description The first few of `kept_moved_in_count`, by name.
+             */
+            kept_moved_in: components["schemas"]["EntityRefRead"][];
+            /**
+             * Kept Moved In Count
+             * @description Scoped baseline only: the elements filed in its subtree now, absent from it, that existed before it was captured. Moved in since, not created since: they are kept, never deleted — remove them by hand if they do not belong.
+             */
+            kept_moved_in_count: number;
             /** Relationships Cascaded */
             relationships_cascaded: number;
             /** Relationships To Create */
@@ -4931,6 +4976,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Conflict */
             409: {
                 headers: {
@@ -5107,6 +5161,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -44,7 +44,14 @@ from ea.domain.audit import (
     saved_query_view,
 )
 from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
-from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
+from ea.domain.baselines import (
+    Baseline,
+    BoxSnapshot,
+    ModelSnapshot,
+    RestorePlan,
+    plan_restore,
+    restricted_to,
+)
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
 from ea.domain.diagram_templates import MAX_TEMPLATES, DiagramTemplate
 from ea.domain.diagrams import MAX_DIAGRAMS, Diagram, DiagramNode
@@ -52,6 +59,7 @@ from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     BaselineNotFoundError,
+    BaselineScopedError,
     DiagramLimitError,
     DiagramLiveError,
     DiagramNotFoundError,
@@ -119,6 +127,7 @@ from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, StereotypeRef
 from ea.domain.package_versions import (
     Bump,
+    FrozenBy,
     PackageVersion,
     Publication,
     PublicationPreview,
@@ -1546,6 +1555,12 @@ class InMemoryBaselines:
         self.protected: set[UUID] = set()
         self.baselines: dict[UUID, Baseline] = {}
         self.copies: dict[UUID, ModelSnapshot] = {}
+        #: The package each baseline was captured under, `None` for the whole model.
+        self.created_with_scope: dict[UUID, UUID | None] = {}
+        #: `(scope, known)` of every `current_snapshot`, and the baselines `apply_restore` was
+        #: asked to write, for a test that checks what was (not) asked.
+        self.current_calls: list[tuple[UUID | None, frozenset[UUID]]] = []
+        self.applied: list[UUID] = []
 
     def _counted(self, baseline: Baseline) -> Baseline:
         copy = self.copies.get(baseline.id, ModelSnapshot((), ()))
@@ -1560,11 +1575,37 @@ class InMemoryBaselines:
         stored = self.baselines.get(baseline_id)
         return self._counted(stored) if stored is not None else None
 
-    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+    async def create(
+        self, baseline: Baseline, *, audit: AuditOf[Baseline], scope: UUID | None = None
+    ) -> Baseline:
         if any(b.name == baseline.name for b in self.baselines.values()):
             raise DuplicateBaselineError(f"a baseline is already named {baseline.name!r}")
+        copy = self._model()
+        if scope is not None:
+            tree = self.packages.packages if self.packages is not None else {}
+            if scope not in tree:
+                raise PackageNotFoundError(str(scope))
+            below = {scope, *descendants_of(scope, tree)}
+            kept = tuple(e for e in copy.elements if e.package_id in below)
+            ids = {e.id for e in kept}
+            copy = replace(
+                copy,
+                elements=kept,
+                relationships=tuple(
+                    r for r in copy.relationships if r.source_id in ids and r.target_id in ids
+                ),
+                boxes=tuple(
+                    b
+                    for b in copy.boxes
+                    if self.diagrams.diagrams[b.diagram_id].package_id in below
+                ),
+            )
+            baseline = replace(
+                baseline, scope_package_id=scope, scope_path=copy.package_paths[scope]
+            )
+        self.created_with_scope[baseline.id] = scope
         self.baselines[baseline.id] = baseline
-        self.copies[baseline.id] = await self.current_snapshot()
+        self.copies[baseline.id] = copy
         stored = self._counted(baseline)
         self.audit_log.append(events_for(audit, stored))
         return stored
@@ -1582,7 +1623,23 @@ class InMemoryBaselines:
     async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot:
         return self.copies.get(baseline_id, ModelSnapshot((), ()))
 
-    async def current_snapshot(self) -> ModelSnapshot:
+    def _subtree(self, scope: UUID) -> tuple[frozenset[UUID], frozenset[UUID]]:
+        tree = self.packages.packages if self.packages is not None else {}
+        below = frozenset({scope, *descendants_of(scope, tree)})
+        return below, frozenset(
+            d.id for d in self.diagrams.diagrams.values() if d.package_id in below
+        )
+
+    async def current_snapshot(
+        self, scope: UUID | None = None, *, known: frozenset[UUID] = frozenset()
+    ) -> ModelSnapshot:
+        self.current_calls.append((scope, known))
+        if scope is None:
+            return self._model()
+        below, diagrams = self._subtree(scope)
+        return restricted_to(self._model(), packages=below, diagrams=diagrams, known=known)
+
+    def _model(self) -> ModelSnapshot:
         tree = self.packages.packages if self.packages is not None else {}
 
         def path(package_id: UUID) -> str:
@@ -1604,15 +1661,46 @@ class InMemoryBaselines:
     async def _plan(self, baseline_id: UUID, keep_new: bool) -> RestorePlan:
         if baseline_id not in self.baselines:
             raise BaselineNotFoundError(f"no baseline with id {baseline_id}")
+        scope = self.baselines[baseline_id].scope_package_id
+        packages_present = frozenset(self.packages.packages if self.packages else ())
+        if scope is not None and scope not in packages_present:
+            raise BaselineScopedError("the package this baseline copies no longer exists")
+        snapshot, current = self.copies[baseline_id], self._model()
+        deletable = None
+        if scope is not None:
+            below, diagrams_present = self._subtree(scope)
+            deletable = frozenset(e.id for e in current.elements if e.package_id in below)
+        else:
+            diagrams_present = frozenset(self.diagrams.diagrams)
         plan = plan_restore(
-            self.copies[baseline_id],
-            await self.current_snapshot(),
+            snapshot,
+            current,
             keep_new=keep_new,
-            packages_present=frozenset(self.packages.packages if self.packages else ()),
+            packages_present=packages_present,
             protected_ids=frozenset(self.protected)
             | frozenset(e.id for e in self.graph.elements.values() if is_frozen(e)),
-            diagrams_present=frozenset(self.diagrams.diagrams),
+            diagrams_present=diagrams_present,
+            deletable=deletable,
+            captured_at=self.baselines[baseline_id].created_at,
         )
+        if scope is not None:
+            # As the store does: the diagrams it writes (boxes put back, boxes of what it
+            # deletes) are packages it writes too.
+            gone = {e.id for e in plan.elements_to_delete}
+            written = {b.diagram_id for b in plan.boxes_to_restore} | {
+                diagram_id
+                for diagram_id, nodes in self.diagrams.nodes.items()
+                if any(n.element_id in gone for n in nodes)
+            }
+            plan = replace(
+                plan,
+                packages_written=plan.packages_written
+                | {
+                    package
+                    for d in written
+                    if (package := self.diagrams.diagrams[d].package_id) is not None
+                },
+            )
         held: dict[UUID, list[UUID]] = {}
         for d in sorted(
             self.documents.documents.values() if self.documents else (), key=lambda d: str(d.id)
@@ -1643,6 +1731,7 @@ class InMemoryBaselines:
         now: datetime,
         audit: AuditOf[RestorePlan],
     ) -> None:
+        self.applied.append(baseline_id)
         plan = await self._plan(baseline_id, keep_new)
         if plan.is_blocked:
             raise RestoreBlockedError(
@@ -1728,6 +1817,8 @@ class InMemoryPackages:
         self.audit_log = graph.audit_log
         self.packages: dict[UUID, Package] = {}
         self.published: list[PackageVersion] = []
+        #: The reads made of it, by method name, for a test that counts them.
+        self.calls: list[str] = []
         self._graph = graph
         self._diagrams = diagrams
         graph.package_tree = self
@@ -1747,6 +1838,7 @@ class InMemoryPackages:
             raise PackageNotFoundError(str(package.parent_id))
 
     async def list_all(self) -> tuple[Package, ...]:
+        self.calls.append("list_all")
         return tuple(sorted(self.packages.values(), key=lambda p: (p.name.lower(), p.id)))
 
     async def counts(self) -> dict[UUID, PackageCounts]:
@@ -2521,6 +2613,12 @@ def profile_service(profiles: InMemoryProfiles, service: ArchitectureService) ->
     return ProfileService(profiles, service, clock=lambda: FIXED_NOW)
 
 
+def an_empty_package_tree() -> InMemoryPackages:
+    """A tree with no package, for an app whose test files nothing: every element or
+    diagram read asks what is frozen (docs/adr/0074), so the app needs one."""
+    return InMemoryPackages(InMemoryRepository(), InMemoryDiagrams())
+
+
 @pytest.fixture
 def packages(repository: InMemoryRepository, diagrams: InMemoryDiagrams) -> InMemoryPackages:
     return InMemoryPackages(repository, diagrams)
@@ -2543,7 +2641,12 @@ def baseline_store(
 
 @pytest.fixture
 def baseline_service(baseline_store: InMemoryBaselines) -> BaselineService:
-    return BaselineService(baseline_store, clock=lambda: FIXED_NOW)
+    return BaselineService(baseline_store, freezes=nothing_published, clock=lambda: FIXED_NOW)
+
+
+async def nothing_published() -> dict[UUID, FrozenBy]:
+    """A `FreezesLookup` for a catalogue where nothing is published."""
+    return {}
 
 
 @pytest.fixture

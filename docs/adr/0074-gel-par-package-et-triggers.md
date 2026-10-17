@@ -8,7 +8,7 @@ affects: backend/migrations/versions/0020_package_versions.py, backend/src/ea/db
 # 74. Gel par package — une version en vigueur, des triggers en base, une seule traduction
 
 Date : 2026-10-12
-Statut : Proposition
+Statut : Proposition (remplacé en partie par [0077](0077-gel-par-package-lectures-mcp-et-baselines-scopees.md), sur les baselines scopées)
 
 ## Contexte
 

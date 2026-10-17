@@ -20,6 +20,7 @@ from tests.conftest import (
     StaticVerifier,
     a_reader,
     an_editor,
+    an_empty_package_tree,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -36,6 +37,7 @@ async def client(
         architecture_service=service,
         diagrams=diagrams,  # type: ignore[arg-type]
         view_sources=view_sources,  # type: ignore[arg-type]
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -56,6 +58,7 @@ async def secured(
         diagrams=diagrams,  # type: ignore[arg-type]
         view_sources=view_sources,  # type: ignore[arg-type]
         verifier=StaticVerifier({EDITOR: an_editor(), READER: a_reader()}),
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

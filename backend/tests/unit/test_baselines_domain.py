@@ -16,13 +16,17 @@ from ea.domain.baselines import (
     MAX_BASELINE_NAME_LENGTH,
     Baseline,
     BaselineLimits,
+    BoxSnapshot,
     ModelSize,
     ModelSnapshot,
+    RestorePlan,
     diff_snapshots,
     refuse_oversize,
+    restricted_to,
 )
 from ea.domain.errors import BaselineTooLargeError
 from ea.domain.model import Element, Relationship
+from ea.domain.package_versions import FrozenBy
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 
@@ -173,3 +177,71 @@ class TestTheBound:
             refuse_oversize(
                 replace(at_the_limit, **{field: getattr(at_the_limit, field) + 1}), self.LIMITS
             )
+
+
+class TestRestrictingTheModelToASubtree:
+    """What a subtree baseline is compared with: its subtree now, plus what it knows."""
+
+    finance, elsewhere = uuid4(), uuid4()
+    d1, d2 = uuid4(), uuid4()
+
+    def model(self) -> tuple[ModelSnapshot, dict[str, Element], dict[str, Relationship]]:
+        inside_a = replace(an_element("a"), package_id=self.finance)
+        inside_b = replace(an_element("b"), package_id=self.finance)
+        outside = replace(an_element("out"), package_id=self.elsewhere)
+        moved_out = an_element("moved")
+        a_to_b = Relationship.between(R.ASSOCIATION, inside_a, inside_b, now=NOW)
+        a_to_outside = Relationship.between(R.ASSOCIATION, inside_a, outside, now=NOW)
+        model = ModelSnapshot(
+            elements=(inside_a, inside_b, outside, moved_out),
+            relationships=(a_to_b, a_to_outside),
+            boxes=(
+                BoxSnapshot(self.d1, inside_a.id, 0, 0, 10, 10),
+                BoxSnapshot(self.d2, inside_a.id, 0, 0, 10, 10),
+            ),
+            package_paths={self.finance: "Finance"},
+        )
+        elements = {"a": inside_a, "b": inside_b, "out": outside, "moved": moved_out}
+        return model, elements, {"a_to_b": a_to_b, "a_to_outside": a_to_outside}
+
+    def test_it_keeps_the_subtree_its_inner_links_and_its_boxes(self) -> None:
+        model, elements, links = self.model()
+
+        kept = restricted_to(
+            model,
+            packages=frozenset({self.finance}),
+            diagrams=frozenset({self.d1}),
+            known=frozenset(),
+        )
+
+        assert {e.id for e in kept.elements} == {elements["a"].id, elements["b"].id}
+        assert {r.id for r in kept.relationships} == {links["a_to_b"].id}
+        assert {b.diagram_id for b in kept.boxes} == {self.d1}
+        assert kept.package_paths == model.package_paths
+
+    def test_an_element_the_baseline_knows_is_kept_wherever_it_is_now(self) -> None:
+        model, elements, _ = self.model()
+
+        kept = restricted_to(
+            model,
+            packages=frozenset({self.finance}),
+            diagrams=frozenset(),
+            known=frozenset({elements["moved"].id}),
+        )
+
+        assert elements["moved"].id in {e.id for e in kept.elements}
+
+    def test_an_empty_scope_keeps_nothing(self) -> None:
+        model, _, _ = self.model()
+
+        kept = restricted_to(model, packages=frozenset(), diagrams=frozenset(), known=frozenset())
+
+        assert (kept.elements, kept.relationships, kept.boxes) == ((), (), ())
+
+
+class TestAPlanFrozenByAPublication:
+    def test_it_is_blocked_with_nothing_protected(self) -> None:
+        frozen = RestorePlan(frozen_by=FrozenBy(uuid4(), "Finance", "v1.2.0"))
+
+        assert frozen.is_blocked and frozen.blocked == ()
+        assert not RestorePlan().is_blocked

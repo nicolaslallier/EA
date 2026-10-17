@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,9 +23,13 @@ from ea.domain.errors import (
     DuplicateBaselineError,
     ElementNotFoundError,
     NotAuthorisedError,
+    PackageFrozenError,
     RestoreBlockedError,
     RestoreConflictError,
 )
+from ea.domain.model import Element, Relationship
+from ea.domain.package_versions import FrozenBy
+from ea.domain.packages import Package
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService, RestoreOutcome
 from ea.services.caller import acting_as
@@ -51,6 +57,24 @@ async def apply(
 
 
 class TestCapturingAndComparing:
+    async def test_a_baseline_of_one_package_says_so(
+        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        assert baseline_store.packages is not None
+        finance = Package.create(name="Finance", now=FIXED_NOW)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+
+        made = await baseline_service.create(name="Finance avant refonte", package_id=finance.id)
+
+        assert baseline_store.created_with_scope[made.id] == finance.id
+        assert (made.scope_package_id, made.scope_path) == (finance.id, "Finance")
+
+    async def test_a_reader_cannot_capture_a_subtree(
+        self, baseline_service: BaselineService
+    ) -> None:
+        with acting_as(a_reader()), pytest.raises(NotAuthorisedError):
+            await baseline_service.create(name="x", package_id=uuid4())
+
     async def test_a_capture_is_listed_with_its_counts_and_audited(
         self,
         service: ArchitectureService,
@@ -439,30 +463,286 @@ class TestApprovedAndLockedElements:
         assert audit_log.events == []
 
 
-class TestASubtreeBaselineIsNotTheWholeModel:
-    async def scoped(
-        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
-    ) -> UUID:
-        stored = await baseline_service.create(name="v1")
-        baseline_store.baselines[stored.id] = replace(
-            stored, scope_package_id=uuid4(), scope_path="Finance"
-        )
-        return stored.id
+FINANCE = UUID("00000000-0000-0000-0000-00000000f1a0")
+FROZEN = FrozenBy(FINANCE, "Finance", "v1.2.0")
 
-    async def test_diff_and_restore_are_refused_and_list_and_get_still_work(
+
+async def _async[T](value: T) -> T:
+    return value
+
+
+async def a_scoped_baseline(
+    baseline_service: BaselineService, baseline_store: InMemoryBaselines
+) -> tuple[UUID, frozenset[UUID]]:
+    """Finance, one element filed in it, and a baseline of that subtree."""
+    assert baseline_store.packages is not None
+    finance = replace(Package.create(name="Finance", now=FIXED_NOW), id=FINANCE)
+    await baseline_store.packages.add(finance, audit=lambda p: ())
+    inside = Element.create(element_type=E.NODE, name="ledger", now=FIXED_NOW)
+    baseline_store.graph.elements[inside.id] = replace(inside, package_id=FINANCE)
+    stored = await baseline_service.create(name="Finance v1", package_id=FINANCE)
+    return stored.id, frozenset({inside.id})
+
+
+@pytest.fixture
+def lookups() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def frozen_service(baseline_store: InMemoryBaselines, lookups: list[str]) -> BaselineService:
+    """The same store, behind a `FreezesLookup` that says Finance is published."""
+
+    async def freezes() -> dict[UUID, FrozenBy]:
+        lookups.append("freezes")
+        return {FINANCE: FROZEN}
+
+    return BaselineService(baseline_store, freezes=freezes, clock=lambda: FIXED_NOW)
+
+
+class TestASubtreeBaselineIsComparedInItsScope:
+    async def test_diff_against_the_model_reads_the_scope_and_what_the_baseline_knows(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, known_ids = await a_scoped_baseline(baseline_service, baseline_store)
+
+        assert (await baseline_service.diff(scoped_id)).is_empty
+        assert baseline_store.current_calls[-1] == (FINANCE, known_ids)
+
+    async def test_two_baselines_of_different_scopes_are_not_compared(
         self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
     ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
         ordinary = await baseline_service.create(name="whole")
-        scoped = await self.scoped(baseline_service, baseline_store)
 
         with pytest.raises(BaselineScopedError):
-            await baseline_service.diff(scoped)
+            await baseline_service.diff(ordinary.id, against=scoped_id)
         with pytest.raises(BaselineScopedError):
-            await baseline_service.diff(ordinary.id, against=scoped)
+            await baseline_service.diff(scoped_id, against=ordinary.id)
+
+    async def test_a_scoped_baseline_restores_as_a_dry_run_by_default(
+        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        outcome = await baseline_service.restore(scoped_id)
+
+        assert outcome.applied is False and outcome.digest
+        assert outcome.plan.frozen_by is None and not outcome.plan.is_blocked
+
+    async def test_it_deletes_what_appeared_inside_and_nothing_outside(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        inside = Element.create(element_type=E.NODE, name="new inside", now=FIXED_NOW)
+        outside = Element.create(element_type=E.NODE, name="new at the root", now=FIXED_NOW)
+        baseline_store.graph.elements[inside.id] = replace(inside, package_id=FINANCE)
+        baseline_store.graph.elements[outside.id] = outside
+
+        outcome = await apply(baseline_service, scoped_id)
+
+        assert [e.id for e in outcome.plan.elements_to_delete] == [inside.id]
+        assert outside.id in baseline_store.graph.elements
+        assert inside.id not in baseline_store.graph.elements
+
+    async def test_the_dry_run_is_logged_with_ids_and_counts_never_names(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        inside = Element.create(element_type=E.NODE, name="secret name", now=FIXED_NOW)
+        baseline_store.graph.elements[inside.id] = replace(inside, package_id=FINANCE)
+
+        with caplog.at_level(logging.INFO):
+            await baseline_service.restore(scoped_id)
+
+        (line,) = [
+            r for r in caplog.records if getattr(r, "action", "") == "baseline_restore_preview"
+        ]
+        assert (line.baseline_id, line.elements_to_delete) == (str(scoped_id), 1)  # type: ignore[attr-defined]
+        assert line.is_blocked is False  # type: ignore[attr-defined]
+        assert "secret name" not in caplog.text
+
+    async def test_an_element_older_than_the_capture_moved_in_since_is_kept(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        crm = Element.create(element_type=E.NODE, name="CRM", now=FIXED_NOW - timedelta(days=600))
+        baseline_store.graph.elements[crm.id] = replace(crm, package_id=FINANCE)  # moved in
+
+        outcome = await apply(baseline_service, scoped_id)
+
+        assert outcome.plan.elements_to_delete == ()
+        assert [e.id for e in outcome.plan.kept_moved_in] == [crm.id]
+        assert crm.id in baseline_store.graph.elements
+
+    async def test_a_protected_element_outside_blocks_a_deletion_that_cascades_to_it(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        inside = replace(
+            Element.create(element_type=E.NODE, name="new inside", now=FIXED_NOW),
+            package_id=FINANCE,
+        )
+        outside = Element.create(element_type=E.NODE, name="approved outside", now=FIXED_NOW)
+        link = Relationship.between(R.ASSOCIATION, inside, outside, now=FIXED_NOW)
+        baseline_store.graph.elements.update({inside.id: inside, outside.id: outside})
+        baseline_store.graph.relationships[link.id] = link
+        baseline_store.protected.add(outside.id)
+
+        outcome = await baseline_service.restore(scoped_id)
+
+        assert [e.id for e in outcome.plan.blocked] == [outside.id]
+        assert outcome.plan.cascaded_relationships == 1
+
+    async def test_a_baseline_whose_package_is_gone_is_diffed_but_not_restored(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        assert baseline_store.packages is not None
+        del baseline_store.packages.packages[FINANCE]
+
+        await baseline_service.diff(scoped_id)
         with pytest.raises(BaselineScopedError):
-            await baseline_service.restore(scoped)
-        with pytest.raises(BaselineScopedError):
-            await baseline_service.restore(scoped, dry_run=False, expected_digest="x")
-        assert (await baseline_service.get(scoped)).scope_path == "Finance"
-        assert len(await baseline_service.list_baselines()) == 2
-        assert (await baseline_service.diff(ordinary.id)).is_empty
+            await baseline_service.restore(scoped_id)
+
+
+class TestAFrozenSubtreeIsPredictedNotOnlyRefused:
+    async def test_the_dry_run_says_the_plan_is_blocked_and_by_what(
+        self, frozen_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(frozen_service, baseline_store)
+        outcome = await frozen_service.restore(scoped_id)
+
+        assert outcome.plan.frozen_by == FROZEN
+        assert outcome.plan.is_blocked and outcome.applied is False
+
+    async def test_applying_is_refused_before_the_repository_is_asked_to_write(
+        self,
+        frozen_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(frozen_service, baseline_store)
+        digest = (await frozen_service.restore(scoped_id)).digest
+        audit_log.events.clear()
+
+        with pytest.raises(PackageFrozenError) as raised:
+            await frozen_service.restore(scoped_id, dry_run=False, expected_digest=digest)
+
+        assert baseline_store.applied == []
+        assert audit_log.events == []
+        assert "Finance" not in str(raised.value) and "v1.2.0" in str(raised.value)
+        assert str(FINANCE) in str(raised.value)
+
+    async def test_the_freeze_is_checked_before_the_digest(
+        self, frozen_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(frozen_service, baseline_store)
+        with pytest.raises(PackageFrozenError):
+            await frozen_service.restore(scoped_id, dry_run=False, expected_digest="stale")
+        assert baseline_store.applied == []
+
+    async def test_the_freeze_is_read_again_when_applying(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        answers = iter([{}, {FINANCE: FROZEN}])  # published between the two calls
+        service = BaselineService(baseline_store, freezes=lambda: _async(next(answers)))
+        scoped_id, _ = await a_scoped_baseline(service, baseline_store)
+
+        digest = (await service.restore(scoped_id)).digest
+        with pytest.raises(PackageFrozenError):
+            await service.restore(scoped_id, dry_run=False, expected_digest=digest)
+        assert baseline_store.applied == []
+
+    async def test_a_whole_model_baseline_never_asks_for_a_freeze(
+        self, frozen_service: BaselineService, lookups: list[str]
+    ) -> None:
+        ordinary = await frozen_service.create(name="whole")
+
+        assert (await frozen_service.restore(ordinary.id)).plan.frozen_by is None
+        assert lookups == []
+
+
+BUDGET = UUID("00000000-0000-0000-0000-00000000b0d6")
+OTHER = UUID("00000000-0000-0000-0000-0000000007e4")
+
+
+class TestEveryPackageThePlanWritesIsChecked:
+    """Not only the scope: a nested publication, or a frozen package outside it."""
+
+    async def test_a_published_child_inside_the_subtree_blocks_the_plan_that_writes_it(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        child = FrozenBy(BUDGET, "Finance / Budget", "v1.0.0")
+        service = BaselineService(
+            baseline_store, freezes=lambda: _async({BUDGET: child}), clock=lambda: FIXED_NOW
+        )
+        assert baseline_store.packages is not None
+        finance = replace(Package.create(name="Finance", now=FIXED_NOW), id=FINANCE)
+        budget = replace(Package.create(name="Budget", now=FIXED_NOW), id=BUDGET, parent_id=FINANCE)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+        await baseline_store.packages.add(budget, audit=lambda p: ())
+        planned = replace(
+            Element.create(element_type=E.NODE, name="plan", now=FIXED_NOW), package_id=BUDGET
+        )
+        baseline_store.graph.elements[planned.id] = planned
+        scoped_id = (await service.create(name="Finance v1", package_id=FINANCE)).id
+        baseline_store.graph.elements[planned.id] = replace(planned, name="renamed")
+
+        outcome = await service.restore(scoped_id)
+        assert outcome.plan.frozen_by == child and outcome.plan.is_blocked
+        with pytest.raises(PackageFrozenError):
+            await service.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
+        assert baseline_store.applied == []
+
+    async def test_a_cascade_to_an_element_in_a_frozen_package_outside_is_predicted(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        other = FrozenBy(OTHER, "Other", "v2.0.0")
+        service = BaselineService(
+            baseline_store, freezes=lambda: _async({OTHER: other}), clock=lambda: FIXED_NOW
+        )
+        scoped_id, _ = await a_scoped_baseline(service, baseline_store)
+        assert baseline_store.packages is not None
+        await baseline_store.packages.add(
+            replace(Package.create(name="Other", now=FIXED_NOW), id=OTHER), audit=lambda p: ()
+        )
+        inside = replace(
+            Element.create(element_type=E.NODE, name="new inside", now=FIXED_NOW),
+            package_id=FINANCE,
+        )
+        outside = replace(
+            Element.create(element_type=E.NODE, name="frozen outside", now=FIXED_NOW),
+            package_id=OTHER,
+        )
+        crossing = Relationship.between(R.ASSOCIATION, inside, outside, now=FIXED_NOW)
+        baseline_store.graph.elements.update({inside.id: inside, outside.id: outside})
+        baseline_store.graph.relationships[crossing.id] = crossing
+
+        outcome = await service.restore(scoped_id)
+
+        assert outcome.plan.frozen_by == other and outcome.plan.is_blocked
+
+    async def test_an_untouched_frozen_package_does_not_block(
+        self, baseline_store: InMemoryBaselines
+    ) -> None:
+        service = BaselineService(
+            baseline_store,
+            freezes=lambda: _async({OTHER: FrozenBy(OTHER, "Other", "v2.0.0")}),
+            clock=lambda: FIXED_NOW,
+        )
+        scoped_id, _ = await a_scoped_baseline(service, baseline_store)
+
+        assert (await service.restore(scoped_id)).plan.frozen_by is None

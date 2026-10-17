@@ -90,6 +90,7 @@ from ea.api.schemas import (
     PackageName,
     PackageRead,
     PackageTarget,
+    PackageVersionRead,
     PassageRead,
     PlateauGapRead,
     PlateauRead,
@@ -97,10 +98,14 @@ from ea.api.schemas import (
     PropertyKey,
     PropertyTestSchema,
     PropertyValue,
+    PublicationAdr,
+    PublicationNotes,
+    PublishResult,
     QualityReportRead,
     RelationshipMatrixRead,
     RelationshipRead,
     RelationTestSchema,
+    ReopeningReason,
     ReportTemplateId,
     ReportTemplateRead,
     RequestIdFilter,
@@ -115,6 +120,7 @@ from ea.api.schemas import (
 )
 from ea.api.schemas import BaselineDescription as BaselineDescriptionBounds
 from ea.api.schemas import BaselineName as BaselineNameBounds
+from ea.api.schemas import BaselineScope as BaselineScopeBounds
 from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
 from ea.api.schemas import ExternalReferenceText as ExternalReferenceBounds
@@ -154,6 +160,7 @@ from ea.domain.external import ExternalKind, ExternalView, IssuePlan
 from ea.domain.files import DEFAULT_CONTENT_TYPE, FileDetails, guess_content_type
 from ea.domain.generated_views import PackageSource, QuerySource
 from ea.domain.ipam import DEFAULT_VRF
+from ea.domain.package_versions import Bump
 from ea.domain.packages import MAX_MOVE_BATCH, UNSET
 from ea.domain.ports import ElementFilter
 from ea.domain.quality import RuleCode
@@ -261,6 +268,14 @@ id; `update_package` (`parent_id`), `delete_package` (`move_contents_to`) and
 `move_elements` (`package_id`) also take the word `root` for the top of the
 tree. `create_package` leaves `parent_id` out for the top, and
 `search_elements` takes `root_only` for the elements filed nowhere.
+
+A package can be *published* under a version (`vX.Y.Z`), which freezes it and
+everything below it. `list_package_versions` shows the history; `publish_package`
+is a `dry_run` unless told otherwise — call it once as is, show the person the
+version and the counts, and only then call it again with `dry_run=false`;
+`reopen_package` needs a reason and the person's confirmation. Both need the
+`ea-approver` role. An element or diagram that carries `frozen_by` cannot be
+written: ask for the package to be reopened rather than retrying.
 
 To find elements, prefer `search_elements` to paging through `list_elements`:
 it combines types, layers, a name fragment, a package (with or without its
@@ -891,14 +906,16 @@ def build_mcp_server(
                 description=description,
                 documentation=documentation,
                 properties=properties,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
     @speaking_plainly
     async def get_element(element_id: ElementId) -> ElementRead:
         """Read one element in full, by id."""
-        return ElementRead.of(await get_service().get_element(element_id))
+        element = await get_service().get_element(element_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -935,8 +952,12 @@ def build_mcp_server(
             as_of=as_of,
         )
         service = get_service()
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            items=[
+                ElementRead.of(element, freezes=freezes)
+                for element in await service.list_elements(criteria)
+            ],
             total=await service.count_elements(criteria),
             limit=limit,
             offset=offset,
@@ -964,7 +985,8 @@ def build_mcp_server(
                 description=description,
                 documentation=documentation,
                 properties=properties,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=REMOVES)
@@ -1007,7 +1029,8 @@ def build_mcp_server(
         return ElementRead.of(
             await get_service().transition_element(
                 element_id, transition, expected_revision=expected_revision
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     # --- Relationships ----------------------------------------------------
@@ -1110,7 +1133,8 @@ def build_mcp_server(
         return GraphRead.of(
             await get_service().relations_of(
                 element_id, relationship_types=tuple(relationship_types or ())
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=REMOVES)
@@ -1141,7 +1165,8 @@ def build_mcp_server(
                 depth=depth,
                 relationship_types=tuple(relationship_types or ()),
                 as_of=as_of,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
@@ -1166,7 +1191,8 @@ def build_mcp_server(
                 depth=depth,
                 relationship_types=tuple(relationship_types or ()),
                 as_of=as_of,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     # --- Time (docs/adr/0061) ---------------------------------------------
@@ -1201,7 +1227,8 @@ def build_mcp_server(
         source = (
             QuerySource(query_id) if query_id is not None else PackageSource(package_id, recursive)  # type: ignore[arg-type]
         )
-        return DiagramRead.of(await get_diagrams().generate(name=name, source=source))
+        detail = await get_diagrams().generate(name=name, source=source)
+        return DiagramRead.of(detail, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -1222,7 +1249,8 @@ def build_mcp_server(
         Read it to answer "what does this schema show". There is no tool that
         moves a box: a layout is a person's gesture, not data to compute.
         """
-        return DiagramRead.of(await get_diagrams().open(diagram_id))
+        detail = await get_diagrams().open(diagram_id)
+        return DiagramRead.of(detail, freezes=await get_packages().freezes())
 
     # --- Profiles and stereotypes -----------------------------------------------
 
@@ -1249,13 +1277,15 @@ def build_mcp_server(
         until an approver reopens it. The property *values* stay the element's
         own: write them with `update_element`.
         """
-        return ElementRead.of(await get_profiles().apply_stereotype(element_id, stereotype_id))
+        element = await get_profiles().apply_stereotype(element_id, stereotype_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     @server.tool(annotations=EDITS)
     @speaking_plainly
     async def remove_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
         """Take a stereotype's label off an element. Its properties are left untouched."""
-        return ElementRead.of(await get_profiles().remove_stereotype(element_id, stereotype_id))
+        element = await get_profiles().remove_stereotype(element_id, stereotype_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     # --- Diagram templates ----------------------------------------------------
 
@@ -1304,7 +1334,8 @@ def build_mcp_server(
                 name=name,
                 bindings=[binding.placed() for binding in bindings],
                 create_relationships=create_relationships,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
@@ -1330,7 +1361,8 @@ def build_mcp_server(
         `common`, plus the `gaps` already drawn between the two. It only reads; to draw the
         gap element itself use `create_gap`.
         """
-        return PlateauGapRead.of(await get_timeline().plateau_gap(a, b))
+        gap = await get_timeline().plateau_gap(a, b)
+        return PlateauGapRead.of(gap, freezes=await get_packages().freezes())
 
     @server.tool(annotations=ADDS)
     @speaking_plainly
@@ -1350,7 +1382,8 @@ def build_mcp_server(
             already = False
         except DuplicateGapError:
             already = True
-        comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
+        gap = await timeline.plateau_gap(a, b)
+        comparison = PlateauGapRead.of(gap, freezes=await get_packages().freezes())
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
 
     # --- External references (docs/adr/0073) --------------------------------
@@ -1668,7 +1701,8 @@ def build_mcp_server(
         sub-graph around it, so "10.0.1.12 is srv-app-01, and Billing runs on
         it" can be written without looking anything else up.
         """
-        return AddressLocationRead.of(await get_ipam().locate(address, vrf=vrf))
+        location = await get_ipam().locate(address, vrf=vrf)
+        return AddressLocationRead.of(location, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -1909,6 +1943,53 @@ def build_mcp_server(
         moved = await get_packages().move_elements(element_ids, package_target(package_id))
         return f"{moved} element(s) filed in {package_id}"
 
+    @server.tool(annotations=READS)
+    @speaking_plainly
+    async def list_package_versions(package_id: PackageId) -> list[PackageVersionRead]:
+        """Every version a package was published under, the latest first: who published it,
+        when, the notes, the ADR of a major, and who reopened it and why. A package with a
+        version in force freezes everything below it.
+        """
+        return [PackageVersionRead.of(v) for v in await get_packages().versions(package_id)]
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def publish_package(
+        package_id: PackageId,
+        bump: Bump,
+        notes: PublicationNotes,
+        adr: PublicationAdr | None = None,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description=(
+                    "True previews the version and what it would freeze, and writes nothing. "
+                    "Set it to false to publish."
+                )
+            ),
+        ] = True,
+    ) -> PublishResult:
+        """Publish a version of a package (vX.Y.Z) and freeze it and everything below it: no
+        element, link, document, diagram or sub-package there can be changed until an approver
+        reopens it. Needs the ea-approver role. A dry run unless `dry_run` is false: call it
+        once as is, show the person the version and the counts, and only then call it again
+        with `dry_run=false`. Notes are required; a major names its ADR.
+        """
+        return PublishResult.of(
+            await get_packages().publish(
+                package_id, bump=bump, notes=notes, adr=adr, dry_run=dry_run
+            )
+        )
+
+    @server.tool(annotations=EDITS)
+    @speaking_plainly
+    async def reopen_package(package_id: PackageId, reason: ReopeningReason) -> PackageVersionRead:
+        """Close the version in force so the subtree can be changed again. Needs the ea-approver
+        role and a reason, which is kept in the history. Confirm with the person you are
+        working for before calling it.
+        """
+        return PackageVersionRead.of(await get_packages().reopen(package_id, reason=reason))
+
     # --- Structured search and saved queries ------------------------------
 
     @server.tool(annotations=READS)
@@ -1955,8 +2036,12 @@ def build_mcp_server(
         ).to_domain()
         criteria = ElementFilter.from_query(query)
         service = get_service()
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            items=[
+                ElementRead.of(element, freezes=freezes)
+                for element in await service.list_elements(criteria)
+            ],
             total=await service.count_elements(criteria),
             limit=query.limit,
             offset=query.offset,
@@ -2021,8 +2106,9 @@ def build_mcp_server(
     ) -> ElementPage:
         """Run a saved query, one page at a time."""
         result = await get_queries().run(query_id, limit=limit, offset=offset)
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in result.elements],
+            items=[ElementRead.of(element, freezes=freezes) for element in result.elements],
             total=result.total,
             limit=limit,
             offset=offset,
@@ -2389,14 +2475,21 @@ def build_mcp_server(
     @server.tool(annotations=ADDS)
     @speaking_plainly
     async def create_baseline(
-        name: BaselineNameBounds, description: BaselineDescriptionBounds = ""
+        name: BaselineNameBounds,
+        description: BaselineDescriptionBounds = "",
+        package_id: BaselineScopeBounds | None = None,
     ) -> BaselineRead:
         """Freeze a copy of the whole model under a name (documents are not part of it).
+
+        With `package_id`, copies only that package and everything below it, which is what
+        a published version takes.
 
         Cheap and non-destructive: do it before a large or risky change, so there
         is something to compare against and to go back to.
         """
-        return BaselineRead.of(await get_baselines().create(name=name, description=description))
+        return BaselineRead.of(
+            await get_baselines().create(name=name, description=description, package_id=package_id)
+        )
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -2409,7 +2502,11 @@ def build_mcp_server(
             ),
         ] = None,
     ) -> BaselineDiffRead:
-        """What was added, removed or modified between a baseline and another, or the live model."""
+        """What was added, removed or modified between a baseline and another, or the live model.
+
+        A baseline of one package (`scope_path`) is compared with that subtree as it is now,
+        and only with another baseline of the same package.
+        """
         return BaselineDiffRead.of(await get_baselines().diff(baseline_id, against_of(against)))
 
     @server.tool(annotations=REMOVES)
@@ -2440,6 +2537,14 @@ def build_mcp_server(
         person you work for; only after they agree call again with
         `dry_run=false` and that `digest` as `expected_digest`. A plan that
         touches a locked element is refused; unlock it first. All or nothing.
+
+        A baseline of one package restores that subtree only and deletes no
+        element outside it; a link to the outside, or a box on another diagram,
+        goes with an element it deletes (`relationships_cascaded`, `boxes_lost`).
+        An element moved into the subtree since the capture, older than it, is
+        kept, never deleted (`kept_moved_in`). If a package the plan writes is
+        published, the dry run carries `frozen_by` (`is_blocked`) and applying is
+        refused: it must be reopened first, by an approver.
         """
         return RestoreRead.of(
             await get_baselines().restore(

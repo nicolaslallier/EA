@@ -20,6 +20,7 @@ from tests.conftest import (
     StaticVerifier,
     a_reader,
     an_editor,
+    an_empty_package_tree,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -46,6 +47,7 @@ async def client(
         external_systems={"main": system},
         external_inactive={"offline": "jira_issue"},  # type: ignore[arg-type]
         verifier=StaticVerifier({EDITOR: an_editor(), READER: a_reader()}),
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -267,6 +269,7 @@ async def test_a_read_only_target_refuses_an_issue_even_with_dry_run_false(
         external=external_references,
         external_systems={"main": readonly},
         verifier=StaticVerifier({EDITOR: an_editor()}),
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

@@ -13,17 +13,19 @@ from ea.domain.errors import (
     CyclicPackageError,
     DuplicatePackageError,
     ElementNotFoundError,
+    NotAuthenticatedError,
     NotAuthorisedError,
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageTooDeepError,
     TooManyPackagesError,
 )
+from ea.domain.package_versions import Bump, FrozenBy
 from ea.domain.packages import MAX_MOVE_BATCH, MAX_PACKAGE_DEPTH
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.packages import PackageService
-from tests.conftest import FIXED_NOW, InMemoryDiagrams, a_reader
+from tests.conftest import FIXED_NOW, InMemoryDiagrams, InMemoryPackages, a_reader, an_approver
 
 pytestmark = pytest.mark.asyncio
 
@@ -358,3 +360,42 @@ class TestTheAuditTrail:
         ]
         moved = next(r for r in caplog.records if getattr(r, "action", "") == "elements_moved")
         assert moved.count == 1  # type: ignore[attr-defined]
+
+
+class TestTheFreezesOfTheTree:
+    async def test_nothing_published_costs_one_query_and_freezes_nothing(
+        self, package_service: PackageService, packages: InMemoryPackages
+    ) -> None:
+        await package_service.create(name="Finance")
+        packages.calls.clear()
+        assert await package_service.freezes() == {}
+        assert packages.calls.count("list_all") == 0  # the tree is not read
+
+    async def test_a_publication_freezes_the_package_and_everything_below(
+        self, package_service: PackageService
+    ) -> None:
+        finance = (await package_service.create(name="Finance")).package
+        budget = (await package_service.create(name="Budget", parent_id=finance.id)).package
+        achats = (await package_service.create(name="Achats")).package
+        with acting_as(an_approver()):
+            await package_service.publish(finance.id, bump=Bump.MINOR, notes="n", dry_run=False)
+        freezes = await package_service.freezes()
+        assert freezes[budget.id] == FrozenBy(finance.id, "Finance", "v1.0.0")
+        assert freezes[finance.id].version == "v1.0.0"
+        assert achats.id not in freezes
+
+    async def test_frozen_by_reads_the_same_map(self, package_service: PackageService) -> None:
+        finance = (await package_service.create(name="Finance")).package
+        budget = (await package_service.create(name="Budget", parent_id=finance.id)).package
+        with acting_as(an_approver()):
+            await package_service.publish(finance.id, bump=Bump.MINOR, notes="n", dry_run=False)
+        assert (
+            await package_service.frozen_by(budget.id)
+            == (await package_service.freezes())[budget.id]
+        )
+
+    async def test_nobody_calling_is_refused(
+        self, package_service: PackageService, nobody_calling: None
+    ) -> None:
+        with pytest.raises(NotAuthenticatedError):
+            await package_service.freezes()

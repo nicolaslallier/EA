@@ -45,11 +45,15 @@ async def list_baselines(service: Baselines) -> list[BaselineRead]:
     "/baselines",
     response_model=BaselineRead,
     status_code=status.HTTP_201_CREATED,
-    responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
+    responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}, **NOT_FOUND},
 )
 async def create_baseline(payload: BaselineCreate, service: Baselines) -> BaselineRead:
-    """Freeze a copy of the whole model under a name."""
-    return BaselineRead.of(await service.create(name=payload.name, description=payload.description))
+    """Freeze a copy of the whole model, or of one package's subtree, under a name."""
+    return BaselineRead.of(
+        await service.create(
+            name=payload.name, description=payload.description, package_id=payload.package_id
+        )
+    )
 
 
 @router.get("/baselines/{baseline_id}", response_model=BaselineRead, responses=NOT_FOUND)
@@ -65,13 +69,22 @@ async def delete_baseline(baseline_id: UUID, service: Baselines) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/baselines/{baseline_id}/diff", response_model=BaselineDiffRead, responses=NOT_FOUND)
+@router.get(
+    "/baselines/{baseline_id}/diff",
+    response_model=BaselineDiffRead,
+    responses={**NOT_FOUND, status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
+)
 async def read_baseline_diff(
     baseline_id: UUID,
     service: Baselines,
     against: Annotated[Against | None, Query()] = None,
 ) -> BaselineDiffRead:
-    """What separates a baseline from another one, or from the model as it is now."""
+    """What separates a baseline from another one, or from the model as it is now.
+
+    A baseline of one package's subtree is compared with that subtree as it is now, plus
+    the elements it holds wherever they went (one moved out is modified, not removed). Two
+    baselines compare only when they have the same scope (`409 baseline_scoped`).
+    """
     return BaselineDiffRead.of(await service.diff(baseline_id, against_of(against)))
 
 
@@ -92,6 +105,14 @@ async def restore_baseline(
     Applying needs `dry_run=false` **and** the `digest` of the dry run you read,
     as `expected_digest`. One transaction: a conflict (`restore_conflict`, read
     the plan again) or a locked element (`restore_blocked`) changes nothing.
+
+    A baseline of one package's subtree restores within it and deletes no element outside
+    it; a link to the outside, or a box on another diagram, goes with an element it deletes
+    (`relationships_cascaded`, `boxes_lost`). An element moved into the subtree since the
+    capture, older than it, is kept (`plan.kept_moved_in`). Its package must still exist
+    (`409 baseline_scoped`). When a package the plan writes is under a publication in force
+    the dry run says so (`plan.frozen_by`, `plan.is_blocked`) and applying is
+    `409 package_frozen`: reopen first.
     """
     return RestoreRead.of(
         await service.restore(

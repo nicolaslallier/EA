@@ -32,6 +32,7 @@ from tests.conftest import (
     StaticVerifier,
     a_reader,
     an_editor,
+    an_empty_package_tree,
 )
 
 #: The transport turns on DNS-rebinding protection when it is served on a
@@ -56,7 +57,9 @@ def an_app(service: ArchitectureService, **overrides: Any) -> Any:
         "auth_enabled": False,
         **overrides,
     }
-    return create_app(Settings(**settings), architecture_service=service)
+    return create_app(
+        Settings(**settings), architecture_service=service, packages=an_empty_package_tree()
+    )
 
 
 def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocuments) -> Any:
@@ -72,6 +75,7 @@ def an_app_with_documents(service: ArchitectureService, documents: InMemoryDocum
         architecture_service=service,
         documents=documents,  # type: ignore[arg-type]
         indexer=DocumentIndexer(FakeEmbedder()),
+        packages=an_empty_package_tree(),
     )
 
 
@@ -149,6 +153,7 @@ class TestTheEndpoint:
             Settings(debug=True, postgres_enabled=False, auth_enabled=False),
             architecture_service=service,
             baselines=baseline_store,
+            packages=an_empty_package_tree(),
         )
         async with agent_over(app) as session:
             made = await session.call_tool("create_baseline", {"name": "v1"})
@@ -224,6 +229,7 @@ class TestTheDocumentTools:
         app = create_app(
             Settings(debug=True, postgres_enabled=False, auth_enabled=False),
             architecture_service=service,
+            packages=an_empty_package_tree(),
         )
         async with agent_over(app) as session:
             names = {tool.name for tool in (await session.list_tools()).tools}
@@ -420,7 +426,10 @@ def an_app_with_auth(service: ArchitectureService, **overrides: Any) -> Any:
         **overrides,
     }
     return create_app(
-        Settings(**settings), architecture_service=service, verifier=StaticVerifier(TOKENS)
+        Settings(**settings),
+        architecture_service=service,
+        verifier=StaticVerifier(TOKENS),
+        packages=an_empty_package_tree(),
     )
 
 

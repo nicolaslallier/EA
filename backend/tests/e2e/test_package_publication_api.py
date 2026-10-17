@@ -144,3 +144,61 @@ async def test_who_may_publish(service: ArchitectureService, packages: InMemoryP
             f"/packages/{package_id}/publish", json=body, headers={"Authorization": "Bearer ap"}
         )
         assert allowed.status_code == 200, allowed.text
+
+
+@pytest_asyncio.fixture
+async def published_finance(client: httpx.AsyncClient) -> dict[str, str]:
+    """Finance (v1.0.0 in force) > Budget, holding one element and one diagram."""
+    finance = await a_package(client)
+    budget = (
+        await client.post("/packages", json={"name": "Budget", "parent_id": finance["id"]})
+    ).json()
+    element = await client.post(
+        "/elements", json={"element_type": "application_component", "name": "Billing"}
+    )
+    assert element.status_code == 201, element.text
+    moved = await client.post(
+        "/elements/move", json={"element_ids": [element.json()["id"]], "package_id": budget["id"]}
+    )
+    assert moved.status_code == 204, moved.text
+    diagram = await client.post("/diagrams", json={"name": "Vue", "package_id": budget["id"]})
+    assert diagram.status_code == 201, diagram.text
+    published = await client.post(
+        f"/packages/{finance['id']}/publish",
+        json={"bump": "minor", "notes": "n", "dry_run": False},
+    )
+    assert published.status_code == 200, published.text
+    return {
+        "finance": finance["id"],
+        "budget": budget["id"],
+        "inside": element.json()["id"],
+        "diagram": diagram.json()["id"],
+    }
+
+
+async def test_an_element_below_a_published_package_says_who_froze_it(
+    client: httpx.AsyncClient, published_finance: dict[str, str]
+) -> None:
+    page = (await client.get("/elements", params={"package": published_finance["budget"]})).json()
+    assert page["items"]
+    assert {item["frozen_by"]["version"] for item in page["items"]} == {"v1.0.0"}
+    one = (await client.get(f"/elements/{published_finance['inside']}")).json()
+    assert one["frozen_by"]["path"] == "Finance" and one["allowed_transitions"] == []
+
+
+async def test_a_diagram_below_a_published_package_says_so(
+    client: httpx.AsyncClient, published_finance: dict[str, str]
+) -> None:
+    read = (await client.get(f"/diagrams/{published_finance['diagram']}")).json()
+    assert read["frozen_by"]["version"] == "v1.0.0"
+
+
+async def test_reopening_clears_frozen_by_on_the_next_read(
+    client: httpx.AsyncClient, published_finance: dict[str, str]
+) -> None:
+    reopened = await client.post(
+        f"/packages/{published_finance['finance']}/reopen", json={"reason": "correction"}
+    )
+    assert reopened.status_code == 200, reopened.text
+    read = (await client.get(f"/elements/{published_finance['inside']}")).json()
+    assert read["frozen_by"] is None

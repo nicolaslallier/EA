@@ -25,6 +25,7 @@ from ea.domain.audit import AUDIT_LISTED_IDS, FieldChange, diff_fields
 from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
+from ea.domain.package_versions import Freezes, FrozenBy
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
 MAX_BASELINE_DESCRIPTION_LENGTH: Final = 2000
@@ -126,6 +127,7 @@ def baseline_view(baseline: Baseline) -> dict[str, Any]:
         "elements": baseline.element_count,
         "relationships": baseline.relationship_count,
         "boxes": baseline.box_count,
+        "scope_package_id": str(baseline.scope_package_id) if baseline.scope_package_id else None,
         "scope_path": baseline.scope_path,
     }
 
@@ -150,6 +152,30 @@ class ModelSnapshot:
     relationships: tuple[Relationship, ...]
     boxes: tuple[BoxSnapshot, ...] = ()
     package_paths: Mapping[UUID, str] = field(default_factory=dict)
+
+
+def restricted_to(
+    current: ModelSnapshot,
+    *,
+    packages: frozenset[UUID],
+    diagrams: frozenset[UUID],
+    known: frozenset[UUID],
+) -> ModelSnapshot:
+    """The part of `current` a subtree baseline is compared with (docs/adr/0074).
+
+    The elements filed in `packages` *or* that the baseline knows (`known`: one moved out
+    since is modified, not removed), the links with both ends kept, the boxes of `diagrams`.
+    """
+    elements = tuple(e for e in current.elements if e.package_id in packages or e.id in known)
+    ids = {e.id for e in elements}
+    return replace(
+        current,
+        elements=elements,
+        relationships=tuple(
+            r for r in current.relationships if r.source_id in ids and r.target_id in ids
+        ),
+        boxes=tuple(b for b in current.boxes if b.diagram_id in diagrams),
+    )
 
 
 def element_content(element: Element) -> dict[str, Any]:
@@ -365,10 +391,20 @@ class RestorePlan:
     boxes_lost: int = 0
     warnings: tuple[str, ...] = ()
     blocked: tuple[Element, ...] = ()
+    #: For a scoped baseline: the elements absent from it, filed in its subtree now, that
+    #: existed before it was captured — moved in since, not created since. Never deleted.
+    kept_moved_in: tuple[Element, ...] = ()
+    #: Every package a write of this plan lands in: where an element is and where it goes
+    #: back, both ends of a link it writes or cascades away (the repository adds the
+    #: packages of the diagrams it writes). What the freeze prediction is checked against.
+    packages_written: frozenset[UUID] = frozenset()
+    #: The publication that freezes a package this plan writes, for a scoped baseline. Left
+    #: out of `plan_digest`: a frozen plan is never applied, and the freeze is checked first.
+    frozen_by: FrozenBy | None = None
 
     @property
     def is_blocked(self) -> bool:
-        return bool(self.blocked)
+        return bool(self.blocked) or self.frozen_by is not None
 
     @property
     def is_noop(self) -> bool:
@@ -431,8 +467,18 @@ def plan_digest(plan: RestorePlan) -> str:
         "boxes_lost": plan.boxes_lost,
         "warnings": list(plan.warnings),
         "blocked": [str(e.id) for e in plan.blocked],
+        "kept_moved_in": [str(e.id) for e in plan.kept_moved_in],
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+def freeze_of(scope: UUID, plan: RestorePlan, freezes: Freezes) -> FrozenBy | None:
+    """The publication that blocks restoring a subtree: its own, else the first (by path,
+    then id) that freezes a package the plan writes — a nested one, or one outside."""
+    if scope in freezes:
+        return freezes[scope]
+    hits = [freezes[p] for p in plan.packages_written if p in freezes]
+    return min(hits, key=lambda f: (f.path, str(f.package_id)), default=None)
 
 
 def _element_order(element: Element) -> tuple[str, str]:
@@ -533,6 +579,8 @@ def plan_restore(
     packages_present: frozenset[UUID],
     protected_ids: frozenset[UUID] = frozenset(),
     diagrams_present: frozenset[UUID] = frozenset(),
+    deletable: frozenset[UUID] | None = None,
+    captured_at: datetime | None = None,
 ) -> RestorePlan:
     """Make `current` equal `snapshot` — over the elements the snapshot knows.
 
@@ -548,6 +596,14 @@ def plan_restore(
     replace or cascade away a link it holds; or write an element that would take
     its (type, name), its address or its prefix. The caller re-reads the set
     inside the transaction that applies the plan.
+
+    `deletable`, for a subtree baseline, is what the plan may delete: the elements filed
+    in that subtree now. Everything else stays, while the plan still sees the whole model,
+    so a deletion cascading to a protected element outside is blocked like any other.
+    `captured_at`, the instant that baseline was taken, spares an element created before it:
+    absent from a subtree's copy, it was moved in since, not created since — deleting it
+    would take an element (its documents, links and boxes) the baseline never meant to
+    undo. It is kept and listed in `kept_moved_in` (docs/adr/0077).
 
     `packages_present` is the set of packages that exist *now*: an element whose
     package is gone is restored at the root, and the plan says so — a package is
@@ -587,11 +643,15 @@ def plan_restore(
             )
             updates.append(ElementUpdate(now_held, restored, changes))
     updates.sort(key=lambda u: _element_order(u.restored))
-    to_delete = (
-        ()
-        if keep_new
-        else tuple(sorted((cur_el[i] for i in cur_el.keys() - snap_el.keys()), key=_element_order))
-    )
+    new_ids = cur_el.keys() - snap_el.keys()
+    kept_moved_in: tuple[Element, ...] = ()
+    if deletable is not None:
+        new_ids &= deletable
+        if captured_at is not None and not keep_new:
+            older = {i for i in new_ids if cur_el[i].created_at < captured_at}
+            new_ids -= older
+            kept_moved_in = tuple(sorted((cur_el[i] for i in older), key=_element_order))
+    to_delete = () if keep_new else tuple(sorted((cur_el[i] for i in new_ids), key=_element_order))
     deleted_ids = {e.id for e in to_delete}
 
     snap_rel = {r.id: r for r in snapshot.relationships}
@@ -668,6 +728,11 @@ def plan_restore(
                 f"element {written.name!r}: its package {path!r} no longer exists, "
                 "it is restored at the root"
             )
+    if kept_moved_in:
+        warnings.append(
+            f"{len(kept_moved_in)} element(s) moved into the subtree since the capture are "
+            "kept: they existed before it, and a restore deletes only what was created since"
+        )
     if to_create:
         warnings.append(
             f"{len(to_create)} element(s) come back without their documents: "
@@ -697,6 +762,25 @@ def plan_restore(
             (cur_el[i] for i in touched if i in protected_ids and i in cur_el), key=_element_order
         )
     )
+    # What the writes reach: the elements written (updated, deleted, or `touch`ed as the end
+    # of a link that appears or goes), by where they are now and where they go back to.
+    reached = (
+        {u.current.id for u in updates}
+        | deleted_ids
+        | {
+            end
+            for link in (*links_to_delete, *links_to_create, *cascaded_links)
+            for end in (link.source_id, link.target_id)
+        }
+    )
+    packages_written = frozenset(
+        package
+        for package in (
+            *(cur_el[i].package_id for i in reached if i in cur_el),
+            *(e.package_id for e in to_write),
+        )
+        if package is not None
+    )
 
     return RestorePlan(
         elements_to_create=to_create,
@@ -711,4 +795,6 @@ def plan_restore(
         boxes_lost=boxes_lost,
         warnings=tuple(warnings),
         blocked=blocked,
+        kept_moved_in=kept_moved_in,
+        packages_written=packages_written,
     )

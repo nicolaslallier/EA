@@ -3,22 +3,30 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from ea.core.config import Settings
+from ea.domain.archimate import ElementType as E
+from ea.domain.model import Element
+from ea.domain.packages import Package
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
 from tests.conftest import (
+    FIXED_NOW,
     InMemoryAuditLog,
     InMemoryBaselines,
     StaticVerifier,
     a_reader,
+    an_approver,
     an_editor,
+    an_empty_package_tree,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -41,6 +49,7 @@ async def client(
         baselines=baseline_store,
         audit=audit_log,
         verifier=verifier,
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -291,3 +300,141 @@ class TestRestoring:
         assert (
             await client.post(f"/baselines/{STRANGER}/restore", json={}, headers=as_(EDITOR))
         ).status_code == 404
+
+
+class TestASubtreeBaseline:
+    async def test_post_baselines_takes_a_package_and_the_list_shows_the_scope(
+        self, client: httpx.AsyncClient, baseline_store: InMemoryBaselines
+    ) -> None:
+        assert baseline_store.packages is not None
+        finance = Package.create(name="Finance", now=FIXED_NOW)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+
+        made = await client.post(
+            "/baselines",
+            json={"name": "Finance", "package_id": str(finance.id)},
+            headers=as_(EDITOR),
+        )
+
+        assert made.status_code == 201 and made.json()["scope_path"] == "Finance"
+        listed = (await client.get("/baselines", headers=as_(EDITOR))).json()
+        assert {b["scope_package_id"] for b in listed} >= {str(finance.id)}
+
+    async def test_an_unknown_package_is_a_typed_404(self, client: httpx.AsyncClient) -> None:
+        answer = await client.post(
+            "/baselines", json={"name": "x", "package_id": str(uuid4())}, headers=as_(EDITOR)
+        )
+        assert (answer.status_code, answer.json()["error"]) == (404, "not_found")
+
+    async def test_a_whole_model_baseline_has_no_scope(self, client: httpx.AsyncClient) -> None:
+        made = await capture(client, "Tout")
+        assert (made["scope_package_id"], made["scope_path"]) == (None, None)
+
+
+APPROVER = "approver-token"
+
+
+@pytest_asyncio.fixture
+async def wired(
+    service: ArchitectureService,
+    baseline_store: InMemoryBaselines,
+    audit_log: InMemoryAuditLog,
+    nobody_calling: None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Baselines and packages over the same tree, the freeze lookup wired as in production."""
+    verifier = StaticVerifier({EDITOR: an_editor(), APPROVER: an_approver()})
+    app = create_app(
+        Settings(debug=True, auth_enabled=True),
+        architecture_service=service,
+        baselines=baseline_store,
+        audit=audit_log,
+        verifier=verifier,
+        packages=baseline_store.packages,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def published_finance(wired: httpx.AsyncClient) -> tuple[str, str]:
+    """Finance, a baseline of its subtree, then Finance published (v1.0.0) through the routes."""
+    finance = (await wired.post("/packages", json={"name": "Finance"}, headers=as_(EDITOR))).json()
+    copy = await wired.post(
+        "/baselines", json={"name": "Finance", "package_id": finance["id"]}, headers=as_(EDITOR)
+    )
+    assert copy.status_code == 201, copy.text
+    published = await wired.post(
+        f"/packages/{finance['id']}/publish",
+        json={"bump": "minor", "notes": "n", "dry_run": False},
+        headers=as_(APPROVER),
+    )
+    assert published.status_code == 200, published.text
+    return finance["id"], copy.json()["id"]
+
+
+class TestAPublishedSubtree:
+    async def test_the_dry_run_of_a_published_version_reports_it_blocked_with_frozen_by(
+        self, wired: httpx.AsyncClient, published_finance: tuple[str, str]
+    ) -> None:
+        finance, baseline = published_finance
+
+        answer = await dry_run(wired, baseline)
+
+        assert answer["applied"] is False
+        assert answer["plan"]["frozen_by"] == {
+            "package_id": finance,
+            "path": "Finance",
+            "version": "v1.0.0",
+        }
+
+    async def test_applying_it_is_a_409_package_frozen_and_writes_nothing(
+        self,
+        wired: httpx.AsyncClient,
+        baseline_store: InMemoryBaselines,
+        published_finance: tuple[str, str],
+    ) -> None:
+        _, baseline = published_finance
+        digest = (await dry_run(wired, baseline))["digest"]
+        before = (await wired.get("/audit", headers=as_(EDITOR))).json()
+
+        answer = await wired.post(
+            f"/baselines/{baseline}/restore",
+            json={"dry_run": False, "expected_digest": digest},
+            headers=as_(EDITOR),
+        )
+
+        assert (answer.status_code, answer.json()["error"]) == (409, "package_frozen")
+        assert (await wired.get("/audit", headers=as_(EDITOR))).json() == before
+        assert baseline_store.applied == []
+
+    async def test_an_element_moved_in_since_the_capture_is_kept_and_named_by_the_dry_run(
+        self, wired: httpx.AsyncClient, baseline_store: InMemoryBaselines
+    ) -> None:
+        finance = await wired.post("/packages", json={"name": "Finance"}, headers=as_(EDITOR))
+        finance_id = UUID(finance.json()["id"])
+        copy = await wired.post(
+            "/baselines",
+            json={"name": "Finance", "package_id": str(finance_id)},
+            headers=as_(EDITOR),
+        )
+        crm = Element.create(element_type=E.NODE, name="CRM", now=FIXED_NOW - timedelta(days=600))
+        baseline_store.graph.elements[crm.id] = replace(crm, package_id=finance_id)  # moved in
+
+        plan = (await dry_run(wired, copy.json()["id"]))["plan"]
+
+        assert (plan["elements_to_delete"], plan["kept_moved_in_count"]) == (0, 1)
+        assert [ref["label"] for ref in plan["kept_moved_in"]] == ["CRM"]
+
+    async def test_baselines_of_different_scopes_are_a_409(
+        self, wired: httpx.AsyncClient, published_finance: tuple[str, str]
+    ) -> None:
+        _, baseline = published_finance
+        whole = await capture(wired, "Tout")
+
+        answer = await wired.get(
+            f"/baselines/{baseline}/diff", params={"against": whole["id"]}, headers=as_(EDITOR)
+        )
+
+        assert (answer.status_code, answer.json()["error"]) == (409, "baseline_scoped")

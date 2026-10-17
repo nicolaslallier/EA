@@ -34,12 +34,14 @@ from ea.domain.baselines import (
     baseline_view,
     blocked_message,
     diff_snapshots,
+    freeze_of,
     plan_digest,
     refusal_context,
 )
 from ea.domain.errors import (
     BaselineNotFoundError,
     BaselineScopedError,
+    PackageFrozenError,
     RestoreBlockedError,
     RestoreConflictError,
 )
@@ -48,6 +50,7 @@ from ea.services.caller import logged, require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
+    from ea.domain.package_versions import FreezesLookup
     from ea.domain.ports import BaselineRepository
 
 Clock = Callable[[], datetime]
@@ -56,14 +59,6 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def refuse_scoped(baseline: Baseline) -> Baseline:
-    """Diff and restore read a baseline as the whole model: not yet for a subtree."""
-    if baseline.scope_package_id is not None:
-        msg = "a baseline of one package's subtree cannot be diffed or restored yet"
-        raise BaselineScopedError(msg)
-    return baseline
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,8 +72,12 @@ class RestoreOutcome:
 class BaselineService:
     """The single entry point `api/` and `mcp/` use to capture, compare and restore."""
 
-    def __init__(self, repository: BaselineRepository, *, clock: Clock = _utc_now) -> None:
+    def __init__(
+        self, repository: BaselineRepository, *, freezes: FreezesLookup, clock: Clock = _utc_now
+    ) -> None:
+        # Required: a forgotten wiring is a type error, not a freeze nobody predicts.
         self._repository = repository
+        self._freezes = freezes
         self._now = clock
         self._trail = AuditTrail(clock)
 
@@ -94,7 +93,9 @@ class BaselineService:
             raise BaselineNotFoundError(msg)
         return baseline
 
-    async def create(self, *, name: str, description: str = "") -> Baseline:
+    async def create(
+        self, *, name: str, description: str = "", package_id: UUID | None = None
+    ) -> Baseline:
         caller = require_editor()
         baseline = Baseline.create(
             name=name,
@@ -112,7 +113,7 @@ class BaselineService:
                 ),
             )
 
-        stored = await self._repository.create(baseline, audit=created)
+        stored = await self._repository.create(baseline, audit=created, scope=package_id)
         logger.info(
             "baseline captured: %r",
             logged(stored.name),
@@ -136,14 +137,23 @@ class BaselineService:
             raise BaselineNotFoundError(msg)
 
     async def diff(self, baseline_id: UUID, against: UUID | None = None) -> BaselineDiff:
-        """The baseline against another one, or against the model as it is now."""
+        """The baseline against another one, or against the model as it is now.
+
+        A subtree baseline is compared with its subtree as it is now, plus the elements it
+        holds wherever they went (one moved out is modified, not removed); two baselines
+        compare only when they have the same scope.
+        """
         require_caller()
-        refuse_scoped(await self.get(baseline_id))
+        baseline = await self.get(baseline_id)
         older = await self._repository.snapshot_of(baseline_id)
         if against is None:
-            newer = await self._repository.current_snapshot()
+            newer = await self._repository.current_snapshot(
+                baseline.scope_package_id, known=frozenset(e.id for e in older.elements)
+            )
         else:
-            refuse_scoped(await self.get(against))
+            if (await self.get(against)).scope_package_id != baseline.scope_package_id:
+                msg = "a baseline compares only with one of the same scope"
+                raise BaselineScopedError(msg)
             newer = await self._repository.snapshot_of(against)
         return diff_snapshots(older, newer)
 
@@ -161,10 +171,16 @@ class BaselineService:
         (`expected_digest`): a model that moved since then gives another digest,
         and the answer is `RestoreConflictError` — read the plan again.
 
-        `keep_new` defaults to `False` for a global baseline: restoring is
-        exact. A plan that touches a protected element is returned by a dry run
-        (its `blocked` list) and refused when applied; the repository checks the
-        protection again inside its transaction.
+        `keep_new` defaults to `False`: restoring is exact. A subtree baseline
+        restores within its subtree, deletes no element outside it, and keeps
+        an element moved in since the capture (`kept_moved_in`). A plan that
+        touches a protected element is returned by a dry run (its `blocked`
+        list) and refused when applied; the repository checks the protection
+        again inside its transaction. A subtree under a publication in force is
+        the same — the scope, a package nested in it, or one outside it that the
+        plan writes: `frozen_by` in the dry run, `PackageFrozenError` when applied
+        — read again at that moment, before the digest, and the triggers still
+        refuse whatever slips between this check and the write.
         """
         require_editor()
         if not dry_run and not expected_digest:
@@ -173,12 +189,50 @@ class BaselineService:
                 "as expected_digest"
             )
             raise ValueError(msg)
-        baseline = refuse_scoped(await self.get(baseline_id))
+        baseline = await self.get(baseline_id)
         wanted = bool(keep_new)
         plan = await self._repository.restore_plan(baseline_id, keep_new=wanted)
+        if baseline.scope_package_id is not None:
+            # Every package the plan writes, not only the scope: a publication nested in
+            # the subtree, or one outside that a moved element or a cascade reaches.
+            found = freeze_of(baseline.scope_package_id, plan, await self._freezes())
+            plan = replace(plan, frozen_by=found)
         digest = plan_digest(plan)
         if dry_run:
+            # A preview is logged, never audited: nothing was written (ids and counts only).
+            logger.info(
+                "restoration previewed",
+                extra={
+                    "action": "baseline_restore_preview",
+                    "baseline_id": str(baseline_id),
+                    "elements_to_create": len(plan.elements_to_create),
+                    "elements_to_update": len(plan.elements_to_update),
+                    "elements_to_delete": len(plan.elements_to_delete),
+                    "relationships_to_create": len(plan.relationships_to_create),
+                    "relationships_to_delete": len(plan.relationships_to_delete),
+                    "relationships_cascaded": plan.cascaded_relationships,
+                    "kept_moved_in": len(plan.kept_moved_in),
+                    "is_blocked": plan.is_blocked,
+                },
+            )
             return RestoreOutcome(plan, applied=False, digest=digest)
+        if plan.frozen_by is not None:
+            # Nothing was attempted in the database: a log line, no audit event.
+            frozen = plan.frozen_by
+            logger.warning(
+                "restoration refused: it writes into a published package",
+                extra={
+                    "action": "restore_blocked_frozen",
+                    "baseline_id": str(baseline_id),
+                    "package_id": str(frozen.package_id),
+                    "version": frozen.version,
+                },
+            )
+            msg = (
+                f"this restoration writes into a published package (package "
+                f"{frozen.package_id}, {frozen.version}): reopen it first"
+            )
+            raise PackageFrozenError(msg)
         if digest != expected_digest:
             msg = "the model changed since the plan you confirmed: read the plan again"
             raise RestoreConflictError(msg)

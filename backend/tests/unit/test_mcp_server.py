@@ -33,8 +33,10 @@ from ea.api.schemas import (
     MoveElements,
     PackageCreate,
     PackageUpdate,
+    PublishPackage,
     RelationshipCreate,
     RelationshipUpdate,
+    ReopenPackage,
     RestoreRequest,
     SavedQueryCreate,
     SubnetCreate,
@@ -44,6 +46,7 @@ from ea.domain.archimate import ElementType
 from ea.domain.diagrams import DiagramNode
 from ea.domain.external import ExternalSnapshot, ExternalStatus
 from ea.domain.generated_views import QuerySource
+from ea.domain.package_versions import Bump
 from ea.domain.profiles import IconKey
 from ea.main import create_app
 from ea.mcp import build_mcp_server
@@ -76,6 +79,7 @@ from tests.conftest import (
     InMemoryViewSources,
     a_reader,
     an_approver,
+    an_editor,
 )
 from tests.exchange_files import DATA
 from tests.unit.test_template_service import BODY
@@ -231,6 +235,11 @@ class TestTheAuditTools:
 
 @pytest.mark.asyncio
 class TestTheBaselineTools:
+    async def test_create_baseline_takes_a_package(self, server: MCPServer[Any]) -> None:
+        pkg = await call(server, "create_package", name="Finance")
+        made = await call(server, "create_baseline", name="F", package_id=pkg["id"])
+        assert made["scope_path"] == "Finance"
+
     async def test_restoring_is_a_dry_run_until_the_agent_says_otherwise(
         self, server: MCPServer[Any]
     ) -> None:
@@ -394,6 +403,64 @@ class TestTheReviewTool:
 
 
 @pytest.mark.asyncio
+class TestThePackageVersionTools:
+    async def _package(self, server: MCPServer[Any]) -> str:
+        return str((await call(server, "create_package", name="Finance"))["id"])
+
+    async def test_publish_package_is_a_dry_run_unless_told_false(
+        self, server: MCPServer[Any]
+    ) -> None:
+        pkg = await self._package(server)
+        with acting_as(an_approver()):
+            preview = await call(server, "publish_package", package_id=pkg, bump="minor", notes="n")
+            assert preview["published"] is None and preview["preview"]["version"] == "v1.0.0"
+            assert (await call(server, "list_package_versions", package_id=pkg))["result"] == []
+
+    async def test_publishing_then_reopening_leaves_two_lines_of_history(
+        self, server: MCPServer[Any]
+    ) -> None:
+        pkg = await self._package(server)
+        with acting_as(an_approver()):
+            made = await call(
+                server, "publish_package", package_id=pkg, bump="minor", notes="n", dry_run=False
+            )
+            assert made["published"]["version"] == "v1.0.0"
+            await call(server, "reopen_package", package_id=pkg, reason="correction")
+            [only] = (await call(server, "list_package_versions", package_id=pkg))["result"]
+            assert only["reopen_reason"] == "correction"
+
+    async def test_an_editor_cannot_publish_or_reopen(self, server: MCPServer[Any]) -> None:
+        pkg = await self._package(server)
+        with acting_as(an_editor()):
+            for tool, args in [
+                ("publish_package", {"bump": "patch", "notes": "n", "dry_run": False}),
+                ("reopen_package", {"reason": "r"}),
+            ]:
+                with pytest.raises(ToolError, match="approv"):
+                    await call(server, tool, package_id=pkg, **args)
+
+    async def test_a_major_without_adr_is_refused_with_its_reason(
+        self, server: MCPServer[Any]
+    ) -> None:
+        pkg = await self._package(server)
+        with acting_as(an_approver()), pytest.raises(ToolError, match="ADR"):
+            await call(server, "publish_package", package_id=pkg, bump="major", notes="n")
+
+    async def test_the_annotations_say_what_each_tool_does(self, server: MCPServer[Any]) -> None:
+        annotations = {t.name: t.annotations for t in await server.list_tools()}
+        for name in ("publish_package", "reopen_package"):
+            assert annotations[name] is not None
+            assert annotations[name].read_only_hint is False
+            assert annotations[name].destructive_hint is False
+        assert annotations["list_package_versions"] is not None
+        assert annotations["list_package_versions"].read_only_hint is True
+
+    async def test_the_instructions_teach_the_dry_run_and_the_reopening(self) -> None:
+        for phrase in ("publish_package", "dry_run", "reopen_package", "frozen_by"):
+            assert phrase in INSTRUCTIONS, phrase
+
+
+@pytest.mark.asyncio
 class TestTheToolset:
     async def test_it_exposes_the_whole_service_and_nothing_else(
         self, server: MCPServer[Any]
@@ -401,9 +468,12 @@ class TestTheToolset:
         """The list is asserted whole: a tool added without a test is a failure."""
         names = {tool.name for tool in await server.list_tools()}
 
-        # seventy-one on main, plus the five tools of the external references (docs/adr/0073)
-        assert len(names) == 76
+        # seventy-six, plus the three of the package versions (docs/adr/0074)
+        assert len(names) == 79
         assert names == {
+            "list_package_versions",
+            "publish_package",
+            "reopen_package",
             "list_diagram_templates",
             "instantiate_diagram_template",
             "create_generated_diagram",
@@ -1606,6 +1676,22 @@ class TestThePackageTools:
             ("Finance / Budget", 0, 0),
         ]
 
+    async def test_get_element_tells_the_agent_the_element_is_frozen(
+        self, server: MCPServer[Any], package_service: PackageService
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        inside = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[inside["id"]], package_id=finance["id"])
+        with acting_as(an_approver()):
+            await package_service.publish(
+                UUID(finance["id"]), bump=Bump.MINOR, notes="n", dry_run=False
+            )
+
+        read = await call(server, "get_element", element_id=inside["id"])
+
+        assert read["frozen_by"]["version"] == "v1.0.0"
+        assert read["allowed_transitions"] == []
+
     async def test_a_taken_sibling_name_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
         await call(server, "create_package", name="Finance")
 
@@ -2185,6 +2271,9 @@ class TestTheSameBoundsAsTheHttpAdapter:
             ("update_package", "name", PackageUpdate, "name"),
             ("update_package", "description", PackageUpdate, "description"),
             ("move_elements", "element_ids", MoveElements, "element_ids"),
+            ("publish_package", "notes", PublishPackage, "notes"),
+            ("publish_package", "adr", PublishPackage, "adr"),
+            ("reopen_package", "reason", ReopenPackage, "reason"),
             ("save_query", "name", SavedQueryCreate, "name"),
             ("save_query", "description", SavedQueryCreate, "description"),
             ("search_elements", "text", ElementQuerySchema, "text"),
@@ -2223,6 +2312,23 @@ class TestTheSameBoundsAsTheHttpAdapter:
 
         assert sent_to_the_agent, f"{tool}.{argument} carries no bound at all"
         assert sent_to_the_agent == served_over_http
+
+    async def test_the_baseline_scope_is_the_same_uuid_with_the_same_words(
+        self, server: MCPServer[Any]
+    ) -> None:
+        # A UUID has no numeric bound for `bounds_of` to compare: pin what the shared type
+        # (`BaselineScope`) carries instead, its format and its description.
+        tools = {listed.name: listed for listed in await server.list_tools()}
+
+        def described(schema: dict[str, Any]) -> tuple[Any, ...]:
+            branches = [schema, *schema.get("anyOf", ())]
+            return tuple(
+                sorted({(b.get("format"), b.get("description")) for b in branches if "format" in b})
+            )
+
+        sent = described(tools["create_baseline"].input_schema["properties"]["package_id"])
+        served = described(BaselineCreate.model_json_schema()["properties"]["package_id"])
+        assert sent and sent == served
 
     @pytest.mark.parametrize(
         ("tool", "argument", "path", "parameter"),

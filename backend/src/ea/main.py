@@ -68,6 +68,7 @@ from ea.db.unit_of_work import set_refusal_recorder
 from ea.domain.auth import Caller
 from ea.domain.errors import ExternalBusyError
 from ea.domain.external import ExternalKind
+from ea.domain.package_versions import Freezes, FreezesLookup
 from ea.domain.ports import (
     AccessTokenVerifier,
     AnalysisRepository,
@@ -205,6 +206,19 @@ def build_scope_resolver(app: FastAPI) -> ScopeResolver:
         return tuple(element.id for element in found)
 
     return resolve
+
+
+def build_freezes_lookup(app: FastAPI) -> FreezesLookup:
+    """Every freeze in force, for a service that knows no packages (docs/adr/0074).
+
+    Read on the app at call time: no package service is a wiring fault and a 500, never a
+    subtree predicted unfrozen.
+    """
+
+    async def freezes() -> Freezes:
+        return await package_service_of(app).freezes()
+
+    return freezes
 
 
 def build_quality_params(settings: Settings) -> QualityParams:
@@ -533,7 +547,9 @@ def _lifespan(
             if audit_store is not None:
                 app.state.audit_service = AuditService(audit_store)
             if baseline_store is not None:
-                app.state.baseline_service = BaselineService(baseline_store)
+                app.state.baseline_service = BaselineService(
+                    baseline_store, freezes=build_freezes_lookup(app)
+                )
             # Files live in MinIO, beside every other store (docs/adr/0036). The
             # service is attached either way, so a deployment without it answers
             # 503 on every file route and tool instead of 500.
@@ -930,7 +946,7 @@ def create_app(
     if audit is not None:
         app.state.audit_service = AuditService(audit)
     if baselines is not None:
-        app.state.baseline_service = BaselineService(baselines)
+        app.state.baseline_service = BaselineService(baselines, freezes=build_freezes_lookup(app))
 
     # Added first, so it is the *innermost* layer: the envelope it sends for an
     # unhandled failure then passes back out through CORS and the request id,

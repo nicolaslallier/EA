@@ -19,7 +19,7 @@ from ea.core.config import Settings
 from ea.domain.documents import MAX_DOCUMENT_BYTES
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryDocuments
+from tests.conftest import InMemoryDocuments, an_empty_package_tree
 
 RUNBOOK = b"# Runbook\n\nRedemarrer le service.\n"
 
@@ -33,6 +33,7 @@ async def client(
         Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         documents=documents,  # type: ignore[arg-type]
+        packages=an_empty_package_tree(),
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -237,7 +238,11 @@ async def test_the_document_routes_say_so_when_the_relational_store_is_shut(
     A 500 rather than an empty list on purpose: an operator who turned the
     store off must not be told, quietly, that every element lost its files.
     """
-    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
+    app = create_app(
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        packages=an_empty_package_tree(),
+    )
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

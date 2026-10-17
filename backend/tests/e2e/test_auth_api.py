@@ -17,7 +17,7 @@ from ea.main import create_app
 from ea.repositories.keycloak import AuthServiceError
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
-from tests.conftest import StaticVerifier, a_reader, an_editor
+from tests.conftest import StaticVerifier, a_reader, an_editor, an_empty_package_tree
 
 PUBLIC = {"/health"}
 EDITOR, READER = "editor-token", "reader-token"
@@ -44,7 +44,10 @@ def api_routes(routes: Iterable[Any]) -> Iterator[APIRoute]:
 def an_app(service: ArchitectureService):  # type: ignore[no-untyped-def]
     verifier = StaticVerifier({EDITOR: an_editor(), READER: a_reader()})
     return create_app(
-        Settings(debug=True, auth_enabled=True), architecture_service=service, verifier=verifier
+        Settings(debug=True, auth_enabled=True),
+        architecture_service=service,
+        verifier=verifier,
+        packages=an_empty_package_tree(),
     )
 
 
@@ -150,7 +153,11 @@ async def test_me_says_who_and_whether_they_may_write(client: httpx.AsyncClient)
 async def test_with_auth_off_the_local_developer_calls(
     service: ArchitectureService, nobody_calling: None
 ) -> None:
-    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
+    app = create_app(
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        packages=an_empty_package_tree(),
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -178,6 +185,7 @@ async def test_keycloak_being_down_is_a_500_not_a_401(
         Settings(debug=True, auth_enabled=True),
         architecture_service=service,
         verifier=UnreachableKeycloak(),  # type: ignore[arg-type]
+        packages=an_empty_package_tree(),
     )
     # `_handle_unexpected_error` re-raises after answering, so the traceback
     # still reaches the ASGI server's log (see `ea/api/errors.py`) — which

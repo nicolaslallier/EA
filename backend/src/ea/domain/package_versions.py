@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -129,6 +129,13 @@ class FrozenBy:
     package_id: UUID
     path: str
     version: str
+
+
+#: Each package that is published or lies under one, with the publication that freezes it.
+type Freezes = Mapping[UUID, FrozenBy]
+#: Every freeze in force, read when asked: what a service that knows nothing of packages is
+#: handed (`PackageService.freezes`), like a `ScopeResolver`.
+type FreezesLookup = Callable[[], Awaitable[Freezes]]
 
 
 @dataclass(frozen=True, slots=True)

@@ -29,6 +29,7 @@ from tests.conftest import (
     StaticVerifier,
     a_reader,
     an_editor,
+    an_empty_package_tree,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -45,7 +46,7 @@ def an_app(service, diagrams, documents, files_store, files_metadata, **extra: A
         files=files_store,
         file_metadata=files_metadata,
         report_renderers={},
-        **extra,
+        **{"packages": an_empty_package_tree(), **extra},
     )
 
 
@@ -449,6 +450,7 @@ def a_client(
         files=files_store,
         file_metadata=files_metadata,
         report_renderers=renderers,
+        packages=an_empty_package_tree(),
     )
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 

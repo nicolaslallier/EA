@@ -442,3 +442,95 @@ class TestReview:
         result = plan(ModelSnapshot((gone,), ()), ModelSnapshot((), ()))
 
         assert result.elements_to_create[0].approval_state is ApprovalState.DRAFT
+
+
+class TestASubtreePlan:
+    """`deletable`: a subtree baseline deletes only what its subtree holds now (docs/adr/0074)."""
+
+    def test_only_what_is_deletable_is_deleted(self) -> None:
+        inside, outside = node("new inside"), node("new outside")
+
+        result = plan(
+            ModelSnapshot((), ()),
+            ModelSnapshot((inside, outside), ()),
+            deletable=frozenset({inside.id}),
+        )
+
+        assert [e.id for e in result.elements_to_delete] == [inside.id]
+
+    def test_a_crossing_link_to_a_protected_element_blocks_the_deletion_it_cascades(
+        self,
+    ) -> None:
+        inside, outside = node("new inside"), node("approved outside")
+
+        result = plan(
+            ModelSnapshot((), ()),
+            ModelSnapshot((inside, outside), (link(inside, outside),)),
+            deletable=frozenset({inside.id}),
+            protected_ids=frozenset({outside.id}),
+        )
+
+        assert result.cascaded_relationships == 1
+        assert [e.id for e in result.blocked] == [outside.id]
+
+    def test_an_element_older_than_the_capture_moved_in_since_is_kept_and_reported(
+        self,
+    ) -> None:
+        """CRM, in IT since 2024, moved into Finance since: Finance's restore keeps it."""
+        captured = datetime(2026, 1, 15, tzinfo=UTC)
+        moved_in = replace(node("CRM"), created_at=datetime(2024, 3, 1, tzinfo=UTC))
+        created_since = replace(node("new"), created_at=datetime(2026, 2, 1, tzinfo=UTC))
+        other = node("other")
+
+        result = plan(
+            ModelSnapshot((), ()),
+            ModelSnapshot((moved_in, created_since, other), (link(moved_in, other),)),
+            deletable=frozenset({moved_in.id, created_since.id}),
+            captured_at=captured,
+        )
+
+        assert [e.id for e in result.elements_to_delete] == [created_since.id]
+        assert [e.id for e in result.kept_moved_in] == [moved_in.id]
+        assert result.cascaded_relationships == 0
+        assert any("kept" in warning for warning in result.warnings)
+
+
+class TestThePackagesAPlanWrites:
+    """What the freeze prediction is checked against: every package a write lands in."""
+
+    def test_an_update_counts_where_the_element_is_and_where_it_goes_back(self) -> None:
+        was, now = uuid4(), uuid4()
+        original = replace(node("a"), package_id=was)
+
+        result = plan(
+            ModelSnapshot((original,), ()),
+            ModelSnapshot((replace(original, package_id=now),), ()),
+            packages=frozenset({was, now}),
+        )
+
+        assert result.packages_written == {was, now}
+
+    def test_a_cascade_counts_the_package_of_the_other_end(self) -> None:
+        here, there = uuid4(), uuid4()
+        inside = replace(node("new inside"), package_id=here)
+        outside = replace(node("outside"), package_id=there)
+
+        result = plan(
+            ModelSnapshot((), ()),
+            ModelSnapshot((inside, outside), (link(inside, outside),)),
+            deletable=frozenset({inside.id}),
+        )
+
+        assert result.packages_written == {here, there}
+
+    def test_a_no_op_writes_no_package(self) -> None:
+        package = uuid4()
+        element = replace(node("a"), package_id=package)
+
+        result = plan(
+            ModelSnapshot((element,), ()),
+            ModelSnapshot((element,), ()),
+            packages=frozenset({package}),
+        )
+
+        assert result.packages_written == frozenset()

@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response, status
 from pydantic import ValidationError
 
-from ea.api.dependencies import Profiles
+from ea.api.dependencies import Packages, Profiles
 from ea.api.schemas import (
     MAX_PROFILE_DOCUMENT_BYTES,
     ElementRead,
@@ -183,11 +183,12 @@ async def delete_stereotype(stereotype_id: UUID, profiles: Profiles) -> Response
 
 @router.put("/elements/{element_id}/stereotypes", response_model=ElementRead, responses=REJECTED)
 async def set_element_stereotypes(
-    element_id: UUID, body: ElementStereotypesSet, profiles: Profiles
+    element_id: UUID, body: ElementStereotypesSet, profiles: Profiles, packages: Packages
 ) -> ElementRead:
     """Replace the set of stereotypes an element carries.
 
     A stereotype of another base type is a 422, and so is a set of stereotypes
     declaring one key twice or a stored value that breaks a declared format.
     """
-    return ElementRead.of(await profiles.apply_stereotypes(element_id, body.stereotype_ids))
+    element = await profiles.apply_stereotypes(element_id, body.stereotype_ids)
+    return ElementRead.of(element, freezes=await packages.freezes())
