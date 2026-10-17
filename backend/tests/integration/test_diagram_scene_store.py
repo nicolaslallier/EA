@@ -22,10 +22,11 @@ from ea.domain.diagram_objects import (
     Point,
 )
 from ea.domain.diagrams import Diagram, DiagramNode
-from ea.domain.errors import DiagramRevisionConflictError
+from ea.domain.errors import DiagramRevisionConflictError, PackageFrozenError
 from ea.domain.model import Element, Relationship
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
+from tests.integration.test_package_freeze_triggers import a_package, publish
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -370,3 +371,36 @@ async def test_deleting_an_element_moves_the_diagrams_of_the_links_it_takes_with
     await graph.delete_element(a.id, audit=())
 
     assert (await diagrams.get(diagram.id)).revision == 2  # type: ignore[union-attr]
+
+
+async def test_deleting_an_element_drawn_on_a_published_diagram_is_still_package_frozen(
+    diagrams: PostgresDiagramRepository,
+    graph: PostgresArchitectureRepository,
+    engine_at_head: AsyncEngine,
+) -> None:
+    """Moving the diagram's revision makes the `diagrams` row the first write the trigger sees;
+    the answer must stay 409 package_frozen, and nothing is deleted."""
+    drawn = await graph.add_element(an_element("Dessiné"), audit=())  # filed in no package
+    diagram = await a_stored_diagram(diagrams)
+    await diagrams.replace_layout(
+        diagram.id,
+        DiagramScene(nodes=(DiagramNode(drawn.id, 0, 0),)),
+        revision=0,
+        now=NOW,
+        audit=(),
+    )
+    async with engine_at_head.begin() as connection:
+        package = await a_package(connection, "Finance", None)
+        await connection.execute(
+            text("UPDATE diagrams SET package_id = :p WHERE id = :id"),
+            {"p": package, "id": diagram.id},
+        )
+        await publish(connection, package)
+
+    with pytest.raises(PackageFrozenError) as raised:
+        await graph.delete_element(drawn.id, audit=())
+
+    assert raised.value.refusal is not None
+    assert raised.value.refusal.table in {"diagrams", "diagram_nodes"}
+    assert await graph.get_element(drawn.id) is not None
+    assert (await diagrams.get(diagram.id)).revision == 1  # type: ignore[union-attr]
