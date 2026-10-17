@@ -44,6 +44,7 @@ from ea.domain.archimate import ElementType
 from ea.domain.diagrams import DiagramNode
 from ea.domain.external import ExternalSnapshot, ExternalStatus
 from ea.domain.generated_views import QuerySource
+from ea.domain.package_versions import Bump
 from ea.domain.profiles import IconKey
 from ea.main import create_app
 from ea.mcp import build_mcp_server
@@ -1605,6 +1606,22 @@ class TestThePackageTools:
             ("Finance", 1, 1),
             ("Finance / Budget", 0, 0),
         ]
+
+    async def test_get_element_tells_the_agent_the_element_is_frozen(
+        self, server: MCPServer[Any], package_service: PackageService
+    ) -> None:
+        finance = await call(server, "create_package", name="Finance")
+        inside = await an_element(server, "node", "db-01")
+        await call(server, "move_elements", element_ids=[inside["id"]], package_id=finance["id"])
+        with acting_as(an_approver()):
+            await package_service.publish(
+                UUID(finance["id"]), bump=Bump.MINOR, notes="n", dry_run=False
+            )
+
+        read = await call(server, "get_element", element_id=inside["id"])
+
+        assert read["frozen_by"]["version"] == "v1.0.0"
+        assert read["allowed_transitions"] == []
 
     async def test_a_taken_sibling_name_is_told_to_the_model(self, server: MCPServer[Any]) -> None:
         await call(server, "create_package", name="Finance")

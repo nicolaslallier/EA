@@ -19,7 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Path, Query, Response, status
 
-from ea.api.dependencies import Ipam
+from ea.api.dependencies import Ipam, Packages
 from ea.api.schemas import (
     AddressAllocate,
     AddressAssign,
@@ -142,10 +142,13 @@ async def assign_address(payload: AddressAssign, service: Ipam) -> AddressRead:
 async def locate_address(
     address: Annotated[str, Path(max_length=64, description="An IPv4 or IPv6 address.")],
     service: Ipam,
+    packages: Packages,
     vrf: Annotated[str, Query(max_length=64)] = DEFAULT_VRF,
 ) -> AddressLocationRead:
     """What answers on this address, and what that thing is wired to."""
-    return AddressLocationRead.of(await service.locate(address, vrf=vrf))
+    return AddressLocationRead.of(
+        await service.locate(address, vrf=vrf), freezes=await packages.freezes()
+    )
 
 
 @router.delete(

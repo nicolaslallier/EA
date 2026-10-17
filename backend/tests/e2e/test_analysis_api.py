@@ -14,7 +14,7 @@ from ea.core.config import Settings
 from ea.domain.matrix import MAX_MATRIX_AXIS
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryRepository, StaticVerifier, a_reader
+from tests.conftest import InMemoryRepository, StaticVerifier, a_reader, an_empty_package_tree
 
 
 @pytest_asyncio.fixture
@@ -22,7 +22,10 @@ async def client(
     service: ArchitectureService, repository: InMemoryRepository
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
-        Settings(debug=True, auth_enabled=False), architecture_service=service, analysis=repository
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        analysis=repository,
+        packages=an_empty_package_tree(),
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -153,6 +156,7 @@ class TestWhoMayRead:
             architecture_service=service,
             analysis=repository,
             verifier=verifier,
+            packages=an_empty_package_tree(),
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -234,6 +238,7 @@ class TestTheQualityReport:
             architecture_service=service,
             analysis=repository,
             verifier=StaticVerifier({}),
+            packages=an_empty_package_tree(),
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as anonymous:
@@ -338,6 +343,7 @@ class TestTheAggregates:
             architecture_service=service,
             analysis=repository,
             verifier=StaticVerifier({}),
+            packages=an_empty_package_tree(),
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as anonymous:

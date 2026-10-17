@@ -86,8 +86,11 @@ def _may(transition: Transition, caller: Caller) -> bool:
 
 
 def allowed_transitions(
-    state: ApprovalState, locked: bool, caller: Caller
+    state: ApprovalState, locked: bool, caller: Caller, *, frozen: bool
 ) -> tuple[Transition, ...]:
+    """What `caller` may do next; nothing at all under a published package (docs/adr/0074)."""
+    if frozen:
+        return ()
     return tuple(t for t in _OFFERED.get((state, locked), ()) if _may(t, caller))
 
 

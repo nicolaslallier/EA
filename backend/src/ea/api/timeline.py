@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 
-from ea.api.dependencies import Timeline
+from ea.api.dependencies import Packages, Timeline
 from ea.api.schemas import (
     ElementRead,
     ErrorResponse,
@@ -49,6 +49,7 @@ async def list_plateaus(service: Timeline) -> list[PlateauRead]:
 @router.get("/plateaus/gap", response_model=PlateauGapRead, responses=READ_REFUSED)
 async def read_plateau_gap(
     service: Timeline,
+    packages: Packages,
     a: Annotated[UUID, Query(description="The plateau to start from.")],
     b: Annotated[UUID, Query(description="The plateau to reach.")],
 ) -> PlateauGapRead:
@@ -57,7 +58,7 @@ async def read_plateau_gap(
     A plateau contains what it composes or aggregates. `gaps` lists the gap elements
     already drawn between the two.
     """
-    return PlateauGapRead.of(await service.plateau_gap(a, b))
+    return PlateauGapRead.of(await service.plateau_gap(a, b), freezes=await packages.freezes())
 
 
 @router.post(
@@ -66,9 +67,12 @@ async def read_plateau_gap(
     status_code=status.HTTP_201_CREATED,
     responses=WRITE_REFUSED,
 )
-async def create_plateau_gap(payload: GapCreate, service: Timeline) -> ElementRead:
+async def create_plateau_gap(
+    payload: GapCreate, service: Timeline, packages: Packages
+) -> ElementRead:
     """Draw the gap between two plateaus: a `gap` element associated to both."""
-    return ElementRead.of(await service.create_gap(payload.a, payload.b, payload.name))
+    gap = await service.create_gap(payload.a, payload.b, payload.name)
+    return ElementRead.of(gap, freezes=await packages.freezes())
 
 
 @router.get("/roadmap", response_model=RoadmapRead, responses=ONLY_422)

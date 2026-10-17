@@ -12,7 +12,7 @@ import pytest_asyncio
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryRepository
+from tests.conftest import InMemoryRepository, an_empty_package_tree
 
 
 @pytest_asyncio.fixture
@@ -23,6 +23,7 @@ async def client(
         Settings(debug=True, auth_enabled=False),
         architecture_service=service,
         requirements=repository,
+        packages=an_empty_package_tree(),
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

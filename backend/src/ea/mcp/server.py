@@ -891,14 +891,16 @@ def build_mcp_server(
                 description=description,
                 documentation=documentation,
                 properties=properties,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
     @speaking_plainly
     async def get_element(element_id: ElementId) -> ElementRead:
         """Read one element in full, by id."""
-        return ElementRead.of(await get_service().get_element(element_id))
+        element = await get_service().get_element(element_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -935,8 +937,12 @@ def build_mcp_server(
             as_of=as_of,
         )
         service = get_service()
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            items=[
+                ElementRead.of(element, freezes=freezes)
+                for element in await service.list_elements(criteria)
+            ],
             total=await service.count_elements(criteria),
             limit=limit,
             offset=offset,
@@ -964,7 +970,8 @@ def build_mcp_server(
                 description=description,
                 documentation=documentation,
                 properties=properties,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=REMOVES)
@@ -1007,7 +1014,8 @@ def build_mcp_server(
         return ElementRead.of(
             await get_service().transition_element(
                 element_id, transition, expected_revision=expected_revision
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     # --- Relationships ----------------------------------------------------
@@ -1110,7 +1118,8 @@ def build_mcp_server(
         return GraphRead.of(
             await get_service().relations_of(
                 element_id, relationship_types=tuple(relationship_types or ())
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=REMOVES)
@@ -1141,7 +1150,8 @@ def build_mcp_server(
                 depth=depth,
                 relationship_types=tuple(relationship_types or ()),
                 as_of=as_of,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
@@ -1166,7 +1176,8 @@ def build_mcp_server(
                 depth=depth,
                 relationship_types=tuple(relationship_types or ()),
                 as_of=as_of,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     # --- Time (docs/adr/0061) ---------------------------------------------
@@ -1201,7 +1212,8 @@ def build_mcp_server(
         source = (
             QuerySource(query_id) if query_id is not None else PackageSource(package_id, recursive)  # type: ignore[arg-type]
         )
-        return DiagramRead.of(await get_diagrams().generate(name=name, source=source))
+        detail = await get_diagrams().generate(name=name, source=source)
+        return DiagramRead.of(detail, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -1222,7 +1234,8 @@ def build_mcp_server(
         Read it to answer "what does this schema show". There is no tool that
         moves a box: a layout is a person's gesture, not data to compute.
         """
-        return DiagramRead.of(await get_diagrams().open(diagram_id))
+        detail = await get_diagrams().open(diagram_id)
+        return DiagramRead.of(detail, freezes=await get_packages().freezes())
 
     # --- Profiles and stereotypes -----------------------------------------------
 
@@ -1249,13 +1262,15 @@ def build_mcp_server(
         until an approver reopens it. The property *values* stay the element's
         own: write them with `update_element`.
         """
-        return ElementRead.of(await get_profiles().apply_stereotype(element_id, stereotype_id))
+        element = await get_profiles().apply_stereotype(element_id, stereotype_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     @server.tool(annotations=EDITS)
     @speaking_plainly
     async def remove_stereotype(element_id: ElementId, stereotype_id: StereotypeId) -> ElementRead:
         """Take a stereotype's label off an element. Its properties are left untouched."""
-        return ElementRead.of(await get_profiles().remove_stereotype(element_id, stereotype_id))
+        element = await get_profiles().remove_stereotype(element_id, stereotype_id)
+        return ElementRead.of(element, freezes=await get_packages().freezes())
 
     # --- Diagram templates ----------------------------------------------------
 
@@ -1304,7 +1319,8 @@ def build_mcp_server(
                 name=name,
                 bindings=[binding.placed() for binding in bindings],
                 create_relationships=create_relationships,
-            )
+            ),
+            freezes=await get_packages().freezes(),
         )
 
     @server.tool(annotations=READS)
@@ -1330,7 +1346,8 @@ def build_mcp_server(
         `common`, plus the `gaps` already drawn between the two. It only reads; to draw the
         gap element itself use `create_gap`.
         """
-        return PlateauGapRead.of(await get_timeline().plateau_gap(a, b))
+        gap = await get_timeline().plateau_gap(a, b)
+        return PlateauGapRead.of(gap, freezes=await get_packages().freezes())
 
     @server.tool(annotations=ADDS)
     @speaking_plainly
@@ -1350,7 +1367,8 @@ def build_mcp_server(
             already = False
         except DuplicateGapError:
             already = True
-        comparison = PlateauGapRead.of(await timeline.plateau_gap(a, b))
+        gap = await timeline.plateau_gap(a, b)
+        comparison = PlateauGapRead.of(gap, freezes=await get_packages().freezes())
         return DrawnGapRead(**comparison.model_dump(), already_drawn=already)
 
     # --- External references (docs/adr/0073) --------------------------------
@@ -1668,7 +1686,8 @@ def build_mcp_server(
         sub-graph around it, so "10.0.1.12 is srv-app-01, and Billing runs on
         it" can be written without looking anything else up.
         """
-        return AddressLocationRead.of(await get_ipam().locate(address, vrf=vrf))
+        location = await get_ipam().locate(address, vrf=vrf)
+        return AddressLocationRead.of(location, freezes=await get_packages().freezes())
 
     @server.tool(annotations=READS)
     @speaking_plainly
@@ -1955,8 +1974,12 @@ def build_mcp_server(
         ).to_domain()
         criteria = ElementFilter.from_query(query)
         service = get_service()
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in await service.list_elements(criteria)],
+            items=[
+                ElementRead.of(element, freezes=freezes)
+                for element in await service.list_elements(criteria)
+            ],
             total=await service.count_elements(criteria),
             limit=query.limit,
             offset=query.offset,
@@ -2021,8 +2044,9 @@ def build_mcp_server(
     ) -> ElementPage:
         """Run a saved query, one page at a time."""
         result = await get_queries().run(query_id, limit=limit, offset=offset)
+        freezes = await get_packages().freezes()
         return ElementPage(
-            items=[ElementRead.of(element) for element in result.elements],
+            items=[ElementRead.of(element, freezes=freezes) for element in result.elements],
             total=result.total,
             limit=limit,
             offset=offset,

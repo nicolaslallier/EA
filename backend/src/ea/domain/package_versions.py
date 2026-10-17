@@ -131,6 +131,10 @@ class FrozenBy:
     version: str
 
 
+#: Each package that is published or lies under one, with the publication that freezes it.
+type Freezes = Mapping[UUID, FrozenBy]
+
+
 @dataclass(frozen=True, slots=True)
 class FrozenRefusal:
     """What the database said when it refused a write: ids and words, nothing of the content.

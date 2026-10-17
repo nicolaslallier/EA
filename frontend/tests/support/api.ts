@@ -214,6 +214,7 @@ export function anElement(overrides: Partial<ElementRead> = {}): ElementRead {
     approved_at: null,
     revision: 1,
     allowed_transitions: [],
+    frozen_by: null,
     ...overrides,
   }
 }

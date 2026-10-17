@@ -109,6 +109,7 @@ from ea.domain.package_versions import (
     MAX_NOTES_LENGTH,
     MAX_REASON_LENGTH,
     Bump,
+    Freezes,
     FrozenBy,
     PackageVersion,
     PublishOutcome,
@@ -313,6 +314,16 @@ class StereotypeRef(BaseModel):
         return cls(id=ref.id, name=ref.name, colour=ref.colour, icon_key=IconKey(ref.icon_key))
 
 
+class FrozenByRead(BaseModel):
+    package_id: UUID
+    path: str
+    version: str
+
+    @classmethod
+    def of(cls, frozen: FrozenBy) -> FrozenByRead:
+        return cls(package_id=frozen.package_id, path=frozen.path, version=frozen.version)
+
+
 class ElementRead(BaseModel):
     """An element as the API exposes it, layer and aspect resolved for the caller."""
 
@@ -336,13 +347,22 @@ class ElementRead(BaseModel):
     allowed_transitions: list[Transition] = Field(
         description="What the caller may do next with this element: the SPA draws a button each."
     )
+    frozen_by: FrozenByRead | None = Field(
+        description=(
+            "The publication that freezes this element's package: nothing below it can be"
+            " written until it is reopened."
+        )
+    )
 
     @classmethod
-    def of(cls, element: Element) -> ElementRead:
+    def of(cls, element: Element, *, freezes: Freezes) -> ElementRead:
+        frozen = freezes.get(element.package_id) if element.package_id else None
         # Outside a request nobody is calling, and nothing is offered.
         caller = current_caller.get()
         offered = (
-            allowed_transitions(element.approval_state, element.locked, caller)
+            allowed_transitions(
+                element.approval_state, element.locked, caller, frozen=frozen is not None
+            )
             if caller is not None
             else ()
         )
@@ -365,6 +385,7 @@ class ElementRead(BaseModel):
             approved_at=element.approved_at,
             revision=element.revision,
             allowed_transitions=list(offered),
+            frozen_by=FrozenByRead.of(frozen) if frozen else None,
         )
 
 
@@ -461,9 +482,9 @@ class GraphRead(BaseModel):
     relationships: list[RelationshipRead]
 
     @classmethod
-    def of(cls, view: GraphView) -> GraphRead:
+    def of(cls, view: GraphView, *, freezes: Freezes) -> GraphRead:
         return cls(
-            elements=[ElementRead.of(element) for element in view.elements],
+            elements=[ElementRead.of(element, freezes=freezes) for element in view.elements],
             relationships=[
                 RelationshipRead.of(relationship) for relationship in view.relationships
             ],
@@ -916,10 +937,10 @@ class AddressLocationRead(BaseModel):
     graph: GraphRead
 
     @classmethod
-    def of(cls, location: AddressLocation) -> AddressLocationRead:
+    def of(cls, location: AddressLocation, *, freezes: Freezes) -> AddressLocationRead:
         return cls(
             address=AddressRead.of(location.assignment),
-            graph=GraphRead.of(location.graph),
+            graph=GraphRead.of(location.graph, freezes=freezes),
         )
 
 
@@ -1147,8 +1168,11 @@ class SourceDiffRead(BaseModel):
     removed: list[UUID]
 
     @classmethod
-    def of(cls, diff: SourceDiff) -> SourceDiffRead:
-        return cls(added=[ElementRead.of(e) for e in diff.added], removed=list(diff.removed))
+    def of(cls, diff: SourceDiff, *, freezes: Freezes) -> SourceDiffRead:
+        return cls(
+            added=[ElementRead.of(e, freezes=freezes) for e in diff.added],
+            removed=list(diff.removed),
+        )
 
 
 class DiagramSummaryRead(BaseModel):
@@ -1204,10 +1228,17 @@ class DiagramRead(BaseModel):
         default_factory=list,
         description="Links out of period on `as_of`, or whose either end is.",
     )
+    frozen_by: FrozenByRead | None = Field(
+        description=(
+            "The publication that freezes this diagram's package: nothing below it can be"
+            " written until it is reopened."
+        )
+    )
 
     @classmethod
-    def of(cls, detail: DiagramDetail) -> DiagramRead:
+    def of(cls, detail: DiagramDetail, *, freezes: Freezes) -> DiagramRead:
         diagram = detail.diagram
+        frozen = freezes.get(diagram.package_id) if diagram.package_id else None
         return cls(
             id=diagram.id,
             name=diagram.name,
@@ -1221,10 +1252,11 @@ class DiagramRead(BaseModel):
             nodes=[DiagramNode.of(node) for node in detail.nodes],
             objects=[DiagramObject.of(item) for item in detail.objects],
             edges=[DiagramEdge.of(edge) for edge in detail.edges],
-            elements=[ElementRead.of(element) for element in detail.graph.elements],
+            elements=[ElementRead.of(e, freezes=freezes) for e in detail.graph.elements],
             relationships=[RelationshipRead.of(link) for link in detail.graph.relationships],
             inactive_element_ids=sorted(detail.inactive_elements, key=str),
             inactive_relationship_ids=sorted(detail.inactive_relationships, key=str),
+            frozen_by=FrozenByRead.of(frozen) if frozen else None,
         )
 
 
@@ -1281,16 +1313,6 @@ class PackageUpdate(_Input):
     name: PackageName | None = None
     description: Description | None = None
     parent_id: UUID | None = None
-
-
-class FrozenByRead(BaseModel):
-    package_id: UUID
-    path: str
-    version: str
-
-    @classmethod
-    def of(cls, frozen: FrozenBy) -> FrozenByRead:
-        return cls(package_id=frozen.package_id, path=frozen.path, version=frozen.version)
 
 
 class PackageRead(BaseModel):
@@ -2205,14 +2227,17 @@ class PlateauGapRead(BaseModel):
     gaps: list[ElementRead] = Field(description="The gap elements already associated to both.")
 
     @classmethod
-    def of(cls, comparison: PlateauComparison) -> PlateauGapRead:
+    def of(cls, comparison: PlateauComparison, *, freezes: Freezes) -> PlateauGapRead:
+        def read(element: Element) -> ElementRead:
+            return ElementRead.of(element, freezes=freezes)
+
         return cls(
-            a=ElementRead.of(comparison.a),
-            b=ElementRead.of(comparison.b),
-            only_in_a=[ElementRead.of(e) for e in comparison.diff.only_in_a],
-            only_in_b=[ElementRead.of(e) for e in comparison.diff.only_in_b],
-            common=[ElementRead.of(e) for e in comparison.diff.common],
-            gaps=[ElementRead.of(e) for e in comparison.gaps],
+            a=read(comparison.a),
+            b=read(comparison.b),
+            only_in_a=[read(e) for e in comparison.diff.only_in_a],
+            only_in_b=[read(e) for e in comparison.diff.only_in_b],
+            common=[read(e) for e in comparison.diff.common],
+            gaps=[read(e) for e in comparison.gaps],
         )
 
 

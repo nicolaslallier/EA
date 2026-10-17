@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 
-from ea.api.dependencies import Architecture
+from ea.api.dependencies import Architecture, Packages
 from ea.api.schemas import (
     ApprovalRequest,
     AsOf,
@@ -59,7 +59,9 @@ NOT_FOUND: dict[int | str, dict[str, type[ErrorResponse]]] = {
     status_code=status.HTTP_201_CREATED,
     responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
 )
-async def create_element(payload: ElementCreate, service: Architecture) -> ElementRead:
+async def create_element(
+    payload: ElementCreate, service: Architecture, packages: Packages
+) -> ElementRead:
     """Add an element to the catalogue."""
     element = await service.create_element(
         element_type=payload.element_type,
@@ -68,12 +70,13 @@ async def create_element(payload: ElementCreate, service: Architecture) -> Eleme
         documentation=payload.documentation,
         properties=payload.properties,
     )
-    return ElementRead.of(element)
+    return ElementRead.of(element, freezes=await packages.freezes())
 
 
 @router.get("/elements", response_model=ElementPage)
 async def list_elements(
     service: Architecture,
+    packages: Packages,
     element_type: Annotated[list[ElementType] | None, Query()] = None,
     layer: Annotated[list[Layer] | None, Query()] = None,
     search: Annotated[Search | None, Query()] = None,
@@ -100,8 +103,9 @@ async def list_elements(
     )
     criteria = replace(ElementFilter.from_query(query), as_of=as_of)
     elements = await service.list_elements(criteria)
+    freezes = await packages.freezes()
     return ElementPage(
-        items=[ElementRead.of(element) for element in elements],
+        items=[ElementRead.of(element, freezes=freezes) for element in elements],
         total=await service.count_elements(criteria),
         limit=limit,
         offset=offset,
@@ -109,13 +113,14 @@ async def list_elements(
 
 
 @router.get("/elements/{element_id}", response_model=ElementRead, responses=NOT_FOUND)
-async def read_element(element_id: UUID, service: Architecture) -> ElementRead:
-    return ElementRead.of(await service.get_element(element_id))
+async def read_element(element_id: UUID, service: Architecture, packages: Packages) -> ElementRead:
+    element = await service.get_element(element_id)
+    return ElementRead.of(element, freezes=await packages.freezes())
 
 
 @router.patch("/elements/{element_id}", response_model=ElementRead, responses=NOT_FOUND)
 async def update_element(
-    element_id: UUID, payload: ElementUpdate, service: Architecture
+    element_id: UUID, payload: ElementUpdate, service: Architecture, packages: Packages
 ) -> ElementRead:
     """Change what an element says. Its type is fixed once created."""
     element = await service.update_element(
@@ -125,7 +130,7 @@ async def update_element(
         documentation=payload.documentation,
         properties=payload.properties,
     )
-    return ElementRead.of(element)
+    return ElementRead.of(element, freezes=await packages.freezes())
 
 
 @router.delete(
@@ -149,7 +154,7 @@ async def delete_element(element_id: UUID, service: Architecture) -> Response:
     },
 )
 async def transition_element(
-    element_id: UUID, payload: ApprovalRequest, service: Architecture
+    element_id: UUID, payload: ApprovalRequest, service: Architecture, packages: Packages
 ) -> ElementRead:
     """Move an element through review.
 
@@ -159,7 +164,7 @@ async def transition_element(
     element = await service.transition_element(
         element_id, payload.transition, expected_revision=payload.expected_revision
     )
-    return ElementRead.of(element)
+    return ElementRead.of(element, freezes=await packages.freezes())
 
 
 # --- Relationships --------------------------------------------------------
@@ -256,6 +261,7 @@ async def delete_relationship(relationship_id: UUID, service: Architecture) -> R
 async def read_element_relations(
     element_id: UUID,
     service: Architecture,
+    packages: Packages,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
 ) -> GraphRead:
     """Every link attached to one element, with the elements at both ends.
@@ -266,7 +272,7 @@ async def read_element_relations(
     client renders "Invoice API serves Order to cash" from one response.
     """
     view = await service.relations_of(element_id, relationship_types=tuple(relationship_type or ()))
-    return GraphRead.of(view)
+    return GraphRead.of(view, freezes=await packages.freezes())
 
 
 # --- Traversals -----------------------------------------------------------
@@ -280,6 +286,7 @@ async def read_element_relations(
 async def read_neighbourhood(
     element_id: UUID,
     service: Architecture,
+    packages: Packages,
     depth: DepthQuery = 1,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
     as_of: AsOfQuery = None,
@@ -288,13 +295,14 @@ async def read_neighbourhood(
     view = await service.neighbourhood(
         element_id, depth=depth, relationship_types=tuple(relationship_type or ()), as_of=as_of
     )
-    return GraphRead.of(view)
+    return GraphRead.of(view, freezes=await packages.freezes())
 
 
 @router.get("/elements/{element_id}/impact", response_model=GraphRead, responses=NOT_FOUND)
 async def read_impact(
     element_id: UUID,
     service: Architecture,
+    packages: Packages,
     depth: DepthQuery = 5,
     relationship_type: Annotated[list[RelationshipType] | None, Query()] = None,
     as_of: AsOfQuery = None,
@@ -308,4 +316,4 @@ async def read_impact(
     view = await service.impact_of(
         element_id, depth=depth, relationship_types=tuple(relationship_type or ()), as_of=as_of
     )
-    return GraphRead.of(view)
+    return GraphRead.of(view, freezes=await packages.freezes())

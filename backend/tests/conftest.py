@@ -1728,6 +1728,8 @@ class InMemoryPackages:
         self.audit_log = graph.audit_log
         self.packages: dict[UUID, Package] = {}
         self.published: list[PackageVersion] = []
+        #: The reads made of it, by method name, for a test that counts them.
+        self.calls: list[str] = []
         self._graph = graph
         self._diagrams = diagrams
         graph.package_tree = self
@@ -1747,6 +1749,7 @@ class InMemoryPackages:
             raise PackageNotFoundError(str(package.parent_id))
 
     async def list_all(self) -> tuple[Package, ...]:
+        self.calls.append("list_all")
         return tuple(sorted(self.packages.values(), key=lambda p: (p.name.lower(), p.id)))
 
     async def counts(self) -> dict[UUID, PackageCounts]:
@@ -2519,6 +2522,12 @@ def service(repository: InMemoryRepository, profiles: InMemoryProfiles) -> Archi
 @pytest.fixture
 def profile_service(profiles: InMemoryProfiles, service: ArchitectureService) -> ProfileService:
     return ProfileService(profiles, service, clock=lambda: FIXED_NOW)
+
+
+def an_empty_package_tree() -> InMemoryPackages:
+    """A tree with no package, for an app whose test files nothing: every element or
+    diagram read asks what is frozen (docs/adr/0074), so the app needs one."""
+    return InMemoryPackages(InMemoryRepository(), InMemoryDiagrams())
 
 
 @pytest.fixture

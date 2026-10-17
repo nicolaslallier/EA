@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from ea.api.dependencies import Templates
+from ea.api.dependencies import Packages, Templates
 from ea.api.schemas import (
     AsTemplateRequest,
     DiagramRead,
@@ -90,7 +90,7 @@ async def delete_template(template_id: UUID, templates: Templates) -> Response:
     responses=REJECTED,
 )
 async def instantiate_template(
-    template_id: UUID, body: InstantiateRequest, templates: Templates
+    template_id: UUID, body: InstantiateRequest, templates: Templates, packages: Packages
 ) -> DiagramRead:
     """Build a diagram from a template.
 
@@ -104,7 +104,7 @@ async def instantiate_template(
         bindings=[binding.placed() for binding in body.bindings],
         create_relationships=body.create_relationships,
     )
-    return DiagramRead.of(detail)
+    return DiagramRead.of(detail, freezes=await packages.freezes())
 
 
 @router.post(

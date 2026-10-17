@@ -16,7 +16,13 @@ from ea.core.logging import REQUESTS_LOGGER
 from ea.domain.audit import AuditChannel
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryAuditLog, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    InMemoryAuditLog,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+    an_empty_package_tree,
+)
 
 ALICE, BOB = "alice-token", "bob-token"
 
@@ -37,7 +43,10 @@ async def client(
         }
     )
     app = create_app(
-        Settings(debug=True, auth_enabled=True), architecture_service=service, verifier=verifier
+        Settings(debug=True, auth_enabled=True),
+        architecture_service=service,
+        verifier=verifier,
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -141,7 +150,11 @@ class TestTheIdentityOfAnHttpEvent:
 async def test_with_auth_off_the_event_names_the_local_developer_explicitly(
     service: ArchitectureService, audit_log: InMemoryAuditLog
 ) -> None:
-    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
+    app = create_app(
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        packages=an_empty_package_tree(),
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:

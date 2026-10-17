@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response, status
 
-from ea.api.dependencies import Diagrams
+from ea.api.dependencies import Diagrams, Packages
 from ea.api.schemas import (
     AsOf,
     DiagramCreate,
@@ -85,13 +85,18 @@ async def create_diagram(body: DiagramCreate, diagrams: Diagrams) -> DiagramSumm
 
 @router.get("/diagrams/{diagram_id}", response_model=DiagramRead, responses=NOT_FOUND)
 async def read_diagram(
-    diagram_id: UUID, diagrams: Diagrams, as_of: Annotated[AsOf | None, Query()] = None
+    diagram_id: UUID,
+    diagrams: Diagrams,
+    packages: Packages,
+    as_of: Annotated[AsOf | None, Query()] = None,
 ) -> DiagramRead:
     """A diagram with its boxes, the elements they show and the links between them.
 
     `as_of` removes nothing: it lists, in `inactive_*_ids`, what is out of period that day.
     """
-    return DiagramRead.of(await diagrams.open(diagram_id, as_of=as_of))
+    return DiagramRead.of(
+        await diagrams.open(diagram_id, as_of=as_of), freezes=await packages.freezes()
+    )
 
 
 @router.patch("/diagrams/{diagram_id}", response_model=DiagramSummaryRead, responses=REJECTED)
@@ -148,46 +153,55 @@ async def replace_diagram_layout(
     status_code=status.HTTP_201_CREATED,
     responses=GENERATE_REJECTED,
 )
-async def generate_diagram(body: DiagramGenerate, diagrams: Diagrams) -> DiagramRead:
+async def generate_diagram(
+    body: DiagramGenerate, diagrams: Diagrams, packages: Packages
+) -> DiagramRead:
     """A new **live** view: everything a saved query or a package yields, at each opening.
 
     It stores no box. To edit it, freeze it; to see it frozen from the start,
     freeze it right after (the layout is the SPA's, the server computes none).
     """
-    return DiagramRead.of(await diagrams.generate(name=body.name, source=body.source.placed()))
+    detail = await diagrams.generate(name=body.name, source=body.source.placed())
+    return DiagramRead.of(detail, freezes=await packages.freezes())
 
 
 @router.get(
     "/diagrams/{diagram_id}/source-diff", response_model=SourceDiffRead, responses=GENERATE_REJECTED
 )
-async def read_source_diff(diagram_id: UUID, diagrams: Diagrams) -> SourceDiffRead:
+async def read_source_diff(
+    diagram_id: UUID, diagrams: Diagrams, packages: Packages
+) -> SourceDiffRead:
     """What a frozen view would gain and lose if it followed its source again. Writes nothing."""
-    return SourceDiffRead.of(await diagrams.source_diff(diagram_id))
+    return SourceDiffRead.of(
+        await diagrams.source_diff(diagram_id), freezes=await packages.freezes()
+    )
 
 
 @router.post(
     "/diagrams/{diagram_id}/freeze", response_model=DiagramRead, responses=GENERATE_REJECTED
 )
-async def freeze_diagram(diagram_id: UUID, body: DiagramFreeze, diagrams: Diagrams) -> DiagramRead:
+async def freeze_diagram(
+    diagram_id: UUID, body: DiagramFreeze, diagrams: Diagrams, packages: Packages
+) -> DiagramRead:
     """Store the layout and make the live view an ordinary editable diagram."""
     await diagrams.freeze(
         diagram_id, [node.placed() for node in body.nodes], revision=body.revision
     )
-    return DiagramRead.of(await diagrams.open(diagram_id))
+    return DiagramRead.of(await diagrams.open(diagram_id), freezes=await packages.freezes())
 
 
 @router.post(
     "/diagrams/{diagram_id}/unfreeze", response_model=DiagramRead, responses=GENERATE_REJECTED
 )
 async def unfreeze_diagram(
-    diagram_id: UUID, body: DiagramUnfreeze, diagrams: Diagrams
+    diagram_id: UUID, body: DiagramUnfreeze, diagrams: Diagrams, packages: Packages
 ) -> DiagramRead:
     """Back to a live view. Refused (409) while notes, groups or routes would be lost,
     unless `discard_annotations` is true."""
     await diagrams.unfreeze(
         diagram_id, revision=body.revision, discard_annotations=body.discard_annotations
     )
-    return DiagramRead.of(await diagrams.open(diagram_id))
+    return DiagramRead.of(await diagrams.open(diagram_id), freezes=await packages.freezes())
 
 
 _SVG_HEADERS = {

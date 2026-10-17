@@ -2468,6 +2468,8 @@ export interface components {
             edges: components["schemas"]["DiagramEdge"][];
             /** Elements */
             elements: components["schemas"]["ElementRead"][];
+            /** @description The publication that freezes this diagram's package: nothing below it can be written until it is reopened. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
             generation: components["schemas"]["Generation"] | null;
             /**
              * Id
@@ -2830,6 +2832,8 @@ export interface components {
             /** Documentation */
             documentation: string;
             element_type: components["schemas"]["ElementType"];
+            /** @description The publication that freezes this element's package: nothing below it can be written until it is reopened. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
             /**
              * Id
              * Format: uuid

@@ -12,7 +12,14 @@ import pytest_asyncio
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryDiagrams, InMemoryTemplates, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    InMemoryDiagrams,
+    InMemoryTemplates,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+    an_empty_package_tree,
+)
 from tests.unit.test_template_service import BODY
 
 pytestmark = pytest.mark.asyncio
@@ -29,6 +36,7 @@ async def client(
         architecture_service=service,
         diagrams=diagrams,  # type: ignore[arg-type]
         templates=templates,  # type: ignore[arg-type]
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -49,6 +57,7 @@ async def secured(
         diagrams=diagrams,  # type: ignore[arg-type]
         templates=templates,  # type: ignore[arg-type]
         verifier=StaticVerifier({EDITOR: an_editor(), READER: a_reader()}),
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

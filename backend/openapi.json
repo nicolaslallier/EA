@@ -1409,6 +1409,17 @@
             "title": "Elements",
             "type": "array"
           },
+          "frozen_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenByRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The publication that freezes this diagram's package: nothing below it can be written until it is reopened."
+          },
           "generation": {
             "anyOf": [
               {
@@ -1515,7 +1526,8 @@
           "objects",
           "edges",
           "elements",
-          "relationships"
+          "relationships",
+          "frozen_by"
         ],
         "title": "DiagramRead",
         "type": "object"
@@ -2180,6 +2192,17 @@
           "element_type": {
             "$ref": "#/components/schemas/ElementType"
           },
+          "frozen_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenByRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The publication that freezes this element's package: nothing below it can be written until it is reopened."
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2251,7 +2274,8 @@
           "approved_by",
           "approved_at",
           "revision",
-          "allowed_transitions"
+          "allowed_transitions",
+          "frozen_by"
         ],
         "title": "ElementRead",
         "type": "object"

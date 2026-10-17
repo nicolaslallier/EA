@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 
-from ea.api.dependencies import Architecture, SavedQueries
+from ea.api.dependencies import Architecture, Packages, SavedQueries
 from ea.api.schemas import (
     ElementPage,
     ElementQuerySchema,
@@ -37,7 +37,9 @@ INVALID: dict[int | str, dict[str, type[ErrorResponse]]] = {
 
 
 @router.post("/elements/search", response_model=ElementPage, responses=INVALID)
-async def search_elements(body: ElementQuerySchema, service: Architecture) -> ElementPage:
+async def search_elements(
+    body: ElementQuerySchema, service: Architecture, packages: Packages
+) -> ElementPage:
     """Types, layers, name fragment, package, attributes and links present or absent.
 
     Every criterion is combined with AND. `total` counts everything the query
@@ -46,8 +48,9 @@ async def search_elements(body: ElementQuerySchema, service: Architecture) -> El
     query = body.to_domain()
     criteria = ElementFilter.from_query(query)
     elements = await service.list_elements(criteria)
+    freezes = await packages.freezes()
     return ElementPage(
-        items=[ElementRead.of(element) for element in elements],
+        items=[ElementRead.of(element, freezes=freezes) for element in elements],
         total=await service.count_elements(criteria),
         limit=query.limit,
         offset=query.offset,
@@ -111,12 +114,17 @@ async def delete_saved_query(query_id: UUID, queries: SavedQueries) -> Response:
 
 @router.get("/queries/{query_id}/elements", response_model=ElementPage, responses=REJECTED)
 async def run_saved_query(
-    query_id: UUID, queries: SavedQueries, limit: LimitQuery = 50, offset: OffsetQuery = 0
+    query_id: UUID,
+    queries: SavedQueries,
+    packages: Packages,
+    limit: LimitQuery = 50,
+    offset: OffsetQuery = 0,
 ) -> ElementPage:
     """Run a saved query, paged. 422 `unknown_package` if its package has since been deleted."""
     result = await queries.run(query_id, limit=limit, offset=offset)
+    freezes = await packages.freezes()
     return ElementPage(
-        items=[ElementRead.of(element) for element in result.elements],
+        items=[ElementRead.of(element, freezes=freezes) for element in result.elements],
         total=result.total,
         limit=limit,
         offset=offset,

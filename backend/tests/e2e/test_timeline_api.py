@@ -12,13 +12,18 @@ import pytest_asyncio
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
+from tests.conftest import an_empty_package_tree
 
 pytestmark = pytest.mark.asyncio
 
 
 @pytest_asyncio.fixture
 async def client(service: ArchitectureService) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(Settings(debug=True, auth_enabled=False), architecture_service=service)
+    app = create_app(
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        packages=an_empty_package_tree(),
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:

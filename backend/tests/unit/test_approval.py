@@ -112,7 +112,7 @@ class TestEveryStateEveryTransitionEveryRole:
     @pytest.mark.parametrize(("state", "locked"), list(OFFERED))
     def test_what_is_offered_is_what_is_applicable(self, state: S, locked: bool, role: str) -> None:
         make_caller, may = ROLES[role]
-        offered = allowed_transitions(state, locked, make_caller())
+        offered = allowed_transitions(state, locked, make_caller(), frozen=False)
 
         assert set(offered) == OFFERED[(state, locked)] & may
 
@@ -311,7 +311,7 @@ class TestEverythingNotListedIsRefused:
         return replace(an_element(), approval_state="bogus")  # type: ignore[arg-type]
 
     def test_an_unknown_state_offers_nothing_and_accepts_no_transition(self) -> None:
-        assert allowed_transitions("bogus", False, an_approver()) == ()  # type: ignore[arg-type]
+        assert allowed_transitions("bogus", False, an_approver(), frozen=False) == ()  # type: ignore[arg-type]
         for transition in Tr:
             with pytest.raises((InvalidTransitionError, NotAuthorisedError)):
                 apply_transition(
@@ -327,7 +327,7 @@ class TestEverythingNotListedIsRefused:
     def test_an_unknown_role_or_no_role_may_take_no_transition(self) -> None:
         stranger = Caller("s", "n", frozenset({"ea-god", "ea-editors"}))
         for caller in (stranger, Caller("s", "n")):
-            assert allowed_transitions(S.DRAFT, False, caller) == ()
+            assert allowed_transitions(S.DRAFT, False, caller, frozen=False) == ()
             for transition in Tr:
                 with pytest.raises(NotAuthorisedError):
                     apply_transition(an_element(), transition, caller, now=LATER, last_author="x")
@@ -368,3 +368,13 @@ class TestApprovalNamesTheRevisionItSaw:
             ).approval_state
             is S.DRAFT
         )
+
+
+def test_a_frozen_element_is_offered_no_transition_whoever_asks() -> None:
+    for state, locked in [
+        (S.DRAFT, False),
+        (S.IN_REVIEW, False),
+        (S.APPROVED, False),
+        (S.APPROVED, True),
+    ]:
+        assert allowed_transitions(state, locked, an_approver(), frozen=True) == ()

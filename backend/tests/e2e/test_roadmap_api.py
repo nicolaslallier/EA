@@ -12,7 +12,13 @@ import pytest_asyncio
 from ea.core.config import Settings
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
-from tests.conftest import InMemoryRepository, StaticVerifier, a_reader, an_editor
+from tests.conftest import (
+    InMemoryRepository,
+    StaticVerifier,
+    a_reader,
+    an_editor,
+    an_empty_package_tree,
+)
 
 
 @pytest_asyncio.fixture
@@ -20,7 +26,10 @@ async def client(
     service: ArchitectureService, repository: InMemoryRepository
 ) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
-        Settings(debug=True, auth_enabled=False), architecture_service=service, timeline=repository
+        Settings(debug=True, auth_enabled=False),
+        architecture_service=service,
+        timeline=repository,
+        packages=an_empty_package_tree(),
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -212,6 +221,7 @@ class TestWhoMayCallWhat:
             architecture_service=service,
             timeline=repository,
             verifier=StaticVerifier({"reader": a_reader(), "editor": an_editor()}),
+            packages=an_empty_package_tree(),
         )
         return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
