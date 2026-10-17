@@ -139,6 +139,8 @@ describe('useDiagram — undo and redo', () => {
     const { editor } = await opened()
     editor.place(B, { x: 300, y: 100 })
     expect(editor.canUndo.value).toBe(true)
+    // The edit is saved when the other diagram is opened: the server is then at revision 1.
+    stubApi([{ ...READ, body: { ...(READ.body as object), revision: 1 } }, SAVE, LINK])
 
     await editor.open(DIAGRAM_ID)
 

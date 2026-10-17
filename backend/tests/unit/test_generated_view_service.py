@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,7 @@ from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
     DiagramHasAnnotationsError,
     DiagramLiveError,
+    DiagramNotFoundError,
     DiagramNotGeneratedError,
     DiagramNotLiveError,
     GeneratedViewsUnavailableError,
@@ -20,7 +22,7 @@ from ea.domain.generated_views import Generation, PackageSource, QuerySource
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.diagrams import DiagramService
-from tests.conftest import InMemoryViewSources, a_reader, lay_out
+from tests.conftest import InMemoryDiagrams, InMemoryViewSources, a_reader, lay_out
 
 
 async def element(service: ArchitectureService, name: str):
@@ -62,6 +64,43 @@ class TestLive:
             await diagram_service.generate(name="Trop", source=source)
 
         assert await diagram_service.list_diagrams() == ()
+
+    async def test_a_live_view_whose_source_outgrew_the_limit_says_how_out_and_can_be_deleted(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+    ) -> None:
+        a = await element(service, "A")
+        source = QuerySource(uuid4())
+        view_sources.answers[source] = [a.id]
+        opened = await diagram_service.generate(name="Grandit", source=source)
+        view_sources.answers[source] = [uuid4() for _ in range(501)]
+
+        with pytest.raises(GeneratedViewTooLargeError, match=r"501.*delete this view"):
+            await diagram_service.open(opened.diagram.id)
+
+        await diagram_service.delete(opened.diagram.id)  # reading it is not needed to remove it
+        assert await diagram_service.list_diagrams() == ()
+
+    async def test_as_of_marks_what_is_out_of_period_on_a_live_view_too(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+    ) -> None:
+        old = await service.create_element(
+            element_type=ElementType.APPLICATION_COMPONENT,
+            name="Old",
+            properties={"valid_until": "2020-12-31"},
+        )
+        source = QuerySource(uuid4())
+        view_sources.answers[source] = [old.id]
+        opened = await diagram_service.generate(name="Vivante", source=source)
+
+        later = await diagram_service.open(opened.diagram.id, as_of=date(2026, 1, 1))
+
+        assert old.id in later.inactive_elements
 
     async def test_a_live_view_cannot_be_laid_out(
         self, diagram_service: DiagramService, view_sources: InMemoryViewSources
@@ -155,6 +194,24 @@ class TestFreezing:
         with pytest.raises(DiagramNotGeneratedError):
             await diagram_service.freeze(by_hand.id, revision=0, nodes=[])
 
+    async def test_a_view_deleted_while_it_is_frozen_is_not_found(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+        diagrams: InMemoryDiagrams,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        diagram, a, _, _ = await self._live(diagram_service, service, view_sources)
+
+        async def gone(*_: object, **__: object) -> None:
+            return None
+
+        monkeypatch.setattr(diagrams, "freeze", gone)
+
+        with pytest.raises(DiagramNotFoundError):
+            await diagram_service.freeze(diagram.id, revision=0, nodes=[DiagramNode(a.id, 0, 0)])
+
     async def test_refreshing_shows_the_gap_and_writes_nothing(
         self,
         diagram_service: DiagramService,
@@ -216,6 +273,26 @@ class TestThawing:
 
         assert thawed.generation is Generation.LIVE
         assert opened.nodes == ()
+
+    async def test_a_view_deleted_while_it_is_thawed_is_not_found(
+        self,
+        diagram_service: DiagramService,
+        service: ArchitectureService,
+        view_sources: InMemoryViewSources,
+        diagrams: InMemoryDiagrams,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        diagram, _ = await self._frozen(diagram_service, service, view_sources)
+
+        async def gone(*_: object, **__: object) -> None:
+            return None
+
+        monkeypatch.setattr(diagrams, "unfreeze", gone)
+
+        with pytest.raises(DiagramNotFoundError):
+            await diagram_service.unfreeze(
+                diagram.id, revision=(await diagram_service.get(diagram.id)).revision
+            )
 
     async def test_thawing_refuses_to_lose_a_note_unless_told_to(
         self,

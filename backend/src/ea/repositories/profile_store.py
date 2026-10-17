@@ -13,7 +13,7 @@ is locked, put to the one guard every way into an element asks, and touched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -32,12 +32,14 @@ from ea.domain.audit import events_for
 from ea.domain.errors import (
     DuplicateProfileError,
     ElementNotFoundError,
+    ProfileLimitError,
     ProfileNotFoundError,
     StereotypeInUseError,
     StereotypeNotFoundError,
 )
 from ea.domain.model import StereotypeRef
 from ea.domain.profiles import (
+    MAX_PROFILES,
     IconKey,
     Profile,
     PropertyKind,
@@ -48,7 +50,7 @@ from ea.repositories.architecture_store import author_of, constraint_of, element
 from ea.repositories.audit_store import write_events
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -57,6 +59,10 @@ if TYPE_CHECKING:
 
 _TAKEN: Final = {"uq_profiles_name", "uq_profile_stereotypes_profile_id_name"}
 _IN_USE: Final = "fk_element_stereotypes_stereotype_id_profile_stereotypes"
+
+
+#: Serialises the count-then-insert of `add_profile`.
+_LIBRARY_LOCK = 0x45_41_00_08
 
 
 def _refused(error: IntegrityError, what: str) -> Exception:
@@ -184,6 +190,12 @@ class PostgresProfileRepository:
     async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
         events = events_for(audit, profile)
         async with work(self._sessions) as session:
+            # Count and insert under one lock: two writers cannot both see the last free place.
+            await session.execute(select(func.pg_advisory_xact_lock(_LIBRARY_LOCK)))
+            held = await session.scalar(select(func.count()).select_from(ProfileRecord))
+            if (held or 0) >= MAX_PROFILES:
+                msg = f"the catalogue holds {MAX_PROFILES} profiles at most"
+                raise ProfileLimitError(msg)
             session.add(
                 ProfileRecord(
                     id=profile.id,
@@ -325,11 +337,14 @@ class PostgresProfileRepository:
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
+        check: Callable[[Mapping[str, Any], Sequence[Stereotype]], None] | None = None,
     ) -> None:
         wanted = list(dict.fromkeys(stereotype_ids))
         async with work(self._sessions) as session:
             # The element first, locked the way every write to it is (docs/adr/0048), then
-            # the guard on the row as it is *now*, in the transaction that writes.
+            # the guard and the properties check on the row as it is *now*, in the transaction
+            # that writes. `key_share` renders FOR NO KEY UPDATE: it waits for a concurrent edit
+            # of the properties, so the check below sees the committed row.
             element = await session.get(
                 ElementRecord,
                 element_id,
@@ -340,8 +355,8 @@ class PostgresProfileRepository:
                 msg = f"no element with id {element_id}"
                 raise ElementNotFoundError(msg)
             guard_element_write(element_from_row(element), WriteKind.STEREOTYPES)
-            # The definitions are held while the label goes on, so none is re-typed or removed
-            # between the service's check and this write.
+            # The definitions are held while the label goes on, so none is re-typed, removed or
+            # re-patterned between the check below and this write.
             definitions = {
                 row.id: row
                 for row in await session.scalars(
@@ -362,6 +377,8 @@ class PostgresProfileRepository:
                         f"not to {element.element_type}"
                     )
                     raise ValueError(msg)
+            if check is not None:
+                check(element.properties, await _stereotypes(session, ids=wanted))
             carried = await self._refs(session, [element_id])
             events = events_for(audit, carried.get(element_id, ()))
             await session.execute(

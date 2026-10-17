@@ -47,11 +47,12 @@ from ea.domain.auth import APPROVER_ROLE, EDITOR_ROLE, Caller
 from ea.domain.baselines import Baseline, BoxSnapshot, ModelSnapshot, RestorePlan, plan_restore
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene
 from ea.domain.diagram_templates import MAX_TEMPLATES, DiagramTemplate
-from ea.domain.diagrams import Diagram, DiagramNode
+from ea.domain.diagrams import MAX_DIAGRAMS, Diagram, DiagramNode
 from ea.domain.documents import Document, DocumentSummary
 from ea.domain.errors import (
     AddressAlreadyAssignedError,
     BaselineNotFoundError,
+    DiagramLimitError,
     DiagramLiveError,
     DiagramNotFoundError,
     DiagramNotLiveError,
@@ -77,6 +78,7 @@ from ea.domain.errors import (
     PackageNotEmptyError,
     PackageNotFoundError,
     PackageNotFrozenError,
+    ProfileLimitError,
     ProfileNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
@@ -137,7 +139,7 @@ from ea.domain.ports import (
     RowRefusal,
     Transaction,
 )
-from ea.domain.profiles import Profile, Stereotype
+from ea.domain.profiles import MAX_PROFILES, Profile, Stereotype
 from ea.domain.requirements import REQUIREMENT_TYPES
 from ea.domain.saved_queries import SavedQuery, SavedQuerySummary
 from ea.domain.search import (
@@ -652,7 +654,7 @@ class InMemoryRepository:
         as_of: date | None = None,
     ) -> tuple[Relationship, ...]:
         self.last_as_of = as_of
-        return tuple(self.relationships.values())
+        return tuple(self.relationships.values())[offset : offset + limit]
 
     async def update_relationship(
         self,
@@ -1134,6 +1136,9 @@ class InMemoryDiagrams:
         return tuple(self._counted(d) for d in sorted(wanted, key=lambda d: d.name))
 
     async def add(self, diagram: Diagram, *, audit: AuditOf[Diagram]) -> Diagram:
+        if len(self.diagrams) >= MAX_DIAGRAMS:
+            msg = f"the catalogue holds {MAX_DIAGRAMS} diagrams at most"
+            raise DiagramLimitError(msg)
         self._refuse_a_taken_name(diagram)
         self.diagrams[diagram.id] = diagram
         self.audit_log.append(events_for(audit, diagram))
@@ -1299,6 +1304,9 @@ class InMemoryProfiles:
         return self.profiles.get(profile_id)
 
     async def add_profile(self, profile: Profile, *, audit: AuditOf[Profile]) -> Profile:
+        if len(self.profiles) >= MAX_PROFILES:
+            msg = f"the catalogue holds {MAX_PROFILES} profiles at most"
+            raise ProfileLimitError(msg)
         self._refuse_a_taken_name(profile)
         events = events_for(audit, profile)
         self.profiles[profile.id] = profile
@@ -1391,6 +1399,7 @@ class InMemoryProfiles:
         stereotype_ids: Sequence[UUID],
         *,
         audit: AuditOf[tuple[StereotypeRef, ...]],
+        check: Callable[[Mapping[str, Any], Sequence[Stereotype]], None] | None = None,
     ) -> None:
         element = self.graph.elements.get(element_id) if self.graph is not None else None
         if self.graph is not None and element is None:
@@ -1407,6 +1416,8 @@ class InMemoryProfiles:
                     f"stereotype {known[sid].name!r} does not apply to {element.element_type.value}"
                 )
                 raise ValueError(msg)
+        if element is not None and check is not None:
+            check(element.properties, [known[sid] for sid in wanted])
         before = (await self.refs_of([element_id])).get(element_id, ())
         events = events_for(audit, before)
         self.applied[element_id] = wanted

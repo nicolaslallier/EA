@@ -65,6 +65,19 @@ describe('layoutByLayers', () => {
     expect(positions.get('y')!.x).toBeLessThan(positions.get('x')!.x)
   })
 
+  it('orders names by code unit, the same in every browser language', () => {
+    const named = (id: string, name: string) => ({ id, name, layer: 'application' as const })
+    const positions = layoutByLayers({
+      elements: [named('1', 'é'), named('2', 'a'), named('3', 'Z')],
+      relationships: [],
+    })
+
+    const left = (id: string) => positions.get(id)?.x ?? -1
+    // Z (U+005A) < a (U+0061) < é (U+00E9): not the locale's a < é < Z.
+    expect(left('3')).toBeLessThan(left('2'))
+    expect(left('2')).toBeLessThan(left('1'))
+  })
+
   it('breaks ties by name, then by id', () => {
     const positions = layoutByLayers({
       elements: [el('2', 'business', 'Même nom'), el('1', 'business', 'Même nom'), el('0', 'business', 'Autre')],

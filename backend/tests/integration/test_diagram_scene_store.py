@@ -22,10 +22,11 @@ from ea.domain.diagram_objects import (
     Point,
 )
 from ea.domain.diagrams import Diagram, DiagramNode
-from ea.domain.errors import DiagramRevisionConflictError
+from ea.domain.errors import DiagramRevisionConflictError, PackageFrozenError
 from ea.domain.model import Element, Relationship
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.diagram_store import PostgresDiagramRepository
+from tests.integration.test_package_freeze_triggers import a_package, publish
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -316,3 +317,90 @@ async def test_revision_0015_applies_over_a_database_that_already_has_diagrams(
         assert set(boxes) == {(0, None)}
     finally:
         await asyncio.to_thread(command.downgrade, alembic_config, "base")
+
+
+async def test_deleting_an_element_or_a_link_moves_the_revision_of_the_diagrams_it_was_on(
+    diagrams: PostgresDiagramRepository, graph: PostgresArchitectureRepository
+) -> None:
+    """An open copy still holds boxes that are gone: its next save must be a 409, not a 422."""
+    a = await graph.add_element(an_element("A"), audit=())
+    b = await graph.add_element(an_element("B"), audit=())
+    c = await graph.add_element(an_element("C"), audit=())
+    link = await graph.add_relationship(
+        Relationship.between(RelationshipType.ASSOCIATION, a, b, now=NOW), audit=()
+    )
+    on = await a_stored_diagram(diagrams)
+    elsewhere = await a_stored_diagram(diagrams)
+    scene = DiagramScene(
+        nodes=(DiagramNode(a.id, 0, 0), DiagramNode(b.id, 300, 0)),
+        edges=(DiagramEdge(link.id, ()),),
+    )
+    await diagrams.replace_layout(on.id, scene, revision=0, now=NOW, audit=())
+    await diagrams.replace_layout(
+        elsewhere.id, DiagramScene(nodes=(DiagramNode(c.id, 0, 0),)), revision=0, now=NOW, audit=()
+    )
+
+    await graph.delete_relationship(link.id, audit=())
+    assert (await diagrams.get(on.id)).revision == 2  # type: ignore[union-attr]
+
+    await graph.delete_element(b.id, audit=())
+    assert (await diagrams.get(on.id)).revision == 3  # type: ignore[union-attr]
+    assert (await diagrams.get(elsewhere.id)).revision == 1  # type: ignore[union-attr]
+    with pytest.raises(DiagramRevisionConflictError):
+        await diagrams.replace_layout(on.id, scene, revision=1, now=NOW, audit=())
+
+
+async def test_deleting_an_element_moves_the_diagrams_of_the_links_it_takes_with_it(
+    diagrams: PostgresDiagramRepository, graph: PostgresArchitectureRepository
+) -> None:
+    a = await graph.add_element(an_element("A"), audit=())
+    b = await graph.add_element(an_element("B"), audit=())
+    link = await graph.add_relationship(
+        Relationship.between(RelationshipType.ASSOCIATION, a, b, now=NOW), audit=()
+    )
+    diagram = await a_stored_diagram(diagrams)
+    # Only the route of the link is on this diagram, none of its ends' boxes.
+    await diagrams.replace_layout(
+        diagram.id,
+        DiagramScene(edges=(DiagramEdge(link.id, ()),)),
+        revision=0,
+        now=NOW,
+        audit=(),
+    )
+
+    await graph.delete_element(a.id, audit=())
+
+    assert (await diagrams.get(diagram.id)).revision == 2  # type: ignore[union-attr]
+
+
+async def test_deleting_an_element_drawn_on_a_published_diagram_is_still_package_frozen(
+    diagrams: PostgresDiagramRepository,
+    graph: PostgresArchitectureRepository,
+    engine_at_head: AsyncEngine,
+) -> None:
+    """Moving the diagram's revision makes the `diagrams` row the first write the trigger sees;
+    the answer must stay 409 package_frozen, and nothing is deleted."""
+    drawn = await graph.add_element(an_element("Dessiné"), audit=())  # filed in no package
+    diagram = await a_stored_diagram(diagrams)
+    await diagrams.replace_layout(
+        diagram.id,
+        DiagramScene(nodes=(DiagramNode(drawn.id, 0, 0),)),
+        revision=0,
+        now=NOW,
+        audit=(),
+    )
+    async with engine_at_head.begin() as connection:
+        package = await a_package(connection, "Finance", None)
+        await connection.execute(
+            text("UPDATE diagrams SET package_id = :p WHERE id = :id"),
+            {"p": package, "id": diagram.id},
+        )
+        await publish(connection, package)
+
+    with pytest.raises(PackageFrozenError) as raised:
+        await graph.delete_element(drawn.id, audit=())
+
+    assert raised.value.refusal is not None
+    assert raised.value.refusal.table in {"diagrams", "diagram_nodes"}
+    assert await graph.get_element(drawn.id) is not None
+    assert (await diagrams.get(diagram.id)).revision == 1  # type: ignore[union-attr]

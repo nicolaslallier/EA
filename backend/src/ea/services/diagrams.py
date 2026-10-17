@@ -20,15 +20,17 @@ from typing import TYPE_CHECKING
 
 from ea.domain.audit import AuditAction, diagram_view, scene_views
 from ea.domain.diagram_objects import DiagramEdge, DiagramObject, DiagramScene, check_scene
-from ea.domain.diagrams import Diagram, DiagramDetail, DiagramNode, check_layout
+from ea.domain.diagrams import MAX_DIAGRAMS, Diagram, DiagramDetail, DiagramNode, check_layout
 from ea.domain.errors import (
     DiagramHasAnnotationsError,
     DiagramLiveError,
     DiagramNotFoundError,
     DiagramNotGeneratedError,
     DiagramNotLiveError,
+    DiagramRevisionConflictError,
     GeneratedViewsUnavailableError,
     PackageNotFoundError,
+    ScopeTooLargeError,
     UnknownLayoutElementError,
 )
 from ea.domain.generated_views import (
@@ -49,7 +51,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from ea.domain.audit import AuditEvent
-    from ea.domain.ports import DiagramRepository, PackageRepository, ViewSourceResolver
+    from ea.domain.ports import DiagramRepository, GraphView, PackageRepository, ViewSourceResolver
     from ea.services.architecture import ArchitectureService
 
 Clock = Callable[[], datetime]
@@ -96,12 +98,19 @@ class DiagramService:
             msg = "a diagram cannot be both at the root and in a package"
             raise ValueError(msg)
         if package_id is None:
-            return await self._repository.list_all(root_only=root_only)
+            return self._within_the_cap(await self._repository.list_all(root_only=root_only))
         wanted = {package_id}
         if include_subpackages and self._packages is not None:
             everything = {p.id: p for p in await self._packages.list_all()}
             wanted |= descendants_of(package_id, everything)
-        return await self._repository.list_all(package_ids=wanted)
+        return self._within_the_cap(await self._repository.list_all(package_ids=wanted))
+
+    @staticmethod
+    def _within_the_cap(listed: tuple[Diagram, ...]) -> tuple[Diagram, ...]:
+        if len(listed) > MAX_DIAGRAMS:
+            msg = f"more than {MAX_DIAGRAMS} diagrams: narrow the listing to a package"
+            raise ScopeTooLargeError(msg)
+        return listed
 
     async def _require_package(self, package_id: UUID | None) -> None:
         if package_id is None:
@@ -152,8 +161,14 @@ class DiagramService:
         if diagram.generation is Generation.LIVE:
             # No box is stored: who is on it is what the source yields now (docs/adr/0071).
             members = await self._members_of(diagram)
+            graph = await self._architecture.view_of(members)
+            live_elements, live_links = self._out_of_period(graph, as_of)
             return DiagramDetail(
-                diagram=diagram, nodes=(), graph=await self._architecture.view_of(members)
+                diagram=diagram,
+                nodes=(),
+                graph=graph,
+                inactive_elements=live_elements,
+                inactive_relationships=live_links,
             )
         nodes = await self._repository.nodes_of(diagram_id)
         objects = await self._repository.objects_of(diagram_id)
@@ -163,21 +178,7 @@ class DiagramService:
         )
         present = {element.id for element in graph.elements}
         linked = {link.id for link in graph.relationships}
-        inactive_elements: frozenset[UUID] = frozenset()
-        inactive_links: frozenset[UUID] = frozenset()
-        if as_of is not None:
-            inactive_elements = frozenset(
-                e.id
-                for e in graph.elements
-                if not Lifespan.read_tolerant(e.properties).covers(as_of)
-            )
-            inactive_links = frozenset(
-                link.id
-                for link in graph.relationships
-                if not Lifespan.read_tolerant(link.properties).covers(as_of)
-                or link.source_id in inactive_elements
-                or link.target_id in inactive_elements
-            )
+        inactive_elements, inactive_links = self._out_of_period(graph, as_of)
         return DiagramDetail(
             diagram=diagram,
             nodes=tuple(node for node in nodes if node.element_id in present),
@@ -187,6 +188,25 @@ class DiagramService:
             inactive_elements=inactive_elements,
             inactive_relationships=inactive_links,
         )
+
+    @staticmethod
+    def _out_of_period(
+        graph: GraphView, as_of: date | None
+    ) -> tuple[frozenset[UUID], frozenset[UUID]]:
+        """Which elements and links are not in service on `as_of` (nothing, without a day)."""
+        if as_of is None:
+            return frozenset(), frozenset()
+        inactive_elements = frozenset(
+            e.id for e in graph.elements if not Lifespan.read_tolerant(e.properties).covers(as_of)
+        )
+        inactive_links = frozenset(
+            link.id
+            for link in graph.relationships
+            if not Lifespan.read_tolerant(link.properties).covers(as_of)
+            or link.source_id in inactive_elements
+            or link.target_id in inactive_elements
+        )
+        return inactive_elements, inactive_links
 
     async def update(
         self,
@@ -259,6 +279,12 @@ class DiagramService:
         if diagram.generation is Generation.LIVE:
             msg = "a live view is recomputed at every opening and cannot be edited: freeze it"
             raise DiagramLiveError(msg)
+        if diagram.revision != revision:
+            # Before the element checks: a box whose element was deleted since is a 422 the SPA
+            # reads as permanent, when the truth is "reload". The check under the row lock, in
+            # the repository, stays the authority.
+            msg = f"the diagram is at revision {diagram.revision}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
         graph = await self._architecture.view_of([node.element_id for node in scene.nodes])
         present = {element.id for element in graph.elements}
         missing = [str(node.element_id) for node in scene.nodes if node.element_id not in present]

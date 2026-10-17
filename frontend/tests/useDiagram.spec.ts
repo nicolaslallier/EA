@@ -275,7 +275,8 @@ describe('useDiagram', () => {
     editor.place(B, { x: 0, y: 0 })
     await pause()
 
-    expect(editor.saveError.value).toBe('Élément inconnu.')
+    expect(editor.saveError.value).toContain('Élément inconnu.')
+    expect(editor.saveError.value).toContain('ne sont plus enregistrées')
   })
 
   it('sends a layout whose save failed again when the diagram is closed', async () => {

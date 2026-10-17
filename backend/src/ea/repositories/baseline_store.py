@@ -74,6 +74,7 @@ from ea.repositories.architecture_store import (
 )
 from ea.repositories.audit_store import write_events
 from ea.repositories.conflicts import is_serialization_failure
+from ea.repositories.diagram_revision import bump_diagrams_of
 from ea.repositories.frozen_tables import lock_guarded
 
 if TYPE_CHECKING:
@@ -762,6 +763,11 @@ async def _write(
         ends |= {end for pair in cascaded for end in pair}
     await touch(
         session, sorted((ends - gone - rewritten) - {e.id for e in plan.elements_to_create}), author
+    )
+    await bump_diagrams_of(
+        session,
+        element_ids=[e.id for e in plan.elements_to_delete],
+        relationship_ids=[r.id for r in plan.relationships_to_delete],
     )
     for link in plan.relationships_to_delete:
         await session.execute(delete(RelationshipRecord).where(RelationshipRecord.id == link.id))

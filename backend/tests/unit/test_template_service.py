@@ -348,3 +348,34 @@ class TestTheCapsCannotBeGoneAround:
             )
 
         assert len(await service.list_elements(ElementFilter())) == 3 * len(BODY["slots"])
+
+
+@pytest.mark.asyncio
+class TestAHubIsNotLinkedTwice:
+    async def test_a_link_past_the_first_page_of_its_source_is_still_found(
+        self, template_service: TemplateService, service: ArchitectureService
+    ) -> None:
+        template = await template_service.create_template(name="T", body=BODY)
+        host = await service.create_element(element_type=ElementType.NODE, name="hub")
+        for i in range(200):
+            other = await service.create_element(
+                element_type=ElementType.APPLICATION_COMPONENT, name=f"other{i}"
+            )
+            await service.connect(
+                relationship_type=RelationshipType.REALIZATION,
+                source_id=host.id,
+                target_id=other.id,
+            )
+        app = await service.create_element(element_type=ElementType.APPLICATION_COMPONENT, name="A")
+        await service.connect(  # the 201st link of this type: past a page of 200
+            relationship_type=RelationshipType.REALIZATION, source_id=host.id, target_id=app.id
+        )
+
+        await template_service.instantiate(
+            template.id,
+            name="V",
+            bindings=[Binding("app", element_id=app.id), Binding("host", element_id=host.id)],
+            create_relationships=True,
+        )
+
+        assert len(await service.list_relationships(limit=500)) == 201

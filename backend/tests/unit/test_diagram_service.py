@@ -27,9 +27,12 @@ from ea.domain.archimate import ElementType
 from ea.domain.archimate import RelationshipType as R
 from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
+    DiagramLimitError,
     DiagramNotFoundError,
+    DiagramRevisionConflictError,
     DuplicateDiagramError,
     PackageNotFoundError,
+    ScopeTooLargeError,
     UnknownLayoutElementError,
 )
 from ea.domain.model import Element
@@ -204,6 +207,39 @@ class TestTheLayout:
 
         with pytest.raises(DiagramNotFoundError):
             await lay_out(diagram_service, uuid4(), [DiagramNode(element.id, 0, 0)])
+
+    async def test_a_stale_save_naming_an_element_deleted_since_is_a_conflict_not_a_422(
+        self, service: ArchitectureService, diagram_service: DiagramService
+    ) -> None:
+        """A 422 reads as permanent to the SPA; a stale revision must say "reload" first."""
+        element = await an_element(service)
+        diagram = await diagram_service.create(name="Vente")
+        seen = await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [])  # someone else moved it on
+        await service.delete_element(element.id)
+
+        with pytest.raises(DiagramRevisionConflictError):
+            await diagram_service.replace_layout(
+                diagram.id, revision=seen, nodes=[DiagramNode(element.id, 5, 5)]
+            )
+
+    async def test_a_diagram_deleted_between_the_read_and_the_write_is_not_found(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        diagrams: InMemoryDiagrams,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        element = await an_element(service)
+        diagram = await diagram_service.create(name="Vente")
+
+        async def gone(*_: object, **__: object) -> None:
+            return None
+
+        monkeypatch.setattr(diagrams, "replace_layout", gone)
+
+        with pytest.raises(DiagramNotFoundError):
+            await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 0, 0)])
 
 
 @pytest.mark.asyncio
@@ -411,3 +447,28 @@ class TestDiagramsInPackages:
     ) -> None:
         with pytest.raises(ValueError, match="both"):
             await diagram_service.list_diagrams(package_id=uuid4(), root_only=True)
+
+
+@pytest.mark.asyncio
+class TestTheNumberOfDiagramsIsBounded:
+    async def test_a_diagram_beyond_the_cap_is_refused_and_a_list_never_exceeds_it(
+        self, diagram_service: DiagramService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tests.conftest.MAX_DIAGRAMS", 3)
+        for i in range(3):
+            await diagram_service.create(name=f"D{i}")
+
+        with pytest.raises(DiagramLimitError):
+            await diagram_service.create(name="one too many")
+
+        assert len(await diagram_service.list_diagrams()) == 3
+
+    async def test_a_store_already_over_the_cap_is_refused_on_listing_not_cut_silently(
+        self, diagram_service: DiagramService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for i in range(4):
+            await diagram_service.create(name=f"D{i}")
+        monkeypatch.setattr("ea.services.diagrams.MAX_DIAGRAMS", 3)
+
+        with pytest.raises(ScopeTooLargeError):
+            await diagram_service.list_diagrams()

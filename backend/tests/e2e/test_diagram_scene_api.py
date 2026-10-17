@@ -136,6 +136,22 @@ class TestTheRevision:
         retry = await client.put(f"/diagrams/{diagram}/layout", json=scene(1, [box(loser)]))
         assert retry.status_code == 204
 
+    async def test_a_stale_save_naming_a_deleted_element_is_a_409_not_a_422(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        diagram = await a_diagram(client)
+        gone = await an_element(client, "Parti")
+        assert (
+            await client.put(f"/diagrams/{diagram}/layout", json=scene(0, [box(gone)]))
+        ).status_code == 204
+        assert (await client.put(f"/diagrams/{diagram}/layout", json=scene(1))).status_code == 204
+        assert (await client.delete(f"/elements/{gone}")).status_code == 204
+
+        stale = await client.put(f"/diagrams/{diagram}/layout", json=scene(1, [box(gone)]))
+
+        assert stale.status_code == 409
+        assert stale.json()["error"] == "diagram_revision_conflict"
+
     async def test_a_body_without_a_revision_is_a_422(self, client: httpx.AsyncClient) -> None:
         diagram = await a_diagram(client)
         body = scene(0)

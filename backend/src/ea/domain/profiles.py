@@ -37,6 +37,8 @@ MAX_TEMPLATE_LENGTH: Final = 64
 MAX_ALLOWED_VALUES: Final = 50
 MAX_PROPERTIES_PER_STEREOTYPE: Final = 30
 MAX_STEREOTYPES_PER_PROFILE: Final = 100
+#: How many profiles exist, and so how many `GET /profiles` returns: it is read whole.
+MAX_PROFILES: Final = 50
 
 #: Keys other conventions already read in `properties`: the IP addressing (docs/adr/0020)
 #: and the validity dates (docs/adr/0059). A stereotype cannot redefine their format.

@@ -603,6 +603,7 @@ async function exportAs(format: ExportFormat): Promise<void> {
     <p v-else-if="editor.status.value === 'loading'" class="hint">Chargement du diagramme…</p>
     <p v-if="editor.saveError.value" class="banner banner--error" role="alert">
       Disposition non enregistrée : {{ editor.saveError.value }}
+      <button v-if="editor.refused.value" type="button" @click="reload">Recharger</button>
     </p>
     <p v-if="editor.conflict.value && !editor.reloaded.value" class="banner banner--error" role="alert">
       Quelqu'un a enregistré ce diagramme avant toi : tes modifications n'ont pas été envoyées.

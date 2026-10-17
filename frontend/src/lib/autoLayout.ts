@@ -42,7 +42,10 @@ export type LayoutInput = {
 
 type Item = LayoutInput['elements'][number]
 
-const byName = (a: Item, b: Item) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
+// By code unit, never `localeCompare`: that one follows the browser's language, and the same
+// elements must be drawn the same way for everybody (the layout is deterministic by design).
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+const byName = (a: Item, b: Item) => compare(a.name, b.name) || compare(a.id, b.id)
 
 export function layoutByLayers(
   input: LayoutInput,

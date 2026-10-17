@@ -52,6 +52,14 @@ class DiagramRevisionConflictError(DomainError):
     """A layout was saved against a revision someone else has since moved on from."""
 
 
+class ProfileLimitError(DomainError):
+    """As many profiles exist as the catalogue allows: delete one before adding another."""
+
+
+class DiagramLimitError(DomainError):
+    """As many diagrams exist as the catalogue allows: delete one before adding another."""
+
+
 class ProfileNotFoundError(DomainError):
     """A profile referenced by id is absent from the store."""
 
