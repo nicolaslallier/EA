@@ -2,7 +2,7 @@
 titre: Les références externes s'écrivent sous revue, et la file de rafraîchissement tourne
 date: 2026-10-17
 statut: Proposition
-affects: backend/src/ea/domain/approval.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/db/models/external.py, backend/migrations/versions/0021_external_reference_attempts.py, backend/migrations/versions/0022_external_references_frozen.py, backend/src/ea/repositories/frozen_tables.py, backend/src/ea/domain/egress.py, backend/src/ea/mcp/server.py, backend/tests/unit/test_review_guard.py, backend/tests/unit/test_external_review.py, CLAUDE.md
+affects: backend/src/ea/domain/approval.py, backend/src/ea/repositories/external_store.py, backend/src/ea/services/external.py, backend/src/ea/db/models/external.py, backend/migrations/versions/0021_external_reference_attempts.py, backend/migrations/versions/0022_external_references_frozen.py, backend/src/ea/repositories/frozen_tables.py, backend/src/ea/services/packages.py, backend/src/ea/main.py, backend/src/ea/domain/egress.py, backend/src/ea/mcp/server.py, backend/tests/unit/test_review_guard.py, backend/tests/unit/test_external_review.py, CLAUDE.md
 ---
 
 # 76. Les références externes s'écrivent sous revue, et la file de rafraîchissement tourne
@@ -66,8 +66,15 @@ La migration **`0022`** pose `external_references_frozen`, sur la fonction `ea_g
 (`DELETE`) sont refusés ; un `UPDATE` seulement s'il touche à ce que la référence *est* —
 `UPDATE OF element_id, kind, target, external_id, url`. Le rafraîchissement du cache (titre, état, `synced_at`,
 `attempted_at`) reste permis : c'est la donnée du tiers, la geler ferait échouer pour toujours le rafraîchissement
-d'un élément publié. Il n'y a pas de garde Python : `open_issue` sur un élément publié (et non approuvé) crée le
-ticket puis voit le lien refusé, ce qui donne le `502 external_link_failed` qui nomme le ticket.
+d'un élément publié. Le trigger reste l'autorité pour le lien ; **une seule porte lit le gel avant lui** :
+`open_issue`, parce qu'elle écrit chez un tiers avant d'écrire chez nous. Juste après la garde de revue — avant la
+cible `writable`, avant le `dry_run`, avant tout appel au fournisseur — elle demande à
+`PackageService.frozen_by` (la lecture `in_force` + `effective_freezes` qui sert déjà `frozen_by` sur les
+packages, aucune règle SQL restatée) si le package de l'élément ou un ancêtre est publié ; si oui, `409
+package_frozen`, et le refus passe par le même enregistreur borné que ceux de la base
+(`package.write_refused_frozen`, table `external_references`, opération `INSERT`). Un ticket n'est donc plus
+ouvert pour un élément qu'on ne pourrait pas lier ; si une publication arrive entre cette lecture et le lien, le
+trigger refuse le lien et c'est le `502 external_link_failed` qui nomme le ticket.
 
 **Trois formes IPv6 de plus ne sont jamais joignables** (`domain/egress.py`, `NEVER`, non déclarables) :
 `::ffff:0:0:0/96` (IPv4 traduite, RFC 2765), `64:ff9b:1::/48` (NAT64 à usage local, RFC 8215) et `2001::/32`

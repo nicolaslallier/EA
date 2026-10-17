@@ -27,6 +27,7 @@ from ea.domain.errors import (
     InvalidExternalReferenceError,
     NotAuthenticatedError,
     NotAuthorisedError,
+    PackageFrozenError,
     UnknownExternalTargetError,
 )
 from ea.domain.external import (
@@ -36,14 +37,17 @@ from ea.domain.external import (
     ExternalSnapshot,
     ExternalStatus,
 )
+from ea.domain.package_versions import Bump, FrozenRefusal, PackageVersion
 from ea.services.architecture import ArchitectureService
 from ea.services.caller import acting_as
 from ea.services.external import ExternalReferenceService
+from ea.services.packages import PackageService
 from tests.conftest import (
     FIXED_NOW,
     FakeExternalSystem,
     InMemoryAuditLog,
     InMemoryExternalReferences,
+    InMemoryPackages,
     a_reader,
 )
 
@@ -1020,3 +1024,88 @@ class TestLogs:
 
         assert "acme/billing" not in caplog.text
         assert "Fix invoice rounding" not in caplog.text
+
+
+class TestATicketForAnElementUnderAPublishedPackage:
+    """docs/adr/0076: refused before anything leaves, like the review guard — dry run too."""
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_it_is_package_frozen_and_the_provider_is_never_called(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        package_service: PackageService,
+        packages: InMemoryPackages,
+        dry_run: bool,
+    ) -> None:
+        recorded: list[FrozenRefusal] = []
+
+        async def recorder(refusal: FrozenRefusal) -> None:
+            recorded.append(refusal)
+
+        system = FakeExternalSystem("main", writable=True)
+        svc = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": system},
+            clock=lambda: FIXED_NOW,
+            packages=package_service,
+            refusals=recorder,
+        )
+        root = await package_service.create(name="Finance")
+        child = await package_service.create(name="Budget", parent_id=root.package.id)
+        element = await an_element(service)
+        await package_service.move_elements([element], child.package.id)
+        packages.published.append(a_version_of(root.package.id))
+
+        with pytest.raises(PackageFrozenError, match=r"published as v1\.0\.0"):
+            await svc.open_issue(
+                element, target="main", scope="acme/billing", title="t", body="", dry_run=dry_run
+            )
+
+        assert system.calls == [] and system.create_attempts == 0
+        assert recorded == [
+            FrozenRefusal(root.package.id, "v1.0.0", "external_references", "INSERT")
+        ]
+
+    async def test_an_element_in_no_package_or_an_unpublished_one_is_not_refused(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        package_service: PackageService,
+    ) -> None:
+        svc = ExternalReferenceService(
+            external_references,
+            service,
+            {"main": FakeExternalSystem("main", writable=True)},
+            clock=lambda: FIXED_NOW,
+            packages=package_service,
+        )
+        loose = await an_element(service)
+        filed = await an_element(service)
+        draft = await package_service.create(name="Brouillon")
+        await package_service.move_elements([filed], draft.package.id)
+
+        for element in (loose, filed):
+            plan = await svc.open_issue(
+                element, target="main", scope="acme/billing", title="t", body=""
+            )
+            assert plan.dry_run is True
+
+
+def a_version_of(package_id: UUID) -> PackageVersion:
+    return PackageVersion(
+        id=uuid4(),
+        package_id=package_id,
+        version="v1.0.0",
+        bump=Bump.MINOR,
+        notes="",
+        adr=None,
+        baseline_id=uuid4(),
+        element_count=0,
+        relationship_count=0,
+        box_count=0,
+        published_by_sub="approver",
+        published_by="approver",
+        published_at=FIXED_NOW,
+    )

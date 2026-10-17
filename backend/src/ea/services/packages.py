@@ -27,6 +27,7 @@ from ea.domain.errors import (
 )
 from ea.domain.package_versions import (
     Bump,
+    FrozenBy,
     PackageVersion,
     PublishOutcome,
     allowed_actions,
@@ -103,6 +104,17 @@ class PackageService:
             )
             for package in packages.values()
         }
+
+    async def frozen_by(self, package_id: UUID) -> FrozenBy | None:
+        """The publication in force that freezes this package (itself or an ancestor).
+
+        A read for a door that must refuse *before* it calls out (`open_issue`); the
+        triggers stay the authority for every write (docs/adr/0074)."""
+        require_caller()
+        in_force = await self._repository.in_force()
+        if not in_force:
+            return None  # nothing published anywhere: no tree to read
+        return effective_freezes(await self._tree(), in_force).get(package_id)
 
     async def list_packages(self) -> tuple[PackageSummary, ...]:
         require_caller()

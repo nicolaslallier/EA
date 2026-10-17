@@ -855,7 +855,7 @@ The triggers are the rule (`docs/adr/0074`): `<table>_frozen` on `elements`, `re
 `diagram_edges`, `packages` and — since migration `0022`, only on an `INSERT`, a `DELETE` or an
 `UPDATE OF` what a reference *is*, never on its cached title and state — `external_references`
 (`docs/adr/0076`) raise `SQLSTATE EA001` for a write whose old or new package is under a
-published one. There is **no Python guard to call**; a door that forgets one is still shut. A new table
+published one. There is **no Python guard to call**; a door that forgets one is still shut. The one read ahead of it is `open_issue` (`PackageService.frozen_by`, `docs/adr/0076`), because it writes to a third party before it writes here. A new table
 that references elements, diagrams, packages or relationships must get its trigger (and join
 `repositories/frozen_tables.py`, which the publication and the restore lock), or be listed with its
 reason in `test_no_table_that_hangs_from_the_model_is_left_unguarded` — which fails otherwise.

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -40,6 +40,7 @@ from ea.domain.errors import (
     ExternalRefusedError,
     ExternalUnavailableError,
     InvalidExternalReferenceError,
+    PackageFrozenError,
     TooManyExternalReferencesError,
     UnknownExternalTargetError,
 )
@@ -60,16 +61,21 @@ from ea.domain.external import (
     clean_scope,
     parse_reference,
 )
+from ea.domain.package_versions import FrozenRefusal
 from ea.services.audit import AuditTrail
 from ea.services.caller import require_caller, require_editor
 
 if TYPE_CHECKING:
     from ea.domain.audit import AuditEvent
+    from ea.domain.model import Element
     from ea.domain.ports import ExternalReferenceRepository, ExternalSystem
     from ea.services.architecture import ArchitectureService
     from ea.services.exchange_admission import Admission
+    from ea.services.packages import PackageService
 
 Clock = Callable[[], datetime]
+#: The bounded recorder `work()` hands the database's refusals to (docs/adr/0074).
+RefusalRecorder = Callable[[FrozenRefusal], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +112,11 @@ class ExternalReferenceService:
         inactive: Mapping[str, ExternalKind] | None = None,
         clock: Clock = _utc_now,
         refresh_budget_seconds: float = REFRESH_BUDGET_SECONDS,
+        packages: PackageService | None = None,
+        refusals: RefusalRecorder | None = None,
     ) -> None:
+        self._packages = packages
+        self._refusals = refusals
         self._budget = refresh_budget_seconds
         self._repository = repository
         self._architecture = architecture
@@ -393,6 +403,30 @@ class ExternalReferenceService:
 
     # --- writing to a third party -------------------------------------------------------
 
+    async def _refuse_if_published(self, element: Element) -> None:
+        """`409 package_frozen` for an element under a published package, before any call out.
+
+        The trigger would refuse the link only after the ticket exists. Recorded through the
+        same bounded recorder as the database's refusals (`package.write_refused_frozen`)."""
+        if self._packages is None or element.package_id is None:
+            return
+        frozen = await self._packages.frozen_by(element.package_id)
+        if frozen is None:
+            return
+        refusal = FrozenRefusal(frozen.package_id, frozen.version, "external_references", "INSERT")
+        if self._refusals is not None:
+            try:
+                await self._refusals(refusal)
+            except Exception:  # the refusal must reach the caller whatever happens
+                logger.exception(
+                    "frozen refusal not recorded", extra={"action": "frozen_refusal_unrecorded"}
+                )
+        msg = (
+            f"package {frozen.package_id} is published as {frozen.version}: "
+            "an approver must reopen it first"
+        )
+        raise PackageFrozenError(msg, refusal)
+
     async def open_issue(
         self,
         element_id: UUID,
@@ -415,6 +449,7 @@ class ExternalReferenceService:
         # Before the writable check, before the dry run, before the provider: a ticket opened
         # for an element that review will not let us link is an orphan nobody can undo.
         guard_element_write(element, WriteKind.EXTERNAL_REFERENCE, caller)
+        await self._refuse_if_published(element)  # same reason: the link would be refused
         system = self._writable_system(ExternalKind.GITHUB_ISSUE, target)
         clean = clean_scope(system.kind, scope)
         draft = IssueDraft.of(title, body)
