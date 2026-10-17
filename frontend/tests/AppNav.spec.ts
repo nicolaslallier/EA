@@ -128,6 +128,57 @@ describe('AppNav', () => {
     await waitFor(() => expect(button).toHaveAttribute('aria-expanded', 'false'))
   })
 
+  it('closes when the focus leaves the menu', async () => {
+    await renderNav()
+    const [first] = menu()
+    const button = await openGroup(first.group.label)
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+
+    await fireEvent.focusOut(screen.getAllByRole('link')[0], { relatedTarget: outside })
+
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    outside.remove()
+  })
+
+  it('stays open while the focus moves inside the menu', async () => {
+    await renderNav()
+    const [first] = menu()
+    const button = await openGroup(first.group.label)
+    const [a, b] = screen.getAllByRole('link')
+
+    await fireEvent.focusOut(a, { relatedTarget: b })
+
+    expect(button).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('closes on a click of the link to the page already open', async () => {
+    await renderNav('/elements')
+    const toggle = screen.getByRole('button', { name: /^☰ menu/i })
+    await fireEvent.click(toggle)
+    const button = await openGroup('Modèle')
+
+    await fireEvent.click(screen.getByRole('link', { name: /Éléments/ }))
+
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('folds the narrow-screen menu too, on Escape or a click outside', async () => {
+    await renderNav()
+    const toggle = screen.getByRole('button', { name: /^☰ menu/i })
+    const [first] = menu()
+
+    await fireEvent.click(toggle)
+    await openGroup(first.group.label)
+    await fireEvent.keyDown(screen.getAllByRole('link')[0], { key: 'Escape' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(toggle)
+    await fireEvent.pointerDown(document.body)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('marks the group of the open section, nested paths included', async () => {
     await renderNav('/analyse/impact')
     const impact = SECTIONS.find((section) => section.path === '/analyse/impact')

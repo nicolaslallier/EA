@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <!-- The theme before the first paint: main.ts runs too late for that
+         (docs/adr/0075). Same rule as lib/theme.ts: dark only if stored. -->
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem('ea.theme') === 'dark' ? 'dark' : 'light'
+      } catch {
+        document.documentElement.dataset.theme = 'light'
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

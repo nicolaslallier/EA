@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // Light or dark, chosen by the person and remembered by this browser.
+// The name stays "Thème sombre" and `aria-pressed` carries the state: a name
+// that flipped with it would be read "Thème clair, enfoncé" in dark.
 import { computed, ref } from 'vue'
 
 import { setTheme, storedTheme, type Theme } from '../lib/theme'
@@ -18,9 +20,9 @@ function toggle(): void {
   <button
     type="button"
     class="theme"
-    :aria-label="dark ? 'Thème clair' : 'Thème sombre'"
+    aria-label="Thème sombre"
     :aria-pressed="dark"
-    :title="dark ? 'Thème clair' : 'Thème sombre'"
+    title="Thème sombre"
     @click="toggle"
   >
     <span aria-hidden="true">{{ dark ? '☀' : '☾' }}</span>

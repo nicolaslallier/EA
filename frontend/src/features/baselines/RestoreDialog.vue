@@ -268,7 +268,7 @@ function onKeydown(event: KeyboardEvent): void {
   max-width: 42rem;
   margin: 5vh auto;
   padding: 1rem 1.2rem;
-  background: var(--bg, canvas);
+  background: var(--surface, canvas);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 8px 30px rgb(0 0 0 / 25%);

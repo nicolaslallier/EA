@@ -32,17 +32,34 @@ function isCurrent(entry: MenuEntry): boolean {
   )
 }
 
+/** Folds everything: the open dropdown and, on a phone, the whole menu. */
+function close(): void {
+  open.value = false
+  openGroup.value = null
+}
+
+function outside(target: EventTarget | null): boolean {
+  return root.value !== null && !root.value.contains(target as Node)
+}
+
 function onEscape(): void {
   const id = openGroup.value
-  if (id === null) return
-  openGroup.value = null
-  document.getElementById(`nav-group-${id}`)?.focus()
+  const folded = open.value
+  if (id === null && !folded) return
+  close()
+  // Give the focus back to the control that opened what just closed.
+  document.getElementById(folded ? 'nav-toggle' : `nav-group-${id}`)?.focus()
 }
 
 function onPointerDown(event: PointerEvent): void {
-  if (root.value && !root.value.contains(event.target as Node)) {
-    openGroup.value = null
-  }
+  if (outside(event.target)) close()
+}
+
+// Tabbing out of an open dropdown must not leave it over the screen. A null
+// `relatedTarget` (Safari does not focus a clicked link) is left to the
+// pointer handler, or the dropdown would vanish under the click.
+function onFocusOut(event: FocusEvent): void {
+  if (event.relatedTarget !== null && outside(event.relatedTarget)) close()
 }
 
 onMounted(() => document.addEventListener('pointerdown', onPointerDown))
@@ -50,15 +67,15 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
 
 // Opening a section must put the screen in front of the user, not leave a
 // dropdown — or, on a phone, the whole menu — covering it.
-watch(() => route.fullPath, () => {
-  open.value = false
-  openGroup.value = null
-})
+// Clicking the page already open is no navigation, hence the click handler on
+// each link as well.
+watch(() => route.fullPath, close)
 </script>
 
 <template>
-  <nav ref="root" class="nav" aria-label="Sections" @keydown.esc="onEscape">
+  <nav ref="root" class="nav" aria-label="Sections" @keydown.esc="onEscape" @focusout="onFocusOut">
     <button
+      id="nav-toggle"
       class="nav__toggle"
       type="button"
       aria-controls="nav-sections"
@@ -86,7 +103,7 @@ watch(() => route.fullPath, () => {
 
         <ul v-show="openGroup === entry.group.id" :id="`nav-panel-${entry.group.id}`" class="nav__panel">
           <li v-for="section in entry.sections" :key="section.path">
-            <RouterLink v-if="section.view" class="nav__item" :to="section.path">
+            <RouterLink v-if="section.view" class="nav__item" :to="section.path" @click="close">
               <span class="nav__label">{{ section.label }}</span>
               <span class="nav__summary">{{ section.summary }}</span>
             </RouterLink>
@@ -182,6 +199,13 @@ watch(() => route.fullPath, () => {
   border: 1px solid var(--border);
   border-radius: 0 0 10px 10px;
   box-shadow: 0 10px 24px rgb(15 23 42 / 18%);
+  max-width: calc(100vw - 2rem);
+}
+
+/* The right-most groups open leftwards, or their dropdown leaves the window. */
+.nav__group:nth-last-child(-n + 2) .nav__panel {
+  left: auto;
+  right: 0;
 }
 
 .nav__item {
@@ -263,7 +287,8 @@ a.nav__item[aria-current='page'] .nav__label {
   .nav__trigger--current {
     border-left-color: var(--bar-accent);
   }
-  .nav__panel {
+  .nav__panel,
+  .nav__group:nth-last-child(-n + 2) .nav__panel {
     position: static;
     min-width: 0;
     border-radius: 8px;

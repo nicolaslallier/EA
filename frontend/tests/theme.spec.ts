@@ -47,7 +47,9 @@ describe('the theme', () => {
 })
 
 describe('ThemeToggle', () => {
-  it('starts light and offers the dark theme', () => {
+  // One constant name, the state in aria-pressed: "Thème sombre, enfoncé" is
+  // what a screen reader must say in dark — never "Thème clair, enfoncé".
+  it('starts light: the dark theme, not pressed', () => {
     render(ThemeToggle)
 
     expect(screen.getByRole('button', { name: 'Thème sombre' })).toHaveAttribute(
@@ -58,15 +60,14 @@ describe('ThemeToggle', () => {
 
   it('switches to dark, and remembers it', async () => {
     render(ThemeToggle)
+    const button = screen.getByRole('button', { name: 'Thème sombre' })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Thème sombre' }))
+    await fireEvent.click(button)
 
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(localStorage.getItem(THEME_KEY)).toBe('dark')
-    expect(screen.getByRole('button', { name: 'Thème clair' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
+    expect(button).toHaveAccessibleName('Thème sombre')
+    expect(button).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('starts on the theme already applied', () => {
@@ -74,7 +75,10 @@ describe('ThemeToggle', () => {
 
     render(ThemeToggle)
 
-    expect(screen.getByRole('button', { name: 'Thème clair' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Thème sombre' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
   })
 
   it('still switches when the storage refuses to write', async () => {

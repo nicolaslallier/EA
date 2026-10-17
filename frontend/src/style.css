@@ -7,7 +7,10 @@
   --muted: #6b7280;
   --border: #dde3ec;
   --accent: #2563eb;
-  --accent-contrast: #ffffff;
+  /* State inks, at least 4.5:1 on --surface. */
+  --success: #2e7d32;
+  --warning: #b45309;
+  --danger: #c62828;
 
   /* The top bar keeps its deep blue in both themes. */
   --bar-bg: #1e3a8a;
@@ -30,7 +33,9 @@
   --muted: #9ca3af;
   --border: #3a4356;
   --accent: #60a5fa;
-  --accent-contrast: #0f172a;
+  --success: #4ade80;
+  --warning: #fb923c;
+  --danger: #f87171;
 
   --bar-bg: #172554;
 

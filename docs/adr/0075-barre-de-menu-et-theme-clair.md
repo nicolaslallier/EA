@@ -2,7 +2,7 @@
 titre: Barre de menu supérieure et thème clair par défaut
 date: 2026-10-17
 statut: Proposition
-affects: frontend/src/App.vue, frontend/src/components/AppNav.vue, frontend/src/components/ThemeToggle.vue, frontend/src/lib/theme.ts, frontend/src/main.ts, frontend/src/style.css
+affects: frontend/src/App.vue, frontend/src/components/AppNav.vue, frontend/src/components/ThemeToggle.vue, frontend/src/lib/theme.ts, frontend/src/main.ts, frontend/index.html, frontend/src/style.css
 ---
 
 # 75. Barre de menu supérieure et thème clair par défaut
@@ -31,7 +31,11 @@ toute la largeur dessous. `AppNav` rend toujours `menu()` et rien d'autre (la
 règle de l'ADR 0008 tient) : un `<button aria-expanded aria-controls>` par groupe,
 qui ouvre un panneau listant ses sections, l'intitulé et, dessous, le résumé.
 Un seul panneau ouvert ; il se ferme sur Échap (le focus revient au bouton du
-groupe), sur un clic hors du menu et à chaque changement de route. Le groupe de
+groupe ou au « ☰ Menu »), sur un clic hors du menu, quand le focus en sort, sur
+le clic d'un lien (y compris celui de la page déjà ouverte) et à chaque
+changement de route ; chacun replie aussi le menu des petits écrans. Les deux
+derniers groupes ouvrent leur panneau vers la gauche, pour ne pas sortir de la
+fenêtre. Le groupe de
 l'écran affiché porte un soulignement d'accent (`aria-current="true"`), chemins
 imbriqués compris (`/analyse/impact`). Sous 48 rem, les groupes se replient
 derrière « ☰ Menu » et s'empilent. En mode lecture (ADR 0064) le menu n'est pas
@@ -39,12 +43,19 @@ rendu, la barre reste.
 
 **Clair par défaut, sombre sur demande.** `style.css` définit une palette claire
 (`--bg`, `--surface`, `--text`, `--muted`, `--border`, `--accent`, et les jetons
-`--bar-*` de la bande) appliquée quel que soit le réglage du système. Le sombre
+`--bar-*` de la bande, et les encres d'état `--success`, `--warning`,
+`--danger`, à 4,5:1 au moins sur `--surface` dans les deux thèmes) appliquée quel que soit le réglage du système. Le sombre
 — ardoise, pas noir — n'existe que sous `:root[data-theme='dark']`, et
 `color-scheme` suit le thème choisi. `ThemeToggle` pose `data-theme` sur
-`<html>` et retient le choix dans `localStorage` (`ea.theme`) ; `main.ts`
-l'applique avant le montage pour éviter un éclair clair. Tout accès au stockage
-est gardé : un navigateur qui le refuse reste en clair.
+`<html>` et retient le choix dans `localStorage` (`ea.theme`). Un petit script
+en ligne dans `index.html` l'applique avant le premier rendu — le module de
+`main.ts`, différé, arriverait après que la feuille de style a peint en clair ;
+`main.ts` le réapplique, sans effet de plus. Aucune Content-Security-Policy ne
+sert le SPA (ni `frontend/nginx.conf`, ni le vhost de l'Infra) : le jour où
+il en aura une, ce script devra y être autorisé par son empreinte ou déplacé.
+Tout accès au stockage est gardé : un navigateur qui le refuse reste en clair.
+Le bouton garde un seul nom, « Thème sombre », et dit son état par
+`aria-pressed`.
 
 ## Alternatives envisagées et écartées
 
@@ -64,7 +75,9 @@ est gardé : un navigateur qui le refuse reste en clair.
   mais le thème sombre peut y laisser des contrastes faibles, à reprendre écran
   par écran vers les jetons.
 - `--accent` est maintenant défini : la matrice et le canevas des diagrammes,
-  qui le lisaient avec un violet de repli, passent au bleu de la palette.
+  qui le lisaient avec un violet de repli, passent au bleu de la palette ; de
+  même `--success`, `--warning` et `--danger` remplacent les replis de
+  `ApprovalBanner` et `FieldDiff`.
 - Le survol n'ouvre pas les panneaux ; clic et clavier suffisent. À ajouter si
   l'usage le demande.
 
