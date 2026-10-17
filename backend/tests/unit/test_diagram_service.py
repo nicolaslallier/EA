@@ -207,6 +207,24 @@ class TestTheLayout:
         with pytest.raises(DiagramNotFoundError):
             await lay_out(diagram_service, uuid4(), [DiagramNode(element.id, 0, 0)])
 
+    async def test_a_diagram_deleted_between_the_read_and_the_write_is_not_found(
+        self,
+        service: ArchitectureService,
+        diagram_service: DiagramService,
+        diagrams: InMemoryDiagrams,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        element = await an_element(service)
+        diagram = await diagram_service.create(name="Vente")
+
+        async def gone(*_: object, **__: object) -> None:
+            return None
+
+        monkeypatch.setattr(diagrams, "replace_layout", gone)
+
+        with pytest.raises(DiagramNotFoundError):
+            await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 0, 0)])
+
 
 @pytest.mark.asyncio
 class TestTheAuditTrail:
