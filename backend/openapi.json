@@ -5244,6 +5244,17 @@
             "title": "Elements To Update",
             "type": "integer"
           },
+          "frozen_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrozenByRead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The publication that freezes the subtree this baseline restores: reopen it first."
+          },
           "relationships_cascaded": {
             "title": "Relationships Cascaded",
             "type": "integer"
@@ -5291,7 +5302,8 @@
           "warning_count",
           "warnings",
           "blocked_count",
-          "blocked"
+          "blocked",
+          "frozen_by"
         ],
         "title": "RestorePlanRead",
         "type": "object"
@@ -7343,7 +7355,7 @@
     },
     "/baselines/{baseline_id}/diff": {
       "get": {
-        "description": "What separates a baseline from another one, or from the model as it is now.",
+        "description": "What separates a baseline from another one, or from the model as it is now.\n\nA baseline of one package's subtree is compared with that subtree as it is now, plus\nthe elements it holds wherever they went (one moved out is modified, not removed). Two\nbaselines compare only when they have the same scope (`409 baseline_scoped`).",
         "operationId": "read_baseline_diff_baselines__baseline_id__diff_get",
         "parameters": [
           {
@@ -7416,6 +7428,16 @@
             },
             "description": "Not Found"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7440,7 +7462,7 @@
     },
     "/baselines/{baseline_id}/restore": {
       "post": {
-        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.",
+        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.\n\nA baseline of one package's subtree restores within it: nothing outside is deleted.\nIts package must still exist (`409 baseline_scoped`). Under a publication in force the\ndry run says so (`plan.frozen_by`) and applying is `409 package_frozen`: reopen first.",
         "operationId": "restore_baseline_baselines__baseline_id__restore_post",
         "parameters": [
           {

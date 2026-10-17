@@ -20,6 +20,7 @@ from tests.conftest import (
     InMemoryBaselines,
     StaticVerifier,
     a_reader,
+    an_approver,
     an_editor,
     an_empty_package_tree,
 )
@@ -324,3 +325,94 @@ class TestASubtreeBaseline:
     async def test_a_whole_model_baseline_has_no_scope(self, client: httpx.AsyncClient) -> None:
         made = await capture(client, "Tout")
         assert (made["scope_package_id"], made["scope_path"]) == (None, None)
+
+
+APPROVER = "approver-token"
+
+
+@pytest_asyncio.fixture
+async def wired(
+    service: ArchitectureService,
+    baseline_store: InMemoryBaselines,
+    audit_log: InMemoryAuditLog,
+    nobody_calling: None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Baselines and packages over the same tree, the freeze lookup wired as in production."""
+    verifier = StaticVerifier({EDITOR: an_editor(), APPROVER: an_approver()})
+    app = create_app(
+        Settings(debug=True, auth_enabled=True),
+        architecture_service=service,
+        baselines=baseline_store,
+        audit=audit_log,
+        verifier=verifier,
+        packages=baseline_store.packages,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def published_finance(wired: httpx.AsyncClient) -> tuple[str, str]:
+    """Finance, a baseline of its subtree, then Finance published (v1.0.0) through the routes."""
+    finance = (await wired.post("/packages", json={"name": "Finance"}, headers=as_(EDITOR))).json()
+    copy = await wired.post(
+        "/baselines", json={"name": "Finance", "package_id": finance["id"]}, headers=as_(EDITOR)
+    )
+    assert copy.status_code == 201, copy.text
+    published = await wired.post(
+        f"/packages/{finance['id']}/publish",
+        json={"bump": "minor", "notes": "n", "dry_run": False},
+        headers=as_(APPROVER),
+    )
+    assert published.status_code == 200, published.text
+    return finance["id"], copy.json()["id"]
+
+
+class TestAPublishedSubtree:
+    async def test_the_dry_run_of_a_published_version_reports_it_blocked_with_frozen_by(
+        self, wired: httpx.AsyncClient, published_finance: tuple[str, str]
+    ) -> None:
+        finance, baseline = published_finance
+
+        answer = await dry_run(wired, baseline)
+
+        assert answer["applied"] is False
+        assert answer["plan"]["frozen_by"] == {
+            "package_id": finance,
+            "path": "Finance",
+            "version": "v1.0.0",
+        }
+
+    async def test_applying_it_is_a_409_package_frozen_and_writes_nothing(
+        self,
+        wired: httpx.AsyncClient,
+        baseline_store: InMemoryBaselines,
+        published_finance: tuple[str, str],
+    ) -> None:
+        _, baseline = published_finance
+        digest = (await dry_run(wired, baseline))["digest"]
+        before = (await wired.get("/audit", headers=as_(EDITOR))).json()
+
+        answer = await wired.post(
+            f"/baselines/{baseline}/restore",
+            json={"dry_run": False, "expected_digest": digest},
+            headers=as_(EDITOR),
+        )
+
+        assert (answer.status_code, answer.json()["error"]) == (409, "package_frozen")
+        assert (await wired.get("/audit", headers=as_(EDITOR))).json() == before
+        assert baseline_store.applied == []
+
+    async def test_baselines_of_different_scopes_are_a_409(
+        self, wired: httpx.AsyncClient, published_finance: tuple[str, str]
+    ) -> None:
+        _, baseline = published_finance
+        whole = await capture(wired, "Tout")
+
+        answer = await wired.get(
+            f"/baselines/{baseline}/diff", params={"against": whole["id"]}, headers=as_(EDITOR)
+        )
+
+        assert (answer.status_code, answer.json()["error"]) == (409, "baseline_scoped")

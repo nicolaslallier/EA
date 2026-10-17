@@ -18,6 +18,7 @@ from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import RestoreBlockedError, RestoreConflictError
 from ea.domain.model import Element
 from ea.repositories.baseline_store import PostgresBaselineRepository
+from tests.conftest import never_frozen
 from tests.integration.test_baseline_store import Model, a_baseline, an_event, created
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -387,7 +388,7 @@ async def test_the_journal_of_a_restoration_lets_one_rebuild_everything_that_dis
     empty = await model.baselines.create(a_baseline("empty"), audit=created)
     await model.seed()
     (note,) = await model.documents.list_for_element(model.left.id)
-    service = BaselineService(model.baselines, clock=lambda: LATER)
+    service = BaselineService(model.baselines, frozen_by=never_frozen, clock=lambda: LATER)
 
     read = await service.restore(empty.id)
     await service.restore(empty.id, dry_run=False, expected_digest=read.digest)

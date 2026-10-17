@@ -48,6 +48,7 @@ from ea.domain.baselines import (
     plan_restore,
     refusal_context,
     refuse_oversize,
+    restricted_to,
 )
 from ea.domain.errors import (
     BaselineInUseError,
@@ -260,6 +261,31 @@ async def _current_snapshot(session: AsyncSession) -> ModelSnapshot:
         boxes=tuple(_box(b) for b in boxes),
         package_paths=package_paths,
     )
+
+
+async def _tree(session: AsyncSession) -> dict[UUID, Package]:
+    return {
+        row.id: Package(
+            id=row.id,
+            parent_id=row.parent_id,
+            name=row.name,
+            description=row.description,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in (await session.execute(select(PackageRecord))).scalars()
+    }
+
+
+async def _subtree(
+    session: AsyncSession, package_id: UUID
+) -> tuple[frozenset[UUID], frozenset[UUID]]:
+    """The packages of this subtree *now* (itself and its descendants), and its diagrams."""
+    below = frozenset({package_id, *descendants_of(package_id, await _tree(session))})
+    diagrams = frozenset(
+        await session.scalars(select(DiagramRecord.id).where(DiagramRecord.package_id.in_(below)))
+    )
+    return below, diagrams
 
 
 async def _documents_held(
@@ -549,17 +575,7 @@ class PostgresBaselineRepository:
     ) -> Baseline:
         async with work(self._sessions, alone=True) as session:
             await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-            tree = {
-                row.id: Package(
-                    id=row.id,
-                    parent_id=row.parent_id,
-                    name=row.name,
-                    description=row.description,
-                    created_at=row.created_at,
-                    updated_at=row.updated_at,
-                )
-                for row in (await session.execute(select(PackageRecord))).scalars()
-            }
+            tree = await _tree(session)
             if package_id not in tree:
                 raise PackageNotFoundError(str(package_id))
             scope = frozenset({package_id, *descendants_of(package_id, tree)})
@@ -650,10 +666,16 @@ class PostgresBaselineRepository:
             await self._guard_baseline(session, baseline_id)
             return await _snapshot_of(session, baseline_id)
 
-    async def current_snapshot(self) -> ModelSnapshot:
+    async def current_snapshot(
+        self, scope: UUID | None = None, *, known: frozenset[UUID] = frozenset()
+    ) -> ModelSnapshot:
         async with self._at_one_instant() as session:
             await self._guard_live(session, diagrams=False)
-            return await _current_snapshot(session)
+            current = await _current_snapshot(session)
+            if scope is None:
+                return current
+            below, diagrams = await _subtree(session, scope)
+            return restricted_to(current, packages=below, diagrams=diagrams, known=known)
 
     async def _plan(
         self, session: AsyncSession, baseline_id: UUID, *, keep_new: bool
@@ -663,19 +685,32 @@ class PostgresBaselineRepository:
         if record is None:
             msg = f"no baseline with id {baseline_id}"
             raise BaselineNotFoundError(msg)
-        if record.scope_package_id is not None:
-            msg = "a baseline of one package's subtree cannot be restored yet"
+        scope = record.scope_package_id
+        packages_present = frozenset(await session.scalars(select(PackageRecord.id)))
+        if scope is not None and scope not in packages_present:
+            msg = "the package this baseline copies no longer exists: it cannot be restored"
             raise BaselineScopedError(msg)
         # Counted before any row is loaded, in the instant the plan reads.
         await self._guard_baseline(session, baseline_id)
         await self._guard_live(session, diagrams=True)
+        snapshot = await _snapshot_of(session, baseline_id)
+        current = await _current_snapshot(session)
+        diagrams_present = frozenset(await session.scalars(select(DiagramRecord.id)))
+        deletable = None
+        if scope is not None:
+            # It deletes only what is filed in its subtree now and writes no box outside it;
+            # the plan still sees the whole model, so a protected element anywhere a deletion
+            # cascades to blocks it.
+            below, diagrams_present = await _subtree(session, scope)
+            deletable = frozenset(e.id for e in current.elements if e.package_id in below)
         plan = plan_restore(
-            await _snapshot_of(session, baseline_id),
-            await _current_snapshot(session),
+            snapshot,
+            current,
             keep_new=keep_new,
-            packages_present=frozenset(await session.scalars(select(PackageRecord.id))),
+            packages_present=packages_present,
             protected_ids=await self._protected(session),
-            diagrams_present=frozenset(await session.scalars(select(DiagramRecord.id))),
+            diagrams_present=diagrams_present,
+            deletable=deletable,
         )
         held = await _documents_held(session, [e.id for e in plan.elements_to_delete])
         return replace(

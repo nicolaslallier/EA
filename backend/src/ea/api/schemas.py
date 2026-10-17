@@ -1808,6 +1808,11 @@ class RestorePlanRead(BaseModel):
     warnings: list[str]
     blocked_count: int
     blocked: list[EntityRefRead]
+    frozen_by: FrozenByRead | None = Field(
+        description=(
+            "The publication that freezes the subtree this baseline restores: reopen it first."
+        )
+    )
 
 
 class RestoreRead(BaseModel):
@@ -1845,6 +1850,7 @@ class RestoreRead(BaseModel):
                 warnings=[w[:PLAN_WARNING_LENGTH] for w in plan.warnings[:PLAN_LISTED_ITEMS]],
                 blocked_count=len(plan.blocked),
                 blocked=named(plan.blocked),
+                frozen_by=FrozenByRead.of(plan.frozen_by) if plan.frozen_by else None,
             ),
         )
 

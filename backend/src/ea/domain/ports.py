@@ -685,12 +685,23 @@ class BaselineRepository(Protocol):
 
     async def snapshot_of(self, baseline_id: UUID) -> ModelSnapshot: ...
 
-    async def current_snapshot(self) -> ModelSnapshot:
-        """The live elements, links and boxes of every diagram, as values."""
+    async def current_snapshot(
+        self, scope: UUID | None = None, *, known: frozenset[UUID] = frozenset()
+    ) -> ModelSnapshot:
+        """The live elements, links and boxes of every diagram, as values.
+
+        With `scope`, only that package's subtree *as it is now* and its diagrams, plus the
+        elements in `known` wherever they are (`restricted_to`), read at the same instant.
+        """
         ...
 
     async def restore_plan(self, baseline_id: UUID, *, keep_new: bool) -> RestorePlan:
-        """What restoring would do now, documents counted. Raises `BaselineNotFoundError`."""
+        """What restoring would do now, documents counted. Raises `BaselineNotFoundError`.
+
+        A subtree baseline deletes only what its subtree holds now and writes no box outside
+        it, while the plan reads the whole model (so a cascade to a protected element
+        anywhere blocks it); `BaselineScopedError` when its package is gone.
+        """
         ...
 
     async def apply_restore(

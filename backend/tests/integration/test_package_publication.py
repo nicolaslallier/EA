@@ -27,6 +27,8 @@ from ea.domain.errors import (
 from ea.domain.package_versions import Bump, PackageVersion, publication
 from ea.repositories.baseline_store import PostgresBaselineRepository
 from ea.repositories.package_store import PostgresPackageRepository
+from ea.services.baselines import BaselineService
+from ea.services.packages import PackageService
 from tests.integration.test_package_freeze_triggers import a_diagram, a_package, an_element
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -448,3 +450,71 @@ async def test_a_restore_planned_before_a_publication_cannot_write_into_the_froz
     assert all(o is None or isinstance(o, PackageVersion | PackageFrozenError) for o in outcomes), (
         outcomes
     )
+
+
+async def _async[T](value: T) -> T:
+    return value
+
+
+async def name_of(engine: AsyncEngine, element_id: UUID) -> str:
+    async with engine.connect() as connection:
+        found = await connection.execute(
+            text("SELECT name FROM elements WHERE id = :i"), {"i": element_id}
+        )
+        return str(found.scalar_one())
+
+
+async def rename(engine: AsyncEngine, element_id: UUID, name: str) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE elements SET name = :n WHERE id = :i"), {"n": name, "i": element_id}
+        )
+
+
+async def test_restoring_a_published_version_is_refused_until_it_is_reopened(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        await an_element(connection, "inside", finance)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    # Wired as main.py does: the real PackageService says what is frozen.
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), frozen_by=PackageService(repo).frozen_by
+    )
+    version = await publish_it(repo, finance)
+
+    outcome = await baselines.restore(version.baseline_id)
+    assert outcome.plan.frozen_by is not None
+    assert outcome.plan.frozen_by.version == version.version and outcome.plan.is_blocked
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(version.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+    await reopen_it(repo, finance)
+    outcome = await baselines.restore(version.baseline_id)
+    assert outcome.plan.frozen_by is None
+    await baselines.restore(version.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+
+async def test_the_triggers_still_refuse_when_the_prediction_is_bypassed(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The race: the service checked before the publication; the database is the authority."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        inside = await an_element(connection, "inside", finance)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    stale = BaselineService(
+        PostgresBaselineRepository(sessions), frozen_by=lambda _: _async(None)
+    )  # predicts nothing
+    first = await publish_it(repo, finance)  # v1.0.0 copies Finance as it was
+    await reopen_it(repo, finance)
+    await rename(engine_at_head, inside, "renamed")  # the plan back to v1.0.0 is not a no-op
+    await publish_it(repo, finance)  # v1.1.0 in force
+
+    outcome = await stale.restore(first.baseline_id)
+    assert outcome.plan.elements_to_update  # there is something to write
+    with pytest.raises(PackageFrozenError):
+        await stale.restore(first.baseline_id, dry_run=False, expected_digest=outcome.digest)
+
+    assert await name_of(engine_at_head, inside) == "renamed"

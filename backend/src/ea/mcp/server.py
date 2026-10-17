@@ -2441,7 +2441,11 @@ def build_mcp_server(
             ),
         ] = None,
     ) -> BaselineDiffRead:
-        """What was added, removed or modified between a baseline and another, or the live model."""
+        """What was added, removed or modified between a baseline and another, or the live model.
+
+        A baseline of one package (`scope_path`) is compared with that subtree as it is now,
+        and only with another baseline of the same package.
+        """
         return BaselineDiffRead.of(await get_baselines().diff(baseline_id, against_of(against)))
 
     @server.tool(annotations=REMOVES)
@@ -2472,6 +2476,10 @@ def build_mcp_server(
         person you work for; only after they agree call again with
         `dry_run=false` and that `digest` as `expected_digest`. A plan that
         touches a locked element is refused; unlock it first. All or nothing.
+
+        A baseline of one package restores that subtree only and deletes nothing
+        outside it. If the subtree is published, the dry run carries `frozen_by`
+        and applying is refused: it must be reopened first, by an approver.
         """
         return RestoreRead.of(
             await get_baselines().restore(

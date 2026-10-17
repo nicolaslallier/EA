@@ -25,6 +25,7 @@ from ea.domain.audit import AUDIT_LISTED_IDS, FieldChange, diff_fields
 from ea.domain.errors import BaselineTooLargeError, IllegalRelationshipError
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY, read_vrf
 from ea.domain.model import Element, Relationship, reject_nul
+from ea.domain.package_versions import FrozenBy
 
 MAX_BASELINE_NAME_LENGTH: Final = 200
 MAX_BASELINE_DESCRIPTION_LENGTH: Final = 2000
@@ -151,6 +152,30 @@ class ModelSnapshot:
     relationships: tuple[Relationship, ...]
     boxes: tuple[BoxSnapshot, ...] = ()
     package_paths: Mapping[UUID, str] = field(default_factory=dict)
+
+
+def restricted_to(
+    current: ModelSnapshot,
+    *,
+    packages: frozenset[UUID],
+    diagrams: frozenset[UUID],
+    known: frozenset[UUID],
+) -> ModelSnapshot:
+    """The part of `current` a subtree baseline is compared with (docs/adr/0074).
+
+    The elements filed in `packages` *or* that the baseline knows (`known`: one moved out
+    since is modified, not removed), the links with both ends kept, the boxes of `diagrams`.
+    """
+    elements = tuple(e for e in current.elements if e.package_id in packages or e.id in known)
+    ids = {e.id for e in elements}
+    return replace(
+        current,
+        elements=elements,
+        relationships=tuple(
+            r for r in current.relationships if r.source_id in ids and r.target_id in ids
+        ),
+        boxes=tuple(b for b in current.boxes if b.diagram_id in diagrams),
+    )
 
 
 def element_content(element: Element) -> dict[str, Any]:
@@ -366,10 +391,13 @@ class RestorePlan:
     boxes_lost: int = 0
     warnings: tuple[str, ...] = ()
     blocked: tuple[Element, ...] = ()
+    #: The publication that freezes the subtree a scoped baseline restores. Left out of
+    #: `plan_digest`: a frozen plan is never applied, and the freeze is checked first.
+    frozen_by: FrozenBy | None = None
 
     @property
     def is_blocked(self) -> bool:
-        return bool(self.blocked)
+        return bool(self.blocked) or self.frozen_by is not None
 
     @property
     def is_noop(self) -> bool:
@@ -534,6 +562,7 @@ def plan_restore(
     packages_present: frozenset[UUID],
     protected_ids: frozenset[UUID] = frozenset(),
     diagrams_present: frozenset[UUID] = frozenset(),
+    deletable: frozenset[UUID] | None = None,
 ) -> RestorePlan:
     """Make `current` equal `snapshot` — over the elements the snapshot knows.
 
@@ -549,6 +578,10 @@ def plan_restore(
     replace or cascade away a link it holds; or write an element that would take
     its (type, name), its address or its prefix. The caller re-reads the set
     inside the transaction that applies the plan.
+
+    `deletable`, for a subtree baseline, is what the plan may delete: the elements filed
+    in that subtree now. Everything else stays, while the plan still sees the whole model,
+    so a deletion cascading to a protected element outside is blocked like any other.
 
     `packages_present` is the set of packages that exist *now*: an element whose
     package is gone is restored at the root, and the plan says so — a package is
@@ -588,11 +621,10 @@ def plan_restore(
             )
             updates.append(ElementUpdate(now_held, restored, changes))
     updates.sort(key=lambda u: _element_order(u.restored))
-    to_delete = (
-        ()
-        if keep_new
-        else tuple(sorted((cur_el[i] for i in cur_el.keys() - snap_el.keys()), key=_element_order))
-    )
+    new_ids = cur_el.keys() - snap_el.keys()
+    if deletable is not None:
+        new_ids &= deletable
+    to_delete = () if keep_new else tuple(sorted((cur_el[i] for i in new_ids), key=_element_order))
     deleted_ids = {e.id for e in to_delete}
 
     snap_rel = {r.id: r for r in snapshot.relationships}

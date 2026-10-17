@@ -24,8 +24,10 @@ from ea.domain.auth import SYSTEM
 from ea.domain.baselines import Baseline
 from ea.domain.errors import DomainError, DuplicateBaselineError
 from ea.repositories.baseline_store import PostgresBaselineRepository
+from ea.repositories.package_store import PostgresPackageRepository
 from ea.services.baselines import BaselineService
 from ea.services.caller import acting_as
+from ea.services.packages import PackageService
 
 
 async def capture(service: BaselineService, *, name: str, description: str) -> Baseline:
@@ -38,7 +40,11 @@ async def run(settings: Settings, name: str, description: str) -> Baseline:
     engine = create_engine(settings)
     try:
         await check_connectivity(engine)
-        service = BaselineService(PostgresBaselineRepository(create_session_factory(engine)))
+        sessions = create_session_factory(engine)
+        packages = PackageService(PostgresPackageRepository(sessions))
+        service = BaselineService(
+            PostgresBaselineRepository(sessions), frozen_by=packages.frozen_by
+        )
         return await capture(service, name=name, description=description)
     finally:
         await engine.dispose()

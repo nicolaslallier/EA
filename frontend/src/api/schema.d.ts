@@ -118,6 +118,10 @@ export interface paths {
         /**
          * Read Baseline Diff
          * @description What separates a baseline from another one, or from the model as it is now.
+         *
+         *     A baseline of one package's subtree is compared with that subtree as it is now, plus
+         *     the elements it holds wherever they went (one moved out is modified, not removed). Two
+         *     baselines compare only when they have the same scope (`409 baseline_scoped`).
          */
         get: operations["read_baseline_diff_baselines__baseline_id__diff_get"];
         put?: never;
@@ -144,6 +148,10 @@ export interface paths {
          *     Applying needs `dry_run=false` **and** the `digest` of the dry run you read,
          *     as `expected_digest`. One transaction: a conflict (`restore_conflict`, read
          *     the plan again) or a locked element (`restore_blocked`) changes nothing.
+         *
+         *     A baseline of one package's subtree restores within it: nothing outside is deleted.
+         *     Its package must still exist (`409 baseline_scoped`). Under a publication in force the
+         *     dry run says so (`plan.frozen_by`) and applying is `409 package_frozen`: reopen first.
          */
         post: operations["restore_baseline_baselines__baseline_id__restore_post"];
         delete?: never;
@@ -4191,6 +4199,8 @@ export interface components {
             elements_to_delete: number;
             /** Elements To Update */
             elements_to_update: number;
+            /** @description The publication that freezes the subtree this baseline restores: reopen it first. */
+            frozen_by: components["schemas"]["FrozenByRead"] | null;
             /** Relationships Cascaded */
             relationships_cascaded: number;
             /** Relationships To Create */
@@ -5132,6 +5142,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
