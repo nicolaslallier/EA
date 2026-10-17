@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -545,6 +547,41 @@ class TestASubtreeBaselineIsComparedInItsScope:
         assert [e.id for e in outcome.plan.elements_to_delete] == [inside.id]
         assert outside.id in baseline_store.graph.elements
         assert inside.id not in baseline_store.graph.elements
+
+    async def test_the_dry_run_is_logged_with_ids_and_counts_never_names(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        inside = Element.create(element_type=E.NODE, name="secret name", now=FIXED_NOW)
+        baseline_store.graph.elements[inside.id] = replace(inside, package_id=FINANCE)
+
+        with caplog.at_level(logging.INFO):
+            await baseline_service.restore(scoped_id)
+
+        (line,) = [
+            r for r in caplog.records if getattr(r, "action", "") == "baseline_restore_preview"
+        ]
+        assert (line.baseline_id, line.elements_to_delete) == (str(scoped_id), 1)  # type: ignore[attr-defined]
+        assert line.is_blocked is False  # type: ignore[attr-defined]
+        assert "secret name" not in caplog.text
+
+    async def test_an_element_older_than_the_capture_moved_in_since_is_kept(
+        self,
+        baseline_service: BaselineService,
+        baseline_store: InMemoryBaselines,
+    ) -> None:
+        scoped_id, _ = await a_scoped_baseline(baseline_service, baseline_store)
+        crm = Element.create(element_type=E.NODE, name="CRM", now=FIXED_NOW - timedelta(days=600))
+        baseline_store.graph.elements[crm.id] = replace(crm, package_id=FINANCE)  # moved in
+
+        outcome = await apply(baseline_service, scoped_id)
+
+        assert outcome.plan.elements_to_delete == ()
+        assert [e.id for e in outcome.plan.kept_moved_in] == [crm.id]
+        assert crm.id in baseline_store.graph.elements
 
     async def test_a_protected_element_outside_blocks_a_deletion_that_cascades_to_it(
         self,

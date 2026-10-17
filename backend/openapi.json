@@ -5253,7 +5253,25 @@
                 "type": "null"
               }
             ],
-            "description": "The publication that freezes the subtree this baseline restores: reopen it first."
+            "description": "The publication that freezes a package this plan writes into: the subtree, a package below it, or a package outside it (a sub-package moved out since the capture, the other end of a link, a diagram). Reopen it first. A frozen plan is blocked with `blocked_count` at 0: check `is_blocked` or `frozen_by`, not the count."
+          },
+          "is_blocked": {
+            "description": "The plan cannot be applied: a protected element blocks it, or a freeze.",
+            "title": "Is Blocked",
+            "type": "boolean"
+          },
+          "kept_moved_in": {
+            "description": "The first few of `kept_moved_in_count`, by name.",
+            "items": {
+              "$ref": "#/components/schemas/EntityRefRead"
+            },
+            "title": "Kept Moved In",
+            "type": "array"
+          },
+          "kept_moved_in_count": {
+            "description": "Scoped baseline only: the elements filed in its subtree now, absent from it, that existed before it was captured. Moved in since, not created since: they are kept, never deleted \u2014 remove them by hand if they do not belong.",
+            "title": "Kept Moved In Count",
+            "type": "integer"
           },
           "relationships_cascaded": {
             "title": "Relationships Cascaded",
@@ -5303,6 +5321,9 @@
           "warnings",
           "blocked_count",
           "blocked",
+          "is_blocked",
+          "kept_moved_in_count",
+          "kept_moved_in",
           "frozen_by"
         ],
         "title": "RestorePlanRead",
@@ -7462,7 +7483,7 @@
     },
     "/baselines/{baseline_id}/restore": {
       "post": {
-        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.\n\nA baseline of one package's subtree restores within it: nothing outside is deleted.\nIts package must still exist (`409 baseline_scoped`). Under a publication in force the\ndry run says so (`plan.frozen_by`) and applying is `409 package_frozen`: reopen first.",
+        "description": "Put the model back as the baseline had it \u2014 a dry run unless told otherwise.\n\nApplying needs `dry_run=false` **and** the `digest` of the dry run you read,\nas `expected_digest`. One transaction: a conflict (`restore_conflict`, read\nthe plan again) or a locked element (`restore_blocked`) changes nothing.\n\nA baseline of one package's subtree restores within it and deletes no element outside\nit; a link to the outside, or a box on another diagram, goes with an element it deletes\n(`relationships_cascaded`, `boxes_lost`). An element moved into the subtree since the\ncapture, older than it, is kept (`plan.kept_moved_in`). Its package must still exist\n(`409 baseline_scoped`). When a package the plan writes is under a publication in force\nthe dry run says so (`plan.frozen_by`, `plan.is_blocked`) and applying is\n`409 package_frozen`: reopen first.",
         "operationId": "restore_baseline_baselines__baseline_id__restore_post",
         "parameters": [
           {

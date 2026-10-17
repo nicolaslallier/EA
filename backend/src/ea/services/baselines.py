@@ -172,7 +172,8 @@ class BaselineService:
         and the answer is `RestoreConflictError` — read the plan again.
 
         `keep_new` defaults to `False`: restoring is exact. A subtree baseline
-        restores within its subtree and never deletes outside it. A plan that
+        restores within its subtree, deletes no element outside it, and keeps
+        an element moved in since the capture (`kept_moved_in`). A plan that
         touches a protected element is returned by a dry run (its `blocked`
         list) and refused when applied; the repository checks the protection
         again inside its transaction. A subtree under a publication in force is
@@ -198,6 +199,22 @@ class BaselineService:
             plan = replace(plan, frozen_by=found)
         digest = plan_digest(plan)
         if dry_run:
+            # A preview is logged, never audited: nothing was written (ids and counts only).
+            logger.info(
+                "restoration previewed",
+                extra={
+                    "action": "baseline_restore_preview",
+                    "baseline_id": str(baseline_id),
+                    "elements_to_create": len(plan.elements_to_create),
+                    "elements_to_update": len(plan.elements_to_update),
+                    "elements_to_delete": len(plan.elements_to_delete),
+                    "relationships_to_create": len(plan.relationships_to_create),
+                    "relationships_to_delete": len(plan.relationships_to_delete),
+                    "relationships_cascaded": plan.cascaded_relationships,
+                    "kept_moved_in": len(plan.kept_moved_in),
+                    "is_blocked": plan.is_blocked,
+                },
+            )
             return RestoreOutcome(plan, applied=False, digest=digest)
         if plan.frozen_by is not None:
             # Nothing was attempted in the database: a log line, no audit event.

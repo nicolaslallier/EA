@@ -546,3 +546,39 @@ async def test_a_publication_nested_in_the_subtree_is_predicted_and_refused(
         await baselines.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
 
     assert await name_of(engine_at_head, inside) == "renamed"
+
+
+async def test_a_deletion_whose_box_is_on_a_frozen_outside_diagram_is_predicted_blocked(
+    engine_at_head: AsyncEngine, repo: PostgresPackageRepository
+) -> None:
+    """The diagram half: the box of a deleted element sits on a diagram filed in a published
+    package outside the subtree; only `packages_of_diagrams` sees that package."""
+    async with engine_at_head.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        other = await a_package(connection, "Autre", None)
+        drawing = await a_diagram(connection, "Vue", other)
+    sessions = async_sessionmaker(engine_at_head, expire_on_commit=False)
+    baselines = BaselineService(
+        PostgresBaselineRepository(sessions), freezes=PackageService(repo).freezes
+    )
+    scoped_id = (await baselines.create(name="Finance", package_id=finance)).id
+    async with engine_at_head.begin() as connection:
+        drawn = await an_element(connection, "new inside", finance)
+        await connection.execute(
+            text("UPDATE elements SET created_at = :t WHERE id = :i"),
+            {"t": datetime.now(UTC) + timedelta(hours=1), "i": drawn},
+        )
+        await connection.execute(
+            text("INSERT INTO diagram_nodes (diagram_id, element_id, x, y) VALUES (:d, :e, 0, 0)"),
+            {"d": drawing, "e": drawn},
+        )
+    await publish_it(repo, other)
+
+    outcome = await baselines.restore(scoped_id)
+
+    assert [e.id for e in outcome.plan.elements_to_delete] == [drawn]
+    assert other in outcome.plan.packages_written
+    assert outcome.plan.frozen_by is not None and outcome.plan.is_blocked
+    assert outcome.plan.frozen_by.package_id == other
+    with pytest.raises(PackageFrozenError):
+        await baselines.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)

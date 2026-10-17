@@ -2538,9 +2538,13 @@ def build_mcp_server(
         `dry_run=false` and that `digest` as `expected_digest`. A plan that
         touches a locked element is refused; unlock it first. All or nothing.
 
-        A baseline of one package restores that subtree only and deletes nothing
-        outside it. If the subtree is published, the dry run carries `frozen_by`
-        and applying is refused: it must be reopened first, by an approver.
+        A baseline of one package restores that subtree only and deletes no
+        element outside it; a link to the outside, or a box on another diagram,
+        goes with an element it deletes (`relationships_cascaded`, `boxes_lost`).
+        An element moved into the subtree since the capture, older than it, is
+        kept, never deleted (`kept_moved_in`). If a package the plan writes is
+        published, the dry run carries `frozen_by` (`is_blocked`) and applying is
+        refused: it must be reopened first, by an approver.
         """
         return RestoreRead.of(
             await get_baselines().restore(

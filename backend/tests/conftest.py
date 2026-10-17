@@ -1681,6 +1681,7 @@ class InMemoryBaselines:
             | frozenset(e.id for e in self.graph.elements.values() if is_frozen(e)),
             diagrams_present=diagrams_present,
             deletable=deletable,
+            captured_at=self.baselines[baseline_id].created_at,
         )
         if scope is not None:
             # As the store does: the diagrams it writes (boxes put back, boxes of what it

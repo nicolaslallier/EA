@@ -21,6 +21,17 @@ PROVIDERS = [
     dependencies.baseline_service_of,
     dependencies.file_service_of,
     dependencies.saved_query_service_of,
+    dependencies.document_service_of,
+    dependencies.diagram_service_of,
+    dependencies.profile_service_of,
+    dependencies.template_service_of,
+    dependencies.exchange_service_of,
+    dependencies.session_factory_of,
+    dependencies.analysis_service_of,
+    dependencies.external_service_of,
+    dependencies.timeline_service_of,
+    dependencies.report_service_of,
+    dependencies.requirement_service_of,
 ]
 
 

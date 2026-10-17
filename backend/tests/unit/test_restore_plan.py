@@ -473,6 +473,27 @@ class TestASubtreePlan:
         assert result.cascaded_relationships == 1
         assert [e.id for e in result.blocked] == [outside.id]
 
+    def test_an_element_older_than_the_capture_moved_in_since_is_kept_and_reported(
+        self,
+    ) -> None:
+        """CRM, in IT since 2024, moved into Finance since: Finance's restore keeps it."""
+        captured = datetime(2026, 1, 15, tzinfo=UTC)
+        moved_in = replace(node("CRM"), created_at=datetime(2024, 3, 1, tzinfo=UTC))
+        created_since = replace(node("new"), created_at=datetime(2026, 2, 1, tzinfo=UTC))
+        other = node("other")
+
+        result = plan(
+            ModelSnapshot((), ()),
+            ModelSnapshot((moved_in, created_since, other), (link(moved_in, other),)),
+            deletable=frozenset({moved_in.id, created_since.id}),
+            captured_at=captured,
+        )
+
+        assert [e.id for e in result.elements_to_delete] == [created_since.id]
+        assert [e.id for e in result.kept_moved_in] == [moved_in.id]
+        assert result.cascaded_relationships == 0
+        assert any("kept" in warning for warning in result.warnings)
+
 
 class TestThePackagesAPlanWrites:
     """What the freeze prediction is checked against: every package a write lands in."""

@@ -697,7 +697,8 @@ class PostgresBaselineRepository:
         current = await _current_snapshot(session)
         deletable = None
         if scope is not None:
-            # It deletes only what is filed in its subtree now and writes no box outside it;
+            # It deletes only what is filed in its subtree now (and was created since the
+            # capture: `captured_at`, docs/adr/0077) and writes no box outside it;
             # the plan still sees the whole model, so a protected element anywhere a deletion
             # cascades to blocks it.
             below, diagrams_present = await _subtree(session, scope)
@@ -712,6 +713,7 @@ class PostgresBaselineRepository:
             protected_ids=await self._protected(session),
             diagrams_present=diagrams_present,
             deletable=deletable,
+            captured_at=record.created_at,
         )
         if scope is not None:
             # The diagrams it writes are packages it writes too, for the freeze prediction.

@@ -1808,9 +1808,25 @@ class RestorePlanRead(BaseModel):
     warnings: list[str]
     blocked_count: int
     blocked: list[EntityRefRead]
+    is_blocked: bool = Field(
+        description="The plan cannot be applied: a protected element blocks it, or a freeze."
+    )
+    kept_moved_in_count: int = Field(
+        description=(
+            "Scoped baseline only: the elements filed in its subtree now, absent from it, that "
+            "existed before it was captured. Moved in since, not created since: they are kept, "
+            "never deleted — remove them by hand if they do not belong."
+        )
+    )
+    kept_moved_in: list[EntityRefRead] = Field(
+        description="The first few of `kept_moved_in_count`, by name."
+    )
     frozen_by: FrozenByRead | None = Field(
         description=(
-            "The publication that freezes the subtree this baseline restores: reopen it first."
+            "The publication that freezes a package this plan writes into: the subtree, a "
+            "package below it, or a package outside it (a sub-package moved out since the "
+            "capture, the other end of a link, a diagram). Reopen it first. A frozen plan is "
+            "blocked with `blocked_count` at 0: check `is_blocked` or `frozen_by`, not the count."
         )
     )
 
@@ -1850,6 +1866,9 @@ class RestoreRead(BaseModel):
                 warnings=[w[:PLAN_WARNING_LENGTH] for w in plan.warnings[:PLAN_LISTED_ITEMS]],
                 blocked_count=len(plan.blocked),
                 blocked=named(plan.blocked),
+                is_blocked=plan.is_blocked,
+                kept_moved_in_count=len(plan.kept_moved_in),
+                kept_moved_in=named(plan.kept_moved_in),
                 frozen_by=FrozenByRead.of(plan.frozen_by) if plan.frozen_by else None,
             ),
         )

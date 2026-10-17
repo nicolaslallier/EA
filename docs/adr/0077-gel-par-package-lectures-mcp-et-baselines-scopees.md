@@ -43,8 +43,19 @@ aujourd'hui peuvent être supprimés, et les boîtes ne s'écrivent que sur les 
 un élément intérieur en cascaderait pourtant un, et aucun élément approuvé ou verrouillé à l'extérieur ne
 bloquerait le plan (ADR 0049).
 
+**Une restauration scopée ne supprime jamais un élément antérieur à la capture.** Pour une baseline du modèle
+entier, absent de la copie veut dire créé depuis ; pour un sous-arbre, non : un élément peut y être *entré* depuis
+(le CRM, dans IT depuis 2024, déplacé dans Finance en mars). Le supprimer en restaurant la baseline de janvier de
+Finance emporterait ses documents, ses liens et ses boîtes, et le dry run le présenterait comme une création récente.
+`plan_restore(captured_at=…)` garde donc tout élément rangé dans le sous-arbre, absent de la copie, dont
+`created_at` précède la capture : il reste où il est, n'entre ni dans les suppressions, ni dans les cascades, ni dans
+`packages_written`, et le plan le nomme (`RestorePlan.kept_moved_in`, exposé en `kept_moved_in_count` /
+`kept_moved_in`, plus un avertissement ; il entre dans le digest). La personne le retire à la main s'il n'a rien à
+y faire. La restauration du modèle entier est inchangée.
+
 **Restaurer un sous-arbre gelé est prédit, puis refusé avant d'écrire.** Le dry run renvoie `RestorePlan.frozen_by`
-et le plan est bloqué (`blocked`), comme pour les éléments protégés ; l'appliquer est un `409 package_frozen`
+et le plan est bloqué (`is_blocked`, avec `frozen_by` renseigné et `blocked_count` à 0), comme pour les
+éléments protégés ; l'appliquer est un `409 package_frozen`
 avant toute écriture. Les triggers restent l'autorité pour la course entre la lecture et l'écriture.
 Écart avec le plan : la prédiction couvre **tout package que le plan écrit**, pas seulement le périmètre
 (`RestorePlan.packages_written` : package actuel et cible des éléments modifiés, recréés ou supprimés, les deux
@@ -75,8 +86,10 @@ qu'on ne dit pas le contraire) et `reopen_package`, bornes importées de `api/sc
 - Limites connues, reportées : un élément recréé dont (type, nom), l'adresse ou le préfixe est maintenant tenu par un
   élément non protégé à l'extérieur n'est pas prédit (la contrainte d'unicité refuse à l'application, comme avec
   `keep_new=True` avant) ; une baseline du modèle entier qui touche un sous-arbre gelé n'est pas prédite (les
-  triggers refusent), décision Q3.
-- Les tests d'intégration n'ont pas pu tourner en local (pas de Docker) : la CI les exécute pour la première fois.
+  triggers refusent), décision Q3 ; une restauration scopée peut écrire **hors** de son sous-arbre — un
+  sous-package sorti depuis la capture voit ses éléments recréés ou réécrits là où ils sont : le gel y est prédit
+  (`packages_written`), mais l'écriture n'est pas empêchée.
+- Les tests d'intégration tournent contre les conteneurs jetables (`make test-integration`).
 - Décisions Q1 à Q5 du 2026-10-17 : Q1 comparer deux baselines au même périmètre seulement ; Q3 prédire pour le
   périmètre, pas pour une baseline globale ; les autres sont les choix ci-dessus.
 

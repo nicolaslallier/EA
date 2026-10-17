@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -166,6 +166,15 @@ async def a_link(engine: AsyncEngine, source: UUID, target: UUID) -> UUID:
     return link
 
 
+async def created_since_the_capture(engine: AsyncEngine, *element_ids: UUID) -> None:
+    """The helpers date every row `AT`; a capture is dated by the real clock, later."""
+    later = datetime.now(UTC) + timedelta(hours=1)
+    for element_id in element_ids:
+        await run(
+            engine, "UPDATE elements SET created_at = :t WHERE id = :i", t=later, i=element_id
+        )
+
+
 async def finance_with(engine: AsyncEngine, *names: str) -> tuple[UUID, list[UUID]]:
     async with engine.begin() as connection:
         finance = await a_package(connection, "Finance", None)
@@ -196,6 +205,7 @@ async def test_a_scoped_restore_never_deletes_outside_its_subtree(
         created_inside = await an_element(connection, "new inside", finance)
         created_at_root = await an_element(connection, "new at the root", None)
         other_root = await an_element(connection, "other at the root", None)
+    await created_since_the_capture(engine_at_head, created_inside, created_at_root, other_root)
     root_link = await a_link(engine_at_head, created_at_root, other_root)
     boundary_link = await a_link(engine_at_head, inside, created_at_root)
 
@@ -213,6 +223,33 @@ async def test_a_scoped_restore_never_deletes_outside_its_subtree(
         ("relationships", boundary_link),
     ):
         assert await exists(engine_at_head, table, kept), (table, kept)
+
+
+async def test_a_scoped_restore_keeps_an_older_element_moved_in_since_with_its_links(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """CRM, in IT since before the capture, moved into Finance since: it stays, and is named."""
+    finance, _ = await finance_with(engine_at_head, "a")
+    async with engine_at_head.begin() as connection:
+        it = await a_package(connection, "IT", None)
+        crm = await an_element(connection, "CRM", it)
+        erp = await an_element(connection, "ERP", it)
+    crm_link = await a_link(engine_at_head, crm, erp)
+    service = a_service(engine_at_head)
+    scoped_id = (await service.create(name="Finance", package_id=finance)).id
+    await run(engine_at_head, "UPDATE elements SET package_id = :p WHERE id = :i", p=finance, i=crm)
+
+    outcome = await service.restore(scoped_id)
+    assert outcome.plan.elements_to_delete == ()
+    assert [e.id for e in outcome.plan.kept_moved_in] == [crm]
+    assert outcome.plan.cascaded_relationships == 0
+    assert it not in outcome.plan.packages_written
+    applied = await service.restore(scoped_id, dry_run=False, expected_digest=outcome.digest)
+
+    assert applied.applied
+    assert await exists(engine_at_head, "elements", crm)
+    assert await exists(engine_at_head, "relationships", crm_link)
+    assert await package_of(engine_at_head, crm) == finance
 
 
 async def test_a_scoped_restore_puts_a_moved_out_element_back(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -11,6 +13,8 @@ import pytest
 import pytest_asyncio
 
 from ea.core.config import Settings
+from ea.domain.archimate import ElementType as E
+from ea.domain.model import Element
 from ea.domain.packages import Package
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
@@ -404,6 +408,24 @@ class TestAPublishedSubtree:
         assert (answer.status_code, answer.json()["error"]) == (409, "package_frozen")
         assert (await wired.get("/audit", headers=as_(EDITOR))).json() == before
         assert baseline_store.applied == []
+
+    async def test_an_element_moved_in_since_the_capture_is_kept_and_named_by_the_dry_run(
+        self, wired: httpx.AsyncClient, baseline_store: InMemoryBaselines
+    ) -> None:
+        finance = await wired.post("/packages", json={"name": "Finance"}, headers=as_(EDITOR))
+        finance_id = UUID(finance.json()["id"])
+        copy = await wired.post(
+            "/baselines",
+            json={"name": "Finance", "package_id": str(finance_id)},
+            headers=as_(EDITOR),
+        )
+        crm = Element.create(element_type=E.NODE, name="CRM", now=FIXED_NOW - timedelta(days=600))
+        baseline_store.graph.elements[crm.id] = replace(crm, package_id=finance_id)  # moved in
+
+        plan = (await dry_run(wired, copy.json()["id"]))["plan"]
+
+        assert (plan["elements_to_delete"], plan["kept_moved_in_count"]) == (0, 1)
+        assert [ref["label"] for ref in plan["kept_moved_in"]] == ["CRM"]
 
     async def test_baselines_of_different_scopes_are_a_409(
         self, wired: httpx.AsyncClient, published_finance: tuple[str, str]

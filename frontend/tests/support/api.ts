@@ -519,6 +519,9 @@ export function aRestorePlan(overrides: Partial<RestorePlanRead> = {}): RestoreP
     warnings: [],
     blocked_count: 0,
     blocked: [],
+    is_blocked: false,
+    kept_moved_in_count: 0,
+    kept_moved_in: [],
     frozen_by: null,
     ...overrides,
   }

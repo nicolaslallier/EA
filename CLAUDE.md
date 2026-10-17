@@ -846,8 +846,11 @@ shared database it writes to and refuses without the confirmation.
 A baseline may be *scoped* to a package subtree (`scope_package_id`, `scope_path`),
 which is what a publication takes. A scoped baseline is compared within its scope
 (`restricted_to`) and only with a baseline of the same scope (`BaselineScopedError`,
-`409 baseline_scoped`), and restored within its subtree, never beyond (`plan_restore(deletable=)`);
-while the subtree it writes is published, its dry run is blocked with `frozen_by` (every package the
+`409 baseline_scoped`), and restored within its subtree: it deletes no element outside it
+(`plan_restore(deletable=)`; a link to the outside or a box on another diagram still goes with an
+element it deletes), and **never an element older than the capture** (`captured_at`) — absent from a
+subtree's copy, such an element was moved in since, not created since, so it is kept and named
+(`kept_moved_in`), never deleted with its documents, links and boxes. While a package it writes is published, its dry run is blocked with `frozen_by` (every package the
 plan writes, `RestorePlan.packages_written`) and applying it is a `409 package_frozen` (`docs/adr/0077`).
 A baseline named by a version is never deleted (`docs/adr/0074`).
 

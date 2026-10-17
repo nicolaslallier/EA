@@ -391,6 +391,9 @@ class RestorePlan:
     boxes_lost: int = 0
     warnings: tuple[str, ...] = ()
     blocked: tuple[Element, ...] = ()
+    #: For a scoped baseline: the elements absent from it, filed in its subtree now, that
+    #: existed before it was captured — moved in since, not created since. Never deleted.
+    kept_moved_in: tuple[Element, ...] = ()
     #: Every package a write of this plan lands in: where an element is and where it goes
     #: back, both ends of a link it writes or cascades away (the repository adds the
     #: packages of the diagrams it writes). What the freeze prediction is checked against.
@@ -464,6 +467,7 @@ def plan_digest(plan: RestorePlan) -> str:
         "boxes_lost": plan.boxes_lost,
         "warnings": list(plan.warnings),
         "blocked": [str(e.id) for e in plan.blocked],
+        "kept_moved_in": [str(e.id) for e in plan.kept_moved_in],
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
 
@@ -576,6 +580,7 @@ def plan_restore(
     protected_ids: frozenset[UUID] = frozenset(),
     diagrams_present: frozenset[UUID] = frozenset(),
     deletable: frozenset[UUID] | None = None,
+    captured_at: datetime | None = None,
 ) -> RestorePlan:
     """Make `current` equal `snapshot` — over the elements the snapshot knows.
 
@@ -595,6 +600,10 @@ def plan_restore(
     `deletable`, for a subtree baseline, is what the plan may delete: the elements filed
     in that subtree now. Everything else stays, while the plan still sees the whole model,
     so a deletion cascading to a protected element outside is blocked like any other.
+    `captured_at`, the instant that baseline was taken, spares an element created before it:
+    absent from a subtree's copy, it was moved in since, not created since — deleting it
+    would take an element (its documents, links and boxes) the baseline never meant to
+    undo. It is kept and listed in `kept_moved_in` (docs/adr/0077).
 
     `packages_present` is the set of packages that exist *now*: an element whose
     package is gone is restored at the root, and the plan says so — a package is
@@ -635,8 +644,13 @@ def plan_restore(
             updates.append(ElementUpdate(now_held, restored, changes))
     updates.sort(key=lambda u: _element_order(u.restored))
     new_ids = cur_el.keys() - snap_el.keys()
+    kept_moved_in: tuple[Element, ...] = ()
     if deletable is not None:
         new_ids &= deletable
+        if captured_at is not None and not keep_new:
+            older = {i for i in new_ids if cur_el[i].created_at < captured_at}
+            new_ids -= older
+            kept_moved_in = tuple(sorted((cur_el[i] for i in older), key=_element_order))
     to_delete = () if keep_new else tuple(sorted((cur_el[i] for i in new_ids), key=_element_order))
     deleted_ids = {e.id for e in to_delete}
 
@@ -714,6 +728,11 @@ def plan_restore(
                 f"element {written.name!r}: its package {path!r} no longer exists, "
                 "it is restored at the root"
             )
+    if kept_moved_in:
+        warnings.append(
+            f"{len(kept_moved_in)} element(s) moved into the subtree since the capture are "
+            "kept: they existed before it, and a restore deletes only what was created since"
+        )
     if to_create:
         warnings.append(
             f"{len(to_create)} element(s) come back without their documents: "
@@ -776,5 +795,6 @@ def plan_restore(
         boxes_lost=boxes_lost,
         warnings=tuple(warnings),
         blocked=blocked,
+        kept_moved_in=kept_moved_in,
         packages_written=packages_written,
     )
