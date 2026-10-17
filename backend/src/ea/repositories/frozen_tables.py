@@ -1,7 +1,8 @@
 """The tables whose rows a published subtree freezes (docs/adr/0074).
 
-The migration `0020` keeps its own literal list, on purpose (a migration never imports the
-code it froze); `tests/unit/test_frozen_tables.py` keeps the two equal. A publication locks
+The migrations `0020` and `0022` (external references, docs/adr/0076) keep their own literal
+lists, on purpose (a migration never imports the code it froze);
+`tests/unit/test_frozen_tables.py` keeps them equal to this one. A publication locks
 all of them in SHARE mode and a restoration in ROW EXCLUSIVE mode, so the two exclude each
 other before either one reads anything.
 """
@@ -20,6 +21,7 @@ GUARDED_TABLES: Final = (
     "diagram_objects",
     "diagram_edges",
     "packages",
+    "external_references",
 )
 
 

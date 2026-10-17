@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -17,11 +18,20 @@ from ea.domain.errors import (
     DuplicateExternalReferenceError,
     ElementLockedError,
     ElementNotFoundError,
+    PackageFrozenError,
+    TooManyExternalReferencesError,
 )
-from ea.domain.external import ExternalKind, ExternalReference, ExternalSnapshot, ExternalStatus
+from ea.domain.external import (
+    MAX_REFERENCES_PER_ELEMENT,
+    ExternalKind,
+    ExternalReference,
+    ExternalSnapshot,
+    ExternalStatus,
+)
 from ea.domain.model import Element
 from ea.repositories.architecture_store import PostgresArchitectureRepository
 from ea.repositories.external_store import PostgresExternalReferenceRepository
+from tests.integration.test_package_freeze_triggers import a_package, publish
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
@@ -295,3 +305,22 @@ async def test_a_line_that_was_tried_goes_to_the_back_and_other_targets_are_not_
         first.id,
     ]
     assert await store.list_stale(before=before, limit=10, targets=set()) == ()
+
+
+async def test_two_links_racing_for_the_last_place_cannot_both_take_it(
+    engine_at_head: AsyncEngine,
+) -> None:
+    """The cap is counted under the element's lock, in the transaction that inserts."""
+    store, element_id, _ = await make(engine_at_head)
+    for number in range(MAX_REFERENCES_PER_ELEMENT - 1):
+        await store.add(reference(element_id, number), audit=())
+
+    outcomes = await asyncio.gather(
+        store.add(reference(element_id, 1000), audit=()),
+        store.add(reference(element_id, 1001), audit=()),
+        return_exceptions=True,
+    )
+
+    refused = [o for o in outcomes if isinstance(o, TooManyExternalReferencesError)]
+    assert len(refused) == 1, outcomes
+    assert len(await store.list_for(element_id)) == MAX_REFERENCES_PER_ELEMENT  # type: ignore[arg-type]

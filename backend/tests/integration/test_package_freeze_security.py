@@ -141,7 +141,6 @@ async def test_no_table_that_hangs_from_the_model_is_left_unguarded(
         "baseline_relationships": "a copy that outlives the model",
         "baseline_boxes": "a copy that outlives the model",
         "document_chunks": "the derived search index: a reindex must still run",
-        "external_references": "third-party cache, exempt by the spec (title and state only)",
         "audit_events": "the trail itself",
         "package_versions": "append-only by its own triggers",
         "diagram_templates": "carry no element and no package",
