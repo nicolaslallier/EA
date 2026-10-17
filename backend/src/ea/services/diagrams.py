@@ -27,6 +27,7 @@ from ea.domain.errors import (
     DiagramNotFoundError,
     DiagramNotGeneratedError,
     DiagramNotLiveError,
+    DiagramRevisionConflictError,
     GeneratedViewsUnavailableError,
     PackageNotFoundError,
     ScopeTooLargeError,
@@ -278,6 +279,12 @@ class DiagramService:
         if diagram.generation is Generation.LIVE:
             msg = "a live view is recomputed at every opening and cannot be edited: freeze it"
             raise DiagramLiveError(msg)
+        if diagram.revision != revision:
+            # Before the element checks: a box whose element was deleted since is a 422 the SPA
+            # reads as permanent, when the truth is "reload". The check under the row lock, in
+            # the repository, stays the authority.
+            msg = f"the diagram is at revision {diagram.revision}, not {revision}"
+            raise DiagramRevisionConflictError(msg)
         graph = await self._architecture.view_of([node.element_id for node in scene.nodes])
         present = {element.id for element in graph.elements}
         missing = [str(node.element_id) for node in scene.nodes if node.element_id not in present]

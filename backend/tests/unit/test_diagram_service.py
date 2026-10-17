@@ -29,6 +29,7 @@ from ea.domain.diagrams import DiagramNode
 from ea.domain.errors import (
     DiagramLimitError,
     DiagramNotFoundError,
+    DiagramRevisionConflictError,
     DuplicateDiagramError,
     PackageNotFoundError,
     ScopeTooLargeError,
@@ -206,6 +207,21 @@ class TestTheLayout:
 
         with pytest.raises(DiagramNotFoundError):
             await lay_out(diagram_service, uuid4(), [DiagramNode(element.id, 0, 0)])
+
+    async def test_a_stale_save_naming_an_element_deleted_since_is_a_conflict_not_a_422(
+        self, service: ArchitectureService, diagram_service: DiagramService
+    ) -> None:
+        """A 422 reads as permanent to the SPA; a stale revision must say "reload" first."""
+        element = await an_element(service)
+        diagram = await diagram_service.create(name="Vente")
+        seen = await lay_out(diagram_service, diagram.id, [DiagramNode(element.id, 0, 0)])
+        await lay_out(diagram_service, diagram.id, [])  # someone else moved it on
+        await service.delete_element(element.id)
+
+        with pytest.raises(DiagramRevisionConflictError):
+            await diagram_service.replace_layout(
+                diagram.id, revision=seen, nodes=[DiagramNode(element.id, 5, 5)]
+            )
 
     async def test_a_diagram_deleted_between_the_read_and_the_write_is_not_found(
         self,
