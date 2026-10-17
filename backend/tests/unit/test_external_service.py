@@ -521,6 +521,48 @@ class TestRefreshing:
 
         assert view.stale is True
 
+    async def test_a_target_now_serving_another_kind_still_counts_as_an_attempt(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        """Else the line stays first in the stale queue forever, hiding the ones behind it."""
+        jira = FakeExternalSystem("main", kind=ExternalKind.JIRA_ISSUE)
+        svc = ExternalReferenceService(
+            external_references, service, {"main": jira}, clock=lambda: FIXED_NOW
+        )
+        element = await an_element(service)
+        row = await cite(external_references, element, 12, age_minutes=60 * 30)
+        before = len(audit_log.events)
+
+        view = await svc.refresh(row.id)
+
+        assert view.stale is True
+        assert jira.calls == []
+        assert external_references.attempts[row.id] == FIXED_NOW
+        assert len(audit_log.events) == before
+
+    async def test_an_attempt_is_a_clock_for_the_queue_and_writes_no_audit_event(
+        self,
+        external_service: ExternalReferenceService,
+        external_references: InMemoryExternalReferences,
+        external_system: FakeExternalSystem,
+        service: ArchitectureService,
+        audit_log: InMemoryAuditLog,
+    ) -> None:
+        """Deliberately silent (docs/adr/0076): a failed refresh changed nothing a reader sees."""
+        element = await an_element(service)
+        row = await cite(external_references, element, 12, age_minutes=60 * 30)
+        external_system.failure = ExternalUnavailableError("down")
+        before = len(audit_log.events)
+
+        view = await external_service.refresh(row.id)
+
+        assert view.stale is True
+        assert external_references.attempts[row.id] == FIXED_NOW
+        assert len(audit_log.events) == before
+
     async def test_a_free_link_has_nothing_to_refresh(
         self,
         external_service: ExternalReferenceService,

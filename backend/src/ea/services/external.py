@@ -273,6 +273,7 @@ class ExternalReferenceService:
                 "a reference points at a target that is not active",
                 extra={"action": "external_target_inactive", "target": row.target},
             )
+            await self._note_attempt(row)  # else it heads the stale queue forever
             return ExternalView(reference=row, stale=True)
         try:
             snapshot = await self._ask(system, row.external_id)
@@ -306,7 +307,11 @@ class ExternalReferenceService:
         return self._view(updated)
 
     async def _note_attempt(self, row: ExternalReference) -> None:
-        """The line stays as it was, but goes to the back of the queue of stale lines."""
+        """The line stays as it was, but goes to the back of the queue of stale lines.
+
+        Deliberately no audit event (docs/adr/0076): an attempt is a scheduling clock, it
+        changes nothing a reader of the reference sees.
+        """
 
         def nothing_to_say(_: ExternalReference) -> tuple[AuditEvent, ...]:
             return ()
