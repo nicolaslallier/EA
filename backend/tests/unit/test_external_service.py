@@ -857,6 +857,22 @@ class TestReadOnlyTargets:
             external_references, service, {system.name: system}, clock=lambda: FIXED_NOW
         )
 
+    async def test_a_writable_target_opens_the_ticket_once_with_no_admission_configured(
+        self,
+        external_references: InMemoryExternalReferences,
+        service: ArchitectureService,
+    ) -> None:
+        writable = FakeExternalSystem("main", writable=True)
+        svc = self._service(external_references, service, writable)
+        element = await an_element(service)
+
+        done = await svc.open_issue(
+            element, target="main", scope="acme/billing", title="t", body="b", dry_run=False
+        )
+
+        assert writable.create_attempts == 1
+        assert done.view is not None and done.view.reference.element_id == element
+
     @pytest.mark.parametrize("dry_run", [True, False])
     async def test_a_read_only_target_refuses_before_any_call_even_for_an_editor(
         self,
