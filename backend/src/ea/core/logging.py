@@ -79,8 +79,11 @@ _SECRETS: Final[tuple[re.Pattern[str], ...]] = (
 
 #: Everything `logging.LogRecord` sets by itself. What a call site added with
 #: `extra=` is whatever is left, and that is what becomes a JSON field.
+#: `color_message` is uvicorn's: an ANSI-coloured copy of the message, meant for
+#: its own formatter alone. Rendered as a field, every uvicorn line said its
+#: message twice, the second time with escape codes and an unfilled `%d`.
 _BUILT_IN: Final[frozenset[str]] = frozenset(
-    set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName"}
+    set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName", "color_message"}
 )
 
 
