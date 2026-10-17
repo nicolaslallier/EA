@@ -85,12 +85,36 @@ class Lifespan:
         )
 
 
+#: How many `legacy_<key>` names a set-aside value may take before it is appended to the last.
+LEGACY_SLOTS: Final = 9
+
+
+def _set_aside(out: dict[str, str], key: str, value: str) -> None:
+    """Move `value` under the first free `legacy_<key>`, `_2` … `_9` — never over one.
+
+    All nine taken, it is appended (after a newline) to the last: nothing is lost. The same
+    rule as revision 0014, which a baseline captured before it is read back through.
+    """
+    names = [f"legacy_{key}"] + [f"legacy_{key}_{n}" for n in range(2, LEGACY_SLOTS + 1)]
+    free = next((name for name in names if name not in out), None)
+    if free is None:
+        last = out[names[-1]]
+        out[names[-1]] = f"{'' if last is None else last}\n{value}"  # as 0014's coalesce
+    else:
+        out[free] = value
+
+
 def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str]:
     """Properties stored before the rule, made readable: never raises, never loses a value.
 
     For what is *read back* from a copy that predates revision 0014 (a baseline): a
     day is canonicalised, a blank removed, and whatever is not a day — or an end that
-    precedes its start — is set aside under `legacy_<key>`, exactly as the migration does.
+    precedes its start — is set aside under `legacy_<key>` (the same slots as 0014).
+
+    Three known differences from the migration: an end before its start is set aside here and
+    not there; the length test here is on the stripped value, there on the stored one; and a
+    non-string JSON value is set aside here as Python's `str()` (`True`, `5.0`), where SQL's
+    `->>` would give its JSON text (`true`, `5.0`).
     """
     out = dict(properties)
     days: dict[str, date] = {}
@@ -104,12 +128,12 @@ def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str
         try:
             days[key] = parse_day(raw, key=key)
         except InvalidLifespanError:
-            out[f"legacy_{key}"] = out.pop(key) if isinstance(raw, str) else str(raw)
             out.pop(key, None)
+            _set_aside(out, key, raw if isinstance(raw, str) else str(raw))
         else:
             out[key] = days[key].isoformat()
     if VALID_FROM in days and VALID_UNTIL in days and days[VALID_UNTIL] < days[VALID_FROM]:
-        out["legacy_" + VALID_UNTIL] = out.pop(VALID_UNTIL)
+        _set_aside(out, VALID_UNTIL, out.pop(VALID_UNTIL))
     return out
 
 

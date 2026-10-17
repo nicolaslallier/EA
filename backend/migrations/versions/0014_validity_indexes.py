@@ -47,6 +47,7 @@ _TABLES = ("elements", "relationships")
 _KEYS = ("valid_from", "valid_until")
 _MAX_DAY_LENGTH = 16
 _LOCK_TIMEOUT = "10s"
+_LEGACY_SLOTS = 9
 
 
 def _canonical(stored: str) -> str | None:
@@ -57,15 +58,38 @@ def _canonical(stored: str) -> str | None:
         return None
 
 
+def _aside(properties: str, key: str, value: str) -> str:
+    """SQL for `jsonb_build_object(<free name>, <value>)`: never overwrites.
+
+    The name is `legacy_<key>`, else `legacy_<key>_2` ... `_9`, the first not already a key of the
+    row. Only when all nine are taken is the value appended (after a newline) to the last one -
+    nothing is lost (`coalesce`: a JSON null there would make the whole `||` NULL). Every
+    identifier here is built from the two constants above, never from data.
+    """
+    value = f"({value})"
+    names = [f"legacy_{key}"] + [f"legacy_{key}_{n}" for n in range(2, _LEGACY_SLOTS + 1)]
+    name = (
+        "CASE "
+        + " ".join(f"WHEN NOT ({properties} ? '{n}') THEN '{n}'" for n in names)
+        + f" ELSE '{names[-1]}' END"
+    )
+    all_taken = " AND ".join(f"({properties} ? '{n}')" for n in names)
+    stored = (
+        f"CASE WHEN {all_taken} "
+        f"THEN coalesce({properties} ->> '{names[-1]}', '') || chr(10) || {value} "
+        f"ELSE {value} END"
+    )
+    return f"jsonb_build_object({name}, {stored})"
+
+
 def _rewrite(connection: sa.Connection, table: str, key: str) -> None:
     # `table` and `key` come from the two constants above; every value is a bound parameter.
     value = f"(properties ->> '{key}')"
-    legacy = f"legacy_{key}"
     # 1. What is too long to be a day: set aside by SQL alone, never read into Python.
     connection.execute(
         sa.text(
             f"UPDATE {table} SET properties = (properties - '{key}') "  # nosec B608 - constants
-            f"|| jsonb_build_object('{legacy}', {value}) "
+            f"|| {_aside('properties', key, value)} "
             f"WHERE length({value}) > :longest"
         ),
         {"longest": _MAX_DAY_LENGTH},
@@ -106,7 +130,7 @@ def _rewrite(connection: sa.Connection, table: str, key: str) -> None:
             f"WHEN 'canonical' THEN (t.properties - '{key}') "
             f"|| jsonb_build_object('{key}', m.new) "
             f"ELSE (t.properties - '{key}') "
-            f"|| jsonb_build_object('{legacy}', t.properties ->> '{key}') END "
+            f"|| {_aside('t.properties', key, f't.properties ->> {chr(39)}{key}{chr(39)}')} END "
             f"FROM unnest(CAST(:olds AS text[]), CAST(:kinds AS text[]), CAST(:news AS text[])) "
             f"AS m(old, kind, new) WHERE (t.properties ->> '{key}') = m.old"
         ),
