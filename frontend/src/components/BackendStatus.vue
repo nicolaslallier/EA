@@ -50,6 +50,11 @@ onMounted(async () => {
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: 8px;
+  /* A chip of the page's surface, so the state colours read on the blue bar. */
+  background: var(--surface);
+}
+.status--loading {
+  color: var(--muted);
 }
 .status--ok {
   border-color: #2e7d32;

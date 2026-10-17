@@ -468,7 +468,7 @@ out until the screen exists: the menu then shows the section greyed out with an
 resolve to a screen that is not there. When you build it, add
 `view: () => import('../features/<section>/<Screen>.vue')` — the lazy import is
 what keeps each section in its own bundle chunk. A new group is an entry in
-`GROUPS`. See `docs/adr/0008`. Every declared section has a
+`GROUPS`, and becomes one dropdown of the top bar. See `docs/adr/0008` and, for the bar and the light/dark theme (light by default, dark chosen per browser, never by the OS), `docs/adr/0075`. Every declared section has a
 screen today, so the *à venir* badge is covered by a spec that hands `AppNav` a
 menu of its own — the component takes its entries as a prop, defaulting to
 `menu()`, for exactly that reason.
@@ -678,7 +678,7 @@ deterministic layout module** (`lib/graphLayout.ts`): concentric rings, one per
 hop from the subject, so the geometry is unit-tested without mounting anything
 and the same sub-graph always draws the same way. Boxes carry the conventional
 ArchiMate layer colours (`LAYER_COLOURS`, beside `LAYER_LABELS`) — light fills
-that state their own dark ink, because `var(--text)` inverts in the dark theme —
+that state their own dark ink, because `var(--text)` inverts in the dark theme (opt-in, `docs/adr/0075`) —
 and every neighbour is a real focusable control, not a painted pixel.
 
 **Both traversals share that drawing, and mean different things by a ring.**
