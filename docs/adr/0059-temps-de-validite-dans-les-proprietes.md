@@ -51,8 +51,11 @@ le second se composera plus tard (`known_at`, nom réservé, non livré).
   nombre de valeurs) ; l'index porte sur `properties ->> clé`, une expression totale qui ne peut lever sur
   aucune ligne. `CREATE INDEX` sans `CONCURRENTLY` bloque l'écriture le temps de la construction (de l'ordre de
   la seconde pour quelques dizaines de milliers de lignes) ; `lock_timeout = 10s` borne l'attente du verrou.
-  Une clé `legacy_*` déjà présente n'est jamais écrasée : la valeur prend `legacy_<clé>_2` … `_9`, et si les neuf
-  sont prises elle est ajoutée (après un saut de ligne) à la dernière.
+  *Précision du 2026-10-17 :* une clé `legacy_*` déjà
+  présente n'est jamais écrasée : la valeur prend `legacy_<clé>_2` … `_9`, et si les neuf sont prises elle est
+  ajoutée (après un saut de ligne) à la dernière — la `0014` comme son jumeau `readable_lifespan_properties`. Une
+  révision appliquée ne se rejoue pas : la règle vaut pour une base neuve ou restaurée d'avant la `0014` ; sur une
+  base où elle a déjà tourné, une valeur écrasée alors ne se retrouve que dans une sauvegarde antérieure.
   Testée sur 5 000 lignes hostiles (`9`×100 000, `infinity`, chiffres pleine chasse, signes, années hors plage),
   la chaîne descendue puis remontée.
 - Une baseline capturée avant la `0014` peut contenir n'importe quelle chaîne sous ces clés : sa lecture

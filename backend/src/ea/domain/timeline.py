@@ -85,6 +85,24 @@ class Lifespan:
         )
 
 
+#: How many `legacy_<key>` names a set-aside value may take before it is appended to the last.
+LEGACY_SLOTS: Final = 9
+
+
+def _set_aside(out: dict[str, str], key: str, value: str) -> None:
+    """Move `value` under the first free `legacy_<key>`, `_2` … `_9` — never over one.
+
+    All nine taken, it is appended (after a newline) to the last: nothing is lost. The same
+    rule as revision 0014, which a baseline captured before it is read back through.
+    """
+    names = [f"legacy_{key}"] + [f"legacy_{key}_{n}" for n in range(2, LEGACY_SLOTS + 1)]
+    free = next((name for name in names if name not in out), None)
+    if free is None:
+        out[names[-1]] = f"{out[names[-1]]}\n{value}"
+    else:
+        out[free] = value
+
+
 def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str]:
     """Properties stored before the rule, made readable: never raises, never loses a value.
 
@@ -104,12 +122,12 @@ def readable_lifespan_properties(properties: Mapping[str, str]) -> dict[str, str
         try:
             days[key] = parse_day(raw, key=key)
         except InvalidLifespanError:
-            out[f"legacy_{key}"] = out.pop(key) if isinstance(raw, str) else str(raw)
             out.pop(key, None)
+            _set_aside(out, key, raw if isinstance(raw, str) else str(raw))
         else:
             out[key] = days[key].isoformat()
     if VALID_FROM in days and VALID_UNTIL in days and days[VALID_UNTIL] < days[VALID_FROM]:
-        out["legacy_" + VALID_UNTIL] = out.pop(VALID_UNTIL)
+        _set_aside(out, VALID_UNTIL, out.pop(VALID_UNTIL))
     return out
 
 

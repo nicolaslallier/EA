@@ -122,6 +122,33 @@ class TestReadingWhatWasStoredBeforeTheRule:
             {VALID_FROM: "2027-02-01", VALID_UNTIL: "2027-01-01"}
         ) == {VALID_FROM: "2027-02-01", "legacy_valid_until": "2027-01-01"}
 
+    def test_a_legacy_key_already_there_is_never_overwritten_exactly_as_the_migration(
+        self,
+    ) -> None:
+        """The same slots as revision 0014: `_2` … `_9`, then appended to the last."""
+        assert readable_lifespan_properties(
+            {VALID_FROM: "not a date", "legacy_valid_from": "keep me"}
+        ) == {"legacy_valid_from": "keep me", "legacy_valid_from_2": "not a date"}
+        assert readable_lifespan_properties(
+            {
+                VALID_FROM: "2027-02-01",
+                VALID_UNTIL: "2027-01-01",
+                "legacy_valid_until": "old",
+            }
+        ) == {
+            VALID_FROM: "2027-02-01",
+            "legacy_valid_until": "old",
+            "legacy_valid_until_2": "2027-01-01",
+        }
+        taken = {
+            "legacy_valid_from": "a",
+            **{f"legacy_valid_from_{n}": str(n) for n in range(2, 10)},
+        }
+        full = readable_lifespan_properties({VALID_FROM: "x", **taken})
+        assert full["legacy_valid_from"] == "a"
+        assert full["legacy_valid_from_9"] == "9\nx"
+        assert VALID_FROM not in full
+
 
 class TestAValueThatIsNotAStringNeverRaisesWhenReadBack:
     @pytest.mark.parametrize(
