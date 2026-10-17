@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
 
 from ea.core.config import Settings
+from ea.domain.packages import Package
 from ea.main import create_app
 from ea.services.architecture import ArchitectureService
 from tests.conftest import (
+    FIXED_NOW,
     InMemoryAuditLog,
     InMemoryBaselines,
     StaticVerifier,
@@ -293,3 +295,32 @@ class TestRestoring:
         assert (
             await client.post(f"/baselines/{STRANGER}/restore", json={}, headers=as_(EDITOR))
         ).status_code == 404
+
+
+class TestASubtreeBaseline:
+    async def test_post_baselines_takes_a_package_and_the_list_shows_the_scope(
+        self, client: httpx.AsyncClient, baseline_store: InMemoryBaselines
+    ) -> None:
+        assert baseline_store.packages is not None
+        finance = Package.create(name="Finance", now=FIXED_NOW)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+
+        made = await client.post(
+            "/baselines",
+            json={"name": "Finance", "package_id": str(finance.id)},
+            headers=as_(EDITOR),
+        )
+
+        assert made.status_code == 201 and made.json()["scope_path"] == "Finance"
+        listed = (await client.get("/baselines", headers=as_(EDITOR))).json()
+        assert {b["scope_package_id"] for b in listed} >= {str(finance.id)}
+
+    async def test_an_unknown_package_is_a_typed_404(self, client: httpx.AsyncClient) -> None:
+        answer = await client.post(
+            "/baselines", json={"name": "x", "package_id": str(uuid4())}, headers=as_(EDITOR)
+        )
+        assert (answer.status_code, answer.json()["error"]) == (404, "not_found")
+
+    async def test_a_whole_model_baseline_has_no_scope(self, client: httpx.AsyncClient) -> None:
+        made = await capture(client, "Tout")
+        assert (made["scope_package_id"], made["scope_path"]) == (None, None)

@@ -54,12 +54,13 @@ from ea.domain.errors import (
     BaselineNotFoundError,
     BaselineScopedError,
     DuplicateBaselineError,
+    PackageNotFoundError,
     RestoreBlockedError,
     RestoreConflictError,
 )
 from ea.domain.ipam import ADDRESS_PROPERTY, PREFIX_PROPERTY
 from ea.domain.model import Element, Relationship
-from ea.domain.packages import PATH_SEPARATOR
+from ea.domain.packages import PATH_SEPARATOR, Package, descendants_of, path_of
 from ea.domain.timeline import readable_lifespan_properties
 from ea.repositories.architecture_store import (
     author_of,
@@ -540,7 +541,41 @@ class PostgresBaselineRepository:
             found = (await session.execute(statement)).first()
             return _baseline(*found) if found is not None else None
 
-    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+    async def _create_scoped(
+        self, baseline: Baseline, audit: AuditOf[Baseline], package_id: UUID
+    ) -> Baseline:
+        async with work(self._sessions, alone=True) as session:
+            await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+            tree = {
+                row.id: Package(
+                    id=row.id,
+                    parent_id=row.parent_id,
+                    name=row.name,
+                    description=row.description,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                )
+                for row in (await session.execute(select(PackageRecord))).scalars()
+            }
+            if package_id not in tree:
+                raise PackageNotFoundError(str(package_id))
+            scope = frozenset({package_id, *descendants_of(package_id, tree)})
+            refuse_oversize(await scope_size(session, scope), self._limits, what="the package")
+            stored = await capture_scope(
+                session,
+                baseline,
+                scope,
+                package_id=package_id,
+                path=path_of(tree[package_id], tree),
+            )
+            write_events(session, events_for(audit, stored))
+        return stored
+
+    async def create(
+        self, baseline: Baseline, *, audit: AuditOf[Baseline], scope: UUID | None = None
+    ) -> Baseline:
+        if scope is not None:
+            return await self._create_scoped(baseline, audit, scope)
         id_column = literal(baseline.id, Uuid())
         paths = _paths()
         async with work(self._sessions, alone=True) as session:

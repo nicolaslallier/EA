@@ -45,11 +45,15 @@ async def list_baselines(service: Baselines) -> list[BaselineRead]:
     "/baselines",
     response_model=BaselineRead,
     status_code=status.HTTP_201_CREATED,
-    responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
+    responses={status.HTTP_409_CONFLICT: {"model": ErrorResponse}, **NOT_FOUND},
 )
 async def create_baseline(payload: BaselineCreate, service: Baselines) -> BaselineRead:
-    """Freeze a copy of the whole model under a name."""
-    return BaselineRead.of(await service.create(name=payload.name, description=payload.description))
+    """Freeze a copy of the whole model, or of one package's subtree, under a name."""
+    return BaselineRead.of(
+        await service.create(
+            name=payload.name, description=payload.description, package_id=payload.package_id
+        )
+    )
 
 
 @router.get("/baselines/{baseline_id}", response_model=BaselineRead, responses=NOT_FOUND)

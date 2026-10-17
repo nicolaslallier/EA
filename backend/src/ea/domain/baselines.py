@@ -126,6 +126,7 @@ def baseline_view(baseline: Baseline) -> dict[str, Any]:
         "elements": baseline.element_count,
         "relationships": baseline.relationship_count,
         "boxes": baseline.box_count,
+        "scope_package_id": str(baseline.scope_package_id) if baseline.scope_package_id else None,
         "scope_path": baseline.scope_path,
     }
 

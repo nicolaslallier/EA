@@ -81,7 +81,7 @@ export interface paths {
         put?: never;
         /**
          * Create Baseline
-         * @description Freeze a copy of the whole model under a name.
+         * @description Freeze a copy of the whole model, or of one package's subtree, under a name.
          */
         post: operations["create_baseline_baselines_post"];
         delete?: never;
@@ -2082,6 +2082,8 @@ export interface components {
             description?: string;
             /** Name */
             name: string;
+            /** Package Id */
+            package_id?: string | null;
         };
         /** BaselineDiffRead */
         BaselineDiffRead: {
@@ -2122,6 +2124,16 @@ export interface components {
             name: string;
             /** Relationship Count */
             relationship_count: number;
+            /**
+             * Scope Package Id
+             * @description The subtree this baseline copies, as its path was then; null for the whole model.
+             */
+            scope_package_id: string | null;
+            /**
+             * Scope Path
+             * @description The subtree this baseline copies, as its path was then; null for the whole model.
+             */
+            scope_path: string | null;
         };
         /** BlockedCellRead */
         BlockedCellRead: {
@@ -4928,6 +4940,15 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

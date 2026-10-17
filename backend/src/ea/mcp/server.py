@@ -115,6 +115,7 @@ from ea.api.schemas import (
 )
 from ea.api.schemas import BaselineDescription as BaselineDescriptionBounds
 from ea.api.schemas import BaselineName as BaselineNameBounds
+from ea.api.schemas import BaselineScope as BaselineScopeBounds
 from ea.api.schemas import Cidr as PrefixBounds
 from ea.api.schemas import ExpectedRevision as ExpectedRevisionBounds
 from ea.api.schemas import ExternalReferenceText as ExternalReferenceBounds
@@ -2413,14 +2414,21 @@ def build_mcp_server(
     @server.tool(annotations=ADDS)
     @speaking_plainly
     async def create_baseline(
-        name: BaselineNameBounds, description: BaselineDescriptionBounds = ""
+        name: BaselineNameBounds,
+        description: BaselineDescriptionBounds = "",
+        package_id: BaselineScopeBounds | None = None,
     ) -> BaselineRead:
         """Freeze a copy of the whole model under a name (documents are not part of it).
+
+        With `package_id`, copies only that package and everything below it, which is what
+        a published version takes.
 
         Cheap and non-destructive: do it before a large or risky change, so there
         is something to compare against and to go back to.
         """
-        return BaselineRead.of(await get_baselines().create(name=name, description=description))
+        return BaselineRead.of(
+            await get_baselines().create(name=name, description=description, package_id=package_id)
+        )
 
     @server.tool(annotations=READS)
     @speaking_plainly

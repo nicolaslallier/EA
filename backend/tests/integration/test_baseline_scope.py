@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from ea.domain.baselines import Baseline, BaselineLimits, refuse_oversize
-from ea.domain.errors import BaselineScopedError, BaselineTooLargeError
+from ea.domain.errors import BaselineScopedError, BaselineTooLargeError, PackageNotFoundError
 from ea.repositories.baseline_store import PostgresBaselineRepository, capture_scope, scope_size
 from tests.integration.test_package_freeze_triggers import (
     AT,
@@ -137,3 +137,76 @@ async def test_a_scoped_baseline_is_not_restorable_and_the_bytes_are_measured(
             )
         ).scalar_one()
     assert left == 1
+
+
+def _a_baseline(name: str) -> Baseline:
+    return Baseline.create(
+        name=name,
+        description="",
+        created_by_sub="s",
+        created_by="n",
+        now=datetime(2026, 10, 12, tzinfo=UTC),
+    )
+
+
+def _no_audit(_stored: Baseline) -> tuple[()]:
+    return ()
+
+
+async def _count_rows(engine: AsyncEngine, table: str) -> int:
+    async with engine.connect() as connection:
+        return int(
+            (
+                await connection.execute(text(f"SELECT count(*) FROM {table}"))  # nosec B608
+            ).scalar_one()
+        )
+
+
+async def _finance_and_budget(engine: AsyncEngine) -> UUID:
+    async with engine.begin() as connection:
+        finance = await a_package(connection, "Finance", None)
+        budget = await a_package(connection, "Budget", finance)
+        await an_element(connection, "a", finance)
+        await an_element(connection, "b", budget)
+        await an_element(connection, "outside", None)
+    return finance
+
+
+async def test_the_repository_captures_a_subtree_by_its_package(
+    engine_at_head: AsyncEngine,
+) -> None:
+    finance = await _finance_and_budget(engine_at_head)
+    repository = PostgresBaselineRepository(async_sessionmaker(engine_at_head))
+
+    stored = await repository.create(_a_baseline("Finance"), audit=_no_audit, scope=finance)
+
+    assert (stored.scope_package_id, stored.scope_path, stored.element_count) == (
+        finance,
+        "Finance",
+        2,
+    )
+
+
+async def test_an_unknown_package_is_a_404_and_copies_nothing(
+    engine_at_head: AsyncEngine,
+) -> None:
+    repository = PostgresBaselineRepository(async_sessionmaker(engine_at_head))
+
+    with pytest.raises(PackageNotFoundError):
+        await repository.create(_a_baseline("x"), audit=_no_audit, scope=uuid4())
+
+    assert await _count_rows(engine_at_head, "baselines") == 0
+
+
+async def test_a_subtree_past_the_ceiling_is_refused_before_it_is_copied(
+    engine_at_head: AsyncEngine,
+) -> None:
+    finance = await _finance_and_budget(engine_at_head)
+    small = PostgresBaselineRepository(
+        async_sessionmaker(engine_at_head), limits=BaselineLimits(elements=1)
+    )
+
+    with pytest.raises(BaselineTooLargeError):
+        await small.create(_a_baseline("Finance"), audit=_no_audit, scope=finance)
+
+    assert await _count_rows(engine_at_head, "baseline_elements") == 0

@@ -538,6 +538,19 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "package_id": {
+            "anyOf": [
+              {
+                "description": "Copy only this package and everything below it; leave out for the whole model.",
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Id"
           }
         },
         "required": [
@@ -637,6 +650,31 @@
           "relationship_count": {
             "title": "Relationship Count",
             "type": "integer"
+          },
+          "scope_package_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The subtree this baseline copies, as its path was then; null for the whole model.",
+            "title": "Scope Package Id"
+          },
+          "scope_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The subtree this baseline copies, as its path was then; null for the whole model.",
+            "title": "Scope Path"
           }
         },
         "required": [
@@ -647,7 +685,9 @@
           "created_at",
           "element_count",
           "relationship_count",
-          "box_count"
+          "box_count",
+          "scope_package_id",
+          "scope_path"
         ],
         "title": "BaselineRead",
         "type": "object"
@@ -7069,7 +7109,7 @@
         ]
       },
       "post": {
-        "description": "Freeze a copy of the whole model under a name.",
+        "description": "Freeze a copy of the whole model, or of one package's subtree, under a name.",
         "operationId": "create_baseline_baselines_post",
         "requestBody": {
           "content": {
@@ -7111,6 +7151,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "409": {
             "content": {

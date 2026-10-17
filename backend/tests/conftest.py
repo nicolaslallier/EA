@@ -1546,6 +1546,8 @@ class InMemoryBaselines:
         self.protected: set[UUID] = set()
         self.baselines: dict[UUID, Baseline] = {}
         self.copies: dict[UUID, ModelSnapshot] = {}
+        #: The package each baseline was captured under, `None` for the whole model.
+        self.created_with_scope: dict[UUID, UUID | None] = {}
 
     def _counted(self, baseline: Baseline) -> Baseline:
         copy = self.copies.get(baseline.id, ModelSnapshot((), ()))
@@ -1560,11 +1562,37 @@ class InMemoryBaselines:
         stored = self.baselines.get(baseline_id)
         return self._counted(stored) if stored is not None else None
 
-    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+    async def create(
+        self, baseline: Baseline, *, audit: AuditOf[Baseline], scope: UUID | None = None
+    ) -> Baseline:
         if any(b.name == baseline.name for b in self.baselines.values()):
             raise DuplicateBaselineError(f"a baseline is already named {baseline.name!r}")
+        copy = await self.current_snapshot()
+        if scope is not None:
+            tree = self.packages.packages if self.packages is not None else {}
+            if scope not in tree:
+                raise PackageNotFoundError(str(scope))
+            below = {scope, *descendants_of(scope, tree)}
+            kept = tuple(e for e in copy.elements if e.package_id in below)
+            ids = {e.id for e in kept}
+            copy = replace(
+                copy,
+                elements=kept,
+                relationships=tuple(
+                    r for r in copy.relationships if r.source_id in ids and r.target_id in ids
+                ),
+                boxes=tuple(
+                    b
+                    for b in copy.boxes
+                    if self.diagrams.diagrams[b.diagram_id].package_id in below
+                ),
+            )
+            baseline = replace(
+                baseline, scope_package_id=scope, scope_path=copy.package_paths[scope]
+            )
+        self.created_with_scope[baseline.id] = scope
         self.baselines[baseline.id] = baseline
-        self.copies[baseline.id] = await self.current_snapshot()
+        self.copies[baseline.id] = copy
         stored = self._counted(baseline)
         self.audit_log.append(events_for(audit, stored))
         return stored

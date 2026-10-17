@@ -24,6 +24,7 @@ from ea.domain.errors import (
     RestoreBlockedError,
     RestoreConflictError,
 )
+from ea.domain.packages import Package
 from ea.services.architecture import ArchitectureService
 from ea.services.baselines import BaselineService, RestoreOutcome
 from ea.services.caller import acting_as
@@ -51,6 +52,24 @@ async def apply(
 
 
 class TestCapturingAndComparing:
+    async def test_a_baseline_of_one_package_says_so(
+        self, baseline_service: BaselineService, baseline_store: InMemoryBaselines
+    ) -> None:
+        assert baseline_store.packages is not None
+        finance = Package.create(name="Finance", now=FIXED_NOW)
+        await baseline_store.packages.add(finance, audit=lambda p: ())
+
+        made = await baseline_service.create(name="Finance avant refonte", package_id=finance.id)
+
+        assert baseline_store.created_with_scope[made.id] == finance.id
+        assert (made.scope_package_id, made.scope_path) == (finance.id, "Finance")
+
+    async def test_a_reader_cannot_capture_a_subtree(
+        self, baseline_service: BaselineService
+    ) -> None:
+        with acting_as(a_reader()), pytest.raises(NotAuthorisedError):
+            await baseline_service.create(name="x", package_id=uuid4())
+
     async def test_a_capture_is_listed_with_its_counts_and_audited(
         self,
         service: ArchitectureService,

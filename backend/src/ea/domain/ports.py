@@ -665,8 +665,13 @@ class BaselineRepository(Protocol):
 
     async def get(self, baseline_id: UUID) -> Baseline | None: ...
 
-    async def create(self, baseline: Baseline, *, audit: AuditOf[Baseline]) -> Baseline:
+    async def create(
+        self, baseline: Baseline, *, audit: AuditOf[Baseline], scope: UUID | None = None
+    ) -> Baseline:
         """Copy the whole model under this baseline, in one REPEATABLE READ transaction.
+
+        With `scope`, copy only that package and everything below it (`PackageNotFoundError`
+        for an absent one).
 
         Raises `DuplicateBaselineError` for a taken name and
         `BaselineTooLargeError` past the limits; writes nothing then. `audit` is

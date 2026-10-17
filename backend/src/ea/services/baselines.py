@@ -94,7 +94,9 @@ class BaselineService:
             raise BaselineNotFoundError(msg)
         return baseline
 
-    async def create(self, *, name: str, description: str = "") -> Baseline:
+    async def create(
+        self, *, name: str, description: str = "", package_id: UUID | None = None
+    ) -> Baseline:
         caller = require_editor()
         baseline = Baseline.create(
             name=name,
@@ -112,7 +114,7 @@ class BaselineService:
                 ),
             )
 
-        stored = await self._repository.create(baseline, audit=created)
+        stored = await self._repository.create(baseline, audit=created, scope=package_id)
         logger.info(
             "baseline captured: %r",
             logged(stored.name),

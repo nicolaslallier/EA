@@ -230,6 +230,17 @@ CursorToken = Annotated[str, Field(max_length=512)]
 #: schema and `Baseline.create` cannot drift into refusing different values.
 BaselineName = Annotated[str, Field(min_length=1, max_length=MAX_BASELINE_NAME_LENGTH)]
 BaselineDescription = Annotated[str, Field(max_length=MAX_BASELINE_DESCRIPTION_LENGTH)]
+BaselineScope = Annotated[
+    UUID,
+    Field(
+        description=(
+            "Copy only this package and everything below it; leave out for the whole model."
+        )
+    ),
+]
+_BASELINE_SCOPE = (
+    "The subtree this baseline copies, as its path was then; null for the whole model."
+)
 Against = Annotated[
     str,
     Field(max_length=36, description="A baseline id, or `current` for the model as it is now."),
@@ -1687,6 +1698,7 @@ PLAN_WARNING_LENGTH: Final = 300
 class BaselineCreate(_Input):
     name: BaselineName
     description: BaselineDescription = ""
+    package_id: BaselineScope | None = None
 
 
 class BaselineRead(BaseModel):
@@ -1698,6 +1710,8 @@ class BaselineRead(BaseModel):
     element_count: int
     relationship_count: int
     box_count: int
+    scope_package_id: UUID | None = Field(description=_BASELINE_SCOPE)
+    scope_path: str | None = Field(description=_BASELINE_SCOPE)
 
     @classmethod
     def of(cls, baseline: Baseline) -> BaselineRead:
@@ -1710,6 +1724,8 @@ class BaselineRead(BaseModel):
             element_count=baseline.element_count,
             relationship_count=baseline.relationship_count,
             box_count=baseline.box_count,
+            scope_package_id=baseline.scope_package_id,
+            scope_path=baseline.scope_path,
         )
 
 

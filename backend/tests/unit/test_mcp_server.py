@@ -232,6 +232,11 @@ class TestTheAuditTools:
 
 @pytest.mark.asyncio
 class TestTheBaselineTools:
+    async def test_create_baseline_takes_a_package(self, server: MCPServer[Any]) -> None:
+        pkg = await call(server, "create_package", name="Finance")
+        made = await call(server, "create_baseline", name="F", package_id=pkg["id"])
+        assert made["scope_path"] == "Finance"
+
     async def test_restoring_is_a_dry_run_until_the_agent_says_otherwise(
         self, server: MCPServer[Any]
     ) -> None:
