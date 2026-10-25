@@ -21,7 +21,7 @@ ENV VITE_AUTH_AUTHORITY=$VITE_AUTH_AUTHORITY
 ENV VITE_AUTH_CLIENT_ID=$VITE_AUTH_CLIENT_ID
 RUN npm run build
 
-FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+FROM nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
