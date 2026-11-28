@@ -334,7 +334,7 @@ app-stack: ## Rappelle comment déployer l'API et le SPA sur le Mac mini, derri�
 	@printf "     ou celui de l'Infra : PORTAINER_ENV_FILE=~/OpenCode/Infra/.portainer.env\n"
 	@printf "  2. cp deploy/ea.env.example deploy/ea.env, puis le remplir\n"
 	@printf "  3. make app-up PORTAINER_URL=https://portainer.infra.famillelallier.net PORTAINER_CA_CERT=<infra-ca.crt>\n"
-	@printf "     main doit être poussé : Portainer clone GitHub, pas ce poste\n"
+	@printf "     main doit être poussé, et le workflow Images passé : Portainer tire ghcr.io/nicolaslallier/ea-*:latest\n"
 	@printf "  4. Portainer, environnement Mac-mini, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
 
 # La stack « ea » vit sur le Mac mini, environnement 7 du Portainer de l'Infra.
@@ -366,7 +366,7 @@ runner-pull: ## Retire l'image du runner et le recrée (GitHub refuse les vieill
 app-env: ## Rend les secrets de deploy/ea.env depuis OpenBao (infra/env)
 	scripts/vault-render-env.sh
 
-app-up: app-env ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images reconstruites)
+app-up: app-env ## Crée ou redéploie la stack EA dans Portainer (GitHub main, images GHCR de EA_IMAGE_TAG, latest par défaut)
 	$(PORTAINER_STACK) up
 
 app-down: ## Arrête la stack EA dans Portainer (elle reste déclarée)
@@ -376,7 +376,7 @@ app-down: ## Arrête la stack EA dans Portainer (elle reste déclarée)
 # démarrage : rien ne re-sonde (docs/adr/0037). Le relancer est donc ce qui fait
 # revenir une section dégradée, l'utilisateur MinIO enfin créé, et ce qui
 # rejoue la chaîne Alembic. Ce que cette cible ne fait pas : aller chercher un
-# commit de main, reconstruire une image, ni porter à Portainer une ligne de
+# commit de main, tirer une autre image, ni porter à Portainer une ligne de
 # deploy/ea.env modifiée depuis le dernier déploiement — les variables ne
 # partent qu'avec un redéploiement, donc avec make app-up.
 app-restart: ## Relance la stack EA : les conteneurs relisent leur configuration

@@ -72,7 +72,7 @@ updates:
         update-types: [version-update:semver-patch, version-update:semver-minor, version-update:semver-major]
 
   # Les images de base des Dockerfile de frontend/ (construit par
-  # deploy/ea.stack.yml) et de pipelines/, épinglées par tag et digest pour la
+  # .github/workflows/images.yml) et de pipelines/, épinglées par tag et digest pour la
   # même raison.
   - package-ecosystem: docker
     directories:

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Pilote la stack « ea » (deploy/ea.stack.yml) par l'API du Portainer de
-# l'Infra. Portainer clone GitHub main et construit les deux images : rien de
+# l'Infra. Portainer clone GitHub main pour le fichier de stack et tire les deux
+# images de GHCR, construites par le workflow Images (docs/adr/0079) : rien de
 # ce poste n'est monté, seules les variables de deploy/ea.env partent avec la
-# requête. Même mécanique que scripts/portainer-stack.sh du dépôt Infra — voir
-# docs/adr/0027.
+# requête, plus les digests des images que `up` résout. Même mécanique que
+# scripts/portainer-stack.sh du dépôt Infra — voir docs/adr/0027.
 #
 # La stack ne se pilote que sur le Mac mini, environnement 7 (docs/adr/0078).
 # Seule la variable PORTAINER_ENDPOINT_ID du terminal change la cible, jamais le
@@ -12,11 +13,13 @@
 # en a une aussi.
 #
 # Usage : scripts/portainer-stack.sh up|down|restart|delete|selftest
-#   up      crée la stack, ou la redéploie depuis main (images reconstruites)
+#   up      crée la stack, ou la redéploie depuis main, avec les images que
+#           EA_IMAGE_TAG désigne sur GHCR (`latest` par défaut), épinglées par
+#           digest ; EA_BACKEND_DIGEST / EA_FRONTEND_DIGEST les imposent
 #   down    arrête la stack (elle reste déclarée dans Portainer)
 #   restart arrête puis relance la stack : les conteneurs sont recréés depuis la
-#           définition que Portainer détient déjà — ni clone de main, ni image
-#           reconstruite, donc rien de deploy/ea.env que `up` n'y ait mis
+#           définition que Portainer détient déjà — ni clone de main, ni autre
+#           image, donc rien de deploy/ea.env que `up` n'y ait mis
 #   delete  retire la stack de Portainer
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,11 +29,12 @@ REPO_URL=https://github.com/nicolaslallier/EA
 REF=refs/heads/main
 DEFAULT_ENDPOINT_ID=7 # le Mac mini dans Portainer
 COMPOSE_FILE=deploy/ea.stack.yml
-# Portainer interroge main à cet intervalle et redéploie sur tout nouveau
-# commit : pousser sur main, c'est déployer (docs/adr/0041). GitHub ne peut pas
-# joindre ce Portainer, et le repo est public — un runner auto-hébergé ici
-# serait à portée d'une PR venue d'un fork.
-POLL_INTERVAL=5m
+# Les deux images, construites par .github/workflows/images.yml (docs/adr/0079).
+# Publiques : le mini les tire sans identifiants, et ce script lit leurs digests
+# avec un jeton anonyme.
+REGISTRY=ghcr.io
+IMAGE=nicolaslallier/ea
+COMPONENTS=(backend frontend)
 STACK_ENV="${EA_STACK_ENV:-deploy/ea.env}"
 PORTAINER_ENV="${PORTAINER_ENV_FILE:-.portainer.env}"
 CURL_IMAGE=curlimages/curl:8.5.0@sha256:08e466006f0860e54fc299378de998935333e0e130a15f6f98482e9f8dab3058
@@ -164,6 +168,18 @@ api() { # <méthode> <chemin> [corps-json]
     || die "$1 $2 a échoué (Portainer tourne ? make portainer-up dans l'Infra)"
 }
 
+# Le digest de l'index multi-architecture que <tag> désigne, par l'API du
+# registre et un jeton anonyme (paquet public) : ni Docker, ni identifiants.
+ghcr_digest() { # <dépôt> <tag>
+  local token
+  token="$(curl -sSf "https://$REGISTRY/token?scope=repository:$1:pull" | jq -r '.token // empty')" || return 1
+  [ -n "$token" ] || return 1
+  curl -sSfI -H "Authorization: Bearer $token" \
+    -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+    "https://$REGISTRY/v2/$1/manifests/$2" \
+    | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | grep -E '^sha256:[0-9a-f]{64}$'
+}
+
 cmd="${1:-}"
 case "$cmd" in
   selftest) selftest; exit 0 ;;
@@ -180,17 +196,37 @@ esac
 if [ "$cmd" = up ]; then
   [ -f "$STACK_ENV" ] || die "$STACK_ENV introuvable — cp deploy/ea.env.example $STACK_ENV, puis le remplir"
   env="$(env_json "$STACK_ENV")"
-  missing="$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*:\?' "$COMPOSE_FILE" | sed -E 's/^\$\{(.*):\?$/\1/' | sort -u |
-    while read -r n; do
-      jq -e --arg n "$n" 'any(.[]; .name == $n and .value != "")' <<<"$env" >/dev/null || printf '%s ' "$n"
-    done)"
-  [ -z "$missing" ] || die "à renseigner dans $STACK_ENV : $missing"
 
   # Ce que ce fichier impose par-dessus la stack, en clair : un défaut corrigé
   # dans le repo ne sert à rien tant qu'une ligne d'ici le recouvre.
   redefined="$(overrides "$env" "$COMPOSE_FILE")"
   [ -z "$redefined" ] || printf 'portainer-stack.sh : %s redéfinit des valeurs par défaut de la stack :\n%s' \
     "$STACK_ENV" "$redefined"
+
+  # Les images : un digest donné (terminal, puis fichier) est gardé tel quel —
+  # c'est un retour arrière ; sinon celui que le tag désigne sur GHCR, lu ici,
+  # pour que la stack tourne sur des octets nommés et non sur un tag qui bouge.
+  tag="${EA_IMAGE_TAG:-$(jq -r 'first(.[] | select(.name == "EA_IMAGE_TAG")) | .value // empty' <<<"$env")}"
+  tag="${tag:-latest}"
+  [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "EA_IMAGE_TAG n'est pas un tag d'image : $tag"
+  env="$(jq --arg v "$tag" '[.[] | select(.name != "EA_IMAGE_TAG")] + [{name: "EA_IMAGE_TAG", value: $v}]' <<<"$env")"
+  for c in "${COMPONENTS[@]}"; do
+    var="EA_$(tr '[:lower:]' '[:upper:]' <<<"$c")_DIGEST"
+    digest="${!var:-$(jq -r --arg n "$var" 'first(.[] | select(.name == $n)) | .value // empty' <<<"$env")}"
+    if [ -z "$digest" ]; then
+      digest="$(ghcr_digest "$IMAGE-$c" "$tag")" \
+        || die "aucun digest pour $REGISTRY/$IMAGE-$c:$tag sur GHCR (image poussée par le workflow Images ? paquet public ?)"
+      echo "portainer-stack.sh : $REGISTRY/$IMAGE-$c:$tag = $digest"
+    fi
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "$var n'a pas la forme sha256:<64 hexadécimaux> : $digest"
+    env="$(jq --arg n "$var" --arg v "$digest" '[.[] | select(.name != $n)] + [{name: $n, value: $v}]' <<<"$env")"
+  done
+
+  missing="$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*:\?' "$COMPOSE_FILE" | sed -E 's/^\$\{(.*):\?$/\1/' | sort -u |
+    while read -r n; do
+      jq -e --arg n "$n" 'any(.[]; .name == $n and .value != "")' <<<"$env" >/dev/null || printf '%s ' "$n"
+    done)"
+  [ -z "$missing" ] || die "à renseigner dans $STACK_ENV : $missing"
 fi
 
 # La clé vient de l'environnement, ou à défaut de .portainer.env (ignoré par
@@ -228,28 +264,29 @@ case "$cmd" in
     echo "portainer-stack.sh : déploie $REPO_URL main${remote:+ @ $remote} (un commit non poussé n'y est pas)"
 
     if [ -z "$sid" ]; then
+      # Sans AutoUpdate : un polling de main redéploierait avec les digests que
+      # Portainer détient déjà, donc l'ancien code sous le nouveau fichier
+      # (docs/adr/0079). Déployer, c'est ce `up`, ou le workflow Deploy.
       body="$(jq -n --arg name "$STACK" --arg url "$REPO_URL" --arg ref "$REF" --arg file "$COMPOSE_FILE" --argjson env "$env" \
-        --arg every "$POLL_INTERVAL" \
         '{Name: $name, RepositoryURL: $url, RepositoryReferenceName: $ref,
-          ComposeFile: $file, RepositoryAuthentication: false, Env: $env,
-          AutoUpdate: {Interval: $every}}')"
+          ComposeFile: $file, RepositoryAuthentication: false, Env: $env}')"
       api POST "/stacks/create/standalone/repository?endpointId=$eid" "$body" >/dev/null
-      echo "portainer-stack.sh : stack '$STACK' créée, main interrogé toutes les $POLL_INTERVAL"
+      echo "portainer-stack.sh : stack '$STACK' créée"
     else
       if [ "$(jq -r .Status <<<"$stack")" = 2 ]; then
         api POST "/stacks/$sid/start?endpointId=$eid" >/dev/null
       fi
-      # Le redéploiement ne porte pas l'AutoUpdate : ce sont les réglages Git
-      # de la stack qui le tiennent, posés d'abord.
-      body="$(jq -n --arg ref "$REF" --argjson env "$env" --arg every "$POLL_INTERVAL" \
+      # Les réglages Git d'abord, sans AutoUpdate : Portainer arrête alors le
+      # polling qu'un `up` d'avant la 0079 avait posé.
+      body="$(jq -n --arg ref "$REF" --argjson env "$env" \
         '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
-          Prune: false, AutoUpdate: {Interval: $every}}')"
+          Prune: false}')"
       api POST "/stacks/$sid/git?endpointId=$eid" "$body" >/dev/null
       body="$(jq -n --arg ref "$REF" --argjson env "$env" \
         '{RepositoryReferenceName: $ref, RepositoryAuthentication: false, Env: $env,
           Prune: false, RepullImageAndRedeploy: false}')"
       api PUT "/stacks/$sid/git/redeploy?endpointId=$eid" "$body" >/dev/null
-      echo "portainer-stack.sh : stack '$STACK' redéployée, main interrogé toutes les $POLL_INTERVAL"
+      echo "portainer-stack.sh : stack '$STACK' redéployée"
     fi
     ;;
   down)

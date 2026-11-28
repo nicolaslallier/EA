@@ -13,8 +13,11 @@ when broken:
   `No module named 'alembic'` — which is what a Dependabot bump of one `FROM`
   did.
 * `deploy/ea.stack.yml` must hand the API the Infra CA, or it cannot fetch
-  the realm's signing keys and refuses to boot, and must build the SPA for the
-  realm — Vite writes both values into the bundle (docs/adr/0032).
+  the realm's signing keys and refuses to boot.
+* The stack builds nothing: a Portainer *Agent* environment cannot run a
+  BuildKit build (docs/adr/0079). GitHub Actions builds both images, the SPA
+  for the realm — Vite writes it into the bundle (docs/adr/0032) — and the
+  stack pulls them from GHCR, pinned by digest.
 """
 
 from __future__ import annotations
@@ -146,15 +149,78 @@ def test_the_deployed_api_serves_mcp_under_the_vhost_it_is_reached_by() -> None:
     assert setting("EA_MCP_RESOURCE_URL") == f"https://{hostname}/api/mcp"
 
 
-def test_the_spa_image_is_built_for_the_realm() -> None:
-    web = _stack_service("web")
-    args = re.search(
-        r"^    build:\n(?:      .*\n)*?      args:\n((?:        .*(?:\n|$))+)", web, re.M
-    )
+IMAGES_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "images.yml"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy.yml"
+REGISTRY_IMAGE = "ghcr.io/nicolaslallier/ea"
 
-    assert args, web
-    assert re.search(r"^\s+VITE_AUTH_AUTHORITY: \S", args.group(1), re.M), args.group(1)
-    assert re.search(r"^\s+VITE_AUTH_CLIENT_ID: \S", args.group(1), re.M), args.group(1)
+
+def test_the_spa_image_is_built_for_the_realm() -> None:
+    """Vite writes these three into the bundle: the workflow that builds it passes them."""
+    workflow = _code(IMAGES_WORKFLOW)
+
+    assert "VITE_API_BASE_URL=/api" in workflow
+    assert "VITE_AUTH_AUTHORITY=https://keycloak.famillelallier.net/realms/ea" in workflow
+    assert "VITE_AUTH_CLIENT_ID=ea-spa" in workflow
+
+
+@pytest.mark.parametrize(("service", "image"), [("api", "backend"), ("web", "frontend")])
+def test_the_stack_pulls_each_image_from_ghcr_pinned_by_digest(service: str, image: str) -> None:
+    """The mini is a Portainer Agent environment: compose cannot build there (docs/adr/0079)."""
+    block = _stack_service(service)
+    variable = f"EA_{image.upper()}_DIGEST"
+
+    assert re.search(
+        rf"^    image: {re.escape(REGISTRY_IMAGE)}-{image}:\$\{{EA_IMAGE_TAG:-latest\}}"
+        rf"@\$\{{{variable}:\?[^}}]+\}}$",
+        block,
+        re.M,
+    ), block
+    assert "build:" not in block
+    assert "pull_policy: build" not in block
+
+
+def test_the_stack_builds_nothing() -> None:
+    stack = _code(STACK)
+
+    assert not re.search(r"^\s+build:", stack, re.M)
+    assert "pull_policy: build" not in stack
+
+
+def test_the_images_are_built_on_github_hosted_runners_for_both_arches() -> None:
+    """The mini is arm64, the laptop amd64; native runners, no emulation."""
+    workflow = _code(IMAGES_WORKFLOW)
+
+    assert "self-hosted" not in workflow
+    assert "pull_request" not in workflow
+    assert "ubuntu-24.04-arm" in workflow and "ubuntu-latest" in workflow
+    assert "component: [backend, frontend]" in workflow
+    assert f"IMAGE: {REGISTRY_IMAGE}" in workflow
+    assert "packages: write" in workflow
+    # `latest` and the immutable `sha-<commit>` the deploy resolves.
+    assert ":latest" in workflow and ":sha-${GITHUB_SHA}" in workflow
+
+
+def test_the_images_workflow_pins_third_party_actions_by_commit() -> None:
+    """It holds `packages: write`: a moved tag of a third party would publish for us."""
+    uses = re.findall(r"^\s*-?\s*uses:\s*(\S+)(.*)$", _code(IMAGES_WORKFLOW), re.M)
+
+    assert uses
+    for action, comment in uses:
+        if action.startswith("actions/"):
+            continue
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
+        assert re.match(r"\s+# v\d+\.\d+\.\d+$", comment), (action, comment)
+
+
+def test_the_deploy_follows_the_images_and_never_a_pull_request() -> None:
+    workflow = _code(DEPLOY_WORKFLOW)
+
+    assert "workflow_run:" in workflow and "workflows: [Images]" in workflow
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "github.event.workflow_run.event == 'push'" in workflow
+    assert "HEAD_SHA: ${{ github.event.workflow_run.head_sha }}" in workflow
+    assert 'EA_IMAGE_TAG="${HEAD_SHA:+sha-$HEAD_SHA}"' in workflow
+    assert "pull_request" not in workflow
 
 
 def test_the_deployed_api_keeps_its_files_in_the_seaweedfs_of_the_laptop() -> None:
@@ -262,6 +328,8 @@ def test_the_makefile_offers_that_restart() -> None:
 PORTAINER_SCRIPT = REPO_ROOT / "scripts" / "portainer-stack.sh"
 THE_KEY = "ptr_SECRET_KEY_0123"
 THE_URL = "https://portainer.example.test"
+BACKEND_DIGEST = "sha256:" + "a" * 64
+FRONTEND_DIGEST = "sha256:" + "b" * 64
 
 needs_tools = pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("jq") is None, reason="bash ou jq absent"
@@ -284,13 +352,23 @@ def _run_portainer(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "curl").write_text(
-        '#!/bin/sh\necho "$*" >>"$CALLS"\ncat >/dev/null\n'
-        'case "$*" in\n*"/api/endpoints"*) echo \'[{"Type":1,"Id":1}]\';;\n'
-        '*"-X GET"*"/api/stacks") printf %s "$FAKE_STACKS";;\n*) echo "[]";;\nesac\n'
+        '#!/bin/sh\necho "$*" >>"$CALLS"\n'
+        'case "$*" in\n'
+        # GHCR: an anonymous token, then the digest of a tag, per image.
+        '*"https://ghcr.io/token"*) echo \'{"token":"anonymous"}\';;\n'
+        '*"https://ghcr.io/v2/"*) [ -n "$FAKE_GHCR_DOWN" ] && exit 22\n'
+        '  case "$*" in *ea-backend*) d="$BACKEND_DIGEST";; *) d="$FRONTEND_DIGEST";; esac\n'
+        "  printf 'HTTP/2 200\\r\\nDocker-Content-Digest: %s\\r\\n\\r\\n' \"$d\";;\n"
+        "*) { cat; printf '\\n\\036\\n'; } >>\"$BODIES\"\n"
+        '  case "$*" in\n*"/api/endpoints"*) echo \'[{"Type":1,"Id":1}]\';;\n'
+        '  *"-X GET"*"/api/stacks") printf %s "$FAKE_STACKS";;\n  *) echo "[]";;\n  esac;;\n'
+        "esac\n"
     )
     (bin_dir / "docker").write_text(
         '#!/bin/sh\ntouch "$DOCKER_RAN"\n' + ("exit 0\n" if docker_ok else "exit 1\n")
     )
+    # `up` names the commit of main it deploys: no test asks GitHub.
+    (bin_dir / "git").write_text("#!/bin/sh\nexit 1\n")
     for f in bin_dir.iterdir():
         f.chmod(0o755)
     ca = tmp_path / "ca.crt"
@@ -301,6 +379,9 @@ def _run_portainer(
         "DOCKER_RAN": str(tmp_path / "docker-ran"),
         "PORTAINER_API_KEY": THE_KEY,
         "FAKE_STACKS": stacks,
+        "BODIES": str(tmp_path / "bodies"),
+        "BACKEND_DIGEST": BACKEND_DIGEST,
+        "FRONTEND_DIGEST": FRONTEND_DIGEST,
         **{k: v.replace("$CA", str(ca)) for k, v in env.items()},
     }
     done = subprocess.run(
@@ -507,3 +588,108 @@ def test_the_ca_is_inlined_and_matches_the_file_in_git() -> None:
     config = stack["configs"]["infra-ca"]
     assert "file" not in config
     assert config["content"].strip() == (REPO_ROOT / "deploy" / "infra-ca.crt").read_text().strip()
+
+
+# --- Les images viennent de GHCR, épinglées par digest (docs/adr/0079) --------
+
+REQUIRED_VARIABLES = "EA_POSTGRES_PASSWORD=pw\nEA_S3_ACCESS_KEY=ea\nEA_S3_SECRET_KEY=s3\n"
+
+
+def _up(
+    tmp_path: Path, *, env_file: str = REQUIRED_VARIABLES, env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[dict[str, object]]]:
+    """`up` against the mini's existing stack; returns the process, curl calls and JSON bodies."""
+    import json
+
+    stack_env = tmp_path / "ea.env"
+    stack_env.write_text(env_file)
+    done, calls, _ = _run_portainer(
+        tmp_path,
+        env={**VERIFIED, "EA_STACK_ENV": str(stack_env), **(env or {})},
+        command="up",
+        stacks=ON_THE_MINI,
+    )
+    bodies_file = tmp_path / "bodies"
+    chunks = bodies_file.read_text().split("\x1e") if bodies_file.exists() else []
+    bodies = [json.loads(chunk) for chunk in chunks if chunk.strip()]
+    return done, calls, bodies
+
+
+def _stack_variables(body: dict[str, object]) -> dict[str, str]:
+    env = body["Env"]
+    assert isinstance(env, list)
+    return {item["name"]: item["value"] for item in env}
+
+
+@needs_tools
+def test_up_pins_the_digests_latest_points_at(tmp_path: Path) -> None:
+    done, calls, bodies = _up(tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert any("ghcr.io/v2/nicolaslallier/ea-backend/manifests/latest" in c for c in calls)
+    assert any("ghcr.io/v2/nicolaslallier/ea-frontend/manifests/latest" in c for c in calls)
+    redeploy = [b for b in bodies if "RepullImageAndRedeploy" in b]
+    assert len(redeploy) == 1, bodies
+    variables = _stack_variables(redeploy[0])
+    assert variables["EA_BACKEND_DIGEST"] == BACKEND_DIGEST
+    assert variables["EA_FRONTEND_DIGEST"] == FRONTEND_DIGEST
+    assert variables["EA_IMAGE_TAG"] == "latest"
+
+
+@needs_tools
+def test_up_resolves_the_tag_it_is_given(tmp_path: Path) -> None:
+    tag = "sha-" + "c" * 40
+    done, calls, bodies = _up(tmp_path, env={"EA_IMAGE_TAG": tag})
+
+    assert done.returncode == 0, done.stderr
+    assert any(f"ea-backend/manifests/{tag}" in c for c in calls)
+    assert _stack_variables(bodies[-1])["EA_IMAGE_TAG"] == tag
+
+
+@needs_tools
+def test_a_digest_written_in_the_env_file_wins_for_a_rollback(tmp_path: Path) -> None:
+    pinned = "sha256:" + "d" * 64
+    done, calls, bodies = _up(
+        tmp_path, env_file=REQUIRED_VARIABLES + f"EA_BACKEND_DIGEST={pinned}\n"
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not any("ea-backend/manifests" in c for c in calls)
+    variables = _stack_variables(bodies[-1])
+    assert variables["EA_BACKEND_DIGEST"] == pinned
+    assert variables["EA_FRONTEND_DIGEST"] == FRONTEND_DIGEST
+
+
+@needs_tools
+def test_up_stops_before_portainer_when_ghcr_has_no_digest(tmp_path: Path) -> None:
+    done, calls, _ = _up(tmp_path, env={"FAKE_GHCR_DOWN": "1"})
+
+    assert done.returncode != 0
+    assert "ghcr.io/nicolaslallier/ea-backend:latest" in done.stderr
+    assert not any(THE_URL in c for c in calls)
+
+
+@needs_tools
+@pytest.mark.parametrize("tag", ["../latest", "la test", "-x"])
+def test_up_refuses_a_tag_that_is_not_one(tmp_path: Path, tag: str) -> None:
+    done, calls, _ = _up(tmp_path, env={"EA_IMAGE_TAG": tag})
+
+    assert done.returncode != 0 and "EA_IMAGE_TAG" in done.stderr
+    assert calls == []
+
+
+@needs_tools
+def test_up_refuses_a_digest_that_is_not_one(tmp_path: Path) -> None:
+    done, calls, _ = _up(tmp_path, env_file=REQUIRED_VARIABLES + "EA_BACKEND_DIGEST=latest\n")
+
+    assert done.returncode != 0 and "EA_BACKEND_DIGEST" in done.stderr
+    assert not any(THE_URL in c for c in calls)
+
+
+@needs_tools
+def test_up_switches_portainer_polling_off(tmp_path: Path) -> None:
+    """Polling would redeploy main with the digests Portainer already holds (docs/adr/0079)."""
+    done, _, bodies = _up(tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert bodies and all("AutoUpdate" not in body for body in bodies)

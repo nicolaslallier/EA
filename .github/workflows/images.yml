@@ -1,0 +1,116 @@
+# Construit les deux images de la stack « ea » et les pousse sur GHCR
+# (docs/adr/0079). La stack ne construit plus rien : le Mac mini est un
+# environnement *Agent* de Portainer, où le build de compose échoue.
+#
+# Runners hébergés par GitHub seulement : ce workflow ne touche ni Portainer
+# ni le runner `ea`. Le workflow Deploy le suit (workflow_run) et déploie le
+# tag sha-<commit> qu'il vient de pousser.
+#
+# Pas de déclencheur pull_request : une PR n'a rien à publier, et ce job a le
+# droit d'écrire les paquets.
+name: Images
+
+on:
+  push:
+    branches: [main]
+    # Mêmes exclusions que Deploy : ce qui ne change aucun conteneur ne
+    # mérite ni image ni redéploiement.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+# Deux pushes rapprochés : `latest` suit le dernier, jamais un build annulé.
+concurrency:
+  group: images-ea
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Le nom que deploy/ea.stack.yml et scripts/portainer-stack.sh tirent,
+  # suivi de -backend ou -frontend.
+  IMAGE: ghcr.io/nicolaslallier/ea
+  # Publics, et écrits dans le bundle par Vite : le SPA est servi sous le nom du
+  # vhost, l'API sous /api sur la même origine, le realm et le client du
+  # déploiement (docs/adr/0027, 0032).
+  SPA_BUILD_ARGS: |
+    VITE_API_BASE_URL=/api
+    VITE_AUTH_AUTHORITY=https://keycloak.famillelallier.net/realms/ea
+    VITE_AUTH_CLIENT_ID=ea-spa
+
+jobs:
+  # Chaque architecture sur un runner natif, sans émulation : le mini est
+  # arm64, le laptop amd64. `publish` réunit les deux sous un seul tag.
+  build:
+    name: ${{ matrix.component }} (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        component: [backend, frontend]
+        platform:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ./${{ matrix.component }}
+          platforms: linux/${{ matrix.platform.arch }}
+          push: true
+          tags: ${{ env.IMAGE }}-${{ matrix.component }}:sha-${{ github.sha }}-${{ matrix.platform.arch }}
+          # `source` rattache le paquet à ce dépôt.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: ${{ matrix.component == 'frontend' && env.SPA_BUILD_ARGS || '' }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.platform.arch }}
+
+  publish:
+    name: ${{ matrix.component }} (multi-arch)
+    needs: build
+    runs-on: ubuntu-latest
+    # Aucun checkout : seulement les paquets.
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # sha-<commit> est immuable : c'est lui que Deploy résout. `latest`, que
+      # `make app-up` résout par défaut, ne bouge que sur main.
+      - name: Réunir les deux architectures
+        env:
+          COMPONENT: ${{ matrix.component }}
+          ON_MAIN: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          src="$IMAGE-$COMPONENT:sha-${GITHUB_SHA}"
+          tags=(-t "$src")
+          [ "$ON_MAIN" != true ] || tags+=(-t "$IMAGE-$COMPONENT:latest")
+          docker buildx imagetools create "${tags[@]}" "$src-amd64" "$src-arm64"
+          docker buildx imagetools inspect "$src"
