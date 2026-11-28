@@ -327,19 +327,21 @@ pg-vector-check: | require-postgres-password ## Vérifie que pgvector est dispon
 	     printf "voir make pg-stack, docs/adr/0019 et 0029.\n"; exit 1; }; \
 	printf "$(GREEN)pgvector disponible (%s).$(NC)\n" "$$out"
 
-app-stack: ## Rappelle comment déployer l'API et le SPA derrière le NGINX de l'Infra
-	@printf "$(GREEN)Stack EA : deploy/ea.stack.yml → https://ea.infra.famillelallier.net$(NC)\n"
+app-stack: ## Rappelle comment déployer l'API et le SPA sur le Mac mini, derrière le NGINX de l'Infra
+	@printf "$(GREEN)Stack EA : deploy/ea.stack.yml, Mac mini (environnement 7) → https://ea.infra.famillelallier.net$(NC)\n"
 	@printf "  0. Infra : EA_DB_PASSWORD dans .env, puis make provision-app app=ea\n"
 	@printf "  1. .portainer.env : PORTAINER_API_KEY=… (Portainer → My account → Access tokens)\n"
 	@printf "     ou celui de l'Infra : PORTAINER_ENV_FILE=~/OpenCode/Infra/.portainer.env\n"
 	@printf "  2. cp deploy/ea.env.example deploy/ea.env, puis le remplir\n"
-	@printf "  3. make app-up — main doit être poussé : Portainer clone GitHub, pas ce poste\n"
-	@printf "  4. make app-ps, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
+	@printf "  3. make app-up PORTAINER_URL=https://portainer.infra.famillelallier.net PORTAINER_CA_CERT=<infra-ca.crt>\n"
+	@printf "     main doit être poussé : Portainer clone GitHub, pas ce poste\n"
+	@printf "  4. Portainer, environnement Mac-mini, puis : curl -k https://ea.infra.famillelallier.net/api/health\n"
 
-# La stack « ea » vit dans le Portainer de l'Infra, sur le Docker de ce Mac.
+# La stack « ea » vit sur le Mac mini, environnement 7 du Portainer de l'Infra.
 # L'écrire passe par l'API de Portainer (scripts/portainer-stack.sh), pour qu'il
-# en reste le propriétaire ; la lire passe par docker compose, qui retrouve le
-# projet `ea` par ses étiquettes, sans fichier. Voir docs/adr/0027.
+# en reste le propriétaire ; depuis un autre poste que celui de Portainer, il
+# faut PORTAINER_URL. app-ps et app-logs lisent le Docker local : ils ne voient
+# pas la stack du mini. Voir docs/adr/0027 et 0078.
 PORTAINER_STACK := scripts/portainer-stack.sh
 APP_COMPOSE     := docker compose -p ea
 
@@ -386,10 +388,12 @@ app-delete: ## Retire la stack EA de Portainer (CONFIRM=yes obligatoire)
 		printf "Relance avec : make app-delete CONFIRM=yes\n"; exit 1; }
 	$(PORTAINER_STACK) delete
 
-app-ps: ## État des conteneurs de la stack EA
+app-ps: ## État des conteneurs « ea » du Docker local (la stack est sur le Mac mini : Portainer)
+	@printf "La stack tourne sur le Mac mini : cette cible lit le Docker local. Voir Portainer, environnement Mac-mini.\n"
 	$(APP_COMPOSE) ps
 
-app-logs: ## Suit les logs de la stack EA (s=api ou s=web pour un seul service)
+app-logs: ## Logs « ea » du Docker local, s=api|web (la stack est sur le Mac mini : Portainer)
+	@printf "La stack tourne sur le Mac mini : cette cible lit le Docker local. Voir Portainer, environnement Mac-mini.\n"
 	$(APP_COMPOSE) logs -f $(if $(s),"$(s)",)
 
 pg-stack: ## Rappelle où vit la base relationnelle et comment la provisionner
