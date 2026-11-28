@@ -9,10 +9,8 @@ La couverture se fait par identifiant d'avis uniquement, jamais par nom de paque
 
 ## Exceptions actives
 
-| Avis | Paquet / plage | Portée | Raison | Ajoutée | Expire |
-|---|---|---|---|---|---|
-| [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) | braces `<=3.0.3` | développement uniquement : `@vue/eslint-config-typescript` → fast-glob → micromatch → braces | Aucun correctif amont : braces 3.0.3, micromatch 4.0.8 et fast-glob 3.3.3 sont les dernières versions ; la rétrogradation de l'outil de lint exigerait ESLint 10 → 9. | 2026-10-11 | 2027-01-09 |
+Aucune.
 
 ## Retirer une exception
 
-Supprimer l'entrée de `frontend/audit-exceptions.json` (et la ligne ci-dessus) quand braces publie un correctif ou que l'outil de lint ne dépend plus de cette chaîne. Prolonger une exception est un choix à refaire, par un commit qui change la date `expires`.
+Supprimer l'entrée de `frontend/audit-exceptions.json` (et sa ligne ci-dessus) dès qu'un correctif existe ou que la chaîne ne tire plus le paquet. Prolonger une exception est un choix à refaire, par un commit qui change la date `expires`.
