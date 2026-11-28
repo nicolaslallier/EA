@@ -5,6 +5,12 @@
 # requête. Même mécanique que scripts/portainer-stack.sh du dépôt Infra — voir
 # docs/adr/0027.
 #
+# La stack ne se pilote que sur le Mac mini, environnement 7 (docs/adr/0078).
+# Seule la variable PORTAINER_ENDPOINT_ID du terminal change la cible, jamais le
+# fichier de la clé, qui peut être celui de l'Infra. Une stack « ea » déclarée sur
+# un autre environnement fait échouer toute commande, sauf `delete` quand la cible
+# en a une aussi.
+#
 # Usage : scripts/portainer-stack.sh up|down|restart|delete|selftest
 #   up      crée la stack, ou la redéploie depuis main (images reconstruites)
 #   down    arrête la stack (elle reste déclarée dans Portainer)
@@ -18,6 +24,7 @@ cd "$(dirname "$0")/.."
 STACK=ea
 REPO_URL=https://github.com/nicolaslallier/EA
 REF=refs/heads/main
+DEFAULT_ENDPOINT_ID=7 # le Mac mini dans Portainer
 COMPOSE_FILE=deploy/ea.stack.yml
 # Portainer interroge main à cet intervalle et redéploie sur tout nouveau
 # commit : pousser sur main, c'est déployer (docs/adr/0041). GitHub ne peut pas
@@ -193,15 +200,24 @@ if [ -z "${PORTAINER_API_KEY:-}" ]; then
   [ -f "$PORTAINER_ENV" ] \
     || die "$PORTAINER_ENV introuvable — y mettre PORTAINER_API_KEY=… (Portainer → My account → Access tokens)"
   PORTAINER_API_KEY="$(env_get "$PORTAINER_ENV" PORTAINER_API_KEY)"
-  PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-$(env_get "$PORTAINER_ENV" PORTAINER_ENDPOINT_ID)}"
 fi
 [ -n "$PORTAINER_API_KEY" ] || die "PORTAINER_API_KEY vide dans $PORTAINER_ENV"
 export PORTAINER_API_KEY
 [ -z "${PORTAINER_URL:-}" ] || direct_key
 
-eid="${PORTAINER_ENDPOINT_ID:-$(api GET /endpoints | jq -r '[.[] | select(.Type == 1)][0].Id // empty')}"
-[ -n "$eid" ] || die "aucun environnement Docker local dans Portainer"
-stack="$(api GET /stacks | jq -c --arg n "$STACK" 'first(.[] | select(.Name == $n)) // empty')"
+eid="${PORTAINER_ENDPOINT_ID:-$DEFAULT_ENDPOINT_ID}"
+[[ "$eid" =~ ^[0-9]+$ ]] || die "PORTAINER_ENDPOINT_ID doit être un nombre : $eid"
+stacks="$(api GET /stacks)"
+# Portainer accepte le même nom sur deux environnements : deux « ea » migreraient
+# la même base.
+elsewhere="$(jq -r --arg n "$STACK" --argjson e "$eid" \
+  'first(.[] | select(.Name == $n and .EndpointId != $e) | .EndpointId) // empty' <<<"$stacks")"
+stack="$(jq -c --arg n "$STACK" --argjson e "$eid" \
+  'first(.[] | select(.Name == $n and .EndpointId == $e)) // empty' <<<"$stacks")"
+# En double, `delete` retire celle de la cible : sans cela, aucune commande ne
+# sortirait de cet état.
+[ -z "$elsewhere" ] || { [ "$cmd" = delete ] && [ -n "$stack" ]; } \
+  || die "stack '$STACK' déclarée sur l'environnement $elsewhere, la cible est $eid — l'y retirer d'abord : PORTAINER_ENDPOINT_ID=$elsewhere scripts/portainer-stack.sh delete"
 sid=""
 [ -z "$stack" ] || sid="$(jq -r .Id <<<"$stack")"
 

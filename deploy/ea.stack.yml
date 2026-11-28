@@ -1,5 +1,6 @@
-# EA — l'API et le SPA, déployés comme stack Portainer sur le Docker de l'Infra
-# et servis par son NGINX, à https://ea.infra.famillelallier.net.
+# EA — l'API et le SPA, déployés comme stack Portainer sur le Mac mini
+# (environnement 7, 192.168.2.68) et servis par le NGINX de l'Infra, sur le
+# laptop (192.168.2.10), à https://ea.infra.famillelallier.net (docs/adr/0078).
 #
 # Stack *Git* et non Web editor : les deux images se construisent depuis le
 # dépôt, et seul un clone donne à Portainer de quoi les construire.
@@ -13,9 +14,11 @@
 # `make app-up` fait la même chose par l'API de Portainer, avec les variables de
 # deploy/ea.env ; `make app-stack` réaffiche ces instructions. Voir docs/adr/0027.
 #
-# Rien ici ne publie de port : la règle d'entrée unique de l'Infra. Les deux
-# conteneurs rejoignent `infra-net` sous un alias, et le vhost
-# nginx/conf.d/ea.conf du dépôt Infra les atteint par ce nom.
+# L'`infra-net` du mini n'est pas celui du laptop : le vhost nginx/conf.d/ea.conf
+# du dépôt Infra atteint les deux conteneurs par les ports publiés ici (8300 le
+# SPA, 8301 l'API), et l'API joint PostgreSQL, S3, Keycloak et Ollama sur
+# 192.168.2.10. Sur ce trajet, seul Keycloak est chiffré ; les deux ports sont
+# joignables par le LAN et le routeur ne doit pas les rediriger.
 
 services:
   api:
@@ -24,6 +27,12 @@ services:
     # déjà construite et un redéploiement après un commit sert l'ancien code.
     pull_policy: build
     restart: unless-stopped
+    ports:
+      - "${EA_API_PORT:-8301}:8000"
+    # Le certificat présenté sur ce nom reste vérifié contre le CA de l'Infra ;
+    # seule la résolution est fixée, pour ne pas dépendre du DNS de la VM.
+    extra_hosts:
+      - "keycloak.famillelallier.net:192.168.2.10"
     environment:
       EA_DEBUG: "false"
       # Le SPA et l'API partagent une origine, celle du vhost ; la liste reste
@@ -33,8 +42,9 @@ services:
       # savoir pour que /api/docs aille chercher /api/openapi.json.
       UVICORN_ROOT_PATH: /api
       # /mcp servi derrière NGINX, pour LibreChat (docs/adr/0034). Le pair TCP
-      # y est toujours NGINX : la garde de boucle locale (docs/adr/0023) ne
-      # distinguerait personne, elle est donc levée, et le jeton du realm
+      # n'y est jamais local : NGINX, ou toute machine du LAN par le port publié
+      # (docs/adr/0078). La garde de boucle locale (docs/adr/0023) bloquerait
+      # LibreChat, elle est donc levée, et le jeton du realm
       # (docs/adr/0032) est la seule barrière — EA_AUTH_ENABLED ne se coupe
       # jamais ici. Le `Host` que NGINX transmet et la ressource annoncée par
       # le 401 sont le nom du vhost, le même que EA_CORS_ORIGINS.
@@ -44,17 +54,17 @@ services:
       EA_MCP_RESOURCE_URL: https://${EA_HOSTNAME:-ea.infra.famillelallier.net}/api/mcp
 
       # Chaque requête porte un jeton du realm Keycloak `ea` (docs/adr/0032).
-      # Dans infra-net, keycloak.famillelallier.net est un alias de `nginx`,
+      # keycloak.famillelallier.net est le NGINX du laptop (extra_hosts),
       # qui présente le certificat de l'Infra : sans son CA, l'API ne lit pas
       # les clés du realm et refuse de démarrer.
       EA_AUTH_ISSUER: ${EA_AUTH_ISSUER:-https://keycloak.famillelallier.net/realms/ea}
       EA_AUTH_CA_CERT: /etc/ssl/certs/infra-ca.pem
 
-      # Le PostgreSQL de l'Infra, sur infra-net : base et rôle `ea`, créés par
+      # Le PostgreSQL de l'Infra, relayé en TCP par le NGINX du laptop : base et rôle `ea`, créés par
       # `make provision-app app=ea` côté Infra. Les migrations s'appliquent au
       # démarrage du conteneur (backend/Dockerfile). Il porte tout le modèle,
       # graphe compris (docs/adr/0033).
-      EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-postgres}
+      EA_POSTGRES_HOST: ${EA_POSTGRES_HOST:-192.168.2.10}
       EA_POSTGRES_PASSWORD: ${EA_POSTGRES_PASSWORD:?EA_POSTGRES_PASSWORD est obligatoire (EA_DB_PASSWORD de l'Infra)}
 
       # Ollama sur le cluster Docker (192.168.2.10:11434), pas une instance du
@@ -67,12 +77,12 @@ services:
       EA_EMBEDDINGS_BASE_URL: ${EA_EMBEDDINGS_BASE_URL:-http://192.168.2.10:11434/v1}
 
       # Les fichiers (docs/adr/0036), dans le SeaweedFS de l'Infra (docs/adr/0056,
-      # qui remplace MinIO). Sur infra-net c'est le service `s3`, port 8333, en
-      # HTTP comme `postgres` : le nom public n'y a pas d'alias. La clé est celle
-      # de l'identité `ea` (make s3-provision app=ea bucket=ea-catalogue), en
-      # lecture-écriture sur ce seul bucket — celui que lit le pipeline.
+      # qui remplace MinIO), publié par le laptop sur le port 8333, en HTTP comme
+      # PostgreSQL est sans TLS. La clé est celle de l'identité `ea`
+      # (make s3-provision app=ea bucket=ea-catalogue), en lecture-écriture sur ce
+      # seul bucket — celui que lit le pipeline.
       EA_S3_ENABLED: "true"
-      EA_S3_ENDPOINT: ${EA_S3_ENDPOINT:-s3:8333}
+      EA_S3_ENDPOINT: ${EA_S3_ENDPOINT:-192.168.2.10:8333}
       EA_S3_SECURE: "false"
       EA_S3_BUCKET: ${EA_S3_BUCKET:-ea-catalogue}
       EA_S3_ACCESS_KEY: ${EA_S3_ACCESS_KEY:?EA_S3_ACCESS_KEY est obligatoire (identité SeaweedFS ea)}
@@ -107,6 +117,8 @@ services:
         VITE_AUTH_CLIENT_ID: ea-spa
     pull_policy: build
     restart: unless-stopped
+    ports:
+      - "${EA_WEB_PORT:-8300}:80"
     depends_on:
       - api
     networks:
