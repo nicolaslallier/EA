@@ -42,8 +42,9 @@ services:
       # savoir pour que /api/docs aille chercher /api/openapi.json.
       UVICORN_ROOT_PATH: /api
       # /mcp servi derrière NGINX, pour LibreChat (docs/adr/0034). Le pair TCP
-      # y est toujours NGINX : la garde de boucle locale (docs/adr/0023) ne
-      # distinguerait personne, elle est donc levée, et le jeton du realm
+      # n'y est jamais local : NGINX, ou toute machine du LAN par le port publié
+      # (docs/adr/0078). La garde de boucle locale (docs/adr/0023) bloquerait
+      # LibreChat, elle est donc levée, et le jeton du realm
       # (docs/adr/0032) est la seule barrière — EA_AUTH_ENABLED ne se coupe
       # jamais ici. Le `Host` que NGINX transmet et la ressource annoncée par
       # le 401 sont le nom du vhost, le même que EA_CORS_ORIGINS.

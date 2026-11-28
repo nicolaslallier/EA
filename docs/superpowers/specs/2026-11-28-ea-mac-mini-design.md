@@ -18,7 +18,8 @@ LAN ; réparer le runner `runner-ea`.
 ## Approches
 
 - **A (retenue)** : le mini publie deux ports, le nginx du laptop reste devant.
-  Petit changement, déjà utilisé par Keycloak et Grafana sur le mini. HTTP et
+  Petit changement, utilisé par Keycloak et Grafana quand ils tournaient sur le
+  mini (jusqu'au commit Infra `#175`). HTTP et
   PostgreSQL circulent en clair sur le LAN.
 - **B** : un nginx TLS sur le mini et le DNS vers lui. Protège le trajet des
   utilisateurs, pas PostgreSQL ni S3 ; une clé privée de plus à gérer.

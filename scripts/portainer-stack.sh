@@ -8,7 +8,8 @@
 # La stack ne se pilote que sur le Mac mini, environnement 7 (docs/adr/0078).
 # Seule la variable PORTAINER_ENDPOINT_ID du terminal change la cible, jamais le
 # fichier de la clé, qui peut être celui de l'Infra. Une stack « ea » déclarée sur
-# un autre environnement fait échouer toute commande.
+# un autre environnement fait échouer toute commande, sauf `delete` quand la cible
+# en a une aussi.
 #
 # Usage : scripts/portainer-stack.sh up|down|restart|delete|selftest
 #   up      crée la stack, ou la redéploie depuis main (images reconstruites)
@@ -211,9 +212,12 @@ stacks="$(api GET /stacks)"
 # la même base.
 elsewhere="$(jq -r --arg n "$STACK" --argjson e "$eid" \
   'first(.[] | select(.Name == $n and .EndpointId != $e) | .EndpointId) // empty' <<<"$stacks")"
-[ -z "$elsewhere" ] || die "stack '$STACK' déclarée sur l'environnement $elsewhere, la cible est $eid — l'y retirer d'abord : PORTAINER_ENDPOINT_ID=$elsewhere scripts/portainer-stack.sh delete"
 stack="$(jq -c --arg n "$STACK" --argjson e "$eid" \
   'first(.[] | select(.Name == $n and .EndpointId == $e)) // empty' <<<"$stacks")"
+# En double, `delete` retire celle de la cible : sans cela, aucune commande ne
+# sortirait de cet état.
+[ -z "$elsewhere" ] || { [ "$cmd" = delete ] && [ -n "$stack" ]; } \
+  || die "stack '$STACK' déclarée sur l'environnement $elsewhere, la cible est $eid — l'y retirer d'abord : PORTAINER_ENDPOINT_ID=$elsewhere scripts/portainer-stack.sh delete"
 sid=""
 [ -z "$stack" ] || sid="$(jq -r .Id <<<"$stack")"
 

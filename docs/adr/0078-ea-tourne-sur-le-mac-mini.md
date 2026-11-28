@@ -30,7 +30,8 @@ même nom que celui du laptop, sans y être relié.
 - `scripts/portainer-stack.sh` vise l'environnement 7. Seule la variable
   `PORTAINER_ENDPOINT_ID` du terminal change la cible, jamais le fichier de la
   clé, qui peut être celui de l'Infra. Une stack « ea » déclarée sur un autre
-  environnement fait échouer toute commande.
+  environnement fait échouer toute commande, sauf `delete` quand la cible en a
+  une aussi, pour sortir d'un doublon.
 
 Remplace en partie [0027](0027-application-deployee-derriere-le-nginx-de-l-infra.md) :
 une seule origine derrière NGINX demeure ; « aucun port publié » et « les

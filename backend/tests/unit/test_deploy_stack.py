@@ -393,8 +393,16 @@ def test_by_default_the_stack_is_driven_on_the_mac_mini(tmp_path: Path) -> None:
 
 
 @needs_tools
-@pytest.mark.parametrize("command", ["down", "restart", "delete"])
-@pytest.mark.parametrize("stacks", [ON_THE_LAPTOP, ON_BOTH])
+@pytest.mark.parametrize(
+    ("command", "stacks"),
+    [
+        ("down", ON_THE_LAPTOP),
+        ("restart", ON_THE_LAPTOP),
+        ("delete", ON_THE_LAPTOP),
+        ("down", ON_BOTH),
+        ("restart", ON_BOTH),
+    ],
+)
 def test_a_stack_declared_elsewhere_stops_the_script(
     tmp_path: Path, command: str, stacks: str
 ) -> None:
@@ -403,6 +411,18 @@ def test_a_stack_declared_elsewhere_stops_the_script(
     assert done.returncode != 0
     assert "environnement 3" in done.stderr
     assert not any(f"-X {m} " in c for c in calls for m in ("POST", "PUT", "DELETE"))
+
+
+@needs_tools
+def test_a_duplicate_can_be_deleted_as_the_refusal_says(tmp_path: Path) -> None:
+    """With `ea` on both, refusing `delete` too would leave no command to get out."""
+    done, calls, _ = _run_portainer(
+        tmp_path, env={**VERIFIED, "PORTAINER_ENDPOINT_ID": "3"}, stacks=ON_BOTH
+    )
+
+    assert done.returncode == 0, done.stderr
+    deletes = [c for c in calls if "-X DELETE " in c]
+    assert len(deletes) == 1 and "/api/stacks/51?endpointId=3" in deletes[0]
 
 
 @needs_tools

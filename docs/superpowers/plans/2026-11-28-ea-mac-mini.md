@@ -198,14 +198,15 @@ Expected: code de sortie 0, aucun fichier modifié par la commande. Tout échec 
 - [ ] **Step 1: préflight, en lecture seule**
   - PostgreSQL du laptop : rôle et base `ea`, extension `vector`, `alembic_version`, et `SELECT count(*) FROM elements`. Passer par `GET /endpoints/3/docker/...` exige un `exec`, qui est une écriture d'API : préférer `psql` depuis ce Mac, hôte `192.168.2.10`, avec le mot de passe du coffre jamais affiché.
   - Bucket `ea-catalogue` présent.
-  - Ports 8300 et 8301 libres sur `192.168.2.68`.
+  - Environnement Portainer 7 actif et réseau `infra-net` présent sur le mini (la stack l'exige) ; noter tout conteneur qui y tourne.
+  - Ports libres sur `192.168.2.68` : `for p in 8300 8301; do nc -z -G3 192.168.2.68 $p && echo "$p PRIS" || echo "$p libre"; done`.
   - `~/Code/Infra/.openbao.env` lisible.
   - **Base absente ou vide : s'arrêter et en parler** (les données ont pu rester dans `infra_pgdata` du mini). Ne rien provisionner ni copier.
-- [ ] **Step 2: merge de la PR EA** — CI verte, puis accord explicite.
-- [ ] **Step 3: sauvegarde, puis déploiement** (accord)
+- [ ] **Step 2: sauvegarde, puis merge de la PR EA** (accord)
+  Le merge touche `deploy/`, `scripts/` et `Makefile` : le workflow `Deploy` met en file un `up`, qui créerait la stack et migrerait la base dès que `runner-ea` répond. Dans l'ordre : `make pg-backup POSTGRES_HOST=192.168.2.10`, puis `gh workflow disable deploy.yml` et vérifier `gh run list --workflow deploy.yml` (aucun run en file), puis le merge (CI verte). Réactiver (`gh workflow enable deploy.yml`) seulement après l'étape 6, avec accord. L'accord de merge ne vaut pas accord de déploiement.
+- [ ] **Step 3: déploiement** (accord)
 
 ```bash
-make pg-backup POSTGRES_HOST=192.168.2.10
 PORTAINER_URL=https://portainer.infra.famillelallier.net \
 PORTAINER_CA_CERT=$HOME/Code/Infra/certs/infra-ca.crt \
 PORTAINER_ENV_FILE=$HOME/Code/Infra/.portainer.env \
@@ -224,4 +225,4 @@ Expected: `"status":"ok"` et `200`. `degraded` ou aucune réponse : lire les log
 
 Run: `curl -sS --cacert ~/Code/Infra/certs/infra-ca.crt https://ea.infra.famillelallier.net/api/health` ; puis `/.well-known/oauth-protected-resource/api/mcp` (JSON, pas le HTML du SPA) et `/api/me` sans jeton (401). La connexion dans le navigateur est confirmée par l'utilisateur.
 
-**Retour arrière :** `make app-delete CONFIRM=yes` (mêmes variables) et annulation de la PR Infra ; la sauvegarde de l'étape 3 couvre la base.
+**Retour arrière :** `make app-delete CONFIRM=yes` (mêmes variables) et annulation de la PR Infra ; la sauvegarde de l'étape 2 couvre la base.
