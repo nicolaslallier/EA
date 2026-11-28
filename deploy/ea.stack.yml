@@ -2,8 +2,13 @@
 # (environnement 7, 192.168.2.68) et servis par le NGINX de l'Infra, sur le
 # laptop (192.168.2.10), à https://ea.infra.famillelallier.net (docs/adr/0078).
 #
-# Stack *Git* et non Web editor : les deux images se construisent depuis le
-# dépôt, et seul un clone donne à Portainer de quoi les construire.
+# La stack ne construit rien : le mini est un environnement *Agent* de Portainer,
+# où le build de compose échoue (BuildKit veut du HTTP/2, l'agent relaie en
+# HTTP/1.1). Le workflow Images (.github/workflows/images.yml) construit les deux
+# images et les pousse sur GHCR ; la stack les tire, épinglées par digest
+# (docs/adr/0079). `make app-up` résout ces digests (EA_IMAGE_TAG, `latest` par
+# défaut) et les passe en variables de stack. Stack *Git* quand même : le
+# fichier vient de main, et la CA de l'Infra avec lui.
 #
 #   https://portainer.infra.famillelallier.net → Stacks → Add stack → Repository
 #   → Repository URL : https://github.com/nicolaslallier/EA   (public, sans auth)
@@ -22,10 +27,9 @@
 
 services:
   api:
-    build: ../backend
-    # Reconstruire à chaque déploiement : sans ceci, compose réutilise l'image
-    # déjà construite et un redéploiement après un commit sert l'ancien code.
-    pull_policy: build
+    # Le digest décide de ce qui tourne ; le tag n'est qu'une étiquette lisible
+    # dans Portainer. Tous deux sont posés par `make app-up` (docs/adr/0079).
+    image: ghcr.io/nicolaslallier/ea-backend:${EA_IMAGE_TAG:-latest}@${EA_BACKEND_DIGEST:?EA_BACKEND_DIGEST est obligatoire (make app-up le résout sur GHCR)}
     restart: unless-stopped
     ports:
       - "${EA_API_PORT:-8301}:8000"
@@ -107,15 +111,10 @@ services:
           - ea-api
 
   web:
-    build:
-      context: ../frontend
-      # Vite écrit ces deux valeurs dans le bundle : changer de realm ou de
-      # client est une reconstruction, pas un redémarrage. L'issuer est celui
-      # que l'API vérifie, lu dans la même variable.
-      args:
-        VITE_AUTH_AUTHORITY: ${EA_AUTH_ISSUER:-https://keycloak.famillelallier.net/realms/ea}
-        VITE_AUTH_CLIENT_ID: ea-spa
-    pull_policy: build
+    # Vite a écrit le realm et le client dans le bundle, au build du workflow
+    # Images : changer de realm est une reconstruction là-bas, pas une variable
+    # d'ici. EA_AUTH_ISSUER ne règle plus que l'API.
+    image: ghcr.io/nicolaslallier/ea-frontend:${EA_IMAGE_TAG:-latest}@${EA_FRONTEND_DIGEST:?EA_FRONTEND_DIGEST est obligatoire (make app-up le résout sur GHCR)}
     restart: unless-stopped
     ports:
       - "${EA_WEB_PORT:-8300}:80"

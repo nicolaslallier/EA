@@ -1,5 +1,5 @@
-# L'API, en image — construite par la stack Portainer deploy/ea.stack.yml.
-# Voir docs/adr/0027.
+# L'API, en image — construite par .github/workflows/images.yml, poussée sur GHCR
+# et tirée par la stack Portainer deploy/ea.stack.yml. Voir docs/adr/0027, 0079.
 #
 # Tag et digest, comme les stacks : un rebuild ne change pas de base sans que
 # ce fichier ait changé. Dependabot propose les mises à jour.

@@ -1,5 +1,6 @@
-# Redéploie la stack « ea » dans Portainer après un push sur main
-# (docs/adr/0044). Même montage que les dépôts Infra et DarkAngel.
+# Redéploie la stack « ea » dans Portainer quand le workflow Images a poussé
+# les images d'un commit de main (docs/adr/0044, 0079). Même montage que les
+# dépôts Infra, DarkAngel et AI.
 #
 # runs-on est le runner auto-hébergé de docker-compose.runner.yml : le Portainer
 # de l'Infra est sur le LAN, un runner hébergé par GitHub ne peut pas le joindre.
@@ -9,15 +10,17 @@
 # workflow qui tourne sur ce label. Le repo est public, le runner
 # tient les secrets de déploiement et une PR de fork apporte son propre fichier
 # de workflow : c'est de l'exécution de code arbitraire avec ces secrets.
+# workflow_run non plus ne suit qu'Images, qui n'a aucun déclencheur de PR ; le
+# job vérifie quand même que le run suivi vient d'un push.
 name: Deploy
 
 on:
-  push:
+  # Images ne tourne que sur main et ignore déjà docs/ et les .md.
+  workflow_run:
+    workflows: [Images]
+    types: [completed]
     branches: [main]
-    # Ce qui ne peut changer aucun conteneur ne mérite pas un redéploiement.
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
+  # À la main : redéploie ce que `latest` désigne.
   workflow_dispatch:
 
 # Un déploiement à la fois, et jamais annulé en vol : Portainer resterait à
@@ -31,6 +34,10 @@ permissions:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: [self-hosted, ea]
     steps:
       - uses: actions/checkout@v7
@@ -53,11 +60,17 @@ jobs:
           # Hors coffre : chemin de la CA côté Docker de l'Infra, et la clé d'accès S3.
           INFRA_CA_CERT: ${{ vars.INFRA_CA_CERT }}
           EA_S3_ACCESS_KEY: ${{ vars.EA_S3_ACCESS_KEY }}
+          # Le tag immuable qu'Images vient de pousser ; le script en lit les
+          # digests sur GHCR et les épingle dans la stack.
+          # Vide sous workflow_dispatch : `latest`.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           for v in PORTAINER_API_KEY BAO_TOKEN INFRA_CA_CERT EA_S3_ACCESS_KEY; do
             [ -n "${!v}" ] || { echo "::error::$v absent (secret ou variable du dépôt)"; exit 1; }
           done
+          EA_IMAGE_TAG="${HEAD_SHA:+sha-$HEAD_SHA}"
+          export EA_IMAGE_TAG="${EA_IMAGE_TAG:-latest}"
           umask 077
           export EA_STACK_ENV="$RUNNER_TEMP/ea.env"
           trap 'rm -f "$EA_STACK_ENV"' EXIT
