@@ -157,21 +157,33 @@ def test_the_spa_image_is_built_for_the_realm() -> None:
     assert re.search(r"^\s+VITE_AUTH_CLIENT_ID: \S", args.group(1), re.M), args.group(1)
 
 
-def test_the_deployed_api_keeps_its_files_in_the_infra_seaweedfs_on_infra_net() -> None:
-    """Inside `infra-net` the object store is the service `s3` (SeaweedFS), in plain HTTP.
+def test_the_deployed_api_keeps_its_files_in_the_seaweedfs_of_the_laptop() -> None:
+    """The object store is the laptop's SeaweedFS, in plain HTTP over the LAN.
 
-    No public name has an alias there (only Keycloak's does), so
-    `minio.famillelallier.net` would not resolve from the container.
-    See docs/adr/0036 and docs/adr/0056.
+    The Mac mini is not on the laptop's `infra-net`, so the service name `s3`
+    resolves to nothing there (docs/adr/0078). See also docs/adr/0036 and 0056.
     """
     env = api_environment()
 
     assert env["EA_S3_ENABLED"] == "true"
-    assert env["EA_S3_ENDPOINT"] == "${EA_S3_ENDPOINT:-s3:8333}"
+    assert env["EA_S3_ENDPOINT"] == "${EA_S3_ENDPOINT:-192.168.2.10:8333}"
     assert env["EA_S3_SECURE"] == "false"
     assert env["EA_S3_BUCKET"] == "${EA_S3_BUCKET:-ea-catalogue}"
     assert env["EA_S3_ACCESS_KEY"].startswith("${EA_S3_ACCESS_KEY:?")
     assert env["EA_S3_SECRET_KEY"].startswith("${EA_S3_SECRET_KEY:?")
+
+
+def test_the_stack_publishes_the_two_ports_the_laptop_nginx_calls() -> None:
+    """Le vhost ea.conf d'Infra appelle ces deux ports sur le mini (docs/adr/0078)."""
+    assert '- "${EA_API_PORT:-8301}:8000"' in _stack_service("api")
+    assert '- "${EA_WEB_PORT:-8300}:80"' in _stack_service("web")
+
+
+def test_the_deployed_api_reaches_the_laptop_over_the_lan() -> None:
+    api = _stack_service("api")
+
+    assert api_environment()["EA_POSTGRES_HOST"] == "${EA_POSTGRES_HOST:-192.168.2.10}"
+    assert '- "keycloak.famillelallier.net:192.168.2.10"' in api
 
 
 def test_the_deployed_api_embeds_with_the_ollama_of_the_cluster() -> None:
