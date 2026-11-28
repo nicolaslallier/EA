@@ -18,7 +18,7 @@ RUN uv sync --locked --no-dev --no-editable
 
 # Même Python, même chemin (/usr/local/bin/python3.12) que l'image de build :
 # le venv copié y pointe.
-FROM python:3.12.15-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+FROM python:3.12.16-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
 
 # Les rapports PDF (docs/adr/0062) : WeasyPrint charge Pango à l'exécution. La
 # police est embarquée (DejaVu) pour que le rendu ne dépende d'aucune machine.
