@@ -32,7 +32,7 @@ dependencies = [
     # DOCX reports; pure Python on top of lxml — see docs/adr/0062.
     "python-docx>=1.1",
     "python-multipart>=0.0.33",
-    "sqlalchemy[asyncio]>=2.1.4",
+    "sqlalchemy[asyncio]>=2.1.9",
     "uvicorn[standard]>=0.54.0",
     # PDF from the self-contained HTML report — needs Pango at run time; see docs/adr/0062.
     "weasyprint>=66.0",
